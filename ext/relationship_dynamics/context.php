@@ -622,3 +622,166 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
     }
 }
 
+// ========== ATTRACTION CONTEXT (PR 11) ==========
+$matrixResult = $GLOBALS['RELDYN_ATTRACTION_MATRIX'] ?? null;
+if ($matrixResult && !empty($matrixResult['enabled'])) {
+    $attractionText = RelationshipDynamics::generateAttractionContext($npcName, $matrixResult, $dynamics);
+    if (!empty($attractionText)) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<attraction_context>{$attractionText}</attraction_context>"];
+    }
+}
+
+// ========== DUTY OVERRIDE CONTEXT (PR 12) ==========
+$dutyFactor = floatval($GLOBALS['RELDYN_DUTY_FACTOR'] ?? 1.0);
+if ($dutyFactor < 1.0) {
+    $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' =>
+        "<duty_context>This interaction involves quest-required dialogue. {$npcName} understands the player may be acting under obligation, not personal choice.</duty_context>"];
+}
+
+// ========== PARASITE/FRIENDZONE TYPE CONTEXT (PR 12) ==========
+$relTypeOverride = $dynamics['_relationship_type_override'] ?? null;
+if ($relTypeOverride === 'parasite') {
+    $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' =>
+        "<relationship_type_context>{$npcName} has noticed a pattern. The gifts keep coming but there is no substance behind them. They feel used, not valued. The warmth in their voice has a transactional edge.</relationship_type_context>"];
+}
+
+// ========== INTERNAL WEATHER CONTEXT (PR 13) ==========
+$weather = $dynamics['_internal_weather'] ?? 'clear';
+if ($weather !== 'clear') {
+    $weatherContext = [
+        'sunny'    => "{$npcName} is in good spirits -- their needs are being met and it shows.",
+        'overcast' => "{$npcName} seems a little off. Something is missing but they may not be able to name it.",
+        'stormy'   => "{$npcName} is visibly restless and dissatisfied. Multiple needs have gone unmet for too long.",
+    ];
+    if (isset($weatherContext[$weather])) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<internal_weather>{$weatherContext[$weather]}</internal_weather>"];
+    }
+}
+
+// ========== INTIMACY DEPRIVATION CONTEXT (PR 13) ==========
+$intimacyContext = RelationshipDynamics::generateIntimacyDeprivationContext($npcName, $dynamics);
+if ($intimacyContext) {
+    $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<intimacy_state>{$intimacyContext}</intimacy_state>"];
+}
+
+// ========== CREATURE STATE CONTEXT (PR 13) ==========
+$creatureType = RelationshipDynamics::detectCreatureType($npcName, $dynamics);
+if ($creatureType) {
+    $isNight = RelationshipDynamics::isGameNight();
+    $isFullMoon = RelationshipDynamics::isFullMoon();
+    if ($creatureType === 'vampire' && $isNight) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' =>
+            "<creature_state>{$npcName}'s vampiric nature is ascendant. The night feeds their predatory edge -- sharper, hungrier, more intense. The mask of humanity is thinner now.</creature_state>"];
+    } elseif ($creatureType === 'werewolf' && $isFullMoon) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' =>
+            "<creature_state>The full moon pulls at {$npcName}'s beast blood. They are fighting for control -- primal urges surge against trained restraint. Everything is more raw, more immediate, more dangerous.</creature_state>"];
+    } elseif ($creatureType === 'werewolf' && $isNight) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' =>
+            "<creature_state>{$npcName}'s beast blood stirs quietly in the night. Not a full transformation, but the primal edge is there -- heightened senses, shorter patience, deeper instincts.</creature_state>"];
+    }
+}
+
+// ========== EMERGENT EMOTION CONTEXT (PR 13) ==========
+$emotions = RelationshipDynamics::detectEmergentEmotions($dynamics);
+if (!empty($emotions)) {
+    $emotionText = RelationshipDynamics::generateEmergentEmotionContext($npcName, $emotions);
+    if ($emotionText) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<emergent_emotion>{$emotionText}</emergent_emotion>"];
+    }
+}
+
+// ========== SOCIAL MASKING CONTEXT (PR 14) ==========
+$maskingActive = !empty($GLOBALS['RELDYN_MASKING_ACTIVE']);
+if ($maskingActive) {
+    $performedState = $GLOBALS['RELDYN_PERFORMED_STATE'] ?? RelationshipDynamics::calculatePerformedState($dynamics);
+    $maskContext = RelationshipDynamics::generateMaskingContext($npcName, $dynamics, $performedState);
+    if ($maskContext) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<social_mask>\n{$maskContext}\n</social_mask>"];
+    }
+} else {
+    // Check for mask drop (was masking last cycle, not masking now)
+    $maskDropText = RelationshipDynamics::generateMaskDropContext($npcName, $dynamics);
+    if ($maskDropText) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<mask_drop>{$maskDropText}</mask_drop>"];
+    }
+}
+
+// ========== UNSTABLE WINDOW CRISIS SCENE (PR 10) ==========
+$unstableWindow = $dynamics['_unstable_window'] ?? null;
+if ($unstableWindow && empty($unstableWindow['resolved'])) {
+    $reldynCfg = $reldynCfg ?? RelationshipDynamics::getConfig();
+    if (!empty($reldynCfg['divine_intervention_enabled'])) {
+        $currentPlayGamets = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+        $windowElapsed = $currentPlayGamets - floatval($unstableWindow['start_gamets']);
+        $windowDuration = floatval($unstableWindow['duration_gamets']);
+        $unstableWindow['_elapsed_fraction'] = ($windowDuration > 0) ? ($windowElapsed / $windowDuration) : 0;
+
+        $crisisText = RelationshipDynamics::generateCrisisNarration($npcName, $unstableWindow);
+        if ($crisisText) {
+            $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<crisis_state>{$crisisText}</crisis_state>"];
+            RelationshipDynamics::log("[RelDyn-CTX] Injected crisis_state for {$npcName}");
+        }
+    }
+}
+
+// ========== GRIEF CONTEXT (PR 10) ==========
+$griefBonds = $dynamics['_grief_bonds'] ?? [];
+if (!empty($griefBonds)) {
+    $reldynCfg = $reldynCfg ?? RelationshipDynamics::getConfig();
+    if (!empty($reldynCfg['grief_system_enabled'] ?? true)) {
+        // Cap to 2 most significant grief bonds (by affinity at death)
+        $sortedGrief = $griefBonds;
+        uasort($sortedGrief, function($a, $b) {
+            return ($b['bond_affinity_at_death'] ?? 0) <=> ($a['bond_affinity_at_death'] ?? 0);
+        });
+        $topGriefBonds = array_slice($sortedGrief, 0, 2, true);
+
+        foreach ($topGriefBonds as $deceasedName => $grief) {
+            $phase = intval($grief['phase']);
+            $maturity = floatval(($dynamics['dimensions']['maturity']['x'] ?? 50));
+            $griefKeywords = RelationshipDynamics::getGriefKeywords($npcName, $deceasedName, $phase, $maturity);
+            if ($griefKeywords) {
+                $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<grief_state>{$griefKeywords}</grief_state>"];
+                RelationshipDynamics::log("[RelDyn-CTX] Injected grief_state for {$npcName}, deceased={$deceasedName}, phase={$phase}");
+            }
+        }
+    }
+}
+
+// ========== ICK CONTEXT (PR 15) ==========
+if (!empty($GLOBALS['RELDYN_ICK_ACTIVE'])) {
+    $temperament = $dynamics['inferred_temperament'] ?? null;
+    $ickText = RelationshipDynamics::getIckContext($dynamics, $npcName, $temperament);
+    if ($ickText) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<ick_state>{$ickText}</ick_state>"];
+        RelationshipDynamics::log("[RelDyn-CTX] Injected ick_state for {$npcName}");
+    }
+}
+
+// ========== CHARISMA AWARENESS CONTEXT (PR 15) ==========
+$charismaText = RelationshipDynamics::getCharismaContext($dynamics, $npcName);
+if ($charismaText) {
+    $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<charisma_awareness>{$charismaText}</charisma_awareness>"];
+    RelationshipDynamics::log("[RelDyn-CTX] Injected charisma_awareness for {$npcName}");
+}
+
+// ========== AUTONOMY CONTEXT (PR 16) ==========
+$reldynCfg = $reldynCfg ?? RelationshipDynamics::getConfig();
+if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
+    $autoTemperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+    $autonomyText = RelationshipDynamics::getAutonomyContext($dynamics, $npcName, $autoTemperament);
+    if ($autonomyText) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<autonomy_state>{$autonomyText}</autonomy_state>"];
+        RelationshipDynamics::log("[RelDyn-CTX] Injected autonomy_state for {$npcName}");
+    }
+}
+
+// ========== HOOVER CONTEXT (PR 16) ==========
+if (!empty($reldynCfg['hoover_enabled'] ?? true)) {
+    $hooverText = RelationshipDynamics::getHooverContext($dynamics, $npcName);
+    if ($hooverText) {
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<hoover_state>{$hooverText}</hoover_state>"];
+        RelationshipDynamics::log("[RelDyn-CTX] Injected hoover_state for {$npcName}");
+    }
+}
+

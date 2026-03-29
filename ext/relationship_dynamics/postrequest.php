@@ -195,6 +195,65 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
                 RelationshipDynamics::log("COMBAT EVENT: {$combatNpc} type={$reqType} LL={$combatLL} gain=" . round($gain, 2) . " passion=" . round($dynamics['passion'], 2) . " source=" . ($combatCtx['source'] ?? 'basic') . $witnessTag);
             }
         }
+
+        // ========== DEATH/GRIEF SYSTEM (PR 10) ==========
+        if ($reqType === 'death' && !empty($reldynCfg['grief_system_enabled'] ?? true)) {
+            $deceasedName = null;
+            $eventData2 = $GLOBALS['HERIKA_EVENT_DATA'] ?? ($GLOBALS['event_data'] ?? ($eventData ?? ''));
+
+            // Pattern 1: "X has defeated Y"
+            if (preg_match('/has defeated\s+(.+?)[\.\s]*$/i', $eventData2, $m)) {
+                $deceasedName = trim($m[1]);
+            }
+            // Pattern 2: "X killed Y"
+            elseif (preg_match('/killed\s+(.+?)[\.\s]*$/i', $eventData2, $m)) {
+                $deceasedName = trim($m[1]);
+            }
+            // Pattern 3: "Y died" or "Y has been slain"
+            elseif (preg_match('/^(?:\(.*?\))?\s*(.+?)\s+(?:died|has been slain)/i', $eventData2, $m)) {
+                $deceasedName = trim($m[1]);
+            }
+
+            // Strip narrator prefix
+            if ($deceasedName) {
+                $deceasedName = preg_replace('/^The Narrator:\s*/i', '', $deceasedName);
+                $deceasedName = trim($deceasedName);
+            }
+
+            if ($deceasedName) {
+                $activeNpcName = $GLOBALS['RELDYN_NPC_NAME'] ?? '';
+
+                // Get all nearby NPCs who might witness the death
+                $witnessList = [];
+                // $cachePeople already defined above in the combat handler
+                foreach ($cachePeople as $witness) {
+                    if (!empty($witness) && strcasecmp($witness, $deceasedName) !== 0) {
+                        $witnessList[] = $witness;
+                    }
+                }
+
+                foreach ($witnessList as $witnessNpc) {
+                    $isActiveNpc = (strcasecmp($witnessNpc, $activeNpcName) === 0);
+
+                    if ($isActiveNpc) {
+                        $witnessDynamics = &$dynamics;
+                    } else {
+                        $witnessDynamics = RelationshipDynamics::getDynamics($witnessNpc);
+                    }
+
+                    $witnessBonds = RelationshipDynamics::getAllBondsForNpc($witnessNpc);
+                    if (isset($witnessBonds[$deceasedName])) {
+                        $bondAff = ($witnessBonds[$deceasedName]['aff'] + 100) / 2.0;
+                        if ($bondAff > 30) {
+                            RelationshipDynamics::onNpcDeath($deceasedName, $witnessNpc, $witnessDynamics);
+                            if (!$isActiveNpc) {
+                                RelationshipDynamics::saveDynamics($witnessNpc, $witnessDynamics);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     // Non-combat narrator events or combat events that didn't match — nothing more to do
     return;
@@ -351,7 +410,14 @@ if (($reldynCfg['passion_enabled'] ?? true) && $interactionLL !== null) {
     $rawPassionGain = RelationshipDynamics::calculatePassionGain($dynamics, $interactionLL);
     // Apply topic and flirt bonuses on top of base passion gain
     $passionGain = $rawPassionGain * $topicBonus * $flirtBonus;
-    error_log("[RelDyn-POST] passionGain: npc={$npcName} LL={$interactionLL} raw={$rawPassionGain} topic={$topicBonus}x flirt={$flirtBonus}x final={$passionGain} currentPassion={$dynamics['passion']}");
+
+    // ========== ATTRACTION MATRIX PASSION MODIFIER (PR 11) ==========
+    $matrixPassionMult = floatval($GLOBALS['RELDYN_MATRIX_PASSION_MULT'] ?? 1.0);
+    if ($matrixPassionMult != 1.0 && isset($passionGain) && $passionGain > 0) {
+        $passionGain *= $matrixPassionMult;
+    }
+
+    error_log("[RelDyn-POST] passionGain: npc={$npcName} LL={$interactionLL} raw={$rawPassionGain} topic={$topicBonus}x flirt={$flirtBonus}x matrix={$matrixPassionMult}x final={$passionGain} currentPassion={$dynamics['passion']}");
     if ($passionGain > 0) {
         RelationshipDynamics::addPassion($dynamics, $passionGain, 'love_match');
     }
@@ -426,6 +492,7 @@ try {
 
                 if ($intDelta != 0) {
                     $newAff = max(-100, min(100, $currentAff + $intDelta));
+                    $GLOBALS['RELDYN_AFFINITY_DELTA'] = $newAff - $currentAff;
                     $playerRel['aff'] = $newAff;
                     $relationships[$playerName] = $playerRel;
                     $extData['relationships'] = $relationships;
@@ -434,6 +501,18 @@ try {
                     $extEscaped = $db->escape($extJson);
                     $npcId = intval($row['id']);
                     $db->execQuery("UPDATE core_npc_master SET extended_data = '{$extEscaped}'::jsonb WHERE id = {$npcId}");
+
+                    // ========== CASCADE AFFINITY (PR 12) ==========
+                    if (!empty($reldynCfg['cascade_network_enabled'])) {
+                        $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
+                        if (abs($affinityDelta) >= RelationshipDynamics::CASCADE_THRESHOLD) {
+                            $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+                            $cascadeResults = RelationshipDynamics::propagateAffinityChange($npcName, $affinityDelta, $playerName);
+                            if (!empty($cascadeResults)) {
+                                RelationshipDynamics::log("[CASCADE] {$npcName}: " . count($cascadeResults) . " NPCs affected by delta=" . round($affinityDelta, 2));
+                            }
+                        }
+                    }
 
                     RelationshipDynamics::log("RPM→Speed: base={$baseDelta} × mult=" . round($affinityGainMult, 2) . " = +{$intDelta} aff (passion=" . intval($dynamics['passion']) . ", aff {$currentAff}→{$newAff})");
                 } else {
@@ -511,6 +590,10 @@ if ($romanticInteraction) {
             $relPref, $marasStatus, $marasAff
         );
 
+        // Attachment style jealousy multiplier (PR 10)
+        $jealousyMult = RelationshipDynamics::getAttachmentModifier($nearbyDynamics, 'jealousy_mult') ?? 1.0;
+        $jealousyGain *= $jealousyMult;
+
         if ($jealousyGain > 0) {
             RelationshipDynamics::addJealousy($nearbyDynamics, $jealousyGain, $npcName);
             RelationshipDynamics::saveDynamics($nearbyNpc, $nearbyDynamics);
@@ -533,6 +616,52 @@ if ($passionGain > 0 && !empty($dynamics['in_conflict'])) {
 
 skip_conflict:
 
+// ========== ATTRACTION MATRIX TIER CEILING (PR 11) ==========
+// The Matrix gates tier progression, not affinity. Affinity can still grow.
+// Tier label is controlled elsewhere (context injection reflects the ceiling).
+
+// ========== FRIENDZONE PASSION CAP (PR 11) ==========
+if (!empty($GLOBALS['RELDYN_MATRIX_FRIENDZONED'])) {
+    $friendzoneCap = 20;
+    if (isset($dynamics['passion']) && floatval($dynamics['passion']) > $friendzoneCap) {
+        $dynamics['passion'] = floatval($friendzoneCap);
+    }
+    if (isset($dynamics['dimensions']['passion']['x']) && floatval($dynamics['dimensions']['passion']['x']) > $friendzoneCap) {
+        $dynamics['dimensions']['passion']['x'] = floatval($friendzoneCap);
+    }
+}
+
+// ========== INTERACTION PATTERN TRACKING (PR 12) ==========
+if (!empty($reldynCfg['parasite_detection_enabled'])) {
+    $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
+    $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
+    RelationshipDynamics::updateInteractionPattern($dynamics, $classifiedLL, $affinityDelta);
+
+    // Check for parasite detection/recovery
+    RelationshipDynamics::checkParasitePattern($npcName, $dynamics);
+    RelationshipDynamics::checkParasiteRecovery($npcName, $dynamics);
+}
+
+// ========== ICK TRACKER + CHARISMA DETECTION (PR 15) ==========
+if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
+    $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
+    $evalPending = $dynamics['_pending_eval'] ?? [];
+    $isRomantic = RelationshipDynamics::isRomanticAttempt($classifiedLL, $lastMood, $evalPending);
+    $temperament = $dynamics['inferred_temperament'] ?? null;
+    $ickChanged = RelationshipDynamics::updateIckTracker($dynamics, $isRomantic, $temperament);
+    if ($ickChanged) {
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+    }
+    $GLOBALS['RELDYN_ICK_ACTIVE'] = !empty($dynamics['_ick_tracker']['ick_active']);
+}
+
+if (!empty($reldynCfg['charisma_detection_enabled'] ?? true)) {
+    $evalPending = $dynamics['_pending_eval'] ?? [];
+    $romanticIntent = intval($evalPending['romantic_intent'] ?? 0);
+    $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
+    RelationshipDynamics::updateCharismaTracker($dynamics, $romanticIntent, $affinityDelta);
+}
+
 // -------------------------------------------------------------------------
 // 7. Track positive interactions + stage advancement
 // -------------------------------------------------------------------------
@@ -541,10 +670,30 @@ if ($passionGain > 0) {
     RelationshipDynamics::checkStageAdvancement($dynamics);
 }
 
+// ========== MASKING STATE TRACKING (PR 14) ==========
+// Track if masking state changed for mask-drop detection next cycle
+if (isset($GLOBALS['RELDYN_MASKING_ACTIVE'])) {
+    $dynamics['_was_masking'] = !empty($GLOBALS['RELDYN_MASKING_ACTIVE']);
+}
+
+// ========== DIARY COMPLETION (PR 14) ==========
+// If diary was triggered and generated this cycle, mark completed
+if (!empty($GLOBALS['RELDYN_DIARY_TRIGGERED'])) {
+    RelationshipDynamics::markDiaryCompleted($npcName, $dynamics);
+}
+
 // -------------------------------------------------------------------------
 // 8. Save
 // -------------------------------------------------------------------------
 RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+// ========== DUTY OVERRIDE DAMPENING (PR 12) ==========
+$dutyFactor = floatval($GLOBALS['RELDYN_DUTY_FACTOR'] ?? 1.0);
+if ($dutyFactor < 1.0) {
+    // Only dampen negative deltas — positive quest moments still count
+    // This is handled inside the eval processing — we set a global flag
+    $GLOBALS['RELDYN_DUTY_DAMPEN_NEGATIVE'] = $dutyFactor;
+}
 
 // ========== XYZ EVAL DELTA PROCESSING (PR 3) ==========
 $rdConfig = RelationshipDynamics::getConfig();
@@ -553,12 +702,35 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
     if (!empty($evalResults)) {
         error_log("[RelDyn-POST] XYZ eval deltas applied for {$npcName}: " . json_encode($evalResults));
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+        // ========== BETRAYAL DETECTION (PR 10) ==========
+        // If trust dropped by 50+ in a single eval, fire Divine Intervention
+        $trustDeltaActual = $evalResults['trust'] ?? 0;
+        if ($trustDeltaActual <= -50) {
+            if (!empty($rdConfig['divine_intervention_enabled'])) {
+                RelationshipDynamics::triggerDivineIntervention($npcName, 'betrayal', 4, $dynamics);
+                RelationshipDynamics::log("[RelDyn-POST] Betrayal detected for {$npcName}: trust_delta={$trustDeltaActual}");
+            }
+        }
     }
 
     // ========== RESENTMENT DIMENSION (PR 7) ==========
+    // PR 16: Post-hoover resentment builds faster (patterns don't heal from carpet-sweeping)
+    $hooverResentmentMult = floatval($dynamics['_hoover_resentment_mult'] ?? 1.0);
+
     // Process pending grievances into resentment buildup
     $pendingGrievances = $dynamics['dimensions']['resentment']['pending_grievances'] ?? [];
     if (!empty($pendingGrievances)) {
+        // Apply hoover multiplier to grievance values
+        if ($hooverResentmentMult > 1.0) {
+            foreach ($pendingGrievances as &$grievance) {
+                if (isset($grievance['value'])) {
+                    $grievance['value'] = $grievance['value'] * $hooverResentmentMult;
+                }
+            }
+            unset($grievance);
+            $dynamics['dimensions']['resentment']['pending_grievances'] = $pendingGrievances;
+        }
         $dynamics['_npc_name'] = $npcName; // Tag for logging
         $temperament = $dynamics['inferred_temperament'] ?? null;
         $grievanceCount = RelationshipDynamics::processGrievances($dynamics, $temperament);
@@ -589,6 +761,14 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
     );
     if (!empty($itemResults['consumable']) || !empty($itemResults['gift']) || !empty($itemResults['equip'])) {
         error_log("[RelDyn-POST] Item events for {$npcName}: " . json_encode($itemResults));
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+    }
+
+    // ========== TOXIC CONFLICT PASSION (PR 10) ==========
+    $conflictPassion = $GLOBALS['RELDYN_ATTACHMENT_CONFLICT_PASSION'] ?? 0;
+    if ($conflictPassion > 0) {
+        RelationshipDynamics::applyDelta('passion', $dynamics, $conflictPassion, $temperament ?? null);
+        unset($GLOBALS['RELDYN_ATTACHMENT_CONFLICT_PASSION']);
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
     }
 }

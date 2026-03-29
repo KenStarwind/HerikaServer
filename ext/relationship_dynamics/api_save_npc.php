@@ -42,6 +42,75 @@ try {
                 }
             }
 
+            // Attachment Style (PR 10)
+            if (isset($input['attachment_style'])) {
+                $validStyles = ['secure', 'avoidant', 'anxious', 'toxic', ''];
+                $style = $input['attachment_style'];
+                if (in_array($style, $validStyles, true)) {
+                    $dynamics['attachment_style'] = $style === '' ? null : $style;
+                }
+            }
+
+            // ========== SOCIAL SENSITIVITY OVERRIDE (PR 15) ==========
+            if (isset($input['social_sensitivity_curve'])) {
+                $validCurves = ['inner_circle', 'open_heart', 'uniform', 'inverse_tolerance', 'romantic_mid', ''];
+                $curve = $input['social_sensitivity_curve'];
+                if (in_array($curve, $validCurves, true)) {
+                    $dynamics['social_sensitivity_curve'] = $curve === '' ? null : $curve;
+                }
+            }
+
+            // ========== HOME LOCATION (PR 16) ==========
+            if (isset($input['home_location'])) {
+                $homeLoc = trim($input['home_location']);
+                $dynamics['home_location'] = $homeLoc !== '' ? $homeLoc : null;
+            }
+
+            // ========== ATTRACTION PROFILE (PR 11) ==========
+            $attractionChanged = false;
+            if (isset($input['attraction_archetype']) && !empty($input['attraction_archetype'])) {
+                $archetype = $input['attraction_archetype'];
+                $validArchetypes = ['Warrior', 'Noble', 'Scholar', 'Rogue', 'Priest', 'Primal', 'Bard'];
+                if (in_array($archetype, $validArchetypes, true)) {
+                    $dynamics['attraction_profile'] = RelationshipDynamics::ATTRACTION_ARCHETYPES[$archetype] ?? null;
+                    $attractionChanged = true;
+                }
+            }
+            if (isset($input['attraction_beauty_keywords']) && !empty(trim($input['attraction_beauty_keywords']))) {
+                if (!is_array($dynamics['attraction_profile'] ?? null)) {
+                    $dynamics['attraction_profile'] = RelationshipDynamics::getArchetypeProfile($dynamics);
+                }
+                $dynamics['attraction_profile']['beauty_keywords'] = array_map('trim', explode(',', $input['attraction_beauty_keywords']));
+                $dynamics['attraction_profile']['beauty_keywords_embedding'] = null; // Clear cached embedding
+                $attractionChanged = true;
+            }
+            if (isset($input['attraction_intimacy_gate'])) {
+                $validGates = ['visceral', 'bond', 'balanced', ''];
+                $gate = $input['attraction_intimacy_gate'];
+                if (in_array($gate, $validGates, true)) {
+                    if (!is_array($dynamics['attraction_profile'] ?? null)) {
+                        $dynamics['attraction_profile'] = RelationshipDynamics::getArchetypeProfile($dynamics);
+                    }
+                    $dynamics['attraction_profile']['intimacy_gate'] = $gate ?: 'balanced';
+                    $attractionChanged = true;
+                }
+            }
+            if (isset($input['attraction_gender_pref'])) {
+                $validPrefs = ['heterosexual', 'homosexual', 'bisexual', ''];
+                $pref = $input['attraction_gender_pref'];
+                if (in_array($pref, $validPrefs, true)) {
+                    if (!is_array($dynamics['attraction_profile'] ?? null)) {
+                        $dynamics['attraction_profile'] = RelationshipDynamics::getArchetypeProfile($dynamics);
+                    }
+                    $dynamics['attraction_profile']['gender_pref'] = $pref ?: 'bisexual';
+                    $attractionChanged = true;
+                }
+            }
+            // Clear matrix cache if profile changed
+            if ($attractionChanged) {
+                $dynamics['_attraction_matrix_cache'] = null;
+            }
+
             // Update interests
             if (isset($input['interests']) && is_array($input['interests'])) {
                 $prefs = [];

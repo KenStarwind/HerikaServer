@@ -31,6 +31,9 @@ $rdWarmth       = $rdDynamics['warmth_curve'] ?? '';
 $rdTemperament  = $rdDynamics['inferred_temperament'] ?? '';
 $rdRelPref      = $rdDynamics['relationship_preference'] ?? '';
 $rdOpenness     = $rdDynamics['openness'] ?? '';
+$rdAttachment   = $rdDynamics['attachment_style'] ?? '';
+$rdSensitivity  = $rdDynamics['social_sensitivity_curve'] ?? '';
+$rdHomeLocation = $rdDynamics['home_location'] ?? '';
 $rdPassion      = floatval($rdDynamics['passion'] ?? 0);
 $rdJealousy     = floatval($rdDynamics['jealousy_anger'] ?? 0);
 $rdStage        = $rdDynamics['stage'] ?? 'early';
@@ -420,6 +423,145 @@ if ($rdUiPos !== false) {
                     <option value="<?= htmlspecialchars($val) ?>"<?= $rdOpenness === $val ? ' selected' : '' ?>><?= htmlspecialchars($label) ?></option>
                     <?php endforeach; ?>
                 </select>
+            </div>
+        </div>
+
+        <!-- Row 2c: Attachment Style (PR 10) -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px;">
+            <div>
+                <label style="font-weight:700; color:rgb(242, 124, 17); display:block; margin-bottom:4px; font-size:0.85em;"
+                    title="Attachment style affects jealousy sensitivity, conflict patterns, and emotional volatility. Blank = derive from temperament.">
+                    Attachment Style
+                </label>
+                <select id="reldyn_attachment_style" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
+                    <option value=""<?= $rdAttachment === '' ? ' selected' : '' ?>>-- From temperament --</option>
+                    <option value="secure"<?= $rdAttachment === 'secure' ? ' selected' : '' ?>>Secure</option>
+                    <option value="avoidant"<?= $rdAttachment === 'avoidant' ? ' selected' : '' ?>>Avoidant</option>
+                    <option value="anxious"<?= $rdAttachment === 'anxious' ? ' selected' : '' ?>>Anxious</option>
+                    <option value="toxic"<?= $rdAttachment === 'toxic' ? ' selected' : '' ?>>Toxic / Disorganized</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-weight:700; color:rgb(242, 124, 17); display:block; margin-bottom:4px; font-size:0.85em;"
+                    title="How much this NPC cares about input from different bond levels. Inner Circle = only close bonds land. Open Heart = everyone's opinion matters. Blank = derive from temperament.">
+                    Social Sensitivity
+                </label>
+                <select id="reldyn_social_sensitivity" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
+                    <option value=""<?= $rdSensitivity === '' ? ' selected' : '' ?>>-- From temperament --</option>
+                    <option value="inner_circle"<?= $rdSensitivity === 'inner_circle' ? ' selected' : '' ?>>Inner Circle (only close bonds land)</option>
+                    <option value="open_heart"<?= $rdSensitivity === 'open_heart' ? ' selected' : '' ?>>Open Heart (everyone's opinion matters)</option>
+                    <option value="uniform"<?= $rdSensitivity === 'uniform' ? ' selected' : '' ?>>Uniform (doesn't discriminate)</option>
+                    <option value="inverse_tolerance"<?= $rdSensitivity === 'inverse_tolerance' ? ' selected' : '' ?>>Inverse Tolerance (close bonds get patience)</option>
+                    <option value="romantic_mid"<?= $rdSensitivity === 'romantic_mid' ? ' selected' : '' ?>>Romantic Mid (inner circle + open heart blend)</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Row 2d: Home Location (PR 16) -->
+        <div style="margin-top:12px; border:1px solid #3a5a3a; border-radius:6px; padding:12px; background:#1a2a1a;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                <div>
+                    <label style="font-weight:700; color:#4ade80; display:block; margin-bottom:4px; font-size:0.85em;"
+                        title="Where this NPC goes when they walk away. Used by walkaway protocol. Leave blank for vanilla home.">
+                        Home Location (Walkaway Destination)
+                    </label>
+                    <input type="text" id="reldyn_home_location"
+                        value="<?= htmlspecialchars($rdHomeLocation) ?>"
+                        placeholder="e.g. Breezehome, Lakeview Manor (blank = vanilla home)"
+                        list="reldyn_home_locations_list"
+                        style="background:#0d1a0d; border:1px solid #3a5a3a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
+                    <?php
+                    // Populate datalist with known locations
+                    $rdLocations = [];
+                    try {
+                        $locRows = $GLOBALS['db']->fetchAll("SELECT DISTINCT name FROM locations WHERE name IS NOT NULL AND name != '' ORDER BY name LIMIT 200");
+                        if (is_array($locRows)) {
+                            foreach ($locRows as $lr) {
+                                $rdLocations[] = $lr['name'];
+                            }
+                        }
+                    } catch (\Throwable $e) { /* silent */ }
+                    ?>
+                    <datalist id="reldyn_home_locations_list">
+                        <?php foreach ($rdLocations as $loc): ?>
+                        <option value="<?= htmlspecialchars($loc) ?>">
+                        <?php endforeach; ?>
+                    </datalist>
+                </div>
+                <div style="display:flex; align-items:center;">
+                    <span style="color:#6a8a6a; font-size:0.78em; font-style:italic;">
+                        Used by Walkaway Protocol. NPC travels here when they walk away.<br>
+                        If blank, falls back to vanilla ReturnHome command.
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 2e: Attraction Profile (PR 11) -->
+        <div style="margin-top:12px; border:1px solid #4a3a5a; border-radius:6px; padding:12px; background:#1e1a2e;">
+            <label style="font-weight:700; color:#c084fc; display:block; margin-bottom:8px; font-size:0.85em;">
+                Attraction Profile
+            </label>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                <div>
+                    <label style="font-weight:600; color:#a78bfa; display:block; margin-bottom:4px; font-size:0.8em;"
+                        title="Archetype preset that pre-fills attraction weights. Leave blank to auto-derive from interests.">
+                        Archetype Preset
+                    </label>
+                    <select id="reldyn_attraction_archetype" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
+                        <option value="">-- Auto from interests --</option>
+                        <?php
+                        $rdAttractionProfile = $rdDynamics['attraction_profile'] ?? null;
+                        $rdCurrentArchetype = '';
+                        foreach (['Warrior', 'Noble', 'Scholar', 'Rogue', 'Priest', 'Primal', 'Bard'] as $arch) {
+                            $sel = ($rdCurrentArchetype === $arch) ? ' selected' : '';
+                            echo "<option value=\"{$arch}\"{$sel}>{$arch}</option>";
+                        }
+                        ?>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-weight:600; color:#a78bfa; display:block; margin-bottom:4px; font-size:0.8em;"
+                        title="Comma-separated keywords describing what this NPC finds physically attractive.">
+                        Beauty Keywords
+                    </label>
+                    <input type="text" id="reldyn_attraction_beauty_keywords"
+                        value="<?= htmlspecialchars(implode(', ', $rdAttractionProfile['beauty_keywords'] ?? [])) ?>"
+                        placeholder="e.g. strong, scarred, tall"
+                        style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:8px;">
+                <div>
+                    <label style="font-weight:600; color:#a78bfa; display:block; margin-bottom:4px; font-size:0.8em;"
+                        title="How this NPC approaches physical intimacy. Visceral=physical first, Bond=commitment required, Balanced=either path.">
+                        Intimacy Gate
+                    </label>
+                    <select id="reldyn_attraction_intimacy_gate" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
+                        <?php
+                        $rdAttrGate = $rdAttractionProfile['intimacy_gate'] ?? '';
+                        foreach (['visceral' => 'Visceral (physical first)', 'bond' => 'Bond (commitment required)', 'balanced' => 'Balanced'] as $val => $label) {
+                            $sel = ($rdAttrGate === $val) ? ' selected' : '';
+                            echo "<option value=\"{$val}\"{$sel}>{$label}</option>";
+                        }
+                        ?>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-weight:600; color:#a78bfa; display:block; margin-bottom:4px; font-size:0.8em;"
+                        title="Gender preference for romantic/sexual attraction.">
+                        Gender Preference
+                    </label>
+                    <select id="reldyn_attraction_gender_pref" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
+                        <?php
+                        $rdAttrGP = $rdAttractionProfile['gender_pref'] ?? '';
+                        foreach (['heterosexual' => 'Heterosexual', 'homosexual' => 'Homosexual', 'bisexual' => 'Bisexual'] as $val => $label) {
+                            $sel = ($rdAttrGP === $val) ? ' selected' : '';
+                            echo "<option value=\"{$val}\"{$sel}>{$label}</option>";
+                        }
+                        ?>
+                    </select>
+                </div>
             </div>
         </div>
 
@@ -1278,6 +1420,12 @@ if ($rdUiPos !== false) {
             inferred_temperament: document.getElementById('reldyn_temperament')?.value || '',
             relationship_preference: document.getElementById('reldyn_rel_pref')?.value || '',
             openness: document.getElementById('reldyn_openness')?.value || '',
+            // PR 10: Attachment Style
+            attachment_style: document.getElementById('reldyn_attachment_style')?.value || '',
+            // PR 15: Social Sensitivity override
+            social_sensitivity_curve: document.getElementById('reldyn_social_sensitivity')?.value || '',
+            // PR 16: Home Location
+            home_location: document.getElementById('reldyn_home_location')?.value || '',
             interests: {},
             // PR 3: Maturity dimension
             maturity_x: document.getElementById('reldyn_maturity_x')?.value ?? null,
@@ -1310,6 +1458,11 @@ if ($rdUiPos !== false) {
             resentment_x: document.getElementById('reldyn_resentment_x')?.value ?? null,
             // PR 7: Resentment_self (self-directed shame)
             resentment_self_x: document.getElementById('reldyn_resentment_self_x')?.value ?? null,
+            // PR 11: Attraction Profile
+            attraction_archetype: document.getElementById('reldyn_attraction_archetype')?.value || '',
+            attraction_beauty_keywords: document.getElementById('reldyn_attraction_beauty_keywords')?.value || '',
+            attraction_intimacy_gate: document.getElementById('reldyn_attraction_intimacy_gate')?.value || '',
+            attraction_gender_pref: document.getElementById('reldyn_attraction_gender_pref')?.value || '',
         };
         INTERESTS.forEach(int => {
             const slider = document.getElementById('reldyn_int_' + int);

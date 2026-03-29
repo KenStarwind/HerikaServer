@@ -77,6 +77,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_reldyn'])) {
         'dimension_debug_logging'            => isset($_POST['dimension_debug_logging']),
         // Diary reflection mode
         'diary_reflection_mode'              => in_array($_POST['diary_reflection_mode'] ?? 'baseline', ['baseline', 'trajectory']) ? $_POST['diary_reflection_mode'] : 'baseline',
+        // PR 10: Behavioral system toggles
+        'divine_intervention_enabled'        => isset($_POST['divine_intervention_enabled']),
+        'grief_system_enabled'               => isset($_POST['grief_system_enabled']),
+        'attachment_style_enabled'            => isset($_POST['attachment_style_enabled']),
+        // PR 11: Attraction Matrix
+        'attraction_matrix_enabled'          => isset($_POST['attraction_matrix_enabled']),
+        'attraction_eval_interval'           => intval($_POST['attraction_eval_interval'] ?? 10),
+        // PR 12: Affinity Network
+        'cascade_network_enabled'            => isset($_POST['cascade_network_enabled']),
+        'duty_override_enabled'              => isset($_POST['duty_override_enabled']),
+        'parasite_detection_enabled'         => isset($_POST['parasite_detection_enabled']),
+        // PR 13: Environmental Quirks
+        'significance_scaling_enabled'       => isset($_POST['significance_scaling_enabled']),
+        'baseline_drift_enabled'             => isset($_POST['baseline_drift_enabled']),
+        'internal_weather_enabled'           => isset($_POST['internal_weather_enabled']),
+        'creature_moodifications_enabled'    => isset($_POST['creature_moodifications_enabled']),
+        'emergent_emotions_enabled'          => isset($_POST['emergent_emotions_enabled']),
+        // PR 14: Social Masking + Autonomous Diary
+        'social_masking_enabled'             => isset($_POST['social_masking_enabled']),
+        'autonomous_diary_enabled'           => isset($_POST['autonomous_diary_enabled']),
+        'diary_interaction_gap'              => intval($_POST['diary_interaction_gap'] ?? 15),
+        'mask_maturity_cost'                 => floatval($_POST['mask_maturity_cost'] ?? 0.15),
+        // PR 15: Social Sensitivity
+        'social_sensitivity_enabled'         => isset($_POST['social_sensitivity_enabled']),
+        // PR 15: Ick / Desperation Tracker
+        'ick_system_enabled'                 => isset($_POST['ick_system_enabled']),
+        'ick_base_threshold'                 => floatval($_POST['ick_base_threshold'] ?? 0.5),
+        // PR 15: Charisma Archetypes
+        'charisma_detection_enabled'         => isset($_POST['charisma_detection_enabled']),
+        // PR 16: Autonomy Override + Walkaway + Hoover
+        'autonomy_enabled'                   => isset($_POST['autonomy_enabled']),
+        'walkaway_enabled'                   => isset($_POST['walkaway_enabled']),
+        'hoover_enabled'                     => isset($_POST['hoover_enabled']),
     ];
 
     $jsonConfig = json_encode($newConfig, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -395,6 +428,163 @@ html, body {
                 </label>
             </div>
             <span class="rd-hint">Baseline: compares dimensional snapshots with math. Trajectory: uses LLM to score diary text quality.</span>
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
+            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 10: Behavioral Systems</p>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+                <div class="rd-toggle">
+                    <input type="hidden" name="divine_intervention_enabled" value="">
+                    <input type="checkbox" name="divine_intervention_enabled" id="rd_divine" <?php if ($cfg['divine_intervention_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_divine" title="Divine Intervention: automatic corrective events when relationships stagnate or spiral">Divine Intervention</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="grief_system_enabled" value="">
+                    <input type="checkbox" name="grief_system_enabled" id="rd_grief" <?php if ($cfg['grief_system_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_grief" title="Grief system: NPC death creates grief bonds, widow's lock caps new affinity">Grief System</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="attachment_style_enabled" value="">
+                    <input type="checkbox" name="attachment_style_enabled" id="rd_attach" <?php if ($cfg['attachment_style_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_attach" title="Attachment styles: secure/avoidant/anxious/toxic modify decay, resentment, and absence behavior">Attachment Styles</label>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
+            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 11: Attraction Matrix</p>
+            <div class="rd-toggle">
+                <input type="hidden" name="attraction_matrix_enabled" value="">
+                <input type="checkbox" name="attraction_matrix_enabled" id="rd_attraction_matrix" <?php if (!empty($cfg['attraction_matrix_enabled'])) echo 'checked'; ?>>
+                <label for="rd_attraction_matrix" title="Attraction Matrix: pre-filter tier gating based on NPC attraction profile (beauty keywords, intimacy gate, gender preference)">Attraction Matrix</label>
+            </div>
+            <div class="rd-row">
+                <label for="rd_attraction_eval_interval">Re-evaluate every N interactions</label>
+                <input type="number" step="1" min="1" max="50" id="rd_attraction_eval_interval" name="attraction_eval_interval"
+                       value="<?php echo intval($cfg['attraction_eval_interval'] ?? 10); ?>">
+                <span class="rd-hint">How often to recalculate the attraction matrix (default: 10)</span>
+            </div>
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
+            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 12: Affinity Network</p>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+                <div class="rd-toggle">
+                    <input type="hidden" name="cascade_network_enabled" value="">
+                    <input type="checkbox" name="cascade_network_enabled" id="rd_cascade" <?php if (!empty($cfg['cascade_network_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_cascade" title="Cascading Affinity: actions ripple to bonded NPCs based on bond strength">Cascading Affinity</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="duty_override_enabled" value="">
+                    <input type="checkbox" name="duty_override_enabled" id="rd_duty" <?php if (!empty($cfg['duty_override_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_duty" title="Duty Override: quest dialogue protection dampens negative eval deltas during obligation interactions">Duty Override</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="parasite_detection_enabled" value="">
+                    <input type="checkbox" name="parasite_detection_enabled" id="rd_parasite" <?php if (!empty($cfg['parasite_detection_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_parasite" title="Parasite Detection: gift-only relationship warning when NPC detects transactional pattern">Parasite Detection</label>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
+            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 13: Environmental Quirks</p>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+                <div class="rd-toggle">
+                    <input type="hidden" name="significance_scaling_enabled" value="">
+                    <input type="checkbox" name="significance_scaling_enabled" id="rd_significance" <?php if (!empty($cfg['significance_scaling_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_significance" title="Interaction Significance Scaling: 1-3x delta bands based on interaction weight">Significance Scaling</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="baseline_drift_enabled" value="">
+                    <input type="checkbox" name="baseline_drift_enabled" id="rd_drift" <?php if (!empty($cfg['baseline_drift_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_drift" title="Baseline Drift: sustained behavior shifts the rubber band center over time">Baseline Drift</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="internal_weather_enabled" value="">
+                    <input type="checkbox" name="internal_weather_enabled" id="rd_weather" <?php if (!empty($cfg['internal_weather_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_weather" title="Internal Weather: interest deprivation mood system (sunny/overcast/stormy)">Internal Weather</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="creature_moodifications_enabled" value="">
+                    <input type="checkbox" name="creature_moodifications_enabled" id="rd_creature" <?php if (!empty($cfg['creature_moodifications_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_creature" title="Vampire/Werewolf Moodifications: night/moon dimension modifiers for creature NPCs">Vampire/Werewolf Moodifications</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="emergent_emotions_enabled" value="">
+                    <input type="checkbox" name="emergent_emotions_enabled" id="rd_emergent" <?php if (!empty($cfg['emergent_emotions_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_emergent" title="Emergent Emotion Labeling: detect complex emotional states from dimension combinations">Emergent Emotions</label>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
+            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 14: Social Masking + Autonomous Diary</p>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                <div class="rd-toggle">
+                    <input type="hidden" name="social_masking_enabled" value="">
+                    <input type="checkbox" name="social_masking_enabled" id="rd_masking" <?php if (!empty($cfg['social_masking_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_masking" title="Social Masking: dual-state public/private behavior">Social Masking</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="autonomous_diary_enabled" value="">
+                    <input type="checkbox" name="autonomous_diary_enabled" id="rd_diary_auto" <?php if (!empty($cfg['autonomous_diary_enabled'])) echo 'checked'; ?>>
+                    <label for="rd_diary_auto" title="Autonomous Diary: NPC-driven reflection triggers">Autonomous Diary</label>
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px;">
+                <div class="rd-row">
+                    <label for="rd_diary_gap">Diary interaction gap</label>
+                    <input type="number" step="1" min="5" max="50" id="rd_diary_gap" name="diary_interaction_gap"
+                           value="<?php echo intval($cfg['diary_interaction_gap'] ?? 15); ?>">
+                </div>
+                <div class="rd-row">
+                    <label for="rd_mask_cost">Masking maturity cost</label>
+                    <input type="number" step="0.05" min="0" max="1" id="rd_mask_cost" name="mask_maturity_cost"
+                           value="<?php echo floatval($cfg['mask_maturity_cost'] ?? 0.15); ?>">
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
+            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 15: Social Sensitivity + Ick + Charisma</p>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+                <div class="rd-toggle">
+                    <input type="hidden" name="social_sensitivity_enabled" value="">
+                    <input type="checkbox" name="social_sensitivity_enabled" id="rd_sensitivity" <?php if ($cfg['social_sensitivity_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_sensitivity" title="Social Sensitivity: bond-weighted impact curves. Inner Circle NPCs ignore strangers, Open Heart NPCs are hurt by everyone.">Social Sensitivity</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="ick_system_enabled" value="">
+                    <input type="checkbox" name="ick_system_enabled" id="rd_ick" <?php if ($cfg['ick_system_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_ick" title="Ick/Desperation Tracker: spamming romance while NPC is unreceptive triggers passion inversion. Maturity gates detection threshold.">Ick Tracker</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="charisma_detection_enabled" value="">
+                    <input type="checkbox" name="charisma_detection_enabled" id="rd_charisma" <?php if ($cfg['charisma_detection_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_charisma" title="Charisma Archetypes: detects player style (Rock/Catalyst/Charmer) and adjusts effectiveness per NPC temperament and maturity.">Charisma Detection</label>
+                </div>
+            </div>
+            <div class="rd-row" style="margin-top:8px;">
+                <label for="rd_ick_threshold">Ick base threshold</label>
+                <input type="number" step="0.05" min="0.2" max="0.9" id="rd_ick_threshold" name="ick_base_threshold"
+                       value="<?php echo floatval($cfg['ick_base_threshold'] ?? 0.5); ?>">
+                <span class="rd-hint">Romantic attempt ratio in 10-interaction window that triggers ick (default: 0.5). Maturity multiplies this.</span>
+            </div>
+        </div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
+            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 16: Autonomy Override + Walkaway + Hoover</p>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+                <div class="rd-toggle">
+                    <input type="hidden" name="autonomy_enabled" value="">
+                    <input type="checkbox" name="autonomy_enabled" id="rd_autonomy" <?php if ($cfg['autonomy_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_autonomy" title="Autonomy Override: personality-gated command refusal spectrum (compliant → resistant → refusing → walkaway)">Autonomy Override</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="walkaway_enabled" value="">
+                    <input type="checkbox" name="walkaway_enabled" id="rd_walkaway" <?php if ($cfg['walkaway_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_walkaway" title="Walkaway Protocol: NPC self-dismisses, travels home, boundary test window determines recovery or permanent departure">Walkaway Protocol</label>
+                </div>
+                <div class="rd-toggle">
+                    <input type="hidden" name="hoover_enabled" value="">
+                    <input type="checkbox" name="hoover_enabled" id="rd_hoover" <?php if ($cfg['hoover_enabled'] ?? true) echo 'checked'; ?>>
+                    <label for="rd_hoover" title="Hoover Protocol: Toxic NPCs return after walkaway with charm offensive (dimensional snap). Maturity > 40 permanently disables.">Hoover Protocol</label>
+                </div>
+            </div>
         </div>
         <table class="rd-curve-table" style="margin-top:10px;">
             <thead>

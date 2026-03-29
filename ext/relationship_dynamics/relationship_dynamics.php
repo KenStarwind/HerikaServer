@@ -16,6 +16,7 @@ class RelationshipDynamics
 {
     private static $config = null;
     private static $npcCache = [];
+    private static $bondCache = [];
 
     // Love language types
     const LL_WORDS   = 'words_of_affirmation';
@@ -251,6 +252,310 @@ class RelationshipDynamics
 
     /** Accumulated play gamets for resentment decay cooldown (~15 real minutes). */
     const GAMETS_RESENTMENT_COOLDOWN = 2083500;
+
+    // ========== TIMING CONSTANTS (PR 10) ==========
+    /** Gamets per real second at 20:1 time compression. */
+    const GAMETS_PER_REAL_SECOND = 2315;
+
+    /** Gamets per real hour of play time. */
+    const GAMETS_PER_REAL_HOUR = 8334000; // 2315 * 3600
+
+    /** 30 game days in gamets (for plasticity override expiry, uses raw game clock). */
+    const THIRTY_GAME_DAYS_GAMETS = 300000048; // 30 * 24 * 416667 (GAMETS_PER_HOUR)
+
+    // ========== DIVINE INTERVENTION CONSTANTS (PR 10) ==========
+    /** Minimum play gamets between DI checks (one decay tick = ~10 real min). */
+    const DI_COOLDOWN_GAMETS = 1389000; // same as GAMETS_PER_DECAY_TICK
+
+    /** Unstable window duration: 24 real hours of play time. */
+    const UNSTABLE_WINDOW_GAMETS = 200016000; // 24 * GAMETS_PER_REAL_HOUR
+
+    // ========== GRIEF CONSTANTS (PR 10) ==========
+    const GRIEF_PHASE_HOURS = [1 => 0, 2 => 2, 3 => 5, 4 => 15];
+
+    // ========== ATTACHMENT STYLE CONSTANTS (PR 10) ==========
+    const TEMPERAMENT_ATTACHMENT_DEFAULTS = [
+        'Romantic'    => 'secure',
+        'Anxious'     => 'anxious',
+        'Playful'     => 'secure',
+        'Humble'      => 'secure',
+        'Nurturing'   => 'secure',
+        'Gentle'      => 'secure',
+        'Jealous'     => 'anxious',
+        'Stoic'       => 'avoidant',
+        'Proud'       => 'avoidant',
+        'Bold'        => 'secure',
+        'Independent' => 'avoidant',
+        'Defiant'     => 'avoidant',
+        'Guarded'     => 'avoidant',
+    ];
+
+    const ATTACHMENT_MODIFIERS = [
+        'secure' => [
+            'comfort_decay_mult'      => 0.7,
+            'trust_decay_mult'        => 0.7,
+            'resentment_gain_mult'    => 1.0,
+            'confrontation_threshold' => 50,
+            'absence_comfort_delta'   => 0.0,
+            'affinity_absence_mult'   => 1.0,
+            'jealousy_mult'           => 1.0,
+            'maturity_floor'          => null,
+            'conflict_passion_gain'   => 0.0,
+            'suffocation_threshold'   => null,
+        ],
+        'avoidant' => [
+            'comfort_decay_mult'      => 1.5,
+            'trust_decay_mult'        => 1.0,
+            'resentment_gain_mult'    => 1.0,
+            'confrontation_threshold' => 70,
+            'absence_comfort_delta'   => +0.5,
+            'affinity_absence_mult'   => 0.7,
+            'jealousy_mult'           => 0.5,
+            'maturity_floor'          => null,
+            'conflict_passion_gain'   => 0.0,
+            'suffocation_threshold'   => 60,
+        ],
+        'anxious' => [
+            'comfort_decay_mult'      => 1.0,
+            'trust_decay_mult'        => 1.3,
+            'resentment_gain_mult'    => 1.5,
+            'confrontation_threshold' => 30,
+            'absence_comfort_delta'   => -1.0,
+            'affinity_absence_mult'   => 2.0,
+            'jealousy_mult'           => 2.0,
+            'maturity_floor'          => null,
+            'conflict_passion_gain'   => 0.0,
+            'suffocation_threshold'   => null,
+        ],
+        'toxic' => [
+            'comfort_decay_mult'      => 1.0,
+            'trust_decay_mult'        => 1.0,
+            'resentment_gain_mult'    => 1.3,
+            'confrontation_threshold' => 50,
+            'absence_comfort_delta'   => 0.0,
+            'affinity_absence_mult'   => 1.0,
+            'jealousy_mult'           => 1.5,
+            'maturity_floor'          => 30,
+            'conflict_passion_gain'   => 5.0,
+            'suffocation_threshold'   => null,
+        ],
+    ];
+
+    const ATTACHMENT_REDEMPTION_SHIFTS = [
+        'toxic'    => 'anxious',
+        'anxious'  => 'secure',
+        'avoidant' => 'secure',
+        'secure'   => 'secure',
+    ];
+
+    const ATTACHMENT_BREAKING_SHIFTS = [
+        'secure'   => null, // determined by self_confidence at runtime
+        'anxious'  => 'toxic',
+        'avoidant' => 'avoidant',
+        'toxic'    => 'toxic',
+    ];
+
+    // ========== ATTRACTION MATRIX CONSTANTS (PR 11) ==========
+
+    /** Default pass threshold for pillar scoring. */
+    const ATTRACTION_PASS_THRESHOLD = 0.4;
+
+    /** Default interaction interval between full matrix re-evaluations. */
+    const ATTRACTION_EVAL_INTERVAL = 10;
+
+    /** Archetype presets for NPC attraction profiles. */
+    const ATTRACTION_ARCHETYPES = [
+        'Warrior' => [
+            'beauty_keywords' => ['rugged', 'strong', 'battle-worn', 'scarred', 'muscular', 'commanding', 'fierce'],
+            'strength_skills' => ['OneHanded', 'TwoHanded', 'Archery', 'Block', 'HeavyArmor', 'LightArmor'],
+            'strength_mode' => 'flexible_total',
+            'strength_threshold' => 200,
+            'status_metrics' => [
+                ['type' => 'faction_rank', 'faction' => 'Companions', 'min' => 1],
+            ],
+            'competence_metrics' => [
+                ['type' => 'kill_category', 'category' => 'people', 'min' => 50],
+            ],
+            'pillar_rigidity' => ['beauty' => 'rigid', 'strength' => 'flexible', 'status' => 'soft', 'competence' => 'rigid'],
+            'intimacy_gate' => 'visceral',
+            'gender_pref' => 'heterosexual',
+            'gender_fluidity' => 0.2,
+        ],
+        'Noble' => [
+            'beauty_keywords' => ['refined', 'regal', 'well-dressed', 'noble', 'commanding', 'clean', 'elegant'],
+            'strength_skills' => ['Speech', 'Enchanting', 'Restoration'],
+            'strength_mode' => 'irrelevant',
+            'strength_threshold' => 100,
+            'status_metrics' => [
+                ['type' => 'thane_count', 'min' => 2],
+                ['type' => 'lifetime_wealth', 'min' => 50000],
+            ],
+            'competence_metrics' => [
+                ['type' => 'quest_count', 'min' => 20],
+            ],
+            'pillar_rigidity' => ['beauty' => 'soft', 'strength' => 'irrelevant', 'status' => 'rigid', 'competence' => 'rigid'],
+            'intimacy_gate' => 'bond',
+            'gender_pref' => 'heterosexual',
+            'gender_fluidity' => 0.3,
+        ],
+        'Scholar' => [
+            'beauty_keywords' => ['intelligent', 'composed', 'curious', 'bookish', 'sharp-eyed', 'thoughtful'],
+            'strength_skills' => ['Destruction', 'Conjuration', 'Alteration', 'Enchanting', 'Restoration', 'Illusion'],
+            'strength_mode' => 'flexible_total',
+            'strength_threshold' => 180,
+            'status_metrics' => [
+                ['type' => 'faction_rank', 'faction' => 'College', 'min' => 1],
+            ],
+            'competence_metrics' => [
+                ['type' => 'quest_count', 'min' => 15],
+            ],
+            'pillar_rigidity' => ['beauty' => 'soft', 'strength' => 'flexible', 'status' => 'rigid', 'competence' => 'rigid'],
+            'intimacy_gate' => 'bond',
+            'gender_pref' => 'bisexual',
+            'gender_fluidity' => 0.5,
+        ],
+        'Rogue' => [
+            'beauty_keywords' => ['dangerous', 'quick', 'sharp-eyed', 'sly', 'lithe', 'shadowy', 'charming'],
+            'strength_skills' => ['Sneak', 'Lockpicking', 'Pickpocket', 'Speech', 'LightArmor', 'OneHanded'],
+            'strength_mode' => 'flexible_total',
+            'strength_threshold' => 180,
+            'status_metrics' => [
+                ['type' => 'faction_rank', 'faction' => 'ThievesGuild', 'min' => 1],
+                ['type' => 'lifetime_wealth', 'min' => 20000],
+            ],
+            'competence_metrics' => [
+                ['type' => 'quest_count', 'min' => 10],
+            ],
+            'pillar_rigidity' => ['beauty' => 'flexible', 'strength' => 'flexible', 'status' => 'soft', 'competence' => 'soft'],
+            'intimacy_gate' => 'balanced',
+            'gender_pref' => 'bisexual',
+            'gender_fluidity' => 0.6,
+        ],
+        'Priest' => [
+            'beauty_keywords' => ['serene', 'kind', 'gentle', 'compassionate', 'radiant', 'pure', 'humble'],
+            'strength_skills' => ['Restoration', 'Alteration', 'Speech'],
+            'strength_mode' => 'irrelevant',
+            'strength_threshold' => 100,
+            'status_metrics' => [
+                ['type' => 'faction_rank', 'faction' => 'Dawnguard', 'min' => 0],
+            ],
+            'competence_metrics' => [
+                ['type' => 'quest_count', 'min' => 10],
+            ],
+            'pillar_rigidity' => ['beauty' => 'soft', 'strength' => 'irrelevant', 'status' => 'soft', 'competence' => 'soft'],
+            'intimacy_gate' => 'bond',
+            'gender_pref' => 'heterosexual',
+            'gender_fluidity' => 0.1,
+        ],
+        'Primal' => [
+            'beauty_keywords' => ['wild', 'feral', 'untamed', 'muscular', 'scarred', 'war-paint', 'weathered', 'rugged'],
+            'strength_skills' => ['OneHanded', 'TwoHanded', 'Archery', 'LightArmor', 'Sneak', 'Block'],
+            'strength_mode' => 'flexible_total',
+            'strength_threshold' => 220,
+            'status_metrics' => [
+                ['type' => 'faction_rank', 'faction' => 'Companions', 'min' => 2],
+            ],
+            'competence_metrics' => [
+                ['type' => 'kill_category', 'category' => 'animals', 'min' => 30],
+                ['type' => 'kill_category', 'category' => 'creatures', 'min' => 50],
+            ],
+            'pillar_rigidity' => ['beauty' => 'rigid', 'strength' => 'flexible', 'status' => 'rigid', 'competence' => 'rigid'],
+            'intimacy_gate' => 'visceral',
+            'gender_pref' => 'heterosexual',
+            'gender_fluidity' => 0.1,
+        ],
+        'Bard' => [
+            'beauty_keywords' => ['attractive', 'charming', 'expressive', 'vibrant', 'captivating', 'well-spoken'],
+            'strength_skills' => ['Speech', 'Illusion', 'Sneak'],
+            'strength_mode' => 'irrelevant',
+            'strength_threshold' => 100,
+            'status_metrics' => [
+                ['type' => 'lifetime_wealth', 'min' => 10000],
+            ],
+            'competence_metrics' => [],
+            'pillar_rigidity' => ['beauty' => 'rigid', 'strength' => 'irrelevant', 'status' => 'soft', 'competence' => 'irrelevant'],
+            'intimacy_gate' => 'visceral',
+            'gender_pref' => 'bisexual',
+            'gender_fluidity' => 0.7,
+        ],
+    ];
+
+    /** Default tier thresholds (pillar scores needed to unlock each tier). */
+    const DEFAULT_TIER_THRESHOLDS = [
+        'crush'  => ['beauty' => 0.3],
+        'friend' => ['status' => 0.3],
+        'close'  => ['beauty' => 0.4, 'strength' => 0.3],
+        'bonded' => ['beauty' => 0.5, 'strength' => 0.5, 'status' => 0.5, 'competence' => 0.5],
+        'sworn'  => ['beauty' => 0.6, 'strength' => 0.6, 'status' => 0.7, 'competence' => 0.7],
+    ];
+
+    // ========== CASCADING AFFINITY NETWORK (PR 12) ==========
+
+    /** Minimum |affinity delta| to trigger cascade to bonded NPCs. */
+    const CASCADE_THRESHOLD = 15;
+
+    /** Propagation decay per hop (30% of original delta reaches neighbors). */
+    const CASCADE_DECAY = 0.3;
+
+    /** Maximum number of NPCs affected by a single cascade event. */
+    const CASCADE_MAX_TARGETS = 10;
+
+    // ========== ENVIRONMENTAL QUIRKS CONSTANTS (PR 13) ==========
+
+    /** Baseline drift rate: 5% of gap per diary check. */
+    const BASELINE_DRIFT_RATE = 0.05;
+
+    /** Maximum baseline drift from temperament default (±20). */
+    const BASELINE_DRIFT_MAX = 20;
+
+    /** Minimum consistent samples before drift triggers. */
+    const BASELINE_DRIFT_MIN_SAMPLES = 3;
+
+    /** Tolerance band — X must be at least this far from baseline consistently. */
+    const BASELINE_DRIFT_TOLERANCE = 5;
+
+    // ========== INTERNAL WEATHER / DEPRIVATION (PR 13) ==========
+
+    const WEATHER_MODIFIERS = [
+        'sunny'    => ['comfort' => 3, 'warmth' => 2, 'valence' => 5],
+        'clear'    => [],
+        'overcast' => ['comfort' => -2, 'passion' => -1, 'valence' => -5],
+        'stormy'   => ['comfort' => -5, 'warmth' => -3, 'valence' => -10, 'arousal' => 5],
+    ];
+
+    const WEATHER_DEPRIVATION_THRESHOLD = 10;
+
+    const FACTION_INTEREST_FLOORS = [
+        'Companions'      => ['combat' => 0.5, 'social' => 0.3],
+        'College'         => ['scholarly' => 0.5, 'enchanting' => 0.3],
+        'ThievesGuild'    => ['adventure' => 0.5, 'wealth' => 0.3],
+        'DarkBrotherhood' => ['combat' => 0.4, 'adventure' => 0.3],
+        'Bards'           => ['social' => 0.5, 'crafting' => 0.2],
+        'Temple'          => ['spiritual' => 0.5, 'domestic' => 0.3],
+        'Guard'           => ['combat' => 0.3, 'social' => 0.2],
+        'Merchant'        => ['wealth' => 0.5, 'social' => 0.3],
+        'Farmer'          => ['nature' => 0.5, 'domestic' => 0.4],
+    ];
+
+    const INTIMACY_DEPRIVATION_CONTEXT = [
+        'high_m'       => "{NAME} is restless. The tension is physical and they are not the type to suffer in silence. They are considering their options.",
+        'high_f'       => "Something aches quietly beneath the surface for {NAME}. The longing is there but they will not chase -- they will withdraw instead.",
+        'low_maturity' => "The frustration is bleeding into everything for {NAME}. They are snapping at people, picking fights, making impulsive choices.",
+        'balanced'     => "{NAME} has unmet physical needs. It is not urgent yet, but it is there -- a low hum of dissatisfaction that colors their mood.",
+    ];
+
+    // ========== VAMPIRE/WEREWOLF MOODIFICATIONS (PR 13) ==========
+
+    const VAMPIRE_NIGHT_MODIFIERS = [
+        'arousal' => 10, 'comfort' => -5, 'maturity' => -3, 'passion' => 5, 'coord_m' => 5,
+    ];
+
+    const WEREWOLF_MOON_MODIFIERS = [
+        'arousal' => 15, 'valence' => -10, 'maturity' => -8,
+        'comfort' => -10, 'self_confidence' => 5, 'coord_m' => 10, 'coord_f' => -5,
+    ];
+
+    const CREATURE_DAY_INVERSION = 0.3;
 
     /**
      * Consumable effect definitions.
@@ -632,6 +937,34 @@ class RelationshipDynamics
             'dimension_max_context_lines' => 10,
             // Diary reflection mode: 'baseline' (math-only) or 'trajectory' (LLM-scored)
             'diary_reflection_mode' => 'baseline',
+            // PR 10: Behavioral system toggles
+            'divine_intervention_enabled' => true,
+            'grief_system_enabled'        => true,
+            'attachment_style_enabled'    => true,
+            // PR 11: Attraction Matrix toggles
+            'attraction_matrix_enabled' => true,
+            'attraction_eval_interval' => 10,
+            'attraction_beauty_weight' => 1.0,
+            'attraction_strength_weight' => 1.0,
+            'attraction_status_weight' => 1.0,
+            'attraction_competence_weight' => 1.0,
+            // PR 12: Affinity Network + Relationship Types
+            'cascade_network_enabled' => true,
+            'cascade_threshold' => 15,
+            'cascade_decay' => 0.3,
+            'duty_override_enabled' => true,
+            'parasite_detection_enabled' => true,
+            // PR 13: Environmental Quirks
+            'baseline_drift_enabled' => true,
+            'internal_weather_enabled' => true,
+            'creature_moodifications_enabled' => true,
+            'emergent_emotions_enabled' => true,
+            'significance_scaling_enabled' => true,
+            // PR 14: Social Masking + Autonomous Diary
+            'social_masking_enabled' => true,
+            'autonomous_diary_enabled' => true,
+            'diary_interaction_gap' => 15,
+            'mask_maturity_cost' => 0.15,
         ];
     }
 
@@ -822,6 +1155,69 @@ class RelationshipDynamics
             '_accumulated_play_gamets'  => 0,     // filtered game time (excludes wait/sleep)
             '_decay_last_play_gamets'   => 0,     // accumulated play gamets at last affinity decay
             '_resentment_last_play_gamets' => 0,  // accumulated play gamets at last resentment decay
+
+            // ========== DIVINE INTERVENTION (PR 10) ==========
+            '_divine_intervention_last' => 0,
+            '_divine_intervention_count' => 0,
+            '_divine_intervention_last_type' => null,
+
+            // ========== UNSTABLE WINDOW (PR 10) ==========
+            '_unstable_window' => null,
+
+            // ========== DEATH/GRIEF SYSTEM (PR 10) ==========
+            '_grief_bonds' => [],
+            '_widow_lock_ceiling' => 100,
+
+            // ========== PLASTICITY OVERRIDE (PR 10) ==========
+            '_plasticity_override' => null,
+            '_plasticity_override_start_gamets' => 0,
+            '_plasticity_override_expires_gamets' => 0,
+
+            // ========== ATTACHMENT STYLE (PR 10) ==========
+            'attachment_style' => null,
+            '_attachment_shift_available' => false,
+            '_attachment_drift_last_check' => 0,
+            '_attachment_drift_score' => 0,
+
+            // ========== ATTRACTION MATRIX (PR 11) ==========
+            'attraction_profile' => null,              // null = derive from archetype
+            '_attraction_matrix_cache' => null,        // Cached matrix result
+            '_attraction_matrix_last_eval' => 0,       // Interaction count at last full eval
+            '_attraction_tier_ceiling' => 'sworn',     // Current max tier (default: unrestricted)
+            '_attraction_friendzoned' => false,        // Friendzone flag
+            '_attraction_passion_mult' => 1.0,         // Cached passion modifier
+
+            // ========== INTERACTION PATTERNS (PR 12) ==========
+            '_interaction_pattern' => [
+                'gift_count' => 0,
+                'genuine_count' => 0,
+                'total_window' => 0,
+                'window_start' => 0,
+                'last_interaction_type' => null,
+            ],
+            '_relationship_type_override' => null,
+            '_relationship_type_history' => [],
+
+            // ========== ENVIRONMENTAL QUIRKS (PR 13) ==========
+            '_baseline_drift_samples' => [],
+            '_interest_satisfaction' => [],
+            '_interest_last_satisfied' => [],
+            '_internal_weather' => 'clear',
+            '_intimacy_last_satisfied' => 0,
+            'creature_type' => null,
+
+            // ========== SOCIAL MASKING + AUTONOMOUS DIARY (PR 14) ==========
+            '_was_masking' => false,
+            '_mask_interactions_count' => 0,
+            '_performed_state_cache' => null,
+            '_diary_last_interaction' => 0,
+            '_diary_last_di_count' => 0,
+            '_diary_last_attachment' => null,
+            '_diary_last_emotions' => [],
+            '_diary_last_tier_ceiling' => 'sworn',
+            '_diary_last_grief_phases' => [],
+            '_diary_pending_triggers' => [],
+            '_diary_trigger_source' => null,
         ];
     }
 
@@ -2283,6 +2679,19 @@ class RelationshipDynamics
         return max(0, min(30, intval(round($effective))));
     }
 
+    /**
+     * Apply friendzone sex_disposal cap (PR 12).
+     * Returns disposition capped at 15 if relationship type is friendzone.
+     */
+    public static function applyFriendzoneSexCap(string $npcName, array $dynamics, float $disposition): float
+    {
+        $relType = self::getRelationshipType($npcName, $dynamics);
+        if ($relType === 'friendzone') {
+            return min($disposition, 15.0);
+        }
+        return $disposition;
+    }
+
     // =========================================================================
     // UTILITY
     // =========================================================================
@@ -2767,6 +3176,147 @@ class RelationshipDynamics
             }
         }
 
+        // ========== PR 10 MIGRATION ==========
+        $dynamics = self::migratePR10($dynamics);
+
+        // ========== PR 11 MIGRATION ==========
+        $dynamics = self::migratePR11($dynamics);
+
+        // ========== PR 12 MIGRATION ==========
+        $dynamics = self::migratePR12($dynamics);
+
+        // ========== PR 13 MIGRATION ==========
+        $dynamics = self::migratePR13($dynamics);
+
+        // ========== PR 14 MIGRATION ==========
+        $dynamics = self::migratePR14($dynamics);
+
+        return $dynamics;
+    }
+
+    /**
+     * PR 10 migration: initialize new fields if missing.
+     */
+    public static function migratePR10($dynamics)
+    {
+        $pr10Fields = [
+            '_divine_intervention_last' => 0,
+            '_divine_intervention_count' => 0,
+            '_divine_intervention_last_type' => null,
+            '_unstable_window' => null,
+            '_grief_bonds' => [],
+            '_widow_lock_ceiling' => 100,
+            '_plasticity_override' => null,
+            '_plasticity_override_start_gamets' => 0,
+            '_plasticity_override_expires_gamets' => 0,
+            'attachment_style' => null,
+            '_attachment_shift_available' => false,
+            '_attachment_drift_last_check' => 0,
+            '_attachment_drift_score' => 0,
+        ];
+
+        foreach ($pr10Fields as $key => $default) {
+            if (!array_key_exists($key, $dynamics)) {
+                $dynamics[$key] = $default;
+            }
+        }
+
+        return $dynamics;
+    }
+
+    /**
+     * PR 11 migration: initialize attraction matrix fields if missing.
+     */
+    public static function migratePR11($dynamics)
+    {
+        $pr11Fields = [
+            'attraction_profile' => null,
+            '_attraction_matrix_cache' => null,
+            '_attraction_matrix_last_eval' => 0,
+            '_attraction_tier_ceiling' => 'sworn',
+            '_attraction_friendzoned' => false,
+            '_attraction_passion_mult' => 1.0,
+        ];
+
+        foreach ($pr11Fields as $key => $default) {
+            if (!array_key_exists($key, $dynamics)) {
+                $dynamics[$key] = $default;
+            }
+        }
+
+        return $dynamics;
+    }
+
+    /**
+     * PR 12 migration: initialize interaction pattern and relationship type fields if missing.
+     */
+    public static function migratePR12($dynamics)
+    {
+        $pr12Fields = [
+            '_interaction_pattern' => [
+                'gift_count' => 0, 'genuine_count' => 0,
+                'total_window' => 0, 'window_start' => 0,
+                'last_interaction_type' => null,
+            ],
+            '_relationship_type_override' => null,
+            '_relationship_type_history' => [],
+        ];
+
+        foreach ($pr12Fields as $key => $default) {
+            if (!array_key_exists($key, $dynamics)) {
+                $dynamics[$key] = $default;
+            }
+        }
+
+        return $dynamics;
+    }
+
+    /**
+     * PR 13 migration: initialize environmental quirks fields if missing.
+     */
+    public static function migratePR13($dynamics)
+    {
+        $pr13Fields = [
+            '_baseline_drift_samples' => [],
+            '_interest_satisfaction' => [],
+            '_interest_last_satisfied' => [],
+            '_internal_weather' => 'clear',
+            '_intimacy_last_satisfied' => 0,
+            'creature_type' => null,
+        ];
+
+        foreach ($pr13Fields as $key => $default) {
+            if (!array_key_exists($key, $dynamics)) {
+                $dynamics[$key] = $default;
+            }
+        }
+
+        return $dynamics;
+    }
+
+    /**
+     * PR 14 migration: initialize social masking + autonomous diary fields if missing.
+     */
+    public static function migratePR14($dynamics)
+    {
+        $pr14Fields = [
+            '_was_masking' => false,
+            '_mask_interactions_count' => 0,
+            '_performed_state_cache' => null,
+            '_diary_last_interaction' => 0,
+            '_diary_last_di_count' => 0,
+            '_diary_last_attachment' => null,
+            '_diary_last_emotions' => [],
+            '_diary_last_tier_ceiling' => 'sworn',
+            '_diary_last_grief_phases' => [],
+            '_diary_pending_triggers' => [],
+            '_diary_trigger_source' => null,
+        ];
+        foreach ($pr14Fields as $key => $default) {
+            if (!array_key_exists($key, $dynamics)) {
+                $dynamics[$key] = $default;
+            }
+        }
         return $dynamics;
     }
 
@@ -4091,6 +4641,45 @@ class RelationshipDynamics
             }
         }
 
+        // ========== ATTACHMENT STYLE MODIFIERS (PR 10) ==========
+        $attachmentStyle = self::getAttachmentStyle($dynamics);
+        $attachMods = self::ATTACHMENT_MODIFIERS[$attachmentStyle] ?? [];
+
+        // Resentment buildup amplification from attachment
+        if ($dimensionId === 'resentment' && $rawDelta > 0 && isset($attachMods['resentment_gain_mult'])) {
+            $modifiedDelta *= $attachMods['resentment_gain_mult'];
+        }
+
+        // Maturity floor for toxic attachment
+        if ($dimensionId === 'maturity' && $rawDelta > 0 && $attachMods['maturity_floor'] !== null) {
+            $currentMaturity = floatval($dims['maturity']['x'] ?? 50);
+            $floor = $attachMods['maturity_floor'];
+            if ($currentMaturity >= $floor) {
+                $modifiedDelta = 0;
+            } elseif (($currentMaturity + $modifiedDelta) > $floor) {
+                $modifiedDelta = max(0, $floor - $currentMaturity);
+            }
+        }
+
+        // Toxic conflict passion: resentment gains queue passion
+        if ($dimensionId === 'resentment' && $rawDelta > 0 && $attachMods['conflict_passion_gain'] > 0) {
+            $GLOBALS['RELDYN_ATTACHMENT_CONFLICT_PASSION'] =
+                ($GLOBALS['RELDYN_ATTACHMENT_CONFLICT_PASSION'] ?? 0) + $attachMods['conflict_passion_gain'];
+        }
+
+        // Widow's Lock: cap affinity gains for grieving NPCs
+        if ($dimensionId === 'affinity' && $rawDelta > 0) {
+            $ceiling = floatval($dynamics['_widow_lock_ceiling'] ?? 100);
+            if ($ceiling < 100) {
+                $currentAff = floatval($dims['affinity']['x'] ?? 0);
+                if ($currentAff >= $ceiling) {
+                    $modifiedDelta = 0;
+                } elseif (($currentAff + $modifiedDelta) > $ceiling) {
+                    $modifiedDelta = max(0, $ceiling - $currentAff);
+                }
+            }
+        }
+
         return $modifiedDelta;
     }
 
@@ -4172,6 +4761,26 @@ class RelationshipDynamics
         if ($dimensionId === 'maturity') {
             $plasticityContext['plasticity_type'] = $overrides['plasticity_type']
                 ?? ($dimState['plasticity_type'] ?? null);
+        }
+
+        // ========== PLASTICITY OVERRIDE (PR 10) ==========
+        // Override affects maturity dimension ONLY.
+        // Uses raw _last_gamets for both start and expiry — "30 game days" is calendar time.
+        if ($dimensionId === 'maturity') {
+            $plasticityOverride = $dynamics['_plasticity_override'] ?? null;
+            if ($plasticityOverride !== null) {
+                $overrideExpiry = floatval($dynamics['_plasticity_override_expires_gamets'] ?? 0);
+                $currentRawGamets = floatval($dynamics['_last_gamets'] ?? 0);
+                if ($currentRawGamets > 0 && $currentRawGamets >= $overrideExpiry) {
+                    // Expired — clear override
+                    $dynamics['_plasticity_override'] = null;
+                    $dynamics['_plasticity_override_start_gamets'] = 0;
+                    $dynamics['_plasticity_override_expires_gamets'] = 0;
+                } else {
+                    // Active — override the plasticity type for maturity
+                    $plasticityContext['plasticity_type'] = $plasticityOverride;
+                }
+            }
         }
 
         $profile = self::getPlasticityProfile($temperament, $dimensionId, $plasticityContext);
@@ -4346,6 +4955,13 @@ class RelationshipDynamics
         $results = [];
         $temperament = $dynamics['inferred_temperament'] ?? null;
 
+        // ========== SIGNIFICANCE SCALING (PR 13) ==========
+        $significance = intval($evalResult['significance'] ?? 1);
+        $significance = max(1, min(3, $significance)); // Clamp 1-3
+        if (empty($config['significance_scaling_enabled'])) {
+            $significance = 1;
+        }
+
         foreach (self::EVAL_DELTA_MAP as $jsonKey => $dimId) {
             if (!isset($evalResult[$jsonKey])) {
                 continue;
@@ -4356,8 +4972,26 @@ class RelationshipDynamics
                 continue;
             }
 
-            // Clamp to [-30, +30]
-            $clamped = max(-30.0, min(30.0, $raw));
+            // Scale delta by significance, clamp to effective band
+            $raw = $raw * $significance;
+            $maxBand = 10.0 * $significance;
+            $clamped = max(-$maxBand, min($maxBand, $raw));
+
+            // ========== ICK EFFECTS (PR 15) ==========
+            // If ick is active, invert passion gains and override comfort
+            self::applyIckEffects($dynamics, $dimId, $clamped);
+
+            // ========== CHARISMA EFFECTIVENESS (PR 15) ==========
+            // Apply charisma style multiplier to affinity/passion
+            $charismaStyle = $dynamics['_charisma_tracker']['detected_style'] ?? null;
+            if ($charismaStyle !== null && in_array($dimId, ['affinity', 'passion'], true)) {
+                $matForCharisma = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+                $charismaMult = self::getCharismaEffectiveness($charismaStyle, $temperament, $matForCharisma, $dimId);
+                if (abs($charismaMult - 1.0) > 0.001) {
+                    $clamped *= $charismaMult;
+                    error_log("[RelDyn-CHARISMA] {$dimId} multiplied by {$charismaMult} (style={$charismaStyle})");
+                }
+            }
 
             // Apply through the XYZ physics engine
             $actual = self::applyDelta($dimId, $dynamics, $clamped, $temperament);
@@ -4379,6 +5013,9 @@ class RelationshipDynamics
 
             error_log("[RelDyn-EVAL] npc={$npcName} {$dimId}={$raw}->{$actual} reason=" . ($evalResult[$reasonKey] ?? '(none)'));
         }
+
+        // Store significance for downstream (tier advancement gating)
+        $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] = $significance;
 
         // Handle grievance if present
         if (!empty($evalResult['grievance'])) {
@@ -4682,6 +5319,22 @@ class RelationshipDynamics
             'warmth' => 0.2, 'passion' => 0.2,
             'decay_rate' => 3.0, 'resistance' => 0.5,
         ],
+        'friendzone' => [
+            'trust'   => 1.5,
+            'comfort' => 1.8,
+            'respect' => 1.3,
+            'warmth'  => 1.2,
+            'passion' => 0.1,
+            'decay_rate' => 0.5,
+        ],
+        'parasite' => [
+            'trust'   => 0.3,
+            'comfort' => 0.2,
+            'respect' => 0.5,
+            'warmth'  => 0.2,
+            'passion' => 0.5,
+            'decay_rate' => 4.0,
+        ],
     ];
     /**
      * Default mapping from relationship stage to relationship type.
@@ -4697,9 +5350,11 @@ class RelationshipDynamics
      * Determine the current relationship type for an NPC bond.
      *
      * Resolution order:
-     *   1. Explicit override: $dynamics['relationship_type']
-     *   2. Stage-based default: map stage to type via STAGE_TO_TYPE_MAP
-     *   3. Fallback: 'stranger'
+     *   1. PR 12 override: $dynamics['_relationship_type_override'] (friendzone, parasite, etc.)
+     *   2. PR 12 friendzone: attraction matrix friendzoned flag + high affinity
+     *   3. Explicit type: $dynamics['relationship_type']
+     *   4. Stage-based default: map stage to type via STAGE_TO_TYPE_MAP
+     *   5. Fallback: 'stranger'
      *
      * @param string     $npcName   NPC name (for future per-NPC overrides)
      * @param array|null $dynamics  NPC dynamics blob
@@ -4707,7 +5362,21 @@ class RelationshipDynamics
      */
     public static function getRelationshipType($npcName, $dynamics = null)
     {
-        // 1. Explicit override
+        // 1. PR 12: Explicit type override (friendzone, parasite, etc.)
+        $override = $dynamics['_relationship_type_override'] ?? null;
+        if ($override && isset(self::RELATIONSHIP_TYPE_MODIFIERS[$override])) {
+            return $override;
+        }
+
+        // 2. PR 12: Friendzone from Attraction Matrix
+        if (!empty($dynamics['_attraction_friendzoned'])) {
+            $affinity = floatval($dynamics['dimensions']['affinity']['x'] ?? 0);
+            if ($affinity > 40) {
+                return 'friendzone';
+            }
+        }
+
+        // 3. Explicit override
         if (!empty($dynamics['relationship_type'])) {
             $type = strtolower($dynamics['relationship_type']);
             if (isset(self::RELATIONSHIP_TYPE_MODIFIERS[$type])) {
@@ -4715,13 +5384,13 @@ class RelationshipDynamics
             }
         }
 
-        // 2. Stage-based default
+        // 4. Stage-based default
         $stage = $dynamics['stage'] ?? null;
         if ($stage && isset(self::STAGE_TO_TYPE_MAP[$stage])) {
             return self::STAGE_TO_TYPE_MAP[$stage];
         }
 
-        // 3. Fallback
+        // 5. Fallback
         return 'stranger';
     }
 
@@ -5238,6 +5907,10 @@ class RelationshipDynamics
         // decay_per_tick is already negative; multiply by ticks
         $totalDecay = $baseDecayRate * $ticksElapsed;
 
+        // Attachment style modifies absence decay
+        $absenceMult = self::getAttachmentModifier($dynamics, 'affinity_absence_mult') ?? 1.0;
+        $totalDecay *= $absenceMult;
+
         // --- Apply ambient decay resist if present ---
         $ambientResist = floatval($dynamics['_ambient_decay_resist'] ?? 1.0);
         if ($ambientResist > 0 && $ambientResist < 1.0) {
@@ -5247,6 +5920,13 @@ class RelationshipDynamics
         // --- Apply decay to affinity ---
         $newAffinity = max(0.0, min(100.0, $oldAffinity + $totalDecay));
         $actualDecay = $newAffinity - $oldAffinity;
+
+        // Attachment-driven comfort change during absence
+        $absenceComfortDelta = self::getAttachmentModifier($dynamics, 'absence_comfort_delta') ?? 0.0;
+        if (abs($absenceComfortDelta) > 0.001 && $ticksElapsed > 0) {
+            $comfortChange = $absenceComfortDelta * $ticksElapsed;
+            self::applyDelta('comfort', $dynamics, $comfortChange, $temperament);
+        }
 
         // Store updated affinity
         $dynamics['dimensions']['affinity']['x'] = $newAffinity;
@@ -5289,6 +5969,618 @@ class RelationshipDynamics
             . " {$tierStr}{$gateStr}{$floorStr}");
 
         return $result;
+    }
+
+    // ========== DIVINE INTERVENTION (PR 10) ==========
+
+    /**
+     * Get all bonds for an NPC from the database.
+     * Returns array keyed by bond target name with 'aff', 'type', 'trust' keys.
+     * Caches within the same request.
+     */
+    public static function getAllBondsForNpc($npcName): array
+    {
+        $cacheKey = strtolower($npcName);
+        if (isset(self::$bondCache[$cacheKey])) {
+            return self::$bondCache[$cacheKey];
+        }
+
+        $bonds = [];
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if (!$db) return $bonds;
+
+            $escaped = $db->escape($npcName);
+            $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+            if (is_array($row) && !empty($row['extended_data'])) {
+                $ext = json_decode($row['extended_data'], true) ?: [];
+                $relationships = $ext['relationships'] ?? [];
+                foreach ($relationships as $targetName => $relData) {
+                    $bonds[$targetName] = [
+                        'aff'   => floatval($relData['aff'] ?? 0),
+                        'type'  => $relData['type'] ?? 'stranger',
+                        'trust' => floatval($relData['trust'] ?? 0),
+                    ];
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-DI] getAllBondsForNpc error for {$npcName}: " . $e->getMessage());
+        }
+
+        self::$bondCache[$cacheKey] = $bonds;
+        return $bonds;
+    }
+
+    /**
+     * Calculate anchor status for DI fork decision.
+     * Trust.x is GLOBAL (not per-bond). Uses it once for player bond,
+     * aff*0.5 as trust proxy for NPC-to-NPC bonds.
+     */
+    public static function calculateAnchorStatus($npcName, &$dynamics): array
+    {
+        $bonds = self::getAllBondsForNpc($npcName);
+        $dims = $dynamics['dimensions'] ?? [];
+        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+
+        $globalTrustX = floatval($dims['trust']['x'] ?? 0);
+        $totalTrust = 0.0;
+        $maxAffinity = 0.0;
+
+        foreach ($bonds as $targetName => $bond) {
+            $bondAff = ($bond['aff'] + 100) / 2.0; // Scale -100..+100 to 0..100
+
+            if (strcasecmp($targetName, $playerName) === 0) {
+                $totalTrust += $globalTrustX;
+            } else {
+                $totalTrust += max(0, $bondAff * 0.5);
+            }
+
+            if ($bondAff > $maxAffinity) {
+                $maxAffinity = $bondAff;
+            }
+        }
+
+        return [
+            'has_anchor'   => ($totalTrust > 100 && $maxAffinity > 60),
+            'is_alone'     => ($totalTrust < 50 && $maxAffinity < 40),
+            'total_trust'  => $totalTrust,
+            'max_affinity' => $maxAffinity,
+        ];
+    }
+
+    /**
+     * Trigger Divine Intervention — catastrophic event processing.
+     * The Fork: anchor → redemption, alone → breaking, neither → unstable window.
+     */
+    public static function triggerDivineIntervention($npcName, $eventType, $severity, &$dynamics)
+    {
+        // Config gate
+        $config = self::getConfig();
+        if (empty($config['divine_intervention_enabled'])) {
+            return;
+        }
+
+        // Session cooldown
+        $lastDI = floatval($dynamics['_divine_intervention_last'] ?? 0);
+        $currentPlayGamets = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+        if ($lastDI > 0 && ($currentPlayGamets - $lastDI) < self::DI_COOLDOWN_GAMETS) {
+            self::log("[DIVINE] Cooldown active for {$npcName}, skipping DI");
+            return;
+        }
+
+        // Calculate anchor status
+        $anchor = self::calculateAnchorStatus($npcName, $dynamics);
+
+        // The Fork
+        if ($anchor['has_anchor']) {
+            self::applyRedemptionArc($npcName, $severity, $dynamics);
+        } elseif ($anchor['is_alone']) {
+            self::applyBreakingArc($npcName, $severity, $dynamics);
+        } else {
+            // Neither anchored nor alone — open unstable window
+            self::openUnstableWindow($npcName, $eventType, $severity, $dynamics);
+        }
+
+        // Update DI tracking
+        $dynamics['_divine_intervention_count'] = intval($dynamics['_divine_intervention_count'] ?? 0) + 1;
+        $dynamics['_divine_intervention_last'] = $currentPlayGamets;
+
+        self::log("[DIVINE] Triggered for {$npcName}: type={$eventType}, sev={$severity}, anchor=[trust={$anchor['total_trust']}, maxAff={$anchor['max_affinity']}]");
+    }
+
+    /**
+     * Redemption Arc — baseline rewrite UP.
+     * Triggered when NPC has strong anchor bonds during catastrophic event.
+     */
+    private static function applyRedemptionArc($npcName, $severity, &$dynamics)
+    {
+        $shift = min(30, 15 + ($severity * 3));
+        $dims = &$dynamics['dimensions'];
+
+        // Maturity baseline UP — bypass applyDelta
+        $maturityBaseline = floatval($dims['maturity']['baseline'] ?? 50);
+        $dims['maturity']['baseline'] = min(100, $maturityBaseline + $shift);
+        $dims['maturity']['x'] = min(100, floatval($dims['maturity']['x'] ?? $maturityBaseline) + $shift);
+
+        // Zero resentment
+        $dims['resentment']['x'] = 0;
+        $dims['resentment']['pending_grievances'] = [];
+
+        // Halve resentment_self
+        $dims['resentment_self']['x'] = floatval($dims['resentment_self']['x'] ?? 0) / 2.0;
+
+        // Comfort baseline +10
+        $comfortBaseline = floatval($dims['comfort']['baseline'] ?? 30);
+        $dims['comfort']['baseline'] = min(100, $comfortBaseline + 10);
+
+        // Plasticity override: Growth for 30 game days (raw gamets)
+        $currentRawGamets = floatval($dynamics['_last_gamets'] ?? 0);
+        $dynamics['_plasticity_override'] = 'Growth';
+        $dynamics['_plasticity_override_start_gamets'] = $currentRawGamets;
+        $dynamics['_plasticity_override_expires_gamets'] = $currentRawGamets + self::THIRTY_GAME_DAYS_GAMETS;
+
+        // Attachment shift eligible
+        $dynamics['_attachment_shift_available'] = true;
+        $dynamics['_divine_intervention_last_type'] = 'redemption';
+
+        self::log("[DIVINE] Redemption arc for {$npcName}: shift={$shift}, maturity_baseline={$dims['maturity']['baseline']}");
+    }
+
+    /**
+     * Breaking Arc — baseline rewrite DOWN.
+     * Triggered when NPC is isolated during catastrophic event.
+     */
+    private static function applyBreakingArc($npcName, $severity, &$dynamics)
+    {
+        $shift = min(30, 15 + ($severity * 3));
+        $dims = &$dynamics['dimensions'];
+
+        // Maturity baseline DOWN
+        $maturityBaseline = floatval($dims['maturity']['baseline'] ?? 50);
+        $dims['maturity']['baseline'] = max(0, $maturityBaseline - $shift);
+        $dims['maturity']['x'] = max(0, floatval($dims['maturity']['x'] ?? $maturityBaseline) - $shift);
+
+        // Comfort baseline -20
+        $comfortBaseline = floatval($dims['comfort']['baseline'] ?? 30);
+        $dims['comfort']['baseline'] = max(0, $comfortBaseline - 20);
+
+        // Halve trust
+        $dims['trust']['x'] = floatval($dims['trust']['x'] ?? 50) / 2.0;
+
+        // Zero warmth toward non-bonded
+        $relType = self::getRelationshipType($npcName, $dynamics);
+        if ($relType !== 'bonded' && $relType !== 'sworn') {
+            $dims['warmth']['x'] = 0;
+        }
+
+        // Plasticity override: Brittle for 30 game days (raw gamets)
+        $currentRawGamets = floatval($dynamics['_last_gamets'] ?? 0);
+        $dynamics['_plasticity_override'] = 'Brittle';
+        $dynamics['_plasticity_override_start_gamets'] = $currentRawGamets;
+        $dynamics['_plasticity_override_expires_gamets'] = $currentRawGamets + self::THIRTY_GAME_DAYS_GAMETS;
+
+        $dynamics['_attachment_shift_available'] = true;
+        $dynamics['_divine_intervention_last_type'] = 'breaking';
+
+        self::log("[DIVINE] Breaking arc for {$npcName}: shift={$shift}, maturity_baseline={$dims['maturity']['baseline']}");
+    }
+
+    /**
+     * Open an unstable window when DI finds neither anchor nor isolation.
+     * Full implementation in Segment 3 (Unstable Window).
+     */
+    private static function openUnstableWindow($npcName, $eventType, $severity, &$dynamics)
+    {
+        // Check if window already open
+        $existingWindow = $dynamics['_unstable_window'] ?? null;
+        if ($existingWindow && empty($existingWindow['resolved'])) {
+            // Already open — resolve existing based on new event
+            if ($eventType === 'betrayal') {
+                $dynamics['_unstable_window']['resolved'] = true;
+                $dynamics['_unstable_window']['resolution'] = 'breaking';
+                self::applyBreakingArc($npcName, $severity, $dynamics);
+                self::log("[DIVINE] Existing unstable window resolved via betrayal -> breaking");
+            }
+            return;
+        }
+
+        $dynamics['_unstable_window'] = [
+            'start_gamets'    => floatval($dynamics['_accumulated_play_gamets'] ?? 0),
+            'duration_gamets' => self::UNSTABLE_WINDOW_GAMETS,
+            'event_type'      => $eventType,
+            'severity'        => $severity,
+            'resolved'        => false,
+            'resolution'      => null,
+        ];
+
+        self::log("[DIVINE] Unstable window opened for {$npcName}: event={$eventType}, severity={$severity}");
+    }
+
+    /**
+     * Check unstable window state. Called during prerequest for NPCs with active windows.
+     * Returns 'redemption', 'breaking', 'active', or null (no window).
+     */
+    public static function checkUnstableWindow($npcName, &$dynamics, $interactingWith = null): ?string
+    {
+        $window = $dynamics['_unstable_window'] ?? null;
+        if (!$window || !empty($window['resolved'])) {
+            return null;
+        }
+        // Config gate
+        $config = self::getConfig();
+        if (empty($config['divine_intervention_enabled'])) {
+            return null;
+        }
+
+        $currentGamets = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+        $elapsed = $currentGamets - floatval($window['start_gamets']);
+        $duration = floatval($window['duration_gamets']);
+        $elapsedFraction = ($duration > 0) ? ($elapsed / $duration) : 0;
+
+        // Check multiple potential anchors: the player AND nearby NPCs
+        $potentialAnchors = [];
+        if ($interactingWith !== null) {
+            $potentialAnchors[] = $interactingWith;
+        }
+        // Check CACHE_PEOPLE for NPC anchors
+        $cachePeopleRaw = $GLOBALS['CACHE_PEOPLE'] ?? '';
+        $cachePeople = array_values(array_filter(array_map('trim', explode('|', $cachePeopleRaw))));
+        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+        foreach ($cachePeople as $nearbyNpc) {
+            if (!empty($nearbyNpc) && strcasecmp($nearbyNpc, $npcName) !== 0) {
+                $potentialAnchors[] = $nearbyNpc;
+            }
+        }
+        $potentialAnchors = array_unique($potentialAnchors);
+
+        $bonds = self::getAllBondsForNpc($npcName);
+        foreach ($potentialAnchors as $anchor) {
+            $bond = $bonds[$anchor] ?? null;
+            if ($bond) {
+                $bondAff = ($bond['aff'] + 100) / 2.0;
+                $bondTrust = (strcasecmp($anchor, $playerName) === 0)
+                    ? floatval($dynamics['dimensions']['trust']['x'] ?? 0)
+                    : max(0, $bondAff * 0.5);
+                if ($bondAff > 50 && $bondTrust > 40) {
+                    $dynamics['_unstable_window']['resolved'] = true;
+                    $dynamics['_unstable_window']['resolution'] = 'redemption';
+                    self::applyRedemptionArc($npcName, $window['severity'], $dynamics);
+                    self::log("[DIVINE] Unstable window resolved: REDEMPTION via {$anchor}");
+                    return 'redemption';
+                }
+            }
+        }
+
+        // Check if window expired
+        if ($elapsed >= $duration) {
+            $dynamics['_unstable_window']['resolved'] = true;
+            $dynamics['_unstable_window']['resolution'] = 'breaking';
+            self::applyBreakingArc($npcName, $window['severity'], $dynamics);
+            self::log("[DIVINE] Unstable window expired: BREAKING for {$npcName}");
+            return 'breaking';
+        }
+
+        return 'active';
+    }
+
+    /**
+     * Generate escalating crisis narration for unstable window context injection.
+     * Three tiers: fresh shock (0-25%), mid-crisis (25-75%), desperate urgency (75%+).
+     */
+    public static function generateCrisisNarration($npcName, $windowState): string
+    {
+        $eventType = $windowState['event_type'] ?? 'unknown';
+        $elapsed = floatval($windowState['_elapsed_fraction'] ?? 0);
+
+        if ($elapsed >= 0.75) {
+            $urgencyNarrations = [
+                'companion_death' => "{$npcName} is barely holding on. The grief has hollowed them out and something fundamental is about to snap. They are searching desperately for a reason not to break -- and running out of time to find one.",
+                'near_tpk'        => "{$npcName} has been teetering on the edge since the brush with death and the balance is finally tipping. The window to reach them is closing -- whatever they become next is being decided RIGHT NOW.",
+                'betrayal'        => "{$npcName} has been spiraling since the betrayal and the descent is accelerating. The walls they are building are almost finished. Once they close, they may never open again.",
+                'home_destruction' => "{$npcName} is adrift and sinking. Without an anchor, the current is pulling them somewhere dark. If someone doesn't reach them soon, they will be unreachable.",
+                'quest_event'     => "{$npcName} has been rebuilding their worldview for a while now and the foundation is setting. Whatever shape it takes will be permanent. The last chance to influence the direction is slipping away.",
+            ];
+            return $urgencyNarrations[$eventType] ?? "{$npcName} is at a breaking point. Something irreversible is about to happen. Time is almost up.";
+        } elseif ($elapsed >= 0.25) {
+            $midNarrations = [
+                'companion_death' => "{$npcName} carries the loss like a physical weight. The numbness is fading and what replaces it will depend on who or what they encounter next. They are looking for meaning -- or proof that there is none.",
+                'near_tpk'        => "{$npcName} keeps reliving the moment they almost died. The fear is transforming into something else -- gratitude or rage, depending on what the world shows them next.",
+                'betrayal'        => "{$npcName} is cycling between fury and disbelief. The trust that was broken is being examined from every angle. They are deciding whether to rebuild or burn it all down.",
+                'home_destruction' => "{$npcName} drifts between places that used to feel familiar but no longer do. They are looking for a new anchor point -- consciously or not.",
+                'quest_event'     => "{$npcName} has been questioning everything they thought they knew. The old certainties are gone. New ones haven't formed yet.",
+            ];
+            return $midNarrations[$eventType] ?? "{$npcName} is at a crossroads. Something fundamental is shifting. The direction hasn't been decided yet.";
+        } else {
+            $freshNarrations = [
+                'companion_death' => "{$npcName} is hollow. Something behind their eyes has gone quiet. They are present but unreachable -- the loss hasn't fully landed yet, but when it does, everything could change.",
+                'near_tpk'        => "{$npcName} survived, but barely. The brush with death left something cracked. They are oscillating between grateful and terrified, and which way they settle depends on what happens next.",
+                'betrayal'        => "{$npcName} is reeling from a betrayal that rewrote their understanding of someone they trusted. The ground shifted. They are looking for something to hold onto -- or deciding there is nothing worth holding.",
+                'home_destruction' => "{$npcName} lost something that represented safety. Without that anchor, they are adrift. The next person who shows up might become their new anchor -- or prove that anchors break.",
+                'quest_event'     => "{$npcName} witnessed something that shattered their worldview. The old rules don't apply anymore. They are rebuilding from scratch, and the foundation could go either way.",
+            ];
+            return $freshNarrations[$eventType] ?? "{$npcName} is in shock. Something fundamental just happened. They don't know what it means yet.";
+        }
+    }
+
+    /**
+     * Placeholder for future SNQE quest event integration.
+     * External systems can call this to trigger DI from quest events.
+     */
+    public static function onQuestEvent($npcName, $questId, $stageId)
+    {
+        // Placeholder — not wired in PR 10
+        self::log("[DIVINE] Quest event placeholder: npc={$npcName}, quest={$questId}, stage={$stageId}");
+    }
+
+    // ========== DEATH/GRIEF SYSTEM (PR 10) ==========
+
+    /**
+     * Register an NPC death for a survivor. Creates grief bond, sets widow's lock, triggers Phase 1, fires survivor DI.
+     */
+    public static function onNpcDeath($deceasedName, $survivorName, &$survivorDynamics)
+    {
+        // Config gate
+        $config = self::getConfig();
+        if (empty($config['grief_system_enabled'])) {
+            return;
+        }
+
+        // Bond duration proxy: use deceased's accumulated time
+        $deceasedDynamics = self::getDynamics($deceasedName);
+        $bondDurationHours = floatval($deceasedDynamics['_accumulated_time'] ?? 0) / 3600.0;
+
+        $bonds = self::getAllBondsForNpc($survivorName);
+        $deceasedBond = $bonds[$deceasedName] ?? null;
+        $bondAffinity = $deceasedBond ? (($deceasedBond['aff'] + 100) / 2.0) : 0;
+
+        $dims = $survivorDynamics['dimensions'] ?? [];
+
+        // Initialize grief bond with per-phase applied flags
+        $survivorDynamics['_grief_bonds'][$deceasedName] = [
+            'phase'                   => 1,
+            'death_gamets'            => floatval($survivorDynamics['_accumulated_play_gamets'] ?? 0),
+            'bond_duration_hours'     => $bondDurationHours,
+            'original_type'           => $deceasedBond['type'] ?? 'friend',
+            'bond_affinity_at_death'  => $bondAffinity,
+            'warmth_at_death'         => floatval($dims['warmth']['x'] ?? 0),
+            'trust_at_death'          => floatval($dims['trust']['x'] ?? 0),
+            'phase_transitions'       => [1 => floatval($survivorDynamics['_accumulated_play_gamets'] ?? 0)],
+            '_phase_1_applied'        => false,
+            '_phase_2_applied'        => false,
+            '_phase_3_applied'        => false,
+            '_phase_4_applied'        => false,
+        ];
+
+        // Widow's Lock ceiling
+        $bondDurationWeight = min(2.0, $bondDurationHours / 100.0);
+        $ceiling = 100 - ($bondDurationWeight * 20);
+        $existingCeiling = floatval($survivorDynamics['_widow_lock_ceiling'] ?? 100);
+        $survivorDynamics['_widow_lock_ceiling'] = min($existingCeiling, $ceiling);
+
+        // Apply Phase 1 immediate effects
+        self::applyGriefPhase($survivorName, $deceasedName, 1, $survivorDynamics);
+
+        // Trigger Survivor's DI
+        $severity = min(5, max(1, intval($bondDurationWeight * 2.5)));
+        self::triggerDivineIntervention($survivorName, 'companion_death', $severity, $survivorDynamics);
+
+        self::log("[GRIEF] Death of {$deceasedName} registered for {$survivorName}: duration={$bondDurationHours}h, ceiling={$ceiling}, severity={$severity}");
+    }
+
+    /**
+     * Process grief phase transitions. Called during prerequest for NPCs with active grief bonds.
+     * Phase thresholds scale by bond duration weight.
+     */
+    public static function processGriefPhases($npcName, &$dynamics)
+    {
+        $griefBonds = &$dynamics['_grief_bonds'];
+        if (empty($griefBonds)) return;
+
+        // Config gate
+        $config = self::getConfig();
+        if (empty($config['grief_system_enabled'])) return;
+
+        $currentGamets = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+        $gametsPerHour = self::GAMETS_PER_REAL_HOUR;
+
+        foreach ($griefBonds as $deceasedName => &$grief) {
+            $elapsed = $currentGamets - floatval($grief['death_gamets']);
+            $hoursElapsed = $elapsed / $gametsPerHour;
+
+            $weight = min(2.0, floatval($grief['bond_duration_hours']) / 100.0);
+            $weight = max(0.1, $weight);
+
+            $currentPhase = intval($grief['phase']);
+            $newPhase = $currentPhase;
+
+            // Phase transition thresholds (scaled by bond_duration_weight)
+            if ($hoursElapsed >= 15.0 * $weight && $currentPhase < 4) {
+                $newPhase = 4;
+            } elseif ($hoursElapsed >= 5.0 * $weight && $currentPhase < 3) {
+                $newPhase = 3;
+            } elseif ($hoursElapsed >= 2.0 * $weight && $currentPhase < 2) {
+                $newPhase = 2;
+            }
+
+            if ($newPhase > $currentPhase) {
+                $grief['phase_transitions'][$newPhase] = $currentGamets;
+                $grief['phase'] = $newPhase;
+                self::applyGriefPhase($npcName, $deceasedName, $newPhase, $dynamics);
+            }
+        }
+    }
+
+    /**
+     * Apply grief phase effects. One-shot per phase (checked via _phase_X_applied flag).
+     */
+    private static function applyGriefPhase($npcName, $deceasedName, $phase, &$dynamics)
+    {
+        $dims = &$dynamics['dimensions'];
+        $grief = &$dynamics['_grief_bonds'][$deceasedName];
+
+        // Check if this phase has already been applied
+        $appliedKey = "_phase_{$phase}_applied";
+        if (!empty($grief[$appliedKey])) {
+            return;
+        }
+        $grief[$appliedKey] = true;
+
+        switch ($phase) {
+            case 1: // Acute
+                $dims['comfort']['x'] = max(0, floatval($dims['comfort']['x'] ?? 50) - 15);
+                $dims['warmth']['x'] = max(0, floatval($dims['warmth']['x'] ?? 30) - 10);
+                $dims['valence']['x'] = min(-30, floatval($dims['valence']['x'] ?? 0));
+                $dims['arousal']['x'] = max(50, floatval($dims['arousal']['x'] ?? 10));
+                self::log("[GRIEF] Phase 1 (Acute) applied for {$npcName} re: {$deceasedName}");
+                break;
+
+            case 2: // Bargaining
+                $dims['trust']['x'] = max(0, floatval($dims['trust']['x'] ?? 50) - 5);
+                self::log("[GRIEF] Phase 2 (Bargaining) applied for {$npcName} re: {$deceasedName}");
+                break;
+
+            case 3: // Integration
+                // Recovery begins — no direct writes; rubber band handles recovery
+                self::log("[GRIEF] Phase 3 (Integration) applied for {$npcName} re: {$deceasedName}");
+                break;
+
+            case 4: // Carrying Forward
+                // Grieving → Memorial transition
+                self::log("[GRIEF] Phase 4 (Carrying Forward) for {$npcName} re: {$deceasedName}: ceiling={$dynamics['_widow_lock_ceiling']}");
+                break;
+        }
+    }
+
+    /**
+     * Get grief keywords for context injection. High maturity = quiet grief, low maturity = public breakdown.
+     */
+    public static function getGriefKeywords($npcName, $deceasedName, $phase, $maturity): string
+    {
+        $quiet = ($maturity > 60);
+        switch ($phase) {
+            case 1:
+                return $quiet
+                    ? "{$npcName} carries the loss of {$deceasedName} in silence. Still waters, but the undercurrent is devastating. Withdrawn, unreachable, numbly functional."
+                    : "{$npcName} is shattered by the loss of {$deceasedName}. Visibly struggling, breaking down, unable to maintain composure. The grief is raw and public.";
+            case 2:
+                return $quiet
+                    ? "{$npcName} speaks of {$deceasedName} as if they might return. Idealizing the memory, recounting only the good. A quiet bargaining with fate."
+                    : "{$npcName} swings between desperate hope and crushing reality about {$deceasedName}. Talks about them constantly, looking for signs, refusing to let go.";
+            case 3:
+                return $quiet
+                    ? "{$npcName} has begun to make peace with {$deceasedName}'s absence. The sharp edges of grief are smoothing. They speak of them with bittersweet warmth."
+                    : "{$npcName} is slowly finding ground after losing {$deceasedName}. Good moments mixed with sudden waves of loss. Healing, but unevenly.";
+            case 4:
+                return "{$npcName} carries {$deceasedName}'s memory as part of who they are now. The grief has transformed into something quieter -- a memorial, not a wound. They can form new bonds, though the lost one left a permanent mark.";
+        }
+        return '';
+    }
+
+    // ========== ATTACHMENT STYLE SYSTEM (PR 10) ==========
+
+    public static function getAttachmentStyle($dynamics): string
+    {
+        $config = self::getConfig();
+        if (empty($config['attachment_style_enabled'])) {
+            return 'secure'; // No-op when disabled
+        }
+        $explicit = $dynamics['attachment_style'] ?? null;
+        if ($explicit && isset(self::ATTACHMENT_MODIFIERS[$explicit])) {
+            return $explicit;
+        }
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        return self::TEMPERAMENT_ATTACHMENT_DEFAULTS[$temperament] ?? 'secure';
+    }
+
+    public static function getAttachmentModifier($dynamics, string $key)
+    {
+        $style = self::getAttachmentStyle($dynamics);
+        return self::ATTACHMENT_MODIFIERS[$style][$key] ?? null;
+    }
+
+    public static function processAttachmentShift(&$dynamics): ?string
+    {
+        if (empty($dynamics['_attachment_shift_available'])) {
+            return null;
+        }
+        $config = self::getConfig();
+        if (empty($config['attachment_style_enabled']) || empty($config['divine_intervention_enabled'])) {
+            return null;
+        }
+
+        $currentStyle = self::getAttachmentStyle($dynamics);
+        $diType = $dynamics['_divine_intervention_last_type'] ?? null;
+        $newStyle = null;
+
+        if ($diType === 'redemption') {
+            $newStyle = self::ATTACHMENT_REDEMPTION_SHIFTS[$currentStyle] ?? $currentStyle;
+        } elseif ($diType === 'breaking') {
+            $breakTarget = self::ATTACHMENT_BREAKING_SHIFTS[$currentStyle] ?? null;
+            if ($breakTarget === null && $currentStyle === 'secure') {
+                // Determined by self_confidence
+                $selfConf = floatval($dynamics['dimensions']['self_confidence']['x'] ?? 50);
+                $newStyle = ($selfConf > 50) ? 'avoidant' : 'anxious';
+            } else {
+                $newStyle = $breakTarget ?? $currentStyle;
+            }
+        }
+
+        if ($newStyle && $newStyle !== $currentStyle) {
+            $dynamics['attachment_style'] = $newStyle;
+            $dynamics['_attachment_shift_available'] = false;
+            self::log("[ATTACHMENT] Shift: {$currentStyle} -> {$newStyle} via {$diType}");
+            return $newStyle;
+        }
+
+        $dynamics['_attachment_shift_available'] = false;
+        return null;
+    }
+
+    public static function checkAttachmentDrift(&$dynamics, string $temperament): ?string
+    {
+        $config = self::getConfig();
+        if (empty($config['attachment_style_enabled'])) {
+            return null;
+        }
+
+        $accum = intval($dynamics['_accumulated_time'] ?? 0);
+        $lastCheck = intval($dynamics['_attachment_drift_last_check'] ?? 0);
+        if (($accum - $lastCheck) < 18000) { // 5 hours of play time
+            return null;
+        }
+        $dynamics['_attachment_drift_last_check'] = $accum;
+
+        $currentStyle = self::getAttachmentStyle($dynamics);
+        $dims = $dynamics['dimensions'] ?? [];
+        $maturity = floatval($dims['maturity']['x'] ?? 50);
+        $trust = floatval($dims['trust']['x'] ?? 50);
+        $resentment = floatval($dims['resentment']['x'] ?? 0);
+
+        // Anxious -> Secure drift: sustained health
+        if ($currentStyle === 'anxious') {
+            if ($maturity > 55 && $trust > 60 && $resentment < 15) {
+                $dynamics['_attachment_drift_score'] = intval($dynamics['_attachment_drift_score'] ?? 0) + 1;
+                if ($dynamics['_attachment_drift_score'] >= 3) {
+                    $dynamics['attachment_style'] = 'secure';
+                    $dynamics['_attachment_drift_score'] = 0;
+                    return 'secure';
+                }
+            } else {
+                $dynamics['_attachment_drift_score'] = max(0, intval($dynamics['_attachment_drift_score'] ?? 0) - 1);
+            }
+        }
+
+        // Toxic -> Anxious drift: maturity exceeded floor+10 (only via DI/override)
+        if ($currentStyle === 'toxic') {
+            $floor = self::ATTACHMENT_MODIFIERS['toxic']['maturity_floor'];
+            if ($maturity >= ($floor + 10)) {
+                $dynamics['attachment_style'] = 'anxious';
+                $dynamics['_attachment_drift_score'] = 0;
+                return 'anxious';
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -5399,9 +6691,14 @@ class RelationshipDynamics
 
     /**
      * Get the social sensitivity curve type for a temperament.
+     * Per-NPC override via dynamics['social_sensitivity_curve'] takes priority.
      */
-    public static function getSocialSensitivityCurve($temperament)
+    public static function getSocialSensitivityCurve($temperament, $dynamics = null)
     {
+        // Per-NPC override
+        if ($dynamics !== null && !empty($dynamics['social_sensitivity_curve'])) {
+            return $dynamics['social_sensitivity_curve'];
+        }
         return self::TEMPERAMENT_SENSITIVITY_CURVES[$temperament] ?? 'open_heart';
     }
 
@@ -5416,22 +6713,31 @@ class RelationshipDynamics
      */
     public static function applySocialSensitivity($dynamics, $dimensionId, $rawDelta, $temperament)
     {
+        // Config gate
+        $cfg = self::getConfig();
+        if (isset($cfg['social_sensitivity_enabled']) && !$cfg['social_sensitivity_enabled']) {
+            return $rawDelta;
+        }
+
         // Global dimensions bypass sensitivity (self-evaluative)
         if (in_array($dimensionId, self::GLOBAL_DIMENSIONS, true)) {
             return $rawDelta;
         }
 
-        $curve = self::getSocialSensitivityCurve($temperament);
+        $curve = self::getSocialSensitivityCurve($temperament, $dynamics);
 
         // Proud exception: respect dimension uses open_heart (disrespect from anyone lands)
-        if ($temperament === 'Proud' && $dimensionId === 'respect') {
-            $curve = 'open_heart';
-        }
+        // Only applies if using temperament default (not per-NPC override)
+        if (empty($dynamics['social_sensitivity_curve'])) {
+            if ($temperament === 'Proud' && $dimensionId === 'respect') {
+                $curve = 'open_heart';
+            }
 
-        // Jealous exception: passion/comfort dimensions use open_heart
-        // (hyperaware of partner's attention toward ANYONE)
-        if ($temperament === 'Jealous' && in_array($dimensionId, ['passion', 'comfort'], true)) {
-            $curve = 'open_heart';
+            // Jealous exception: passion/comfort dimensions use open_heart
+            // (hyperaware of partner's attention toward ANYONE)
+            if ($temperament === 'Jealous' && in_array($dimensionId, ['passion', 'comfort'], true)) {
+                $curve = 'open_heart';
+            }
         }
 
         $bondLevel = $dynamics['dimensions']['affinity']['x'] ?? 50;
@@ -8350,5 +9656,3259 @@ class RelationshipDynamics
     }
 
     // ========== END DIARY SELF-EVAL (PR 9) ==========
+
+    // ========== ATTRACTION MATRIX — PLAYER DATA (PR 11) ==========
+
+    /**
+     * Get player stats from conf_opts storage.
+     * Returns default structure if no stats synced yet.
+     */
+    public static function getPlayerStats(): array
+    {
+        $defaults = [
+            'level' => 1,
+            'gold' => 0,
+            'lifetime_wealth' => 0,
+            'race' => 'Nord',
+            'gender' => 'Male',
+            'skills' => [],
+            'kill_counts' => ['people' => 0, 'animals' => 0, 'creatures' => 0, 'dragons' => 0, 'undead' => 0],
+            'quest_count' => 0,
+            'property_count' => 0,
+            'thane_holds' => [],
+            'faction_ranks' => [],
+            'synced_at' => 0,
+        ];
+
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if (!$db) return $defaults;
+
+            $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = '_player_stats' LIMIT 1");
+            if ($row && !empty($row['value'])) {
+                $stats = json_decode($row['value'], true);
+                if (is_array($stats)) {
+                    return array_merge($defaults, $stats);
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-MATRIX] getPlayerStats error: " . $e->getMessage());
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * Get player appearance text from core_player or PLAYER_BIOS config.
+     */
+    public static function getPlayerAppearance(): string
+    {
+        try {
+            // Try core_player table first
+            $db = $GLOBALS['db'] ?? null;
+            if ($db) {
+                $row = $db->fetchOne("SELECT value FROM core_player WHERE id = 'appearance' LIMIT 1");
+                if ($row && !empty($row['value'])) {
+                    return $row['value'];
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        // Fallback to PLAYER_BIOS global
+        return $GLOBALS['PLAYER_BIOS'] ?? '';
+    }
+
+    /**
+     * Get or generate player appearance embedding (384-dim vector).
+     * Caches in conf_opts to avoid re-embedding on every interaction.
+     */
+    public static function getPlayerAppearanceEmbedding(): array
+    {
+        $appearance = self::getPlayerAppearance();
+        if (empty(trim($appearance))) {
+            return []; // No appearance data available
+        }
+
+        $textHash = md5($appearance);
+
+        // Check cache
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if ($db) {
+                $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = '_player_appearance_embedding' LIMIT 1");
+                if ($row && !empty($row['value'])) {
+                    $cached = json_decode($row['value'], true);
+                    if (is_array($cached) && ($cached['text_hash'] ?? '') === $textHash && !empty($cached['vector'])) {
+                        return $cached['vector'];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        // Generate new embedding
+        if (!function_exists('getEmbedding')) {
+            // Try to include the embedding helper
+            $embeddingPath = realpath(__DIR__ . '/../../lib/memory_helper_embeddings.php');
+            if ($embeddingPath && file_exists($embeddingPath)) {
+                @include_once($embeddingPath);
+            }
+        }
+
+        if (!function_exists('getEmbedding')) {
+            error_log("[RelDyn-MATRIX] getEmbedding() not available — cannot compute appearance embedding");
+            return [];
+        }
+
+        try {
+            $vector = getEmbedding($appearance);
+            if (!is_array($vector) || empty($vector)) {
+                return [];
+            }
+
+            // Cache it
+            if ($db) {
+                $cacheData = json_encode(['text_hash' => $textHash, 'vector' => $vector]);
+                $escaped = $db->escape($cacheData);
+                $db->execQuery("INSERT INTO conf_opts (id, value) VALUES ('_player_appearance_embedding', '{$escaped}')
+                    ON CONFLICT (id) DO UPDATE SET value = '{$escaped}'");
+            }
+
+            return $vector;
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-MATRIX] Embedding generation failed: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Get or generate NPC beauty keywords embedding.
+     * Caches in the NPC's attraction_profile.
+     */
+    public static function getNpcBeautyEmbedding($npcName, &$dynamics): array
+    {
+        $profile = $dynamics['attraction_profile'] ?? null;
+        if (!$profile) {
+            $profile = self::getArchetypeProfile($dynamics);
+        }
+
+        $keywords = $profile['beauty_keywords'] ?? [];
+        if (empty($keywords)) return [];
+
+        // Check cached embedding
+        if (!empty($profile['beauty_keywords_embedding'])) {
+            return $profile['beauty_keywords_embedding'];
+        }
+
+        // Generate from keywords text
+        $keywordText = implode(', ', $keywords);
+
+        if (!function_exists('getEmbedding')) {
+            $embeddingPath = realpath(__DIR__ . '/../../lib/memory_helper_embeddings.php');
+            if ($embeddingPath && file_exists($embeddingPath)) {
+                @include_once($embeddingPath);
+            }
+        }
+
+        if (!function_exists('getEmbedding')) {
+            return [];
+        }
+
+        try {
+            $vector = getEmbedding($keywordText);
+            if (is_array($vector) && !empty($vector)) {
+                // Cache on the dynamics object (saved with next saveDynamics)
+                if (!is_array($dynamics['attraction_profile'])) {
+                    $dynamics['attraction_profile'] = $profile;
+                }
+                $dynamics['attraction_profile']['beauty_keywords_embedding'] = $vector;
+                return $vector;
+            }
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-MATRIX] NPC beauty embedding failed for {$npcName}: " . $e->getMessage());
+        }
+
+        return [];
+    }
+
+    /**
+     * Cosine similarity clamped to 0.0-1.0 for attraction scoring.
+     * Wraps the existing cosineSimilarity() — negative similarity = 0 for attraction purposes.
+     */
+    public static function clampedCosineSimilarity(array $a, array $b): float
+    {
+        return max(0.0, min(1.0, self::cosineSimilarity($a, $b)));
+    }
+
+    /**
+     * Get the archetype profile for an NPC based on their interests/temperament.
+     * Falls back to 'Warrior' if no match found.
+     */
+    public static function getArchetypeProfile($dynamics): array
+    {
+        // Try to infer archetype from NPC interests
+        $interests = $dynamics['interests'] ?? [];
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+
+        // Map dominant interest to archetype
+        if (!empty($interests)) {
+            arsort($interests);
+            $topInterest = array_key_first($interests);
+
+            $interestToArchetype = [
+                'combat'     => 'Warrior',
+                'adventure'  => 'Warrior',
+                'scholarly'  => 'Scholar',
+                'enchanting' => 'Scholar',
+                'nature'     => 'Primal',
+                'social'     => 'Bard',
+                'wealth'     => 'Noble',
+                'spiritual'  => 'Priest',
+                'crafting'   => 'Warrior',
+                'alchemy'    => 'Scholar',
+                'domestic'   => 'Noble',
+            ];
+
+            $archetype = $interestToArchetype[$topInterest] ?? 'Warrior';
+        } else {
+            // Fallback: temperament-based
+            $temperamentToArchetype = [
+                'Romantic'    => 'Bard',
+                'Anxious'     => 'Noble',
+                'Playful'     => 'Bard',
+                'Humble'      => 'Priest',
+                'Nurturing'   => 'Priest',
+                'Gentle'      => 'Scholar',
+                'Jealous'     => 'Noble',
+                'Stoic'       => 'Warrior',
+                'Proud'       => 'Noble',
+                'Bold'        => 'Warrior',
+                'Independent' => 'Rogue',
+                'Defiant'     => 'Primal',
+                'Guarded'     => 'Rogue',
+            ];
+            $archetype = $temperamentToArchetype[$temperament] ?? 'Warrior';
+        }
+
+        $profile = self::ATTRACTION_ARCHETYPES[$archetype] ?? self::ATTRACTION_ARCHETYPES['Warrior'];
+
+        // Add default tier thresholds if not present
+        if (!isset($profile['tier_thresholds'])) {
+            $profile['tier_thresholds'] = self::DEFAULT_TIER_THRESHOLDS;
+        }
+
+        return $profile;
+    }
+
+    // ========== ATTRACTION MATRIX — SCORING & GATING (PR 11) ==========
+
+    /**
+     * Score a single attraction pillar.
+     * Returns 0.0-1.0 continuous score.
+     */
+    public static function scoreAttractionPillar(string $pillarId, array $profile, array $playerData, string $npcName = '', &$dynamics = null): float
+    {
+        $config = self::getConfig();
+
+        switch ($pillarId) {
+            case 'beauty':
+                // Cosine similarity: player appearance embedding vs NPC beauty keywords embedding
+                $weight = floatval($config['attraction_beauty_weight'] ?? 1.0);
+                $playerEmbed = self::getPlayerAppearanceEmbedding();
+                if (empty($playerEmbed)) return 0.5 * $weight; // No data = neutral
+
+                $npcEmbed = [];
+                if ($dynamics !== null) {
+                    $npcEmbed = self::getNpcBeautyEmbedding($npcName, $dynamics);
+                }
+                if (empty($npcEmbed)) {
+                    // Generate from profile keywords
+                    $keywords = $profile['beauty_keywords'] ?? [];
+                    if (!empty($keywords) && function_exists('getEmbedding')) {
+                        try {
+                            $npcEmbed = getEmbedding(implode(', ', $keywords));
+                        } catch (\Throwable $e) {}
+                    }
+                }
+                if (empty($npcEmbed)) return 0.5 * $weight;
+
+                return self::clampedCosineSimilarity($playerEmbed, $npcEmbed) * $weight;
+
+            case 'strength':
+                $weight = floatval($config['attraction_strength_weight'] ?? 1.0);
+                $mode = $profile['strength_mode'] ?? 'flexible_total';
+                $threshold = floatval($profile['strength_threshold'] ?? 150);
+
+                if ($mode === 'irrelevant') return 1.0;
+
+                $relevantSkills = $profile['strength_skills'] ?? [];
+                $playerSkills = $playerData['skills'] ?? [];
+
+                if (empty($playerSkills)) return 0.0; // No skill data synced
+
+                $playerTotal = 0;
+                foreach ($relevantSkills as $skill) {
+                    $playerTotal += floatval($playerSkills[$skill] ?? 0);
+                }
+
+                if ($mode === 'flexible_total') {
+                    // Give partial credit for non-preferred skills
+                    $allSkillTotal = array_sum(array_map('floatval', $playerSkills));
+                    $playerTotal = max($playerTotal, $allSkillTotal * 0.4);
+                }
+
+                return min(1.0, ($playerTotal / max(1, $threshold))) * $weight;
+
+            case 'status':
+                $weight = floatval($config['attraction_status_weight'] ?? 1.0);
+                $metrics = $profile['status_metrics'] ?? [];
+                if (empty($metrics)) return 1.0;
+
+                $totalScore = 0;
+                foreach ($metrics as $metric) {
+                    $totalScore += self::scoreStatusMetric($metric, $playerData);
+                }
+                return min(1.0, ($totalScore / count($metrics))) * $weight;
+
+            case 'competence':
+                $weight = floatval($config['attraction_competence_weight'] ?? 1.0);
+                $metrics = $profile['competence_metrics'] ?? [];
+                if (empty($metrics)) return 1.0;
+
+                $totalScore = 0;
+                foreach ($metrics as $metric) {
+                    $totalScore += self::scoreCompetenceMetric($metric, $playerData);
+                }
+                return min(1.0, ($totalScore / count($metrics))) * $weight;
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * Score a single status metric against player data.
+     */
+    private static function scoreStatusMetric(array $metric, array $playerData): float
+    {
+        $type = $metric['type'] ?? '';
+        $min = floatval($metric['min'] ?? 0);
+        if ($min < 0.001) return 1.0; // No threshold = auto-pass
+
+        switch ($type) {
+            case 'faction_rank':
+                $faction = $metric['faction'] ?? '';
+                $ranks = $playerData['faction_ranks'] ?? [];
+                $rank = floatval($ranks[$faction] ?? 0);
+                return min(1.0, $rank / max(1, $min));
+
+            case 'npc_affinity':
+                // Check player's affinity with a specific NPC
+                $targetNpc = $metric['npc'] ?? '';
+                if (empty($targetNpc)) return 0.0;
+                try {
+                    $db = $GLOBALS['db'] ?? null;
+                    if ($db) {
+                        $escaped = $db->escape($targetNpc);
+                        $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+                        if ($row && !empty($row['extended_data'])) {
+                            $ext = json_decode($row['extended_data'], true) ?: [];
+                            $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+                            $aff = floatval($ext['relationships'][$playerName]['aff'] ?? 0);
+                            $normalizedAff = ($aff + 100) / 2.0; // Scale -100..+100 to 0..100
+                            return min(1.0, $normalizedAff / max(1, $min));
+                        }
+                    }
+                } catch (\Throwable $e) {}
+                return 0.0;
+
+            case 'lifetime_wealth':
+                $wealth = floatval($playerData['lifetime_wealth'] ?? 0);
+                return min(1.0, $wealth / max(1, $min));
+
+            case 'thane_count':
+                $thanes = $playerData['thane_holds'] ?? [];
+                $count = is_array($thanes) ? count($thanes) : 0;
+                return min(1.0, $count / max(1, $min));
+
+            case 'property_count':
+                $props = intval($playerData['property_count'] ?? 0);
+                return min(1.0, $props / max(1, $min));
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * Score a single competence metric against player data.
+     */
+    private static function scoreCompetenceMetric(array $metric, array $playerData): float
+    {
+        $type = $metric['type'] ?? '';
+        $min = floatval($metric['min'] ?? 0);
+        if ($min < 0.001) return 1.0;
+
+        switch ($type) {
+            case 'kill_category':
+                $category = $metric['category'] ?? '';
+                $kills = $playerData['kill_counts'] ?? [];
+                $count = floatval($kills[$category] ?? 0);
+                return min(1.0, $count / max(1, $min));
+
+            case 'quest_count':
+                $count = intval($playerData['quest_count'] ?? 0);
+                return min(1.0, $count / max(1, $min));
+
+            case 'quest_line':
+                $quest = $metric['quest'] ?? '';
+                $minStage = floatval($metric['min_stage'] ?? $min);
+                // Check quest progress — for now use faction_ranks as proxy
+                $factionRanks = $playerData['faction_ranks'] ?? [];
+                $rank = floatval($factionRanks[$quest] ?? 0);
+                return min(1.0, $rank / max(1, $minStage));
+
+            case 'kill_total':
+                $kills = $playerData['kill_counts'] ?? [];
+                $total = array_sum(array_map('floatval', $kills));
+                return min(1.0, $total / max(1, $min));
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * Check gender preference compatibility.
+     */
+    public static function checkGenderPreference(array $profile, array $playerData): bool
+    {
+        $pref = $profile['gender_pref'] ?? 'bisexual';
+        $fluidity = floatval($profile['gender_fluidity'] ?? 0.5);
+        $playerGender = strtolower($playerData['gender'] ?? 'male');
+
+        if ($pref === 'bisexual') return true;
+        if ($fluidity >= 0.9) return true; // Fully fluid
+
+        // Determine if gender matches preference
+        $npcExpectsOpposite = ($pref === 'heterosexual');
+        // We don't know NPC gender from this data — infer from profile keywords
+        // For now, assume NPC gender context is handled elsewhere and just check fluidity
+        // If fluidity > random threshold, allow it regardless
+        if ($fluidity > 0.5) return true;
+
+        // Strict check would need NPC gender — skip for now, return true
+        // Gender gating will be refined when NPC profiles have explicit gender fields
+        return true;
+    }
+
+    /**
+     * Calculate the maximum relationship tier available based on pillar scores.
+     */
+    public static function calculateTierCeiling(array $profile, array $pillarScores): string
+    {
+        $thresholds = $profile['tier_thresholds'] ?? self::DEFAULT_TIER_THRESHOLDS;
+
+        // Walk from highest to lowest tier
+        $tierOrder = ['sworn', 'bonded', 'close', 'friend', 'crush'];
+
+        foreach ($tierOrder as $tier) {
+            if (!isset($thresholds[$tier])) continue;
+            $requirements = $thresholds[$tier];
+            $passes = true;
+            foreach ($requirements as $pillar => $minScore) {
+                if (($pillarScores[$pillar] ?? 0) < $minScore) {
+                    $passes = false;
+                    break;
+                }
+            }
+            if ($passes) return $tier;
+        }
+
+        return 'stranger';
+    }
+
+    /**
+     * Calculate passion modifier based on pillar scores and intimacy gate type.
+     */
+    public static function calculatePassionModifier(array $profile, array $pillarScores, bool $visceralPass): float
+    {
+        $gate = $profile['intimacy_gate'] ?? 'balanced';
+        $beautyScore = $pillarScores['beauty'] ?? 0;
+
+        switch ($gate) {
+            case 'visceral':
+                return $visceralPass ? max(0.3, $beautyScore) : 0.1;
+
+            case 'bond':
+                // Passion barely builds without commitment — beauty gives small bonus
+                return $beautyScore * 0.3; // Max 0.3 until bonded tier is reached
+
+            case 'balanced':
+                return $visceralPass ? max(0.5, $beautyScore) : ($beautyScore * 0.5);
+        }
+
+        return 0.5;
+    }
+
+    /**
+     * Calculate effective tolerance from maturity x attachment style.
+     * Returns 0.0-1.0 where higher = more tolerant/flexible.
+     */
+    public static function calculateEffectiveTolerance($dynamics): float
+    {
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        $attachStyle = self::getAttachmentStyle($dynamics);
+
+        $baseTolerance = $maturity / 100.0;
+
+        switch ($attachStyle) {
+            case 'secure':
+                $tolerance = $baseTolerance * 1.2; // High maturity = more tolerant
+                break;
+            case 'avoidant':
+                $tolerance = 1.0 - ($baseTolerance * 0.8); // High maturity = less tolerant (refined standards)
+                break;
+            case 'anxious':
+                $tolerance = ($maturity > 50) ? (1.0 - $baseTolerance * 0.5) : 0.9; // Low mat = desperate "tolerance"
+                break;
+            case 'toxic':
+                $tolerance = 0.3; // Pattern-locked
+                break;
+            default:
+                $tolerance = 0.5;
+        }
+
+        return min(1.0, max(0.0, $tolerance));
+    }
+
+    /**
+     * Main Attraction Matrix calculation.
+     * Scores all 4 pillars, determines tier ceiling, friendzone, passion modifier.
+     * Caches result on dynamics for reuse within the same request cycle.
+     */
+    public static function calculateAttractionMatrix(string $npcName, array &$dynamics, array $playerData = null): array
+    {
+        // Config gate
+        $config = self::getConfig();
+        if (empty($config['attraction_matrix_enabled'])) {
+            return [
+                'pillar_scores' => ['beauty' => 1.0, 'strength' => 1.0, 'status' => 1.0, 'competence' => 1.0],
+                'pillar_pass' => ['beauty' => true, 'strength' => true, 'status' => true, 'competence' => true],
+                'visceral_pass' => true,
+                'sociological_pass' => true,
+                'gender_pass' => true,
+                'max_tier' => 'sworn',
+                'friendzoned' => false,
+                'passion_mult' => 1.0,
+                'respect_mult' => 1.0,
+                'effective_tolerance' => 0.5,
+                'intimacy_gate' => 'balanced',
+                'enabled' => false,
+            ];
+        }
+
+        // Load player data if not provided
+        if ($playerData === null) {
+            $playerData = self::getPlayerStats();
+        }
+
+        // Get NPC attraction profile
+        $profile = $dynamics['attraction_profile'] ?? null;
+        if (!$profile || !is_array($profile)) {
+            $profile = self::getArchetypeProfile($dynamics);
+        }
+
+        // Score each pillar
+        $pillarScores = [];
+        foreach (['beauty', 'strength', 'status', 'competence'] as $pillar) {
+            $pillarScores[$pillar] = self::scoreAttractionPillar($pillar, $profile, $playerData, $npcName, $dynamics);
+        }
+
+        // Apply rigidity rules
+        $rigidity = $profile['pillar_rigidity'] ?? [];
+        $passThreshold = self::ATTRACTION_PASS_THRESHOLD;
+
+        // Adjust threshold by effective tolerance
+        $tolerance = self::calculateEffectiveTolerance($dynamics);
+        $adjustedThreshold = $passThreshold * (1.0 - ($tolerance * 0.2)); // High tolerance = slightly lower bar
+
+        $pillarPass = [];
+        foreach ($pillarScores as $pillar => $score) {
+            $rig = $rigidity[$pillar] ?? 'soft';
+            switch ($rig) {
+                case 'rigid':
+                    $pillarPass[$pillar] = ($score >= $adjustedThreshold);
+                    break;
+                case 'flexible':
+                    $pillarPass[$pillar] = ($score >= $adjustedThreshold * 0.6);
+                    break;
+                case 'soft':
+                    $pillarPass[$pillar] = true; // Always passes, score still affects modifier
+                    break;
+                case 'irrelevant':
+                    $pillarPass[$pillar] = true;
+                    $pillarScores[$pillar] = 1.0;
+                    break;
+                default:
+                    $pillarPass[$pillar] = ($score >= $adjustedThreshold);
+            }
+        }
+
+        // Axis results
+        $visceralPass = $pillarPass['beauty'] && $pillarPass['strength'];
+        $sociologicalPass = $pillarPass['status'] && $pillarPass['competence'];
+
+        // Gender check
+        $genderPass = self::checkGenderPreference($profile, $playerData);
+
+        // Tier ceiling
+        $maxTier = self::calculateTierCeiling($profile, $pillarScores);
+
+        // Friendzone: sociological pass + visceral fail + gender ok
+        $friendzoned = ($sociologicalPass && !$visceralPass && $genderPass);
+
+        // Passion modifier
+        $passionMult = self::calculatePassionModifier($profile, $pillarScores, $visceralPass);
+
+        // Respect modifier
+        $respectMult = (($pillarScores['competence'] ?? 0) + ($pillarScores['status'] ?? 0)) / 2.0;
+
+        // Friendzone caps passion
+        if ($friendzoned) {
+            $passionMult = min($passionMult, 0.2);
+        }
+
+        $result = [
+            'pillar_scores'       => $pillarScores,
+            'pillar_pass'         => $pillarPass,
+            'visceral_pass'       => $visceralPass,
+            'sociological_pass'   => $sociologicalPass,
+            'gender_pass'         => $genderPass,
+            'max_tier'            => $maxTier,
+            'friendzoned'         => $friendzoned,
+            'passion_mult'        => $passionMult,
+            'respect_mult'        => $respectMult,
+            'effective_tolerance' => $tolerance,
+            'intimacy_gate'       => $profile['intimacy_gate'] ?? 'balanced',
+            'enabled'             => true,
+        ];
+
+        // Cache on dynamics
+        $dynamics['_attraction_matrix_cache'] = $result;
+        $dynamics['_attraction_tier_ceiling'] = $maxTier;
+        $dynamics['_attraction_friendzoned'] = $friendzoned;
+        $dynamics['_attraction_passion_mult'] = $passionMult;
+        $dynamics['_attraction_matrix_last_eval'] = intval($dynamics['interaction_count'] ?? 0);
+
+        self::log("[MATRIX] {$npcName}: beauty=" . round($pillarScores['beauty'], 2) . " str=" . round($pillarScores['strength'], 2) . " status=" . round($pillarScores['status'], 2) . " comp=" . round($pillarScores['competence'], 2) . " tier={$maxTier} fz=" . ($friendzoned ? '1' : '0') . " passion_mult=" . round($passionMult, 2));
+
+        return $result;
+    }
+
+    /**
+     * Generate attraction context text for LLM injection.
+     */
+    public static function generateAttractionContext(string $npcName, array $matrixResult, array $dynamics): string
+    {
+        $scores = $matrixResult['pillar_scores'] ?? [];
+        $friendzoned = $matrixResult['friendzoned'] ?? false;
+        $intimacyGate = $matrixResult['intimacy_gate'] ?? 'balanced';
+        $maxTier = $matrixResult['max_tier'] ?? 'stranger';
+        $visceralPass = $matrixResult['visceral_pass'] ?? false;
+
+        $lines = [];
+
+        // Physical attraction
+        $beautyScore = $scores['beauty'] ?? 0;
+        if ($beautyScore > 0.7) {
+            $lines[] = "{$npcName} finds the player's appearance strongly compelling -- exactly their type.";
+        } elseif ($beautyScore > 0.4) {
+            $lines[] = "{$npcName} finds the player reasonably attractive, though not overwhelmingly so.";
+        } elseif ($beautyScore > 0.2) {
+            $lines[] = "{$npcName} is not particularly drawn to the player's appearance.";
+        } else {
+            $lines[] = "{$npcName} feels no physical attraction to the player.";
+        }
+
+        // Competence/status
+        $compScore = (($scores['competence'] ?? 0) + ($scores['status'] ?? 0)) / 2;
+        if ($compScore > 0.7) {
+            $lines[] = "They see the player as accomplished and worthy of deep respect.";
+        } elseif ($compScore > 0.4) {
+            $lines[] = "The player has some standing but hasn't fully proven themselves yet.";
+        } else {
+            $lines[] = "The player hasn't earned significant standing in {$npcName}'s eyes.";
+        }
+
+        // Friendzone
+        if ($friendzoned) {
+            $lines[] = "{$npcName} values the player as a trusted companion but romantic attraction is absent. This is a deep friendship, not a romance. Any flirtation will be deflected with warmth, not cruelty.";
+        }
+
+        // Tier ceiling
+        $tierLabels = [
+            'stranger' => 'cautious distance',
+            'crush' => 'casual interest',
+            'friend' => 'genuine friendship',
+            'close' => 'close partnership',
+            'bonded' => 'deep commitment',
+            'sworn' => 'soul-level bond',
+        ];
+        $ceilingLabel = $tierLabels[$maxTier] ?? 'neutral distance';
+        if ($maxTier !== 'sworn') {
+            $lines[] = "Maximum relationship depth currently available: {$ceilingLabel}. Deeper tiers require proving more to {$npcName}.";
+        }
+
+        // Intimacy gate
+        if ($intimacyGate === 'visceral' && $visceralPass) {
+            $lines[] = "{$npcName} is physically open to the player regardless of commitment status.";
+        } elseif ($intimacyGate === 'bond') {
+            $lines[] = "{$npcName} requires genuine emotional commitment before physical intimacy.";
+        }
+
+        return implode(' ', $lines);
+    }
+
+    // ========== END ATTRACTION MATRIX — SCORING & GATING (PR 11) ==========
+
+    // ========== CASCADING AFFINITY NETWORK (PR 12) ==========
+
+    /**
+     * Propagate a significant affinity change to bonded NPCs.
+     * One hop only — no recursive cascading.
+     * Uses social sensitivity curves to modulate impact per receiving NPC.
+     *
+     * @param string $sourceNpc   NPC whose affinity changed
+     * @param float  $affinityDelta The delta that triggered the cascade
+     * @param string $playerName  Player name (excluded from cascade targets)
+     * @return array  Results per affected NPC
+     */
+    public static function propagateAffinityChange(string $sourceNpc, float $affinityDelta, string $playerName): array
+    {
+        $config = self::getConfig();
+        if (empty($config['cascade_network_enabled'])) return [];
+
+        $threshold = floatval($config['cascade_threshold'] ?? self::CASCADE_THRESHOLD);
+        if (abs($affinityDelta) < $threshold) return [];
+
+        $decay = floatval($config['cascade_decay'] ?? self::CASCADE_DECAY);
+        $sourceBonds = self::getAllBondsForNpc($sourceNpc);
+        $results = [];
+        $count = 0;
+
+        foreach ($sourceBonds as $targetName => $bond) {
+            if ($count >= self::CASCADE_MAX_TARGETS) break;
+            if (strcasecmp($targetName, $playerName) === 0) continue;
+
+            $bondAff = ($bond['aff'] + 100) / 200.0; // Normalize to 0-1
+            if ($bondAff < 0.2) continue; // Weak bonds don't propagate
+
+            // Load target NPC dynamics
+            $targetDynamics = self::getDynamics($targetName);
+            if (empty($targetDynamics) || !is_array($targetDynamics)) continue;
+
+            $targetTemperament = $targetDynamics['inferred_temperament'] ?? $targetDynamics['temperament'] ?? 'Stoic';
+
+            // Calculate base cascade delta
+            $cascadeDelta = $affinityDelta * $bondAff * $decay;
+
+            // Check if target dislikes source — inverse cascade (enemy of my enemy)
+            $targetBonds = self::getAllBondsForNpc($targetName);
+            $targetToSource = $targetBonds[$sourceNpc] ?? null;
+            if ($targetToSource) {
+                $targetSourceAff = ($targetToSource['aff'] + 100) / 200.0;
+                if ($targetSourceAff < 0.3) {
+                    $cascadeDelta *= -0.5; // Weaker inverse
+                }
+            }
+
+            // Apply social sensitivity curve
+            if (method_exists(self::class, 'applySocialSensitivity')) {
+                $cascadeDelta = self::applySocialSensitivity($targetDynamics, 'affinity', $cascadeDelta, $targetTemperament);
+            }
+
+            if (abs($cascadeDelta) < 1.0) continue; // Too small to matter
+
+            // Apply to target's affinity toward player
+            self::applyDelta('affinity', $targetDynamics, $cascadeDelta, $targetTemperament);
+            self::saveDynamics($targetName, $targetDynamics);
+
+            $results[] = [
+                'target' => $targetName,
+                'cascade_delta' => round($cascadeDelta, 2),
+                'bond_strength' => round($bondAff, 2),
+            ];
+
+            $count++;
+            self::log("[CASCADE] {$sourceNpc} -> {$targetName}: delta=" . round($cascadeDelta, 2) . " (bond=" . round($bondAff, 2) . ")");
+        }
+
+        return $results;
+    }
+
+    // ========== END CASCADING AFFINITY NETWORK (PR 12) ==========
+
+    // ========== DUTY OVERRIDE (PR 12) ==========
+
+    /**
+     * Check if current interaction is quest-protected.
+     * Returns dampening factor: 1.0 = normal, 0.0 = fully protected, 0.1 = quest-dampened.
+     */
+    public static function getDutyOverrideFactor(): float
+    {
+        $config = self::getConfig();
+        if (empty($config['duty_override_enabled'])) return 1.0;
+
+        // Check explicit flag from game-side
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if ($db) {
+                $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = '_duty_override_active' LIMIT 1");
+                if ($row && !empty($row['value'])) {
+                    $override = json_decode($row['value'], true);
+                    if (is_array($override) && !empty($override['active'])) {
+                        return floatval($override['dampening'] ?? 0.1);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        // Check request type for quest indicators
+        $gameRequest = $GLOBALS['gameRequest'] ?? [];
+        $reqType = is_array($gameRequest) ? ($gameRequest[0] ?? '') : '';
+        $reqData = is_array($gameRequest) ? ($gameRequest[3] ?? '') : '';
+
+        $questIndicators = ['quest_dialogue', 'quest_event', 'snqe_', 'forced_dialogue', 'scene_dialogue'];
+        foreach ($questIndicators as $indicator) {
+            if (stripos($reqType, $indicator) !== false || stripos($reqData, $indicator) !== false) {
+                return 0.1;
+            }
+        }
+
+        return 1.0;
+    }
+
+    // ========== END DUTY OVERRIDE (PR 12) ==========
+
+    // ========== PARASITE DETECTION (PR 12) ==========
+
+    /**
+     * Check interaction patterns for parasitic behavior (gift-only engagement).
+     * Returns 'parasite' if detected, null otherwise.
+     */
+    public static function checkParasitePattern(string $npcName, array &$dynamics): ?string
+    {
+        $config = self::getConfig();
+        if (empty($config['parasite_detection_enabled'])) return null;
+
+        $pattern = $dynamics['_interaction_pattern'] ?? [];
+        $totalWindow = intval($pattern['total_window'] ?? 0);
+
+        if ($totalWindow < 10) return null; // Not enough data
+
+        $giftCount = intval($pattern['gift_count'] ?? 0);
+        $genuineCount = intval($pattern['genuine_count'] ?? 0);
+        $giftRatio = $giftCount / max(1, $totalWindow);
+
+        // Trigger: >70% gifts AND <3 genuine interactions in the window
+        if ($giftRatio > 0.7 && $genuineCount < 3) {
+            $currentOverride = $dynamics['_relationship_type_override'] ?? null;
+            if ($currentOverride !== 'parasite') {
+                // Record history
+                $dynamics['_relationship_type_history'][] = [
+                    'from' => self::getRelationshipType($npcName, $dynamics),
+                    'to' => 'parasite',
+                    'at' => intval($dynamics['interaction_count'] ?? 0),
+                    'reason' => 'gift_ratio=' . round($giftRatio, 2),
+                ];
+                $dynamics['_relationship_type_override'] = 'parasite';
+                self::log("[TYPE] Parasite detected for {$npcName}: gift_ratio=" . round($giftRatio, 2));
+                return 'parasite';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Check if a parasite relationship has recovered (genuine engagement resumed).
+     */
+    public static function checkParasiteRecovery(string $npcName, array &$dynamics): ?string
+    {
+        $currentOverride = $dynamics['_relationship_type_override'] ?? null;
+        if ($currentOverride !== 'parasite') return null;
+
+        $pattern = $dynamics['_interaction_pattern'] ?? [];
+        $genuineCount = intval($pattern['genuine_count'] ?? 0);
+        $giftCount = intval($pattern['gift_count'] ?? 0);
+
+        // Recovery: 3+ genuine interactions AND gifts <= genuine
+        if ($genuineCount >= 3 && $giftCount <= $genuineCount) {
+            $history = $dynamics['_relationship_type_history'] ?? [];
+            $lastEntry = !empty($history) ? end($history) : null;
+            $previousType = ($lastEntry && isset($lastEntry['from'])) ? $lastEntry['from'] : null;
+
+            $dynamics['_relationship_type_override'] = ($previousType !== 'parasite') ? $previousType : null;
+            $dynamics['_relationship_type_history'][] = [
+                'from' => 'parasite',
+                'to' => $previousType ?? 'friend',
+                'at' => intval($dynamics['interaction_count'] ?? 0),
+                'reason' => 'genuine_recovery',
+            ];
+            self::log("[TYPE] Parasite recovery for {$npcName}: returning to " . ($previousType ?? 'default'));
+            return $previousType ?? 'friend';
+        }
+
+        return null;
+    }
+
+    /**
+     * Update interaction pattern tracking.
+     * Called from postrequest after interaction classification.
+     */
+    public static function updateInteractionPattern(array &$dynamics, ?string $interactionType, float $affinityDelta): void
+    {
+        if (!isset($dynamics['_interaction_pattern']) || !is_array($dynamics['_interaction_pattern'])) {
+            $dynamics['_interaction_pattern'] = [
+                'gift_count' => 0, 'genuine_count' => 0,
+                'total_window' => 0, 'window_start' => 0,
+                'last_interaction_type' => null,
+            ];
+        }
+
+        $pattern = &$dynamics['_interaction_pattern'];
+        $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+
+        // Reset window every 20 interactions
+        if (($interactionCount - intval($pattern['window_start'] ?? 0)) >= 20) {
+            $pattern['gift_count'] = 0;
+            $pattern['genuine_count'] = 0;
+            $pattern['total_window'] = 0;
+            $pattern['window_start'] = $interactionCount;
+        }
+
+        $pattern['total_window']++;
+        $pattern['last_interaction_type'] = $interactionType;
+
+        if ($interactionType === 'gifts') {
+            $pattern['gift_count']++;
+        } elseif ($interactionType !== null && $affinityDelta > 0) {
+            $pattern['genuine_count']++;
+        }
+    }
+
+    // ========== END PARASITE DETECTION (PR 12) ==========
+
+    // ========== BASELINE DRIFT (PR 13) ==========
+
+    /**
+     * Check and apply baseline drift for all driftable dimensions.
+     * Called during diary eval (~5 hours play time).
+     * Nudges baselines toward sustained reality. Capped at ±20 from temperament default.
+     */
+    public static function processBaselineDrift(string $npcName, array &$dynamics): array
+    {
+        $config = self::getConfig();
+        if (empty($config['baseline_drift_enabled'])) return [];
+
+        $driftResults = [];
+        $samples = &$dynamics['_baseline_drift_samples'];
+        if (!is_array($samples)) $samples = [];
+
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $dims = &$dynamics['dimensions'];
+
+        $driftable = ['affinity', 'trust', 'comfort', 'respect', 'warmth', 'maturity'];
+
+        foreach ($driftable as $dimId) {
+            if (!isset($dims[$dimId])) continue;
+
+            $currentX = floatval($dims[$dimId]['x'] ?? 0);
+            $currentBaseline = floatval($dims[$dimId]['baseline'] ?? 0);
+            $temperamentBaseline = self::getTemperamentBaseline($temperament, $dimId);
+
+            // Record sample
+            if (!isset($samples[$dimId])) $samples[$dimId] = [];
+            $samples[$dimId][] = $currentX;
+            if (count($samples[$dimId]) > 5) {
+                $samples[$dimId] = array_slice($samples[$dimId], -5);
+            }
+
+            if (count($samples[$dimId]) < self::BASELINE_DRIFT_MIN_SAMPLES) continue;
+
+            // Check consistency: all samples on same side of baseline (with tolerance)
+            $allAbove = true;
+            $allBelow = true;
+            foreach ($samples[$dimId] as $sample) {
+                if ($sample <= $currentBaseline + self::BASELINE_DRIFT_TOLERANCE) $allAbove = false;
+                if ($sample >= $currentBaseline - self::BASELINE_DRIFT_TOLERANCE) $allBelow = false;
+            }
+
+            if (!$allAbove && !$allBelow) continue; // Mixed — no drift
+
+            // Calculate drift
+            $avgSample = array_sum($samples[$dimId]) / count($samples[$dimId]);
+            $driftAmount = ($avgSample - $currentBaseline) * self::BASELINE_DRIFT_RATE;
+
+            // Cap: can't drift more than ±MAX from temperament default
+            $newBaseline = $currentBaseline + $driftAmount;
+            $driftFromDefault = $newBaseline - $temperamentBaseline;
+            if (abs($driftFromDefault) > self::BASELINE_DRIFT_MAX) {
+                $newBaseline = $temperamentBaseline + (self::BASELINE_DRIFT_MAX * ($driftFromDefault > 0 ? 1 : -1));
+                $driftAmount = $newBaseline - $currentBaseline;
+            }
+
+            if (abs($driftAmount) < 0.1) continue;
+
+            $dims[$dimId]['baseline'] = round($newBaseline, 2);
+            $driftResults[$dimId] = [
+                'old_baseline' => $currentBaseline,
+                'new_baseline' => round($newBaseline, 2),
+                'drift' => round($driftAmount, 2),
+            ];
+
+            self::log("[DRIFT] {$npcName} {$dimId}: baseline {$currentBaseline} -> " . round($newBaseline, 2));
+        }
+
+        return $driftResults;
+    }
+
+    // ========== END BASELINE DRIFT (PR 13) ==========
+
+    // ========== INTERNAL WEATHER ENGINE (PR 13) ==========
+
+    /**
+     * Calculate interest satisfaction from all 4 NPC-centric sources.
+     */
+    public static function calculateInterestSatisfaction(string $npcName, array &$dynamics, ?string $currentInterest, array $eventContext = []): array
+    {
+        $interests = $dynamics['interests'] ?? [];
+        if (empty($interests)) return [];
+
+        $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+        $lastSatisfied = &$dynamics['_interest_last_satisfied'];
+        if (!is_array($lastSatisfied)) $lastSatisfied = [];
+        $satisfaction = &$dynamics['_interest_satisfaction'];
+        if (!is_array($satisfaction)) $satisfaction = [];
+
+        // Source 1: Direct interaction interest
+        if ($currentInterest && isset($interests[$currentInterest])) {
+            $lastSatisfied[$currentInterest] = $interactionCount;
+            $satisfaction[$currentInterest] = 1.0;
+        }
+
+        // Source 2: Companion proximity events
+        $cachePeople = $GLOBALS['CACHE_PEOPLE'] ?? '';
+        $cacheParty = $GLOBALS['CACHE_PARTY'] ?? '';
+        $isInParty = (stripos($cachePeople, $npcName) !== false || stripos($cacheParty, $npcName) !== false);
+
+        if ($isInParty) {
+            $eventType = $eventContext['type'] ?? ($GLOBALS['gameRequest'][0] ?? '');
+            $eventInterestMap = [
+                'combatend' => 'combat', 'combatstart' => 'combat', 'death' => 'combat',
+                'quest_event' => 'adventure', 'snqe_' => 'adventure',
+            ];
+            foreach ($eventInterestMap as $prefix => $interest) {
+                if (stripos($eventType, $prefix) !== false && isset($interests[$interest])) {
+                    $lastSatisfied[$interest] = $interactionCount;
+                    $satisfaction[$interest] = max($satisfaction[$interest] ?? 0, 0.8);
+                }
+            }
+        }
+
+        // Source 3: Location inference
+        $locKey = "_minai_" . strtolower($npcName) . "//locationkeywords";
+        $locationKeywords = '';
+        foreach ($GLOBALS as $gk => $gv) {
+            if (strcasecmp($gk, $locKey) === 0) {
+                $locationKeywords = $gv;
+                break;
+            }
+        }
+        if (empty($locationKeywords)) {
+            $locationKeywords = $GLOBALS['CACHE_LOCATION'] ?? '';
+        }
+
+        $locationInterestMap = [
+            'forge' => 'crafting', 'workshop' => 'crafting',
+            'tavern' => 'social', 'inn' => 'social',
+            'dungeon' => 'adventure', 'cave' => 'adventure', 'ruin' => 'adventure',
+            'temple' => 'spiritual', 'shrine' => 'spiritual',
+            'farm' => 'nature', 'garden' => 'nature', 'forest' => 'nature',
+            'library' => 'scholarly', 'college' => 'scholarly',
+            'market' => 'wealth', 'shop' => 'wealth',
+            'home' => 'domestic', 'house' => 'domestic',
+        ];
+        foreach ($locationInterestMap as $keyword => $interest) {
+            if (stripos($locationKeywords, $keyword) !== false && isset($interests[$interest])) {
+                $satisfaction[$interest] = max($satisfaction[$interest] ?? 0, 0.5);
+            }
+        }
+
+        // Source 4: Faction/occupation passive floor
+        $factionFloors = self::getFactionInterestFloors($npcName, $dynamics);
+        foreach ($factionFloors as $interest => $floor) {
+            if (isset($interests[$interest])) {
+                $satisfaction[$interest] = max($satisfaction[$interest] ?? 0, $floor);
+            }
+        }
+
+        // Intimacy (special handling)
+        $satisfaction['intimacy'] = self::checkIntimacySatisfaction($dynamics, $interactionCount, $eventContext);
+
+        // Decay satisfaction for stale interests
+        foreach ($interests as $category => $weight) {
+            if ($weight < 1.0) continue;
+            $lastSat = intval($lastSatisfied[$category] ?? 0);
+            $gap = $interactionCount - $lastSat;
+            if ($gap >= self::WEATHER_DEPRIVATION_THRESHOLD) {
+                $current = floatval($satisfaction[$category] ?? 0);
+                $floor = $factionFloors[$category] ?? 0.0;
+                $satisfaction[$category] = max($floor, $current * 0.9);
+            }
+        }
+
+        return $satisfaction;
+    }
+
+    /**
+     * Get passive interest floors from NPC factions.
+     */
+    private static function getFactionInterestFloors(string $npcName, array $dynamics): array
+    {
+        $floors = [];
+
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if (!$db) return $floors;
+
+            $escaped = $db->escape($npcName);
+            $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+            if ($row && !empty($row['extended_data'])) {
+                $ext = json_decode($row['extended_data'], true) ?: [];
+                $factions = $ext['factions'] ?? [];
+
+                foreach ($factions as $faction) {
+                    $name = $faction['name'] ?? '';
+                    foreach (self::FACTION_INTEREST_FLOORS as $factionKey => $interestFloors) {
+                        if (stripos($name, $factionKey) !== false) {
+                            foreach ($interestFloors as $interest => $floor) {
+                                $floors[$interest] = max($floors[$interest] ?? 0, $floor);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        return $floors;
+    }
+
+    /**
+     * Check intimacy satisfaction. Uses OStim/touch events + attachment-rate modifiers.
+     */
+    private static function checkIntimacySatisfaction(array &$dynamics, int $interactionCount, array $eventContext = []): float
+    {
+        $lastIntimacy = intval($dynamics['_intimacy_last_satisfied'] ?? 0);
+        $gap = $interactionCount - $lastIntimacy;
+
+        // Check current event for intimacy signals
+        $eventType = $eventContext['type'] ?? ($GLOBALS['gameRequest'][0] ?? '');
+        $eventData = is_array($GLOBALS['gameRequest'] ?? null) ? ($GLOBALS['gameRequest'][3] ?? '') : '';
+
+        $fullSatisfy = ['ext_nsfw_physics', 'OStim', 'ostim'];
+        $partialSatisfy = ['ExtCmdHug', 'ExtCmdKiss'];
+
+        foreach ($fullSatisfy as $prefix) {
+            if (stripos($eventType, $prefix) !== false || stripos($eventData, $prefix) !== false) {
+                $dynamics['_intimacy_last_satisfied'] = $interactionCount;
+                return 1.0;
+            }
+        }
+        foreach ($partialSatisfy as $prefix) {
+            if (stripos($eventType, $prefix) !== false || stripos($eventData, $prefix) !== false) {
+                $dynamics['_intimacy_last_satisfied'] = $interactionCount;
+                return 0.5;
+            }
+        }
+
+        // Deprivation rate modified by attachment style
+        $attachStyle = self::getAttachmentStyle($dynamics);
+        $deprivationMult = [
+            'avoidant' => 0.5,
+            'anxious'  => 2.0,
+            'secure'   => 1.0,
+            'toxic'    => 1.5,
+        ];
+        $mult = $deprivationMult[$attachStyle] ?? 1.0;
+
+        $effectiveGap = $gap * $mult;
+        if ($effectiveGap < 5) return 0.8;
+        if ($effectiveGap < 10) return 0.5;
+        if ($effectiveGap < 20) return 0.2;
+        return 0.0;
+    }
+
+    /**
+     * Update internal weather based on NPC-centric satisfaction levels.
+     */
+    public static function updateInternalWeather(string $npcName, array &$dynamics, ?string $currentInterest, array $eventContext = []): string
+    {
+        $config = self::getConfig();
+        if (empty($config['internal_weather_enabled'])) return 'clear';
+
+        $interests = $dynamics['interests'] ?? [];
+        if (empty($interests)) return 'clear';
+
+        // Calculate satisfaction from all 4 sources
+        $satisfaction = self::calculateInterestSatisfaction($npcName, $dynamics, $currentInterest, $eventContext);
+
+        // Calculate deprivation ratio (weighted)
+        $deprivedWeight = 0;
+        $totalWeight = 0;
+        foreach ($interests as $category => $weight) {
+            if ($weight < 1.0) continue;
+            $adjustedWeight = $weight - 0.9;
+            $sat = floatval($satisfaction[$category] ?? 0);
+            if ($sat < 0.3) {
+                $deprivedWeight += $adjustedWeight * (1.0 - $sat);
+            }
+            $totalWeight += $adjustedWeight;
+        }
+
+        // Add intimacy interest (inferred from passion if not explicit)
+        $intimacyWeight = floatval($interests['intimacy'] ?? 0);
+        if ($intimacyWeight < 1.0) {
+            $passion = floatval($dynamics['dimensions']['passion']['x'] ?? 0);
+            if ($passion > 30) $intimacyWeight = 1.0 + ($passion / 100.0);
+        }
+        if ($intimacyWeight >= 1.0) {
+            $intimacySat = floatval($satisfaction['intimacy'] ?? 0);
+            $adjustedWeight = $intimacyWeight - 0.9;
+            if ($intimacySat < 0.3) {
+                $deprivedWeight += $adjustedWeight * (1.0 - $intimacySat);
+            }
+            $totalWeight += $adjustedWeight;
+        }
+
+        $ratio = ($totalWeight > 0) ? ($deprivedWeight / $totalWeight) : 0;
+        $oldWeather = $dynamics['_internal_weather'] ?? 'clear';
+
+        if ($ratio >= 0.6) {
+            $newWeather = 'stormy';
+        } elseif ($ratio >= 0.3) {
+            $newWeather = 'overcast';
+        } elseif ($ratio <= 0.1) {
+            $newWeather = 'sunny';
+        } else {
+            $newWeather = 'clear';
+        }
+
+        $dynamics['_internal_weather'] = $newWeather;
+
+        if ($newWeather !== $oldWeather) {
+            self::log("[WEATHER] {$npcName}: {$oldWeather} -> {$newWeather} (deprivation=" . round($ratio, 2) . ")");
+        }
+
+        return $newWeather;
+    }
+
+    /**
+     * Apply weather-based dimension modifiers (small per-interaction accumulation).
+     */
+    public static function applyWeatherModifiers(string $npcName, array &$dynamics, string $temperament): void
+    {
+        $weather = $dynamics['_internal_weather'] ?? 'clear';
+        $modifiers = self::WEATHER_MODIFIERS[$weather] ?? [];
+
+        foreach ($modifiers as $dimId => $delta) {
+            $scaledDelta = $delta * 0.1;
+            self::applyDelta($dimId, $dynamics, $scaledDelta, $temperament);
+        }
+    }
+
+    /**
+     * Generate M/F-aware intimacy deprivation context.
+     */
+    public static function generateIntimacyDeprivationContext(string $npcName, array $dynamics): ?string
+    {
+        $intimacySat = floatval($dynamics['_interest_satisfaction']['intimacy'] ?? 1.0);
+        if ($intimacySat > 0.3) return null;
+
+        $dims = $dynamics['dimensions'] ?? [];
+        $coordM = floatval($dims['coord_m']['x'] ?? 50);
+        $coordF = floatval($dims['coord_f']['x'] ?? 50);
+        $maturity = floatval($dims['maturity']['x'] ?? 50);
+
+        if ($maturity < 30) {
+            $key = 'low_maturity';
+        } elseif ($coordM > 65 && $coordM > $coordF) {
+            $key = 'high_m';
+        } elseif ($coordF > 65 && $coordF > $coordM) {
+            $key = 'high_f';
+        } else {
+            $key = 'balanced';
+        }
+
+        return str_replace('{NAME}', $npcName, self::INTIMACY_DEPRIVATION_CONTEXT[$key]);
+    }
+
+    // ========== VAMPIRE/WEREWOLF MOODIFICATIONS (PR 13) ==========
+
+    /**
+     * Get creature dimension modifiers based on time/moon.
+     * Returns array of dimId => modifier value, or empty array.
+     */
+    public static function getCreatureModifiers(string $npcName, array $dynamics): array
+    {
+        $config = self::getConfig();
+        if (empty($config['creature_moodifications_enabled'])) return [];
+
+        $creatureType = self::detectCreatureType($npcName, $dynamics);
+        if (!$creatureType) return [];
+
+        $isNight = self::isGameNight();
+        $isFullMoon = self::isFullMoon();
+        $modifiers = [];
+
+        if ($creatureType === 'vampire') {
+            $base = self::VAMPIRE_NIGHT_MODIFIERS;
+            if ($isNight) {
+                $modifiers = $base;
+            } else {
+                foreach ($base as $dim => $val) {
+                    $modifiers[$dim] = -$val * self::CREATURE_DAY_INVERSION;
+                }
+            }
+        } elseif ($creatureType === 'werewolf') {
+            $base = self::WEREWOLF_MOON_MODIFIERS;
+            if ($isFullMoon) {
+                $modifiers = $base;
+            } elseif ($isNight) {
+                foreach ($base as $dim => $val) {
+                    $modifiers[$dim] = $val * 0.5;
+                }
+            } else {
+                foreach ($base as $dim => $val) {
+                    $modifiers[$dim] = -$val * self::CREATURE_DAY_INVERSION;
+                }
+            }
+        }
+
+        return $modifiers;
+    }
+
+    /**
+     * Apply creature modifiers to dimensions (scaled x0.1 per interaction).
+     */
+    public static function applyCreatureModifiers(string $npcName, array &$dynamics, string $temperament): void
+    {
+        $modifiers = self::getCreatureModifiers($npcName, $dynamics);
+        foreach ($modifiers as $dimId => $delta) {
+            $scaledDelta = $delta * 0.1;
+            self::applyDelta($dimId, $dynamics, $scaledDelta, $temperament);
+        }
+    }
+
+    /**
+     * Detect vampire/werewolf from NPC factions or creature_type field.
+     */
+    public static function detectCreatureType(string $npcName, array $dynamics): ?string
+    {
+        // Check dynamics field first (manual override or cached)
+        $creature = $dynamics['creature_type'] ?? null;
+        if ($creature) return $creature;
+
+        // Check factions from DB
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if (!$db) return null;
+
+            $escaped = $db->escape($npcName);
+            $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+            if ($row && !empty($row['extended_data'])) {
+                $ext = json_decode($row['extended_data'], true) ?: [];
+                $factions = $ext['factions'] ?? [];
+                foreach ($factions as $faction) {
+                    $name = strtolower($faction['name'] ?? '');
+                    if (strpos($name, 'vampire') !== false || strpos($name, 'volkihar') !== false) {
+                        return 'vampire';
+                    }
+                    if (strpos($name, 'werewolf') !== false) {
+                        return 'werewolf';
+                    }
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        return null;
+    }
+
+    /**
+     * Check if it's night in-game (8PM-5AM).
+     */
+    public static function isGameNight(): bool
+    {
+        // Try HERIKA_TIME first
+        $timeStr = $GLOBALS['HERIKA_TIME'] ?? '';
+        if (preg_match('/(\d{1,2}):?(\d{0,2})\s*(am|pm)/i', $timeStr, $m)) {
+            $hour = intval($m[1]);
+            $isPM = strtolower($m[3]) === 'pm';
+            if ($isPM && $hour !== 12) $hour += 12;
+            if (!$isPM && $hour === 12) $hour = 0;
+            return ($hour >= 20 || $hour < 5);
+        }
+
+        // Fallback: gamets-based
+        $gamets = floatval($GLOBALS['GAMETS'] ?? ($GLOBALS['gamets'] ?? 0));
+        if ($gamets <= 0) return false;
+
+        $gameHour = fmod($gamets / self::GAMETS_PER_HOUR, 24);
+        return ($gameHour >= 20 || $gameHour < 5);
+    }
+
+    /**
+     * Estimate full moon (every 5th game day).
+     */
+    public static function isFullMoon(): bool
+    {
+        $gamets = floatval($GLOBALS['GAMETS'] ?? ($GLOBALS['gamets'] ?? 0));
+        if ($gamets <= 0) return false;
+
+        $gameDays = $gamets / (24 * self::GAMETS_PER_HOUR);
+        $dayInCycle = fmod($gameDays, 5);
+        return ($dayInCycle >= 4 && $dayInCycle < 5);
+    }
+
+    // ========== END INTERNAL WEATHER ENGINE (PR 13) ==========
+
+    // ========== EMERGENT EMOTION LABELING (PR 13) ==========
+
+    const EMERGENT_EMOTIONS = [
+        'infatuation' => [
+            'rules' => ['affinity' => [70, 100], 'passion' => [60, 100], 'trust' => [0, 40]],
+            'context' => "{NAME} is infatuated -- consumed by idealized desire without genuine trust. This is not love. It is projection.",
+        ],
+        'codependency' => [
+            'rules' => ['affinity' => [80, 100], 'comfort' => [0, 30], 'self_confidence' => [0, 30]],
+            'context' => "{NAME} needs the player in an unhealthy way. This bond is survival, not choice.",
+        ],
+        'suffocation' => [
+            'rules' => ['affinity' => [60, 100], 'comfort' => [80, 100], 'resentment' => [30, 100]],
+            'context' => "{NAME} loves the player but feels trapped by the closeness. Too much warmth, not enough air.",
+        ],
+        'contempt' => [
+            'rules' => ['resentment' => [50, 100], 'affinity' => [40, 100], 'respect' => [0, 25]],
+            'context' => "{NAME} has lost all respect while still being emotionally attached. This is contempt -- the most corrosive emotion.",
+        ],
+        'longing' => [
+            'rules' => ['affinity' => [60, 100], 'warmth' => [50, 100], 'passion' => [0, 15]],
+            'context' => "{NAME} cares deeply but the fire is gone. A bittersweet ache -- wishing things were different.",
+        ],
+        'protective_fury' => [
+            'rules' => ['affinity' => [70, 100], 'arousal' => [60, 100], 'valence' => [-100, -20]],
+            'context' => "{NAME} would burn the world down for the player. This is ferocious, primal protectiveness.",
+        ],
+        'quiet_devotion' => [
+            'rules' => ['affinity' => [80, 100], 'maturity' => [70, 100], 'resentment' => [0, 10], 'passion' => [0, 40]],
+            'context' => "{NAME} has reached deep, peaceful commitment. No drama, no desperation. They choose this person with full awareness.",
+        ],
+        'bitter_nostalgia' => [
+            'rules' => ['affinity' => [0, 30], 'warmth' => [50, 100], 'resentment' => [40, 100]],
+            'context' => "{NAME} remembers what this was. The warmth of those memories clashes with the bitterness of what went wrong.",
+        ],
+        'grudging_respect' => [
+            'rules' => ['respect' => [60, 100], 'affinity' => [0, 20], 'resentment' => [30, 100]],
+            'context' => "{NAME} does not like the player. But they cannot deny their competence. Hating someone you have to respect.",
+        ],
+        'volatile_passion' => [
+            'rules' => ['passion' => [70, 100], 'maturity' => [0, 30], 'arousal' => [50, 100]],
+            'context' => "{NAME} is burning hot and completely unstable. Could flip to devotion, rage, or despair in one interaction.",
+        ],
+    ];
+
+    // ========== AUTONOMOUS DIARY + SOCIAL MASKING CONSTANTS (PR 14) ==========
+    const DIARY_INTERACTION_GAP = 15;
+    const DIARY_CONSUMABLE_BLOCK = true;
+
+    const MASK_DIMENSION_OVERRIDES = [
+        'comfort'         => ['direction' => 'raise', 'target' => 60],
+        'resentment'      => ['direction' => 'lower', 'target' => 10],
+        'resentment_self' => ['direction' => 'lower', 'target' => 5],
+        'valence'         => ['direction' => 'raise', 'target' => 0],
+        'arousal'         => ['direction' => 'lower', 'target' => 20],
+        'warmth'          => ['direction' => 'lower', 'target' => 30],
+    ];
+
+    const MASK_MATURITY_COST_DEFAULT = 0.15;
+
+    /**
+     * Detect emergent emotions from dimension combinations.
+     * Returns array of matched emotion IDs.
+     */
+    public static function detectEmergentEmotions(array $dynamics): array
+    {
+        $config = self::getConfig();
+        if (empty($config['emergent_emotions_enabled'])) return [];
+
+        $dims = $dynamics['dimensions'] ?? [];
+        $detected = [];
+
+        foreach (self::EMERGENT_EMOTIONS as $emotionId => $spec) {
+            $rules = $spec['rules'] ?? [];
+            $match = true;
+
+            foreach ($rules as $dimId => $range) {
+                $value = floatval($dims[$dimId]['x'] ?? 0);
+                if ($value < $range[0] || $value > $range[1]) {
+                    $match = false;
+                    break;
+                }
+            }
+
+            if ($match) {
+                $detected[] = $emotionId;
+            }
+        }
+
+        return $detected;
+    }
+
+    /**
+     * Generate context text for detected emergent emotions (cap at 2).
+     */
+    public static function generateEmergentEmotionContext(string $npcName, array $detected): string
+    {
+        if (empty($detected)) return '';
+
+        $top = array_slice($detected, 0, 2);
+        $lines = [];
+        foreach ($top as $emotionId) {
+            $spec = self::EMERGENT_EMOTIONS[$emotionId] ?? null;
+            if ($spec) {
+                $lines[] = str_replace('{NAME}', $npcName, $spec['context']);
+            }
+        }
+
+        return implode(' ', $lines);
+    }
+
+    // ========== END EMERGENT EMOTION LABELING (PR 13) ==========
+
+    // ========== AUTONOMOUS DIARY TRIGGER SYSTEM (PR 14) ==========
+
+    /**
+     * Check whether an autonomous diary entry should be triggered.
+     *
+     * Gate chain:
+     *   1. Config: autonomous_diary_enabled
+     *   2. Cooldown: DIARY_REFLECTION_COOLDOWN elapsed since _diary_last_accumulated
+     *      (phase_transition source gets reduced 300s minimum)
+     *   3. Consumable block: DIARY_CONSUMABLE_BLOCK prevents diary during consumable effects
+     *   4. Maturity gate: maturity > DIARY_MIN_MATURITY
+     *   5. Content triggers: at least one substantive change detected
+     *   6. Interaction source also checks diary_interaction_gap
+     *
+     * @param string $npcName       NPC identifier
+     * @param array  &$dynamics     NPC dynamics blob (pending triggers written back)
+     * @param string $triggerSource One of 'interaction', 'rest', 'phase_transition', 'emotion_onset'
+     * @return bool  True if diary should be generated
+     */
+    public static function checkDiaryTrigger(string $npcName, array &$dynamics, string $triggerSource = 'interaction'): bool
+    {
+        // Gate 1: Config
+        $config = self::getConfig();
+        if (empty($config['autonomous_diary_enabled'])) {
+            return false;
+        }
+
+        // Gate 2: Cooldown (accumulated time based)
+        $accumulated = intval($dynamics['_accumulated_time'] ?? 0);
+        $lastAccumulated = intval($dynamics['_diary_last_accumulated'] ?? 0);
+        $elapsed = $accumulated - $lastAccumulated;
+
+        // Phase transitions get reduced cooldown (minimum 300s = 5 min play time)
+        $cooldown = self::DIARY_REFLECTION_COOLDOWN;
+        if ($triggerSource === 'phase_transition') {
+            $cooldown = max(300, intval($cooldown * 0.3));
+        }
+
+        if ($elapsed < $cooldown) {
+            return false;
+        }
+
+        // Gate 3: Consumable block
+        if (self::DIARY_CONSUMABLE_BLOCK) {
+            $consumableActive = !empty($dynamics['_active_consumable']);
+            if ($consumableActive) {
+                return false;
+            }
+        }
+
+        // Gate 4: Maturity gate
+        $dims = $dynamics['dimensions'] ?? [];
+        $maturity = floatval($dims['maturity']['x'] ?? 0);
+        if ($maturity <= self::DIARY_MIN_MATURITY) {
+            return false;
+        }
+
+        // Gate 5 (interaction source only): Interaction gap check
+        if ($triggerSource === 'interaction') {
+            $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+            $lastDiaryInteraction = intval($dynamics['_diary_last_interaction'] ?? 0);
+            $gap = intval($config['diary_interaction_gap'] ?? self::DIARY_INTERACTION_GAP);
+            if (($interactionCount - $lastDiaryInteraction) < $gap) {
+                return false;
+            }
+        }
+
+        // Gate 6: Content triggers — must have something worth writing about
+        $triggers = self::detectDiaryContentTriggers($dynamics);
+        if (empty($triggers)) {
+            return false;
+        }
+
+        // All gates passed: store pending triggers and source
+        $dynamics['_diary_pending_triggers'] = $triggers;
+        $dynamics['_diary_trigger_source'] = $triggerSource;
+
+        self::log("[DIARY-TRIGGER] {$npcName}: autonomous diary triggered via {$triggerSource} — " .
+            implode('; ', $triggers));
+
+        return true;
+    }
+
+    /**
+     * Detect substantive content triggers that warrant a diary entry.
+     *
+     * Checks seven categories of meaningful change:
+     *   1. Sustained delta: 15+ drift from baseline in any dimension
+     *   2. Crisis indicators: 2+ of resentment>30, comfort<20, trust<20, resentment_self>30
+     *   3. Phase transitions: DI count changed, grief phase changed, attachment shifted
+     *   4. New emergent emotions since last diary
+     *   5. Intimacy critical: intimacy dimension < 0.1 (near-zero)
+     *   6. Tier change: attraction tier ceiling shifted
+     *   7. Defining moment: last interaction had significance >= 3
+     *
+     * @param array $dynamics  The NPC's dynamics array
+     * @return array  Array of trigger description strings (empty = no triggers)
+     */
+    public static function detectDiaryContentTriggers(array $dynamics): array
+    {
+        $triggers = [];
+        $dims = $dynamics['dimensions'] ?? [];
+
+        // 1. Sustained delta: check baseline drift samples for 15+ deviation
+        $driftSamples = $dynamics['_baseline_drift_samples'] ?? [];
+        if (!empty($driftSamples)) {
+            foreach ($driftSamples as $dimId => $samples) {
+                if (!is_array($samples) || empty($samples)) continue;
+                $baseline = floatval($dims[$dimId]['baseline'] ?? $dims[$dimId]['x'] ?? 0);
+                $latest = end($samples);
+                $latestVal = is_array($latest) ? floatval($latest['v'] ?? $latest[0] ?? 0) : floatval($latest);
+                $delta = abs($latestVal - $baseline);
+                if ($delta >= 15.0) {
+                    $triggers[] = "sustained_delta:{$dimId}(" . round($delta, 1) . ")";
+                    break; // One is enough
+                }
+            }
+        }
+
+        // 2. Crisis indicators: 2+ of resentment>30, comfort<20, trust<20, resentment_self>30
+        $crisisCount = 0;
+        $resentment = floatval($dims['resentment']['x'] ?? 0);
+        $comfort = floatval($dims['comfort']['x'] ?? 50);
+        $trust = floatval($dims['trust']['x'] ?? 50);
+        $resentmentSelf = floatval($dims['resentment_self']['x'] ?? 0);
+
+        if ($resentment > 30) $crisisCount++;
+        if ($comfort < 20) $crisisCount++;
+        if ($trust < 20) $crisisCount++;
+        if ($resentmentSelf > 30) $crisisCount++;
+
+        if ($crisisCount >= self::DIARY_MIN_CRISIS_INDICATORS) {
+            $triggers[] = "crisis_indicators:{$crisisCount}";
+        }
+
+        // 3. Phase transitions: DI count, grief phase, attachment shift
+        $diCount = intval($dynamics['_divine_intervention_count'] ?? 0);
+        $lastDiCount = intval($dynamics['_diary_last_di_count'] ?? 0);
+        if ($diCount > $lastDiCount) {
+            $triggers[] = "di_count_changed:{$lastDiCount}->{$diCount}";
+        }
+
+        // Grief phase changes
+        $griefBonds = $dynamics['_grief_bonds'] ?? [];
+        $lastGriefPhases = $dynamics['_diary_last_grief_phases'] ?? [];
+        $currentGriefPhases = [];
+        foreach ($griefBonds as $name => $grief) {
+            $currentGriefPhases[$name] = intval($grief['phase'] ?? 0);
+        }
+        if ($currentGriefPhases !== $lastGriefPhases && !empty($currentGriefPhases)) {
+            $triggers[] = "grief_phase_changed";
+        }
+
+        // Attachment shift
+        $currentAttachment = $dynamics['attachment_style'] ?? null;
+        $lastAttachment = $dynamics['_diary_last_attachment'] ?? null;
+        if ($currentAttachment !== $lastAttachment && $currentAttachment !== null && $lastAttachment !== null) {
+            $triggers[] = "attachment_shifted:{$lastAttachment}->{$currentAttachment}";
+        }
+
+        // 4. New emergent emotions since last diary
+        $currentEmotions = self::detectEmergentEmotions($dynamics);
+        $lastEmotions = $dynamics['_diary_last_emotions'] ?? [];
+        $newEmotions = array_diff($currentEmotions, $lastEmotions);
+        if (!empty($newEmotions)) {
+            $triggers[] = "new_emotions:" . implode(',', $newEmotions);
+        }
+
+        // 5. Intimacy critical: near-zero
+        $intimacy = floatval($dims['intimacy']['x'] ?? 50);
+        if ($intimacy < 0.1 && isset($dims['intimacy'])) {
+            $triggers[] = "intimacy_critical:" . round($intimacy, 3);
+        }
+
+        // 6. Tier change: attraction tier ceiling shifted
+        $currentTier = $dynamics['_attraction_tier_ceiling'] ?? 'sworn';
+        $lastTier = $dynamics['_diary_last_tier_ceiling'] ?? 'sworn';
+        if ($currentTier !== $lastTier) {
+            $triggers[] = "tier_changed:{$lastTier}->{$currentTier}";
+        }
+
+        // 7. Defining moment: last interaction had significance >= 3
+        $lastSignificance = intval($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? 0);
+        if ($lastSignificance >= 3) {
+            $triggers[] = "defining_moment:significance_{$lastSignificance}";
+        }
+
+        return $triggers;
+    }
+
+    /**
+     * Mark diary as completed: update all tracking fields to current state.
+     *
+     * Called after a diary entry has been successfully generated and processed.
+     * Updates all "last" tracking fields so subsequent trigger checks compare
+     * against the post-diary state.
+     *
+     * @param array &$dynamics  NPC dynamics blob (modified in place)
+     */
+    public static function markDiaryCompleted(array &$dynamics): void
+    {
+        // Accumulated time bookmark
+        $dynamics['_diary_last_accumulated'] = intval($dynamics['_accumulated_time'] ?? 0);
+
+        // Interaction count bookmark
+        $dynamics['_diary_last_interaction'] = intval($dynamics['interaction_count'] ?? 0);
+
+        // Divine intervention count bookmark
+        $dynamics['_diary_last_di_count'] = intval($dynamics['_divine_intervention_count'] ?? 0);
+
+        // Attachment style bookmark
+        $dynamics['_diary_last_attachment'] = $dynamics['attachment_style'] ?? null;
+
+        // Emergent emotions bookmark
+        $dynamics['_diary_last_emotions'] = self::detectEmergentEmotions($dynamics);
+
+        // Tier ceiling bookmark
+        $dynamics['_diary_last_tier_ceiling'] = $dynamics['_attraction_tier_ceiling'] ?? 'sworn';
+
+        // Grief phases bookmark
+        $griefBonds = $dynamics['_grief_bonds'] ?? [];
+        $griefPhases = [];
+        foreach ($griefBonds as $name => $grief) {
+            $griefPhases[$name] = intval($grief['phase'] ?? 0);
+        }
+        $dynamics['_diary_last_grief_phases'] = $griefPhases;
+
+        // Clear pending triggers
+        $dynamics['_diary_pending_triggers'] = [];
+        $dynamics['_diary_trigger_source'] = null;
+    }
+
+    // ========== END AUTONOMOUS DIARY TRIGGER SYSTEM (PR 14) ==========
+
+    // ========== SOCIAL MASKING (PR 14) ==========
+
+    /**
+     * Determine if masking should be active.
+     * Masking occurs when non-trusted NPCs are present.
+     */
+    public static function shouldMask(string $npcName, array $dynamics): bool
+    {
+        $config = self::getConfig();
+        if (empty($config['social_masking_enabled'])) return false;
+
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        if ($maturity < 25) return false;
+
+        $cachePeople = $GLOBALS['CACHE_PEOPLE'] ?? '';
+        if (empty(trim($cachePeople))) return false;
+
+        $people = array_filter(array_map('trim', explode('|', $cachePeople)));
+        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+
+        $audience = [];
+        foreach ($people as $person) {
+            if (strcasecmp($person, $npcName) === 0) continue;
+            if (strcasecmp($person, $playerName) === 0) continue;
+            $audience[] = $person;
+        }
+
+        if (empty($audience)) return false;
+
+        // Check if ALL audience members are trusted
+        $allTrusted = true;
+        $bonds = self::getAllBondsForNpc($npcName);
+        foreach ($audience as $audienceNpc) {
+            $bond = $bonds[$audienceNpc] ?? null;
+            if (!$bond) {
+                $allTrusted = false;
+                break;
+            }
+            $bondAff = ($bond['aff'] + 100) / 2.0;
+            if ($bondAff < 50) {
+                $allTrusted = false;
+                break;
+            }
+        }
+
+        if ($allTrusted) return false;
+
+        return true;
+    }
+
+    /**
+     * Calculate performed (masked) dimension values.
+     * Shifts dimensions toward socially acceptable targets.
+     * Effectiveness scales with maturity (25=0%, 75=100%).
+     */
+    public static function calculatePerformedState(array $dynamics): array
+    {
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        $dims = $dynamics['dimensions'] ?? [];
+        $performed = [];
+
+        $maskEffectiveness = max(0.0, min(1.0, ($maturity - 25) / 50.0));
+
+        foreach (self::MASK_DIMENSION_OVERRIDES as $dimId => $override) {
+            $trueValue = floatval($dims[$dimId]['x'] ?? 0);
+            $target = floatval($override['target']);
+            $shift = ($target - $trueValue) * $maskEffectiveness;
+            $performed[$dimId] = round($trueValue + $shift, 2);
+        }
+
+        foreach ($dims as $dimId => $dimData) {
+            if (!isset($performed[$dimId])) {
+                $performed[$dimId] = floatval($dimData['x'] ?? 0);
+            }
+        }
+
+        return $performed;
+    }
+
+    /**
+     * Apply the cost of maintaining a social mask.
+     * Drains maturity per masked interaction.
+     */
+    public static function applyMaskingCost(string $npcName, array &$dynamics): void
+    {
+        $config = self::getConfig();
+        $cost = floatval($config['mask_maturity_cost'] ?? self::MASK_MATURITY_COST_DEFAULT);
+
+        $attachStyle = self::getAttachmentStyle($dynamics);
+        if ($attachStyle === 'avoidant') {
+            $cost *= 0.5; // Practiced maskers
+        } elseif ($attachStyle === 'anxious') {
+            $cost *= 1.5; // Struggling to hold facade
+        }
+
+        $dims = &$dynamics['dimensions'];
+        $currentMaturity = floatval($dims['maturity']['x'] ?? 50);
+        $dims['maturity']['x'] = max(0, $currentMaturity - $cost);
+
+        $dynamics['_mask_interactions_count'] = intval($dynamics['_mask_interactions_count'] ?? 0) + 1;
+    }
+
+    /**
+     * Generate social masking context for LLM.
+     * Dual-state: true + performed with maturity-gated quality.
+     */
+    public static function generateMaskingContext(string $npcName, array $dynamics, array $performedState): string
+    {
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        $dims = $dynamics['dimensions'] ?? [];
+
+        $lines = [];
+
+        $trueComfort = round(floatval($dims['comfort']['x'] ?? 50), 1);
+        $trueResentment = round(floatval($dims['resentment']['x'] ?? 0), 1);
+        $trueWarmth = round(floatval($dims['warmth']['x'] ?? 30), 1);
+
+        $perfComfort = round($performedState['comfort'] ?? $trueComfort, 1);
+        $perfResentment = round($performedState['resentment'] ?? $trueResentment, 1);
+        $perfWarmth = round($performedState['warmth'] ?? $trueWarmth, 1);
+
+        $lines[] = "[TRUE STATE - what {$npcName} actually feels but is hiding:]";
+        $lines[] = "comfort={$trueComfort}, resentment={$trueResentment}, warmth={$trueWarmth}";
+        $lines[] = "[PERFORMED STATE - what {$npcName} is showing to others:]";
+        $lines[] = "comfort={$perfComfort}, resentment={$perfResentment}, warmth={$perfWarmth}";
+
+        if ($maturity >= 65) {
+            $lines[] = "[MASKING QUALITY: SEAMLESS] {$npcName} maintains perfect composure. The performed state is what shows in dialogue. The true state leaks ONLY through very subtle tells -- a micro-pause, a careful word choice, a glance that lingers too long.";
+        } elseif ($maturity >= 45) {
+            $lines[] = "[MASKING QUALITY: FUNCTIONAL] {$npcName} mostly holds composure but the cracks show under pressure. Forced cheerfulness, slightly too-quick subject changes, tension in their voice.";
+        } elseif ($maturity >= 25) {
+            $lines[] = "[MASKING QUALITY: UNSTABLE] {$npcName} is TRYING to mask but failing. The true state bleeds through constantly -- warm one moment, cold the next. This looks like mood swings to anyone watching.";
+        }
+
+        $cachePeople = $GLOBALS['CACHE_PEOPLE'] ?? '';
+        $audience = array_filter(array_map('trim', explode('|', $cachePeople)));
+        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+        $audience = array_filter($audience, function($p) use ($npcName, $playerName) {
+            return strcasecmp($p, $npcName) !== 0 && strcasecmp($p, $playerName) !== 0;
+        });
+        if (!empty($audience)) {
+            $audienceStr = implode(', ', array_slice(array_values($audience), 0, 3));
+            $lines[] = "[AUDIENCE: {$audienceStr}] {$npcName} is masking because these people are present.";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Generate mask-drop context when transitioning from public to private.
+     */
+    public static function generateMaskDropContext(string $npcName, array $dynamics): ?string
+    {
+        $wasMasking = !empty($dynamics['_was_masking']);
+        $isMasking = self::shouldMask($npcName, $dynamics);
+
+        if ($wasMasking && !$isMasking) {
+            $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+            if ($maturity >= 45) {
+                return "{$npcName} lets the mask fall now that they are alone with the player. The composure dissolves into something more honest. Whatever they show now is real.";
+            } else {
+                return "{$npcName} visibly deflates now that the audience is gone. The effort of pretending is written on their face.";
+            }
+        }
+
+        return null;
+    }
+
+    // ========== END SOCIAL MASKING (PR 14) ==========
+
+    // ========== ICK / DESPERATION TRACKER (PR 15) ==========
+    //
+    // Monitors romantic attempt frequency vs NPC receptivity.
+    // Spamming affection while NPC is cold triggers passion INVERSION.
+    // MDD Section 6.3.
+    // ==========================================================
+
+    // --- Constants ---
+    const ICK_BASE_THRESHOLD = 0.5;       // 50% romantic attempts in window = desperate
+    const ICK_WINDOW_SIZE = 10;           // Rolling window (interactions)
+    const ICK_COMFORT_FLOOR = 40;         // Comfort must be below this for ick
+    const ICK_PASSION_FLOOR = 20;         // Passion must be below this OR warmth below floor
+    const ICK_WARMTH_FLOOR = 30;          // Warmth must be below this OR passion below floor
+    const ICK_RESENTMENT_PER_ATTEMPT = 5; // Resentment added per romantic attempt while ick active
+    const ICK_COMFORT_OVERRIDE = -3.0;    // Forced comfort delta when ick active
+    const ICK_COOLDOWN_SECONDS = 600;     // 10 min IRL cooldown after ick clears
+    const ICK_RECOVERY = [
+        'comfort'    => 50,   // Comfort must exceed this
+        'passion'    => 40,   // Passion must exceed this
+        'resentment' => 20,   // Resentment must be below this (OR confrontation occurred)
+    ];
+
+    // Moods that count as romantic/flirtatious from the NPC's perspective
+    const ROMANTIC_MOODS = [
+        'flirty', 'romantic', 'playful', 'teasing', 'charmed',
+        'smitten', 'coy', 'seductive', 'affectionate', 'flustered',
+    ];
+
+    /**
+     * Determine if an interaction constitutes a romantic attempt by the player.
+     *
+     * @param string|null $interactionLL  Love language classification (LL_TOUCH, LL_WORDS, etc.)
+     * @param string|null $mood           NPC's last mood
+     * @param array       $evalResult     Eval result (may contain romantic_intent)
+     * @return bool
+     */
+    public static function isRomanticAttempt($interactionLL, $mood, $evalResult = [])
+    {
+        // Physical touch is always romantic
+        if ($interactionLL === self::LL_TOUCH) {
+            return true;
+        }
+
+        // Words + romantic mood = romantic attempt
+        if ($interactionLL === self::LL_WORDS && !empty($mood)) {
+            if (in_array(strtolower($mood), self::ROMANTIC_MOODS, true)) {
+                return true;
+            }
+        }
+
+        // Eval detected high romantic intent from player
+        $romanticIntent = intval($evalResult['romantic_intent'] ?? 0);
+        if ($romanticIntent >= 2) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Update the ick rolling window tracker.
+     *
+     * @param array  &$dynamics    NPC dynamics blob
+     * @param bool   $isRomantic   Was this a romantic attempt?
+     * @param string $temperament  NPC temperament
+     * @return bool True if ick state changed
+     */
+    public static function updateIckTracker(&$dynamics, $isRomantic, $temperament)
+    {
+        $cfg = self::getConfig();
+        if (empty($cfg['ick_system_enabled'] ?? true)) {
+            return false;
+        }
+
+        // Initialize tracker
+        if (!isset($dynamics['_ick_tracker']) || !is_array($dynamics['_ick_tracker'])) {
+            $dynamics['_ick_tracker'] = [
+                'romantic_count'     => 0,
+                'total_count'        => 0,
+                'window_start'       => intval($dynamics['interaction_count'] ?? 0),
+                'ick_active'         => false,
+                'ick_triggered_at'   => 0,
+                'ick_cooldown_until' => 0,
+            ];
+        }
+
+        $tracker = &$dynamics['_ick_tracker'];
+        $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+
+        // Reset window if exceeded
+        if (($interactionCount - intval($tracker['window_start'])) >= self::ICK_WINDOW_SIZE) {
+            $tracker['romantic_count'] = 0;
+            $tracker['total_count'] = 0;
+            $tracker['window_start'] = $interactionCount;
+        }
+
+        // Track this interaction
+        $tracker['total_count']++;
+        if ($isRomantic) {
+            $tracker['romantic_count']++;
+        }
+
+        // If ick already active, accumulate resentment on continued romantic attempts
+        if ($tracker['ick_active'] && $isRomantic) {
+            self::applyDelta('resentment', $dynamics, self::ICK_RESENTMENT_PER_ATTEMPT, $temperament);
+            self::log("[ICK] Continued romantic attempt while ick active — resentment +{" . self::ICK_RESENTMENT_PER_ATTEMPT . "}");
+            return false; // State didn't change
+        }
+
+        // Check if ick should trigger (only if not already active and not in cooldown)
+        if (!$tracker['ick_active']) {
+            if (self::checkIckTrigger($dynamics, $temperament)) {
+                $tracker['ick_active'] = true;
+                $tracker['ick_triggered_at'] = time();
+                self::log("[ICK] TRIGGERED for NPC — romantic ratio too high while unreceptive");
+                return true; // State changed
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check whether ick trigger conditions are met.
+     *
+     * @param array  $dynamics     NPC dynamics
+     * @param string $temperament  NPC temperament
+     * @return bool
+     */
+    public static function checkIckTrigger($dynamics, $temperament)
+    {
+        $tracker = $dynamics['_ick_tracker'] ?? null;
+        if (!$tracker || $tracker['total_count'] < 3) {
+            return false; // Need minimum interactions in window
+        }
+
+        // Check cooldown
+        if (!empty($tracker['ick_cooldown_until']) && time() < $tracker['ick_cooldown_until']) {
+            return false;
+        }
+
+        // Calculate romantic ratio
+        $ratio = $tracker['romantic_count'] / max(1, $tracker['total_count']);
+
+        // Maturity-gated threshold
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        $cfg = self::getConfig();
+        $baseThreshold = floatval($cfg['ick_base_threshold'] ?? self::ICK_BASE_THRESHOLD);
+        $threshold = $baseThreshold * (1 + $maturity / 100.0);
+
+        // Catalyst archetype lowers threshold by 30% for mature NPCs
+        $charismaStyle = $dynamics['_charisma_tracker']['detected_style'] ?? null;
+        if ($charismaStyle === 'catalyst' && $maturity > 60) {
+            $threshold *= 0.7;
+            self::log("[ICK] Catalyst style detected + high maturity — threshold reduced 30%");
+        }
+
+        if ($ratio < $threshold) {
+            return false; // Not enough romantic pressure
+        }
+
+        // Check receptivity conditions
+        $dims = $dynamics['dimensions'] ?? [];
+        $comfort = floatval($dims['comfort']['x'] ?? 50);
+        $passion = floatval($dims['passion']['x'] ?? 0);
+        $warmth  = floatval($dims['warmth']['x'] ?? 50);
+
+        // NPC must be unreceptive: comfort < 40 AND (passion < 20 OR warmth < 30)
+        if ($comfort >= self::ICK_COMFORT_FLOOR) {
+            return false; // NPC is comfortable — no ick
+        }
+
+        if ($passion >= self::ICK_PASSION_FLOOR && $warmth >= self::ICK_WARMTH_FLOOR) {
+            return false; // NPC is receptive — no ick
+        }
+
+        return true;
+    }
+
+    /**
+     * Check if ick should clear (recovery conditions met).
+     *
+     * @param array &$dynamics NPC dynamics
+     * @return bool True if ick was cleared
+     */
+    public static function checkIckRecovery(&$dynamics)
+    {
+        $tracker = &$dynamics['_ick_tracker'];
+        if (empty($tracker) || !$tracker['ick_active']) {
+            return false;
+        }
+
+        $dims = $dynamics['dimensions'] ?? [];
+        $comfort    = floatval($dims['comfort']['x'] ?? 0);
+        $passion    = floatval($dims['passion']['x'] ?? 0);
+        $resentment = floatval($dims['resentment']['x'] ?? 0);
+
+        $recovery = self::ICK_RECOVERY;
+        $comfortOk    = ($comfort > $recovery['comfort']);
+        $passionOk    = ($passion > $recovery['passion']);
+        $resentmentOk = ($resentment < $recovery['resentment']);
+
+        // Check if confrontation occurred (resentment was addressed)
+        $confrontationOccurred = !empty($dynamics['_ick_confrontation_resolved']);
+
+        if ($comfortOk && $passionOk && ($resentmentOk || $confrontationOccurred)) {
+            $tracker['ick_active'] = false;
+            $tracker['ick_cooldown_until'] = time() + self::ICK_COOLDOWN_SECONDS;
+            $tracker['romantic_count'] = 0;
+            $tracker['total_count'] = 0;
+            $dynamics['_ick_confrontation_resolved'] = false;
+            self::log("[ICK] CLEARED — recovery conditions met, cooldown set");
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Apply ick effects to an eval delta before XYZ physics.
+     * Called from processEvalDeltas.
+     *
+     * @param array  $dynamics     NPC dynamics
+     * @param string $dimensionId  Dimension being modified
+     * @param float  &$rawDelta    Raw delta (modified in place)
+     * @return bool True if ick modified the delta
+     */
+    public static function applyIckEffects($dynamics, $dimensionId, &$rawDelta)
+    {
+        $tracker = $dynamics['_ick_tracker'] ?? null;
+        if (empty($tracker) || !$tracker['ick_active']) {
+            return false;
+        }
+
+        $modified = false;
+
+        // Passion INVERSION — gains become losses
+        if ($dimensionId === 'passion' && $rawDelta > 0) {
+            $rawDelta = -abs($rawDelta);
+            $modified = true;
+            self::log("[ICK] Passion INVERTED: {$rawDelta}");
+        }
+
+        // Comfort override — forced negative
+        if ($dimensionId === 'comfort') {
+            $rawDelta = min($rawDelta, self::ICK_COMFORT_OVERRIDE);
+            $modified = true;
+        }
+
+        return $modified;
+    }
+
+    /**
+     * Generate context injection for active ick state.
+     *
+     * @param array  $dynamics    NPC dynamics
+     * @param string $npcName     NPC name
+     * @param string $temperament Temperament
+     * @return string|null Context block or null
+     */
+    public static function getIckContext($dynamics, $npcName, $temperament)
+    {
+        $tracker = $dynamics['_ick_tracker'] ?? null;
+        if (empty($tracker) || !$tracker['ick_active']) {
+            return null;
+        }
+
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        $resentment = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
+
+        $base = "{$npcName} finds the player's persistent romantic attention uncomfortable and suffocating. ";
+        $base .= "Their advances feel desperate, not flattering. ";
+
+        // Maturity determines reaction style
+        if ($maturity >= 65) {
+            $base .= "{$npcName} recognizes the pattern clearly and will address it directly if pressed further.";
+        } elseif ($maturity >= 45) {
+            $base .= "{$npcName} feels uneasy but may not articulate why — withdrawing instead of confronting.";
+        } else {
+            $base .= "{$npcName} is confused by their own discomfort — they can't tell if the attention is bad or if something is wrong with them.";
+        }
+
+        // Resentment escalation
+        if ($resentment >= 50) {
+            $base .= " Has reached breaking point about the unwanted advances — will confront this directly.";
+        }
+
+        return $base;
+    }
+
+    // ========== END ICK / DESPERATION TRACKER (PR 15) ==========
+
+    // ========== CHARISMA ARCHETYPES (PR 15) ==========
+    //
+    // Detects player interaction style (Rock/Catalyst/Charmer) from
+    // patterns in romantic_intent and affinity deltas.
+    // Applies effectiveness multipliers per NPC temperament + maturity.
+    // MDD Section 5.1.
+    // ==========================================================
+
+    const CHARISMA_WINDOW = 10;       // Interactions to analyze
+    const CHARISMA_MIN_SAMPLES = 5;   // Minimum before detection
+    const CHARISMA_VARIANCE_HIGH = 15.0; // Above this = Catalyst
+    const CHARISMA_VARIANCE_LOW = 5.0;   // Below this = Rock or Charmer
+
+    /**
+     * Effectiveness multipliers: [temperament => [style => [dimension => multiplier]]]
+     */
+    const CHARISMA_EFFECTIVENESS = [
+        'rock' => [
+            'effective'   => ['Anxious', 'Gentle', 'Humble'],       // Stability seekers
+            'ineffective' => ['Independent', 'Bold', 'Defiant'],    // Don't need stability
+            'aff_mult_eff'   => 1.3,
+            'aff_mult_ineff' => 0.7,
+        ],
+        'catalyst' => [
+            'effective'   => ['Playful', 'Romantic'],                // Intensity = excitement
+            'ineffective' => ['Stoic', 'Guarded', 'Proud'],         // See through it
+            'passion_mult_eff'   => 1.5,
+            'passion_mult_ineff' => 0.5,
+        ],
+        'charmer' => [
+            'effective'   => ['Nurturing', 'Gentle', 'Romantic', 'Humble'], // Broad base
+            'ineffective' => ['Independent', 'Proud'],              // Loses respect over time
+            'passion_mult_eff'   => 1.2,
+            'passion_mult_ineff' => 0.8,
+        ],
+    ];
+
+    /**
+     * Update the charisma style tracker with latest interaction data.
+     *
+     * @param array &$dynamics      NPC dynamics
+     * @param int   $romanticIntent romantic_intent from eval (0-3)
+     * @param float $affinityDelta  affinity_delta from eval
+     */
+    public static function updateCharismaTracker(&$dynamics, $romanticIntent, $affinityDelta)
+    {
+        $cfg = self::getConfig();
+        if (empty($cfg['charisma_detection_enabled'] ?? true)) {
+            return;
+        }
+
+        if (!isset($dynamics['_charisma_tracker']) || !is_array($dynamics['_charisma_tracker'])) {
+            $dynamics['_charisma_tracker'] = [
+                'recent_intents' => [],
+                'recent_deltas'  => [],
+                'detected_style' => null,
+                'style_confidence' => 0.0,
+                'style_detected_at' => 0,
+            ];
+        }
+
+        $tracker = &$dynamics['_charisma_tracker'];
+
+        // Push to rolling window
+        $tracker['recent_intents'][] = intval($romanticIntent);
+        $tracker['recent_deltas'][] = floatval($affinityDelta);
+
+        // Trim to window size
+        if (count($tracker['recent_intents']) > self::CHARISMA_WINDOW) {
+            array_shift($tracker['recent_intents']);
+        }
+        if (count($tracker['recent_deltas']) > self::CHARISMA_WINDOW) {
+            array_shift($tracker['recent_deltas']);
+        }
+
+        // Detect style if enough samples
+        if (count($tracker['recent_deltas']) >= self::CHARISMA_MIN_SAMPLES) {
+            $detected = self::detectCharismaStyle($tracker['recent_intents'], $tracker['recent_deltas']);
+            if ($detected !== null) {
+                $tracker['detected_style'] = $detected['style'];
+                $tracker['style_confidence'] = $detected['confidence'];
+                $tracker['style_detected_at'] = time();
+            }
+        }
+    }
+
+    /**
+     * Analyze interaction patterns to detect charisma style.
+     *
+     * @param array $intents  Recent romantic_intent values
+     * @param array $deltas   Recent affinity_delta values
+     * @return array|null ['style' => string, 'confidence' => float] or null
+     */
+    public static function detectCharismaStyle($intents, $deltas)
+    {
+        $count = count($deltas);
+        if ($count < self::CHARISMA_MIN_SAMPLES) {
+            return null;
+        }
+
+        // Calculate delta statistics
+        $avgDelta = array_sum($deltas) / $count;
+        $variance = 0.0;
+        foreach ($deltas as $d) {
+            $variance += ($d - $avgDelta) ** 2;
+        }
+        $variance /= $count;
+
+        // Calculate intent statistics
+        $avgIntent = array_sum($intents) / $count;
+        $highIntentCount = count(array_filter($intents, fn($i) => $i >= 2));
+
+        // Detection logic:
+        // Catalyst: high variance (push-pull), alternating positive/negative
+        if ($variance > self::CHARISMA_VARIANCE_HIGH && abs($avgDelta) > 1.0) {
+            return ['style' => 'catalyst', 'confidence' => min(1.0, $variance / 30.0)];
+        }
+
+        // Charmer: consistent positive, high romantic intent
+        if ($variance < self::CHARISMA_VARIANCE_LOW && $avgDelta > 0.5 && $avgIntent >= 1.0) {
+            $confidence = min(1.0, ($avgDelta / 3.0) * ($avgIntent / 2.0));
+            return ['style' => 'charmer', 'confidence' => $confidence];
+        }
+
+        // Rock: consistent, low emotional variation, low romantic intent
+        if ($variance < self::CHARISMA_VARIANCE_LOW && abs($avgDelta) < 1.5 && $avgIntent < 1.0) {
+            return ['style' => 'rock', 'confidence' => min(1.0, (1.5 - abs($avgDelta)) / 1.5)];
+        }
+
+        return null; // Mixed/ambiguous
+    }
+
+    /**
+     * Get charisma effectiveness multiplier for a given style against NPC.
+     *
+     * @param string|null $style       Detected style (rock/catalyst/charmer) or null
+     * @param string      $temperament NPC temperament
+     * @param float       $maturity    NPC maturity value
+     * @param string      $dimensionId Which dimension to get multiplier for
+     * @return float Multiplier (1.0 = no effect)
+     */
+    public static function getCharismaEffectiveness($style, $temperament, $maturity, $dimensionId)
+    {
+        if ($style === null || !isset(self::CHARISMA_EFFECTIVENESS[$style])) {
+            return 1.0;
+        }
+
+        $profile = self::CHARISMA_EFFECTIVENESS[$style];
+        $isEffective = in_array($temperament, $profile['effective'] ?? [], true);
+        $isIneffective = in_array($temperament, $profile['ineffective'] ?? [], true);
+
+        // Catalyst special: ineffective against HIGH maturity regardless of temperament
+        if ($style === 'catalyst' && $maturity > 60 && !$isEffective) {
+            $isIneffective = true;
+        }
+
+        // Charmer special: diminishing returns — after many interactions becomes less effective
+        // (handled externally via overuse counter)
+
+        // Select multiplier based on dimension
+        if ($dimensionId === 'affinity' && $style === 'rock') {
+            return $isEffective ? $profile['aff_mult_eff'] : ($isIneffective ? $profile['aff_mult_ineff'] : 1.0);
+        }
+        if ($dimensionId === 'passion' && in_array($style, ['catalyst', 'charmer'], true)) {
+            $key_eff = 'passion_mult_eff';
+            $key_ineff = 'passion_mult_ineff';
+            return $isEffective ? $profile[$key_eff] : ($isIneffective ? $profile[$key_ineff] : 1.0);
+        }
+
+        return 1.0;
+    }
+
+    /**
+     * Generate charisma awareness context for high-maturity NPCs.
+     *
+     * @param array  $dynamics    NPC dynamics
+     * @param string $npcName     NPC name
+     * @return string|null Context block or null
+     */
+    public static function getCharismaContext($dynamics, $npcName)
+    {
+        $tracker = $dynamics['_charisma_tracker'] ?? null;
+        if (empty($tracker) || empty($tracker['detected_style'])) {
+            return null;
+        }
+
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        $style = $tracker['detected_style'];
+        $confidence = floatval($tracker['style_confidence']);
+
+        // Only high-maturity NPCs become aware of the pattern
+        if ($maturity < 55 || $confidence < 0.5) {
+            return null;
+        }
+
+        $labels = [
+            'rock'     => 'stoic and authoritative, projecting stability',
+            'catalyst' => 'using push-pull intensity, alternating warmth and distance',
+            'charmer'  => 'consistently flattering and accommodating',
+        ];
+
+        $label = $labels[$style] ?? $style;
+
+        if ($maturity >= 70) {
+            return "{$npcName} has clearly recognized the player's interaction pattern — they are being {$label}. "
+                 . "This recognition doesn't mean rejection, but {$npcName} sees through the technique.";
+        }
+
+        return "{$npcName} is starting to notice a pattern in how the player interacts — {$label}. "
+             . "Not fully conscious of it yet, but something feels calculated.";
+    }
+
+    // ========== END CHARISMA ARCHETYPES (PR 15) ==========
+
+    // ========== CROSS-BOND GUILT BLEED (PR 15) ==========
+    //
+    // When resentment_self > 30, guilt bleeds into comfort toward
+    // all bonded partners. Higher bond = more guilt.
+    // MDD: "You don't feel comfortable around people who love you
+    //        when you know what you've done."
+    // ==========================================================
+
+    /**
+     * Apply guilt bleed: resentment_self reduces comfort toward bonded NPCs.
+     * Called once per diary cycle (not every interaction).
+     *
+     * @param array  &$dynamics   NPC dynamics
+     * @param string $npcName     NPC name
+     * @param string $temperament NPC temperament
+     * @return array Results of bleed application
+     */
+    public static function applyGuiltBleed(&$dynamics, $npcName, $temperament)
+    {
+        $dims = $dynamics['dimensions'] ?? [];
+        $resentmentSelf = floatval($dims['resentment_self']['x'] ?? 0);
+
+        if ($resentmentSelf <= 30) {
+            return [];
+        }
+
+        $results = [];
+        $bonds = self::getAllBondsForNpc($npcName);
+
+        foreach ($bonds as $targetName => $bond) {
+            $bondAff = floatval($bond['aff'] ?? 0);
+            if ($bondAff < 40) {
+                continue; // Only bleed to meaningful bonds
+            }
+
+            $bondStrength = ($bondAff + 100) / 200.0; // Normalize to 0-1
+            $bleed = $resentmentSelf * $bondStrength;
+            $bleedDelta = -min(15.0, $bleed); // Cap at -15
+
+            if (abs($bleedDelta) < 0.5) {
+                continue; // Too small to matter
+            }
+
+            // Load target dynamics and apply comfort delta
+            $targetDynamics = self::getDynamics($targetName);
+            if (empty($targetDynamics) || !is_array($targetDynamics)) {
+                continue;
+            }
+
+            $targetTemperament = $targetDynamics['inferred_temperament'] ?? $targetDynamics['temperament'] ?? 'Stoic';
+            $actual = self::applyDelta('comfort', $targetDynamics, $bleedDelta, $targetTemperament);
+
+            if (abs($actual) > 0.001) {
+                self::saveDynamics($targetName, $targetDynamics);
+                $results[] = [
+                    'target' => $targetName,
+                    'bleed_delta' => round($bleedDelta, 2),
+                    'actual' => round($actual, 4),
+                    'bond_strength' => round($bondStrength, 2),
+                ];
+                self::log("[GUILT-BLEED] {$npcName} guilt → {$targetName} comfort: delta=" . round($actual, 4) . " (bond=" . round($bondStrength, 2) . ")");
+            }
+        }
+
+        return $results;
+    }
+
+    // ========== END CROSS-BOND GUILT BLEED (PR 15) ==========
+
+    // ========== AUTONOMY OVERRIDE (PR 16) ==========
+    //
+    // Personality-gated refusal spectrum. NPCs refuse commands based on
+    // self-confidence × maturity × attachment × trust × respect.
+    // MDD: "People-pleasers don't refuse. They comply, suffer, and break."
+    // ==========================================================
+
+    // Autonomy score weights — how each dimension contributes
+    const AUTONOMY_WEIGHTS = [
+        'distrust'        => 0.25,   // (100 - trust) * weight
+        'disrespect'      => 0.20,   // (100 - respect) * weight
+        'resentment'      => 0.30,   // resentment * weight
+        'self_confidence'  => 0.15,   // (self_confidence / 100) * weight * 100
+        'maturity_mod'    => 0.10,   // maturity modifier * weight
+    ];
+
+    // State thresholds (autonomy_score → state)
+    const AUTONOMY_THRESHOLDS = [
+        'compliant'  => 30,   // < 30
+        'resistant'  => 55,   // 30-55
+        'refusing'   => 75,   // 55-75
+        // > 75 = walkaway
+    ];
+
+    // Actions denied per autonomy state
+    const AUTONOMY_DENIED_ACTIONS = [
+        'refusing' => [
+            'FollowPlayer', 'Follow', 'MakeFollower',
+            'OpenInventory', 'OpenInventory2',
+            'GiveItemTo', 'GiveGoldTo',
+        ],
+        'walkaway' => [
+            'FollowPlayer', 'Follow', 'MakeFollower',
+            'OpenInventory', 'OpenInventory2',
+            'GiveItemTo', 'GiveGoldTo',
+            'ComeCloser', 'IncreaseWalkSpeed', 'DecreaseWalkSpeed',
+        ],
+    ];
+
+    // Walkaway constants
+    const WALKAWAY_RESENTMENT_TICK = -0.5;            // Resentment decay per tick when player stays away
+    const WALKAWAY_FOLLOW_RESENTMENT_MULT = 2.0;      // Resentment multiplier when player follows
+    const WALKAWAY_FOLLOW_TRUST_PENALTY = -5.0;       // Permanent trust hit when player follows during walkaway
+    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum IRL hours for boundary test
+    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum IRL hours for boundary test
+    const WALKAWAY_RECOVERY_RESENTMENT_MAX = 50;       // Resentment must be below this to recover
+    const WALKAWAY_RECOVERY_COMFORT_MIN = 30;          // Comfort must be above this to recover
+
+    // Hoover constants (Toxic exclusive)
+    const HOOVER_MIN_HOURS = 72;                       // Minimum hours before hoover triggers
+    const HOOVER_MAX_HOURS = 96;                       // Maximum hours for random hoover window
+    const HOOVER_MATURITY_CAP = 40;                    // Maturity must be below this for hoover
+    const HOOVER_RESENTMENT_REBUILD_MULT = 1.5;        // Post-hoover resentment rebuilds faster
+    const HOOVER_WALKAWAY_THRESHOLD_REDUCTION = 0.20;  // Next walkaway triggers 20% sooner
+    const HOOVER_SNAP = [                               // Dimensional snap on hoover return
+        'resentment' => 0,
+        'passion'    => 100,
+        'comfort'    => 50,
+    ];
+
+    // People-pleaser caps
+    const PEOPLE_PLEASER_CONFIDENCE_CAP = 30;
+    const PEOPLE_PLEASER_MATURITY_CAP = 40;
+    const PEOPLE_PLEASER_RESENTMENT_SELF_RATE = 0.1;   // autonomy_score * this per interaction
+
+    /**
+     * Evaluate the autonomy state for an NPC based on personality matrix.
+     *
+     * @param array  $dynamics    NPC dynamics
+     * @param string $temperament NPC temperament
+     * @return array ['state', 'autonomy_score', 'refusal_type', 'deny_actions', 'context', 'people_pleaser']
+     */
+    public static function evaluateAutonomyState($dynamics, $temperament = 'Stoic')
+    {
+        $dims = $dynamics['dimensions'] ?? [];
+
+        // Read dimension values
+        $trust           = floatval($dims['trust']['x'] ?? 50);
+        $respect         = floatval($dims['respect']['x'] ?? 50);
+        $resentment      = floatval($dims['resentment']['x'] ?? 0);
+        $selfConfidence  = floatval($dims['self_confidence']['x'] ?? 50);
+        $maturity        = floatval($dims['maturity']['x'] ?? 50);
+
+        // Maturity modifier: high maturity changes HOW refusal happens, not IF
+        // 0-30: -0.5 (less likely to act on feelings)
+        // 30-60: 0 (neutral)
+        // 60-100: +0.5 (more likely to set clear boundaries)
+        $maturityMod = 0;
+        if ($maturity < 30) {
+            $maturityMod = -0.5;
+        } elseif ($maturity > 60) {
+            $maturityMod = 0.5;
+        }
+
+        // Calculate autonomy score
+        $w = self::AUTONOMY_WEIGHTS;
+        $score = (100 - $trust) * $w['distrust']
+               + (100 - $respect) * $w['disrespect']
+               + $resentment * $w['resentment']
+               + ($selfConfidence / 100) * $w['self_confidence'] * 100
+               + $maturityMod * $w['maturity_mod'] * 100;
+
+        // Clamp to 0-100
+        $score = max(0, min(100, $score));
+
+        // Check for hoover reduction (post-hoover NPCs trigger walkaway sooner)
+        $hooverCount = intval($dynamics['_hoover_count'] ?? 0);
+        $effectiveThresholds = self::AUTONOMY_THRESHOLDS;
+        if ($hooverCount > 0) {
+            $reduction = self::HOOVER_WALKAWAY_THRESHOLD_REDUCTION * $hooverCount;
+            // Lower the refusing/walkaway thresholds
+            $effectiveThresholds['refusing'] = max(40, $effectiveThresholds['refusing'] * (1 - $reduction));
+        }
+
+        // Determine state from score
+        if ($score < $effectiveThresholds['compliant']) {
+            $state = 'compliant';
+        } elseif ($score < $effectiveThresholds['resistant']) {
+            $state = 'resistant';
+        } elseif ($score < ($effectiveThresholds['refusing'] ?? 75)) {
+            $state = 'refusing';
+        } else {
+            $state = 'walkaway';
+        }
+
+        // People-pleaser override: low confidence + low maturity = forced compliance
+        $isPeoplePleaser = ($selfConfidence < self::PEOPLE_PLEASER_CONFIDENCE_CAP
+                         && $maturity < self::PEOPLE_PLEASER_MATURITY_CAP);
+
+        if ($isPeoplePleaser && ($state === 'refusing' || $state === 'walkaway')) {
+            $state = 'compliant';
+        }
+
+        // Ick + low comfort OR high resentment → force walkaway regardless
+        $ickActive = !empty($dynamics['_ick_tracker']['ick_active']);
+        $comfort = floatval($dims['comfort']['x'] ?? 50);
+        if ($ickActive && $comfort < 20) {
+            $state = 'walkaway';
+        }
+        if ($resentment > 70 && !$isPeoplePleaser) {
+            $state = 'walkaway';
+        }
+
+        // If already in walkaway, stay in walkaway
+        if (!empty($dynamics['_walkaway_state']) && $dynamics['_walkaway_state'] !== 'normal') {
+            $state = 'walkaway';
+        }
+
+        // Get refusal type and denied actions
+        $refusalType = ($state === 'compliant') ? null : self::getRefusalType($dynamics, $temperament);
+        $deniedActions = self::getDeniedActions($state);
+
+        return [
+            'state'           => $state,
+            'autonomy_score'  => round($score, 2),
+            'refusal_type'    => $refusalType,
+            'deny_actions'    => $deniedActions,
+            'people_pleaser'  => $isPeoplePleaser,
+            'resentment_self_buildup' => $isPeoplePleaser ? round($score * self::PEOPLE_PLEASER_RESENTMENT_SELF_RATE, 2) : 0,
+        ];
+    }
+
+    /**
+     * Determine refusal type from personality matrix quadrant.
+     *
+     * @param array  $dynamics    NPC dynamics
+     * @param string $temperament NPC temperament
+     * @return string 'silent'|'boundary'|'dramatic'|'direct'|'manipulative'
+     */
+    public static function getRefusalType($dynamics, $temperament = 'Stoic')
+    {
+        $dims = $dynamics['dimensions'] ?? [];
+        $selfConf = floatval($dims['self_confidence']['x'] ?? 50);
+        $maturity = floatval($dims['maturity']['x'] ?? 50);
+        $attachment = $dynamics['attachment_style'] ?? 'secure';
+
+        // Attachment overrides
+        if ($attachment === 'toxic') {
+            return 'manipulative';
+        }
+
+        // Personality matrix quadrant
+        $highConf = $selfConf >= 50;
+        $highMat = $maturity >= 50;
+
+        if (!$highConf && !$highMat) {
+            $type = 'silent';      // Low conf + low mat: comply but suffer
+        } elseif (!$highConf && $highMat) {
+            $type = 'boundary';    // Low conf + high mat: polite but firm
+        } elseif ($highConf && !$highMat) {
+            $type = 'dramatic';    // High conf + low mat: emotional outburst
+        } else {
+            $type = 'direct';      // High conf + high mat: clean refusal
+        }
+
+        // Attachment shifts
+        if ($attachment === 'anxious' && $type !== 'silent') {
+            $type = 'silent';      // Anxious → comply to keep bond
+        }
+        if ($attachment === 'avoidant' && $type !== 'direct') {
+            $type = 'direct';      // Avoidant → withdraw without explaining
+        }
+
+        return $type;
+    }
+
+    /**
+     * Get the list of actions to deny based on autonomy state.
+     *
+     * @param string $state Autonomy state
+     * @return array Action names to remove
+     */
+    public static function getDeniedActions($state)
+    {
+        return self::AUTONOMY_DENIED_ACTIONS[$state] ?? [];
+    }
+
+    /**
+     * Generate context injection text for the LLM based on autonomy state.
+     *
+     * @param array  $dynamics    NPC dynamics
+     * @param string $npcName     NPC name
+     * @param string $temperament NPC temperament
+     * @return string|null Context text or null
+     */
+    public static function getAutonomyContext($dynamics, $npcName, $temperament = 'Stoic')
+    {
+        $eval = self::evaluateAutonomyState($dynamics, $temperament);
+        $state = $eval['state'];
+
+        if ($state === 'compliant') {
+            // People-pleaser internalization
+            if ($eval['people_pleaser'] && $eval['autonomy_score'] >= 30) {
+                return "{$npcName} is uncomfortable but says nothing. A tightness in their chest, "
+                     . "a forced smile. They want to refuse but can't bring themselves to.";
+            }
+            return null;
+        }
+
+        $refusalType = $eval['refusal_type'];
+        $dims = $dynamics['dimensions'] ?? [];
+        $maturity = floatval($dims['maturity']['x'] ?? 50);
+
+        if ($state === 'resistant') {
+            $detail = '';
+            if ($maturity > 60) {
+                $detail = ' They are choosing their words carefully, setting soft limits.';
+            } elseif ($maturity < 30) {
+                $detail = ' Shorter responses, clipped tone, avoiding eye contact.';
+            }
+            return "{$npcName} is growing uncomfortable with the player's commands. "
+                 . "They follow for now but with visible reluctance.{$detail}";
+        }
+
+        if ($state === 'refusing') {
+            $reaction = match ($refusalType) {
+                'silent'       => "Compliance on the surface, but something has broken inside. They do as asked with hollow eyes.",
+                'boundary'     => "\"I need you to respect my boundaries.\" Polite but immovable.",
+                'dramatic'     => "Voice raised, hands trembling. An emotional outburst building toward a breaking point.",
+                'direct'       => "\"I'm not going to do that.\" No apology, no negotiation.",
+                'manipulative' => "\"Of course, anything you want.\" The words are right but the eyes are wrong.",
+                default        => "Resistance is clear in their body language.",
+            };
+            return "{$npcName} has decided they will not comply with the player's demands. "
+                 . "{$reaction} They may end the conversation or walk away if pushed further.";
+        }
+
+        // Walkaway
+        $walkState = $dynamics['_walkaway_state'] ?? 'pending';
+        if ($walkState === 'recovery') {
+            return "{$npcName} has returned because they chose to, not because they were summoned. "
+                 . "The air is fragile. They are watching to see if things have really changed.";
+        }
+        if ($walkState === 'permanent') {
+            return "{$npcName} is done. This bridge is burned. They feel nothing but cold distance "
+                 . "where warmth used to be.";
+        }
+        if ($walkState === 'active' || $walkState === 'boundary_test') {
+            return "{$npcName} has left. They are processing what happened. "
+                 . "Approaching them now risks making things permanently worse.";
+        }
+        // pending or just-triggered
+        return "{$npcName} is done. They are leaving. No amount of persuasion will change this "
+             . "right now. The conversation is over.";
+    }
+
+    // ========== END AUTONOMY OVERRIDE (PR 16) ==========
+
+    // ========== WALKAWAY STATE MACHINE (PR 16) ==========
+    //
+    // 5-state machine: normal → pending → active → boundary_test → recovery/permanent
+    // NPCs physically leave, travel to home, and may or may not return
+    // based on player behavior during the boundary test window.
+    // ==========================================================
+
+    /**
+     * Initiate walkaway sequence. Sets state to 'pending' (1 interaction grace).
+     *
+     * @param array  &$dynamics NPC dynamics (modified in place)
+     * @param string $npcName   NPC name
+     * @param string $reason    Why walkaway triggered ('ick_comfort', 'resentment', 'autonomy')
+     */
+    public static function initiateWalkaway(&$dynamics, $npcName, $reason = 'autonomy')
+    {
+        $currentState = $dynamics['_walkaway_state'] ?? 'normal';
+
+        // Don't re-initiate if already walking away
+        if ($currentState !== 'normal') {
+            return;
+        }
+
+        // Calculate boundary test duration (random within range)
+        $testHours = self::BOUNDARY_TEST_MIN_HOURS
+                   + (mt_rand(0, 100) / 100.0) * (self::BOUNDARY_TEST_MAX_HOURS - self::BOUNDARY_TEST_MIN_HOURS);
+
+        $dynamics['_walkaway_state'] = 'pending';
+        $dynamics['_walkaway_reason'] = $reason;
+        $dynamics['_walkaway_started_at'] = time();
+        $dynamics['_walkaway_boundary_test_hours'] = round($testHours, 1);
+        $dynamics['_walkaway_player_followed'] = false;
+
+        self::log("[WALKAWAY] Initiated for {$npcName}: reason={$reason}, boundary_test={$testHours}h");
+    }
+
+    /**
+     * Advance walkaway from pending to active. Called on next interaction after pending.
+     * Forces NPC to travel to home location.
+     *
+     * @param array  &$dynamics NPC dynamics (modified in place)
+     * @param string $npcName   NPC name
+     */
+    public static function activateWalkaway(&$dynamics, $npcName)
+    {
+        $dynamics['_walkaway_state'] = 'active';
+        $dynamics['_walkaway_activated_at'] = time();
+
+        // Pause affinity decay during walkaway (they chose to leave, not forgotten)
+        $dynamics['_walkaway_affinity_decay_paused'] = true;
+
+        // Execute physical departure
+        self::executeWalkawaySelfDismiss($npcName, $dynamics);
+
+        self::log("[WALKAWAY] Activated for {$npcName} — NPC departing to home");
+    }
+
+    /**
+     * Process per-interaction tick during walkaway.
+     * Handles resentment decay/escalation and boundary test progression.
+     *
+     * @param array  &$dynamics   NPC dynamics (modified in place)
+     * @param string $npcName     NPC name
+     * @param string $temperament NPC temperament
+     * @param bool   $isDialogue  Whether this tick is from player dialogue (pressure)
+     * @return array Status update
+     */
+    public static function processWalkawayTick(&$dynamics, $npcName, $temperament = 'Stoic', $isDialogue = false)
+    {
+        $state = $dynamics['_walkaway_state'] ?? 'normal';
+        if ($state === 'normal' || $state === 'permanent') {
+            return ['state' => $state, 'changed' => false];
+        }
+
+        // Pending → Active on next interaction
+        if ($state === 'pending') {
+            self::activateWalkaway($dynamics, $npcName);
+            return ['state' => 'active', 'changed' => true, 'action' => 'activated'];
+        }
+
+        $result = ['state' => $state, 'changed' => false];
+
+        // Check if player is pressuring (dialogue during walkaway)
+        if ($isDialogue && ($state === 'active' || $state === 'boundary_test')) {
+            // Player followed and engaged — resentment escalation
+            $dynamics['_walkaway_player_followed'] = true;
+
+            $dims = &$dynamics['dimensions'];
+            $currentResentment = floatval($dims['resentment']['x'] ?? 0);
+            $newResentment = min(100, $currentResentment * self::WALKAWAY_FOLLOW_RESENTMENT_MULT);
+            $dims['resentment']['x'] = $newResentment;
+
+            // Permanent trust hit
+            self::applyDelta('trust', $dynamics, self::WALKAWAY_FOLLOW_TRUST_PENALTY, $temperament);
+
+            self::log("[WALKAWAY] Player pressured {$npcName} during walkaway: resentment {$currentResentment}→{$newResentment}, trust " . self::WALKAWAY_FOLLOW_TRUST_PENALTY);
+            $result['changed'] = true;
+            $result['pressure_applied'] = true;
+            return $result;
+        }
+
+        // Move to boundary test phase after activation
+        if ($state === 'active') {
+            $dynamics['_walkaway_state'] = 'boundary_test';
+            $dynamics['_boundary_test_started_at'] = time();
+            $result['state'] = 'boundary_test';
+            $result['changed'] = true;
+        }
+
+        // During boundary test — passive resentment decay
+        if ($state === 'boundary_test' || $dynamics['_walkaway_state'] === 'boundary_test') {
+            self::applyDelta('resentment', $dynamics, self::WALKAWAY_RESENTMENT_TICK, $temperament);
+
+            // Check boundary test outcome
+            $boundaryResult = self::checkBoundaryTest($dynamics);
+            if ($boundaryResult === 'recovery') {
+                $dynamics['_walkaway_state'] = 'recovery';
+                $dynamics['_walkaway_recovery_at'] = time();
+                $dynamics['_walkaway_affinity_decay_paused'] = false;
+                self::log("[WALKAWAY] {$npcName} entering recovery — conditions met");
+                $result['state'] = 'recovery';
+                $result['changed'] = true;
+            } elseif ($boundaryResult === 'permanent') {
+                $dynamics['_walkaway_state'] = 'permanent';
+                $dynamics['_walkaway_permanent_at'] = time();
+                $dynamics['_walkaway_affinity_decay_paused'] = false;
+                self::log("[WALKAWAY] {$npcName} permanent departure — boundary test failed");
+                $result['state'] = 'permanent';
+                $result['changed'] = true;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Evaluate boundary test pass/fail conditions.
+     *
+     * @param array $dynamics NPC dynamics
+     * @return string|null 'recovery', 'permanent', or null (still testing)
+     */
+    public static function checkBoundaryTest($dynamics)
+    {
+        $testStart = intval($dynamics['_boundary_test_started_at'] ?? 0);
+        if ($testStart === 0) {
+            return null;
+        }
+
+        $testHours = floatval($dynamics['_walkaway_boundary_test_hours'] ?? 36);
+        $elapsedHours = (time() - $testStart) / 3600.0;
+
+        // Test hasn't expired yet — check early recovery
+        $dims = $dynamics['dimensions'] ?? [];
+        $resentment = floatval($dims['resentment']['x'] ?? 0);
+        $comfort = floatval($dims['comfort']['x'] ?? 50);
+
+        // Recovery: resentment dropped below threshold AND comfort above minimum
+        if ($resentment < self::WALKAWAY_RECOVERY_RESENTMENT_MAX
+            && $comfort > self::WALKAWAY_RECOVERY_COMFORT_MIN) {
+            return 'recovery';
+        }
+
+        // Test window expired — if conditions not met, it's permanent
+        if ($elapsedHours >= $testHours) {
+            return 'permanent';
+        }
+
+        // Player followed → immediate fail
+        if (!empty($dynamics['_walkaway_player_followed'])) {
+            return 'permanent';
+        }
+
+        return null; // Still testing
+    }
+
+    /**
+     * Check if walkaway recovery conditions allow autonomous return.
+     *
+     * @param array $dynamics NPC dynamics
+     * @return bool True if NPC should return
+     */
+    public static function checkWalkawayRecovery($dynamics)
+    {
+        $state = $dynamics['_walkaway_state'] ?? 'normal';
+        return ($state === 'recovery');
+    }
+
+    /**
+     * Force NPC to travel to their home location via rolecommand.
+     *
+     * @param string $npcName  NPC name
+     * @param array  $dynamics NPC dynamics
+     * @return bool True if command was injected
+     */
+    public static function executeWalkawaySelfDismiss($npcName, $dynamics)
+    {
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if (!$db) return false;
+
+            // Get NPC refid
+            $escaped = $db->escape($npcName);
+            $npcRow = $db->fetchOne("SELECT refid FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+            if (empty($npcRow['refid'])) {
+                self::log("[WALKAWAY] Cannot dismiss {$npcName}: no refid");
+                return false;
+            }
+
+            $refid = $npcRow['refid'];
+
+            // Determine destination
+            $homeLocation = $dynamics['home_location'] ?? null;
+            $actionCmd = '';
+
+            if ($homeLocation) {
+                // Travel to assigned home
+                $escapedLoc = $db->escape($homeLocation);
+                $locRow = $db->fetchOne("SELECT formid FROM locations WHERE name='{$escapedLoc}' LIMIT 1");
+                if (!empty($locRow['formid'])) {
+                    $refHex = self::convertRefIdToHex($refid);
+                    $actionCmd = "rolecommand|BackgroundCmd@{$refHex}@TravelTo/{$locRow['formid']}";
+                }
+            }
+
+            if (empty($actionCmd)) {
+                // Fallback: use ReturnHome command
+                $refHex = self::convertRefIdToHex($refid);
+                $actionCmd = "rolecommand|BackgroundCmd@{$refHex}@ReturnHome/";
+            }
+
+            // Inject into responselog
+            $db->insert('responselog', [
+                'localts' => time(),
+                'sent'    => 0,
+                'actor'   => 'rolemaster',
+                'text'    => '',
+                'action'  => $actionCmd,
+                'tag'     => '',
+            ]);
+
+            self::log("[WALKAWAY] Injected dismiss command for {$npcName}: {$actionCmd}");
+            return true;
+
+        } catch (\Throwable $e) {
+            self::log("[WALKAWAY] Error dismissing {$npcName}: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Force NPC to return to player's location after recovery.
+     *
+     * @param string $npcName  NPC name
+     * @param array  $dynamics NPC dynamics
+     * @return bool True if command was injected
+     */
+    public static function executeAutonomousReturn($npcName, $dynamics)
+    {
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if (!$db) return false;
+
+            $escaped = $db->escape($npcName);
+            $npcRow = $db->fetchOne("SELECT refid FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+            if (empty($npcRow['refid'])) {
+                return false;
+            }
+
+            $refHex = self::convertRefIdToHex($npcRow['refid']);
+            $actionCmd = "rolecommand|BackgroundCmd@{$refHex}@MoveToPlayer";
+
+            $db->insert('responselog', [
+                'localts' => time(),
+                'sent'    => 0,
+                'actor'   => 'rolemaster',
+                'text'    => '',
+                'action'  => $actionCmd,
+                'tag'     => '',
+            ]);
+
+            self::log("[WALKAWAY] Autonomous return for {$npcName}: {$actionCmd}");
+            return true;
+
+        } catch (\Throwable $e) {
+            self::log("[WALKAWAY] Error returning {$npcName}: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Reset walkaway state back to normal. Used when NPC recovers.
+     *
+     * @param array &$dynamics NPC dynamics
+     */
+    public static function resetWalkawayState(&$dynamics)
+    {
+        $dynamics['_walkaway_state'] = 'normal';
+        $dynamics['_walkaway_affinity_decay_paused'] = false;
+        unset(
+            $dynamics['_walkaway_reason'],
+            $dynamics['_walkaway_started_at'],
+            $dynamics['_walkaway_activated_at'],
+            $dynamics['_walkaway_boundary_test_hours'],
+            $dynamics['_walkaway_player_followed'],
+            $dynamics['_boundary_test_started_at'],
+            $dynamics['_walkaway_recovery_at'],
+            $dynamics['_walkaway_permanent_at']
+        );
+    }
+
+    /**
+     * Convert a refid (from DB) to hex string for rolecommand injection.
+     *
+     * @param string $refid The refid from core_npc_master
+     * @return string Hex string like "0x00012345"
+     */
+    public static function convertRefIdToHex($refid)
+    {
+        // refid may already be hex string or decimal
+        if (is_string($refid) && strpos($refid, '0x') === 0) {
+            return $refid;
+        }
+        $int = intval($refid);
+        $unsigned = $int & 0xFFFFFFFF;
+        return "0x" . str_pad(dechex($unsigned), 8, "0", STR_PAD_LEFT);
+    }
+
+    // ========== END WALKAWAY STATE MACHINE (PR 16) ==========
+
+    // ========== HOOVER PROTOCOL (PR 16) ==========
+    //
+    // Toxic/Disorganized NPCs don't stay gone. After walkaway, they return
+    // with a gaslighting charm offensive — wiping resentment, maxing passion.
+    // MDD: "The abuse cycle. They hoover you back."
+    // ==========================================================
+
+    /**
+     * Check if a Hoover return is eligible.
+     *
+     * @param array $dynamics NPC dynamics
+     * @return bool True if hoover should trigger
+     */
+    public static function checkHooverEligibility($dynamics)
+    {
+        // Must be in walkaway state (active or boundary_test)
+        $walkState = $dynamics['_walkaway_state'] ?? 'normal';
+        if (!in_array($walkState, ['active', 'boundary_test'])) {
+            return false;
+        }
+
+        // Must be toxic attachment
+        $attachment = $dynamics['attachment_style'] ?? 'secure';
+        if ($attachment !== 'toxic') {
+            return false;
+        }
+
+        // Maturity must be below cap
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        if ($maturity >= self::HOOVER_MATURITY_CAP) {
+            return false;
+        }
+
+        // Walkaway must have been active long enough
+        $walkStart = intval($dynamics['_walkaway_activated_at'] ?? $dynamics['_walkaway_started_at'] ?? 0);
+        if ($walkStart === 0) {
+            return false;
+        }
+
+        $elapsedHours = (time() - $walkStart) / 3600.0;
+
+        // Random window within min-max range (use deterministic seed from walkaway start)
+        $hooverHours = self::HOOVER_MIN_HOURS
+                     + (($walkStart % 100) / 100.0) * (self::HOOVER_MAX_HOURS - self::HOOVER_MIN_HOURS);
+
+        return ($elapsedHours >= $hooverHours);
+    }
+
+    /**
+     * Execute the Hoover Protocol — dimensional snap + return.
+     *
+     * @param array  &$dynamics NPC dynamics (modified in place)
+     * @param string $npcName   NPC name
+     * @param string $temperament NPC temperament
+     * @return array Snap results
+     */
+    public static function executeHoover(&$dynamics, $npcName, $temperament = 'Stoic')
+    {
+        $snap = self::HOOVER_SNAP;
+        $results = [];
+
+        // Apply dimensional snap
+        foreach ($snap as $dim => $target) {
+            $current = floatval($dynamics['dimensions'][$dim]['x'] ?? 50);
+            $delta = $target - $current;
+            if ($dim === 'passion') {
+                $dynamics['passion'] = floatval($target);
+                $results[$dim] = ['from' => $current, 'to' => $target];
+            } else {
+                $dynamics['dimensions'][$dim]['x'] = floatval($target);
+                $results[$dim] = ['from' => $current, 'to' => $target];
+            }
+        }
+
+        // Track hoover history
+        $dynamics['_hoover_count'] = intval($dynamics['_hoover_count'] ?? 0) + 1;
+        $dynamics['_hoover_last_at'] = time();
+        $dynamics['_hoover_resentment_mult'] = self::HOOVER_RESENTMENT_REBUILD_MULT;
+
+        // Reset walkaway state
+        self::resetWalkawayState($dynamics);
+
+        // Force NPC to return
+        self::executeAutonomousReturn($npcName, $dynamics);
+
+        self::log("[HOOVER] Executed for {$npcName}: snap=" . json_encode($results)
+            . ", hoover_count={$dynamics['_hoover_count']}");
+
+        return $results;
+    }
+
+    /**
+     * Generate hoover-specific context for LLM injection.
+     *
+     * @param array  $dynamics NPC dynamics
+     * @param string $npcName  NPC name
+     * @return string|null Context text or null
+     */
+    public static function getHooverContext($dynamics, $npcName)
+    {
+        $lastHoover = intval($dynamics['_hoover_last_at'] ?? 0);
+        if ($lastHoover === 0) {
+            return null;
+        }
+
+        // Only inject for 48 hours after hoover
+        $hoursSince = (time() - $lastHoover) / 3600.0;
+        if ($hoursSince > 48) {
+            return null;
+        }
+
+        $hooverCount = intval($dynamics['_hoover_count'] ?? 0);
+        $charm = ($hooverCount === 1)
+            ? "sweet, attentive, exactly what the player wants to hear"
+            : "performing the same charm offensive they've used before — the patterns are becoming visible";
+
+        return "{$npcName} has returned acting as if nothing happened. {$charm}. "
+             . "This is NOT genuine recovery. The underlying issues are buried, not resolved. "
+             . "Resentment will rebuild faster this time.";
+    }
+
+    // ========== END HOOVER PROTOCOL (PR 16) ==========
 
 }

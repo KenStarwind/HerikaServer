@@ -1385,6 +1385,19 @@ significance (1-3): How significant was this interaction for the relationship?
   MOST interactions = 1. Be very conservative with 2 and 3.
   Dimension deltas are MULTIPLIED by this value — higher significance = stronger impact.
 
+ROMANTIC INTENT (required):
+romantic_intent (0-3): Rate the PLAYER's romantic or flirtatious intent in this interaction.
+  0 = No romantic intent (business, combat, neutral conversation)
+  1 = Mild warmth (friendly, could be platonic or romantic)
+  2 = Noticeable flirting (compliments beyond normal, lingering attention, teasing with intent)
+  3 = Overt romantic pursuit (declarations, physical advances, persistent unwanted attention)
+  Score based on PLAYER's behavior, not the NPC's response. Most interactions = 0 or 1.
+
+MASKING AWARENESS:
+If the NPC is socially masking (hiding true feelings in public), score based on their TRUE
+emotional response, not their performed behavior. An NPC may say something polite while
+feeling resentment — score the resentment, not the politeness.
+
 BE CONSERVATIVE: most interactions = 0 on most dimensions. Only score what actually happened.
 
 TYPE CHANGES (rare - only for defining moments):
@@ -1392,7 +1405,7 @@ TYPE CHANGES (rare - only for defining moments):
 - Most interactions just adjust affinity, not type
 
 OUTPUT (JSON only, flat object):
-{"significance": 1, "affinity_delta": 1, "affinity_reason": "brief insight", "trust_delta": 0, "trust_reason": "no trust signal", "comfort_delta": 0, "comfort_reason": "neutral exchange", "respect_delta": 0, "respect_reason": "no skill shown", "maturity_delta": 0, "maturity_reason": "normal response", "grievance": null}
+{"significance": 1, "affinity_delta": 1, "affinity_reason": "brief insight", "trust_delta": 0, "trust_reason": "no trust signal", "comfort_delta": 0, "comfort_reason": "neutral exchange", "respect_delta": 0, "respect_reason": "no skill shown", "maturity_delta": 0, "maturity_reason": "normal response", "grievance": null, "romantic_intent": 0}
 
 If you also need to change the relationship type, add a "type" key (string).
 

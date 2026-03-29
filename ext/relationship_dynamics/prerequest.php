@@ -212,6 +212,200 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
     $GLOBALS['RELDYN_ACTIVE_PHYS_STATES'] = $activePhysStates;
 }
 
+// ========== ATTRACTION MATRIX EVALUATION (PR 11) ==========
+if (!empty($reldynCfg['attraction_matrix_enabled'])) {
+    $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+    $lastMatrixEval = intval($dynamics['_attraction_matrix_last_eval'] ?? 0);
+    $evalInterval = intval($reldynCfg['attraction_eval_interval'] ?? 10);
+
+    // Re-evaluate if: first time, or interval elapsed, or cache is empty
+    if ($lastMatrixEval === 0 || ($interactionCount - $lastMatrixEval) >= $evalInterval || empty($dynamics['_attraction_matrix_cache'])) {
+        $matrixResult = RelationshipDynamics::calculateAttractionMatrix($npcName, $dynamics);
+        $GLOBALS['RELDYN_ATTRACTION_MATRIX'] = $matrixResult;
+    } else {
+        // Use cached result
+        $GLOBALS['RELDYN_ATTRACTION_MATRIX'] = $dynamics['_attraction_matrix_cache'];
+    }
+
+    // Set globals for postrequest consumption
+    $GLOBALS['RELDYN_MATRIX_PASSION_MULT'] = floatval($dynamics['_attraction_passion_mult'] ?? 1.0);
+    $GLOBALS['RELDYN_MATRIX_TIER_CEILING'] = $dynamics['_attraction_tier_ceiling'] ?? 'sworn';
+    $GLOBALS['RELDYN_MATRIX_FRIENDZONED'] = !empty($dynamics['_attraction_friendzoned']);
+}
+
+// ========== DUTY OVERRIDE (PR 12) ==========
+if (!empty($reldynCfg['duty_override_enabled'])) {
+    $dutyFactor = RelationshipDynamics::getDutyOverrideFactor();
+    $GLOBALS['RELDYN_DUTY_FACTOR'] = $dutyFactor;
+    if ($dutyFactor < 1.0) {
+        RelationshipDynamics::log("[RelDyn-PRE] Duty override active: factor=" . round($dutyFactor, 2));
+    }
+}
+
+// ========== INTERNAL WEATHER + CREATURE MODIFIERS (PR 13) ==========
+if (!empty($reldynCfg['internal_weather_enabled'])) {
+    $currentInterest = $GLOBALS['RELDYN_CURRENT_INTEREST'] ?? null;
+    RelationshipDynamics::updateInternalWeather($npcName, $dynamics, $currentInterest);
+    $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+    RelationshipDynamics::applyWeatherModifiers($npcName, $dynamics, $temperament);
+}
+
+if (!empty($reldynCfg['creature_moodifications_enabled'])) {
+    $temperament = $temperament ?? ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic');
+    RelationshipDynamics::applyCreatureModifiers($npcName, $dynamics, $temperament);
+}
+
+// ========== SOCIAL MASKING (PR 14) ==========
+if (!empty($reldynCfg['social_masking_enabled'])) {
+    $isMasking = RelationshipDynamics::shouldMask($npcName, $dynamics);
+    $dynamics['_was_masking'] = $isMasking;
+
+    if ($isMasking) {
+        RelationshipDynamics::applyMaskingCost($npcName, $dynamics);
+        $performedState = RelationshipDynamics::calculatePerformedState($dynamics);
+        $dynamics['_performed_state_cache'] = $performedState;
+        $GLOBALS['RELDYN_MASKING_ACTIVE'] = true;
+        $GLOBALS['RELDYN_PERFORMED_STATE'] = $performedState;
+    } else {
+        $dynamics['_performed_state_cache'] = null;
+        $GLOBALS['RELDYN_MASKING_ACTIVE'] = false;
+    }
+}
+
+// ========== ICK RECOVERY CHECK (PR 15) ==========
+if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
+    $ickCleared = RelationshipDynamics::checkIckRecovery($dynamics);
+    if ($ickCleared) {
+        RelationshipDynamics::log("[RelDyn-PRE] Ick cleared for {$npcName}");
+    }
+    $GLOBALS['RELDYN_ICK_ACTIVE'] = !empty($dynamics['_ick_tracker']['ick_active']);
+}
+
+// ========== AUTONOMY OVERRIDE + WALKAWAY (PR 16) ==========
+if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
+    $autoTemperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+    $autonomyEval = RelationshipDynamics::evaluateAutonomyState($dynamics, $autoTemperament);
+    $GLOBALS['RELDYN_AUTONOMY_STATE'] = $autonomyEval['state'];
+    $GLOBALS['RELDYN_AUTONOMY_EVAL'] = $autonomyEval;
+
+    // People-pleaser internalization: build resentment_self
+    if ($autonomyEval['people_pleaser'] && $autonomyEval['resentment_self_buildup'] > 0) {
+        RelationshipDynamics::applyDelta('resentment_self', $dynamics, $autonomyEval['resentment_self_buildup'], $autoTemperament);
+    }
+
+    // Action list filtering for refusing/walkaway states
+    $deniedActions = $autonomyEval['deny_actions'];
+    if (!empty($deniedActions) && function_exists('unsetFunction')) {
+        foreach ($deniedActions as $actionName) {
+            unsetFunction($actionName);
+        }
+        RelationshipDynamics::log("[RelDyn-PRE] Autonomy action filter: state={$autonomyEval['state']}, denied=" . implode(',', $deniedActions));
+    }
+
+    // Initiate walkaway if state demands it and not already walking away
+    $currentWalkState = $dynamics['_walkaway_state'] ?? 'normal';
+    if ($autonomyEval['state'] === 'walkaway' && $currentWalkState === 'normal') {
+        // Determine reason
+        $ickActive = !empty($dynamics['_ick_tracker']['ick_active']);
+        $comfort = floatval($dynamics['dimensions']['comfort']['x'] ?? 50);
+        $resentment = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
+        if ($ickActive && $comfort < 20) {
+            $reason = 'ick_comfort';
+        } elseif ($resentment > 70) {
+            $reason = 'resentment';
+        } else {
+            $reason = 'autonomy';
+        }
+        RelationshipDynamics::initiateWalkaway($dynamics, $npcName, $reason);
+    }
+
+    // Process walkaway tick if in walkaway state
+    if (!empty($dynamics['_walkaway_state']) && $dynamics['_walkaway_state'] !== 'normal') {
+        $isDialogue = in_array($reqType, ['inputtext', 'inputtext_s', 'ginputtext']);
+        $walkResult = RelationshipDynamics::processWalkawayTick($dynamics, $npcName, $autoTemperament, $isDialogue);
+
+        // If recovered, execute autonomous return
+        if (($walkResult['state'] ?? '') === 'recovery') {
+            RelationshipDynamics::executeAutonomousReturn($npcName, $dynamics);
+            RelationshipDynamics::resetWalkawayState($dynamics);
+        }
+
+        $GLOBALS['RELDYN_WALKAWAY_STATE'] = $dynamics['_walkaway_state'] ?? 'normal';
+    }
+}
+
+// ========== HOOVER CHECK (PR 16) ==========
+if (!empty($reldynCfg['hoover_enabled'] ?? true)) {
+    if (RelationshipDynamics::checkHooverEligibility($dynamics)) {
+        $hooverTemperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $hooverResult = RelationshipDynamics::executeHoover($dynamics, $npcName, $hooverTemperament);
+        RelationshipDynamics::log("[RelDyn-PRE] Hoover executed for {$npcName}: " . json_encode($hooverResult));
+        $GLOBALS['RELDYN_HOOVER_ACTIVE'] = true;
+    }
+}
+
+// ========== AUTONOMOUS DIARY TRIGGER (PR 14) ==========
+if (!empty($reldynCfg['autonomous_diary_enabled'])) {
+    $diaryTriggered = RelationshipDynamics::checkDiaryTrigger($npcName, $dynamics, 'interaction');
+    if ($diaryTriggered) {
+        $GLOBALS['RELDYN_DIARY_TRIGGERED'] = true;
+    }
+}
+
+// ========== UNSTABLE WINDOW CHECK (PR 10) ==========
+if (!empty($reldynCfg['divine_intervention_enabled'])) {
+    $unstableWindow = $dynamics['_unstable_window'] ?? null;
+    if ($unstableWindow && empty($unstableWindow['resolved'])) {
+        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+        $windowResult = RelationshipDynamics::checkUnstableWindow($npcName, $dynamics, $playerName);
+        if ($windowResult && $windowResult !== 'active') {
+            RelationshipDynamics::log("[RelDyn-PRE] Unstable window resolved: {$windowResult} for {$npcName}");
+        }
+    }
+}
+
+// ========== GRIEF PHASE PROCESSING (PR 10) ==========
+if (!empty($reldynCfg['grief_system_enabled'] ?? true)) {
+    RelationshipDynamics::processGriefPhases($npcName, $dynamics);
+}
+
+// ========== ATTACHMENT SHIFT (PR 10) ==========
+if (!empty($reldynCfg['attachment_style_enabled'] ?? true)) {
+    if (!empty($dynamics['_attachment_shift_available'])) {
+        $shiftResult = RelationshipDynamics::processAttachmentShift($dynamics);
+        if ($shiftResult) {
+            RelationshipDynamics::log("[RelDyn-PRE] Attachment shift: {$npcName} -> {$shiftResult}");
+        }
+    }
+}
+
+// ========== AFFINITY DECAY WIRING (PR 10) ==========
+// PR 16: Pause affinity decay during walkaway (NPC chose to leave, not forgotten)
+if (!empty($reldynCfg['dimension_engine_enabled']) && empty($dynamics['_walkaway_affinity_decay_paused'])) {
+    $decayTicks = RelationshipDynamics::calculateDecayTicks($dynamics);
+    if ($decayTicks > 0.001) {
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $relType = 'stranger';
+        try {
+            $db = $GLOBALS['db'] ?? null;
+            if ($db) {
+                $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+                $escaped = $db->escape($npcName);
+                $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+                if (is_array($row) && !empty($row['extended_data'])) {
+                    $ext = json_decode($row['extended_data'], true) ?: [];
+                    $relType = $ext['relationships'][$playerName]['type'] ?? 'stranger';
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        $decayResult = RelationshipDynamics::processAffinityDecay($dynamics, $npcName, $temperament, $relType, $decayTicks);
+        if ($decayResult && !($decayResult['skipped'] ?? false)) {
+            RelationshipDynamics::log("[RelDyn-DECAY-WIRED] {$npcName}: decay=" . round($decayResult['decay_amount'], 2));
+        }
+    }
+}
+
 // Calculate effective disposition (overlay on existing sex_disposal)
 $npcNameKey = "aiagent_nsfw_intimacy_" . strtolower(str_replace(' ', '_', $npcName));
 $existingDisposal = 0;
