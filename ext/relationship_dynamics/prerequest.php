@@ -3,7 +3,7 @@
  * Relationship Dynamics — Prerequest Hook
  *
  * Runs after other extension prerequest hooks (alphabetical order).
- * Handles: passion decay, jealousy decay, reunion spike,
+ * Handles: accumulated time tracking, passion decay, jealousy decay, reunion spike,
  * effective disposition calculation, blush multiplier.
  */
 
@@ -42,6 +42,25 @@ if (!RelationshipDynamics::isEnabled()) {
 // Load dynamics
 $dynamics = RelationshipDynamics::getDynamics($npcName);
 
+// ========== ACCUMULATED TIME TRACKING ==========
+// Must run FIRST -- before any decay/cooldown logic that depends on accumulated time
+$timeDelta = RelationshipDynamics::updateAccumulatedTime($dynamics);
+$accumulatedTotal = intval($dynamics['_accumulated_time'] ?? 0);
+$accumulatedMinutes = round($accumulatedTotal / 60.0, 1);
+if ($timeDelta > 0) {
+    RelationshipDynamics::log("[RelDyn-TIME] {$npcName}: +{$timeDelta}s, total: {$accumulatedTotal}s ({$accumulatedMinutes}min)");
+}
+
+// ========== GAMETS PLAY TIME TRACKING ==========
+// Must run alongside accumulated time -- before any decay/cooldown logic.
+// Reads gamets from $gameRequest[2] (set by CHIM from Skyrim game clock).
+// Filters out wait/sleep by comparing gamets/real-time ratio.
+$gametsDelta = RelationshipDynamics::updatePlayTime($dynamics);
+$playGametsTotal = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+if ($gametsDelta > 0) {
+    RelationshipDynamics::log("[RelDyn-GAMETS] {$npcName}: +{$gametsDelta} gamets, total: {$playGametsTotal} play_gamets");
+}
+
 // Auto-generate love language if missing
 RelationshipDynamics::ensureLoveLanguage($npcName, $dynamics);
 
@@ -57,6 +76,13 @@ if ($reldynCfg['passion_enabled'] ?? true) {
 }
 if ($reldynCfg['jealousy_enabled'] ?? true) {
     RelationshipDynamics::decayJealousy($dynamics);
+}
+
+// ========== CONSUMABLE EXPIRY TICK (PR 8) ==========
+// Reverse immediate effects of expired consumables (game-time based)
+$expiredCount = RelationshipDynamics::tickConsumableExpiry($dynamics);
+if ($expiredCount > 0) {
+    RelationshipDynamics::log("Consumable expiry: {$expiredCount} expired for {$npcName}");
 }
 
 // Check reunion spike
@@ -160,6 +186,30 @@ if ($ambientInterest && $ambientResonance >= 0.15) {
 } else {
     // Not in a matching location — clear decay resist
     unset($dynamics['_ambient_decay_resist']);
+}
+
+// -------------------------------------------------------------------------
+// Physical State Bridges (PR 8): detect physical conditions from MinAI
+// signals and apply/clear temporary dimension modifiers.
+// Gated behind dimension_engine_enabled.
+// -------------------------------------------------------------------------
+if (!empty($reldynCfg['dimension_engine_enabled'])) {
+    $physPlayerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+    $physTemperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+
+    // Detect current physical states from game signals
+    $activePhysStates = RelationshipDynamics::detectPhysicalStates($npcName, $physPlayerName);
+
+    // Clear modifiers for states that are no longer active (reverse deltas)
+    RelationshipDynamics::clearPhysicalStateModifiers($dynamics, $activePhysStates, $physTemperament);
+
+    // Apply modifiers for newly detected states
+    if (!empty($activePhysStates)) {
+        RelationshipDynamics::applyPhysicalStateModifiers($dynamics, $activePhysStates, $physTemperament);
+    }
+
+    // Store active states in globals for context.php to reference
+    $GLOBALS['RELDYN_ACTIVE_PHYS_STATES'] = $activePhysStates;
 }
 
 // Calculate effective disposition (overlay on existing sex_disposal)

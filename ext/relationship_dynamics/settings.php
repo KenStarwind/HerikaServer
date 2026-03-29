@@ -71,6 +71,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_reldyn'])) {
         // Stage thresholds
         'stage_established_threshold'        => max(10, min(500, intval($_POST['stage_established_threshold'] ?? 50))),
         'stage_deep_threshold'               => max(50, min(2000, intval($_POST['stage_deep_threshold'] ?? 200))),
+        // XYZ Dimension Engine
+        'dimension_engine_enabled'           => isset($_POST['dimension_engine_enabled']),
+        'dimension_context_enabled'          => isset($_POST['dimension_context_enabled']),
+        'dimension_debug_logging'            => isset($_POST['dimension_debug_logging']),
+        // Diary reflection mode
+        'diary_reflection_mode'              => in_array($_POST['diary_reflection_mode'] ?? 'baseline', ['baseline', 'trajectory']) ? $_POST['diary_reflection_mode'] : 'baseline',
     ];
 
     $jsonConfig = json_encode($newConfig, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -355,7 +361,67 @@ html, body {
         </div>
     </div>
 
-    <!-- Passion / RPM -->
+    <!-- XYZ Dimension Engine -->
+    <div class="rd-section">
+        <h2>XYZ Dimension Engine</h2>
+        <p style="color:#888; font-size:0.85em; margin-bottom:12px;">Multi-dimensional relationship physics. Each dimension tracks X (value), Y (resistance/plasticity), Z (rubber band strength). Requires Chunks 1-3 integrated.</p>
+        <div class="rd-formula">actual_delta = raw_eval_delta * Y_resistance * Z_distance_decay
+  Z_decay(away)  = 1 / (1 + |X - baseline| / Z)    Z_decay(toward) = min(3.0, 1 + |X - baseline| / Z)</div>
+        <div class="rd-toggle">
+            <input type="hidden" name="dimension_engine_enabled" value="">
+            <input type="checkbox" name="dimension_engine_enabled" id="rd_dim_engine" <?php if (!empty($cfg['dimension_engine_enabled'])) echo 'checked'; ?>>
+            <label for="rd_dim_engine" title="Master toggle for the XYZ dimension framework (trust, comfort, respect, maturity, resentment, M/F, arousal/valence)">Dimension Engine Enabled</label>
+        </div>
+        <div class="rd-toggle">
+            <input type="hidden" name="dimension_context_enabled" value="">
+            <input type="checkbox" name="dimension_context_enabled" id="rd_dim_ctx" <?php if (!empty($cfg['dimension_context_enabled'])) echo 'checked'; ?>>
+            <label for="rd_dim_ctx" title="Inject dimension band keywords (e.g. 'suspicious, watches for deception') into the LLM context prompt">Context Keyword Injection</label>
+        </div>
+        <div class="rd-toggle">
+            <input type="hidden" name="dimension_debug_logging" value="">
+            <input type="checkbox" name="dimension_debug_logging" id="rd_dim_debug" <?php if (!empty($cfg['dimension_debug_logging'])) echo 'checked'; ?>>
+            <label for="rd_dim_debug" title="Verbose logging of applyDelta() calculations, band lookups, and plasticity profile resolution">Dimension Debug Logging</label>
+        </div>
+        <div class="rd-row" style="margin-top:10px;">
+            <label>Diary Reflection Mode</label>
+            <div style="display:flex; gap:18px; align-items:center;">
+                <label style="font-weight:normal; cursor:pointer;">
+                    <input type="radio" name="diary_reflection_mode" value="baseline" <?php if (($cfg['diary_reflection_mode'] ?? 'baseline') === 'baseline') echo 'checked'; ?>>
+                    Baseline <span style="color:#888; font-size:0.85em;">(Cheap &mdash; math only)</span>
+                </label>
+                <label style="font-weight:normal; cursor:pointer;">
+                    <input type="radio" name="diary_reflection_mode" value="trajectory" <?php if (($cfg['diary_reflection_mode'] ?? 'baseline') === 'trajectory') echo 'checked'; ?>>
+                    Trajectory <span style="color:#888; font-size:0.85em;">(Rich &mdash; LLM call)</span>
+                </label>
+            </div>
+            <span class="rd-hint">Baseline: compares dimensional snapshots with math. Trajectory: uses LLM to score diary text quality.</span>
+        </div>
+        <table class="rd-curve-table" style="margin-top:10px;">
+            <thead>
+                <tr>
+                    <th>Dimension</th>
+                    <th>Range</th>
+                    <th>Z (Rubber Band)</th>
+                    <th>Scope</th>
+                    <th>Special</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Affinity</td><td>0-100</td><td>25 (wide)</td><td>Per-bond</td><td>Existing, eval-scored</td></tr>
+                <tr><td>Passion</td><td>0-100</td><td>10 (tight)</td><td>Per-bond</td><td>Existing, event-driven</td></tr>
+                <tr><td>Warmth</td><td>0-100</td><td>20</td><td>Per-bond</td><td>Existing, trajectory-derived</td></tr>
+                <tr><td>Trust</td><td>0-100</td><td>30 (wide)</td><td>Per-bond</td><td>New, slow to build</td></tr>
+                <tr><td>Comfort</td><td>0-100</td><td>20</td><td>Per-bond</td><td>New, boundary-sensitive</td></tr>
+                <tr><td>Respect</td><td>0-100</td><td>25 (wide)</td><td>Per-bond</td><td>New, asymmetric Y</td></tr>
+                <tr><td>Maturity</td><td>0-100</td><td>20</td><td>Global</td><td>New, asymmetric plasticity</td></tr>
+                <tr><td>Resentment</td><td>0-100</td><td>8 (tight)</td><td>Per-bond</td><td>New, inverted rubber band</td></tr>
+                <tr><td>M/F Coords</td><td>-100 to +100</td><td>15</td><td>Global</td><td>Two-axis behavioral mode</td></tr>
+                <tr><td>Arousal/Valence</td><td>0-100 / -100 to +100</td><td>8-12</td><td>Global</td><td>Two-axis, fast decay</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+        <!-- Passion / RPM -->
     <div class="rd-section">
         <h2>Passion (RPM)</h2>
         <div class="rd-formula">affinity_gain_mult = 0.3 + (passion / 100) x 1.7

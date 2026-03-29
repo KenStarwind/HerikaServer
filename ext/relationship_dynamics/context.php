@@ -248,3 +248,377 @@ if (!empty($parts)) {
 } else {
     RelationshipDynamics::log("CTX: No parts for {$npcName}: passion={$passion} stage={$stage}");
 }
+
+// ========== TIERED CONTEXT INJECTION ==========
+//
+// Injects <relational_dimensions> block with band keywords for active dimensions.
+// Gated behind dimension_context_enabled — zero change to existing context when off.
+// Placed AFTER <emotional_dynamics> to extend, not replace.
+//
+// Tier 0 (Stranger)     : 0-25 affinity — bare minimum ("stranger, no established history")
+// Tier 1 (Acquaintance) : 26-40 affinity — band keywords only (cap 5 lines)
+// Tier 2 (Friend+)      : 41-70 affinity — keywords + maturity guidance + recent shifts (cap 8 lines)
+// Tier 3 (Bonded+)      : 71-100 affinity — full dimensional state + reasons + maturity + shifts (cap 10 lines)
+//
+// High water mark: once tier 2 is reached, it becomes the permanent floor.
+// Tier 3 requires active high affinity (71+) — drops back to tier 2 if bond breaks.
+// "You don't forget who someone is because you hate them."
+// ==================================================
+
+$rdCfg = RelationshipDynamics::getConfig();
+if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'])) {
+
+    // -----------------------------------------------------------------
+    // Update HWM and compute effective tier
+    // -----------------------------------------------------------------
+    $hwmChanged = RelationshipDynamics::updateContextTierHWM($dynamics);
+    $contextTier = RelationshipDynamics::getContextTier($dynamics);
+    $hwmValue = intval($dynamics['context_tier_hwm'] ?? 0);
+
+    // Persist HWM if it ratcheted up
+    if ($hwmChanged) {
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+    }
+
+    // Log the tier
+    RelationshipDynamics::log("[RelDyn-CTX] Context tier for {$npcName}: {$contextTier} (hwm={$hwmValue})");
+
+    $player = $GLOBALS['PLAYER_NAME'] ?? 'Player';
+    $dims = $dynamics['dimensions'];
+    $dimDebug = !empty($rdCfg['dimension_debug_logging']);
+
+    // Tier-based line caps
+    $tierMaxLines = [0 => 0, 1 => 5, 2 => 8, 3 => 10];
+    $maxLines = $tierMaxLines[$contextTier] ?? 10;
+
+    // Config override can still lower the cap (but not raise above tier cap)
+    $configMax = intval($rdCfg['dimension_max_context_lines'] ?? 10);
+    if ($configMax > 0) {
+        $maxLines = min($maxLines, $configMax);
+    }
+
+    // -----------------------------------------------------------------
+    // Tier 0: Stranger — inject minimal context, skip dimension loop
+    // -----------------------------------------------------------------
+    if ($contextTier === 0) {
+        $dimBlock = "<relational_dimensions>\n{$npcName} is a stranger to {$player} — no established emotional history.\n</relational_dimensions>";
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => $dimBlock];
+
+        RelationshipDynamics::log("CTX: Injected relational_dimensions for {$npcName}: tier 0 (stranger)");
+
+        if ($dimDebug) {
+            error_log("[RelDyn-CTX] Dimension context for {$npcName}: tier 0 (stranger), hwm={$hwmValue}");
+        }
+    } else {
+        // -----------------------------------------------------------------
+        // Tiers 1-3: Build dimension candidate lines
+        // -----------------------------------------------------------------
+
+    // -----------------------------------------------------------------
+    // Priority filtering: skip dimensions at/near baseline, skip inactive
+    // -----------------------------------------------------------------
+    $candidateLines = [];
+    $includedDims = [];
+    $skippedDims = [];
+
+    // Track M/F and A/V combo handling (same logic as buildDimensionContext)
+    $mfHandled = false;
+    $avHandled = false;
+
+    foreach ($dims as $dimId => $dimData) {
+        // Skip inactive dimensions (x is null)
+        if (!isset($dimData['x']) || $dimData['x'] === null) {
+            $skippedDims[] = "{$dimId}(inactive)";
+            continue;
+        }
+
+        $x = floatval($dimData['x']);
+
+        // --- M/F Coordinates: combine into one quadrant entry ---
+        if ($dimId === 'coord_m' || $dimId === 'coord_f') {
+            if ($mfHandled) {
+                continue;
+            }
+            $mfHandled = true;
+
+            $mData = $dims['coord_m'] ?? null;
+            $fData = $dims['coord_f'] ?? null;
+
+            if ($mData === null || !isset($mData['x']) || $mData['x'] === null
+                || $fData === null || !isset($fData['x']) || $fData['x'] === null) {
+                $skippedDims[] = 'coord_mf(inactive)';
+                continue;
+            }
+            // M/F: check distance from temperament baseline
+            $mBase = floatval($mData['baseline'] ?? 0);
+            $fBase = floatval($fData['baseline'] ?? 0);
+            $mDist = abs(floatval($mData['x']) - $mBase);
+            $fDist = abs(floatval($fData['x']) - $fBase);
+
+            if ($mDist <= 10 && $fDist <= 10) {
+                $skippedDims[] = 'coord_mf(near_baseline)';
+                continue;
+            }
+
+            $band = RelationshipDynamics::getMFQuadrantBand($mData['x'], $fData['x']);
+            $candidateLines[] = [
+                'dimId'    => 'coord_mf',
+                'priority' => max($mDist, $fDist),
+                'extreme'  => false,
+                'line'     => "Behavioral Mode: {$band['label']} — {$band['keywords']}",
+            ];
+            $includedDims[] = 'coord_mf';
+            continue;
+        }
+
+        // --- Arousal/Valence: combine into one combo entry ---
+        if ($dimId === 'arousal' || $dimId === 'valence') {
+            if ($avHandled) {
+                continue;
+            }
+            $avHandled = true;
+
+            $aData = $dims['arousal'] ?? null;
+            $vData = $dims['valence'] ?? null;
+
+            if ($aData === null || !isset($aData['x']) || $aData['x'] === null
+                || $vData === null || !isset($vData['x']) || $vData['x'] === null) {
+                $skippedDims[] = 'arousal_valence(inactive)';
+                continue;
+            }
+
+            // Skip if arousal is at resting baseline (10 or below)
+            if (floatval($aData['x']) <= 10) {
+                $skippedDims[] = 'arousal_valence(resting)';
+                continue;
+            }
+
+            $aBase = floatval($aData['baseline'] ?? 10);
+            $vBase = floatval($vData['baseline'] ?? 0);
+            $aDist = abs(floatval($aData['x']) - $aBase);
+            $vDist = abs(floatval($vData['x']) - $vBase);
+
+            if ($aDist <= 10 && $vDist <= 10) {
+                $skippedDims[] = 'arousal_valence(near_baseline)';
+                continue;
+            }
+
+            $band = RelationshipDynamics::getArousalValenceBand($aData['x'], $vData['x']);
+            $candidateLines[] = [
+                'dimId'    => 'arousal_valence',
+                'priority' => max($aDist, $vDist),
+                'extreme'  => (floatval($aData['x']) > 80 || floatval($aData['x']) < 10),
+                'line'     => "Emotional State: {$band['label']} — {$band['keywords']}",
+            ];
+            $includedDims[] = 'arousal_valence';
+            continue;
+        }
+        // --- Standard single-axis dimensions ---
+        $def = RelationshipDynamics::getDimensionDefinition($dimId);
+        if (!$def) {
+            $skippedDims[] = "{$dimId}(unknown)";
+            continue;
+        }
+
+        $baseline = floatval($dimData['baseline'] ?? $def['default_baseline']);
+        $dist = abs($x - $baseline);
+
+        // Get the band
+        $band = RelationshipDynamics::getDimensionBand($dimId, $x);
+        if ($band === null) {
+            $skippedDims[] = "{$dimId}(no_band)";
+            continue;
+        }
+
+        // Skip resentment clean-slate band (empty keywords)
+        if ($dimId === 'resentment' && empty($band['keywords'])) {
+            $skippedDims[] = "{$dimId}(clean_slate)";
+            continue;
+        }
+
+        // Determine if this is an extreme band (first or last in the band table)
+        $allBands = RelationshipDynamics::DIMENSION_BANDS[$dimId] ?? [];
+        $isExtreme = false;
+        if (!empty($allBands)) {
+            $firstBand = $allBands[0];
+            $lastBand = $allBands[count($allBands) - 1];
+            $isExtreme = ($x >= $firstBand['range'][0] && $x <= $firstBand['range'][1])
+                      || ($x >= $lastBand['range'][0] && $x <= $lastBand['range'][1]);
+        }
+
+        // Priority filtering: skip if near baseline and not extreme
+        if ($dist <= 10 && !$isExtreme) {
+            $skippedDims[] = "{$dimId}(near_baseline:{$dist})";
+            continue;
+        }
+
+        // Build the context line
+        $label = RelationshipDynamics::DIMENSION_LABELS[$dimId] ?? ucfirst(str_replace('_', ' ', $dimId));
+
+        if ($dimId === 'resentment') {
+            $lineText = "{$npcName} internal state (not visible to {$player}): {$band['keywords']}";
+        } else {
+            $lineText = "{$label}: {$band['label']} — {$band['keywords']}";
+        }
+
+        $candidateLines[] = [
+            'dimId'    => $dimId,
+            'priority' => $dist,
+            'extreme'  => $isExtreme,
+            'line'     => $lineText,
+        ];
+        $includedDims[] = $dimId;
+    }
+
+    // Sort candidates: extreme bands first, then by distance from baseline (descending)
+    usort($candidateLines, function ($a, $b) {
+        // Extreme bands always win
+        if ($a['extreme'] && !$b['extreme']) return -1;
+        if (!$a['extreme'] && $b['extreme']) return 1;
+        // Then by priority (distance from baseline) descending
+        return $b['priority'] <=> $a['priority'];
+    });
+
+    // Cap at max lines
+    $candidateLines = array_slice($candidateLines, 0, $maxLines);
+    // -----------------------------------------------------------------
+    // Build the dimension context lines
+    // -----------------------------------------------------------------
+    // --- Text Intensity post-processing on dimension keyword lines ---
+    // Transform each keyword line through the intensity engine at render time.
+    // Only applies if arousal, passion, or maturity have non-default values.
+    $intensityActive = false;
+    $iArousal  = floatval($dims['arousal']['x'] ?? 10);
+    $iPassion  = floatval($dims['passion']['x'] ?? 0);
+    $iMaturity = floatval($dims['maturity']['x'] ?? 60);
+    if ($iArousal > 10 || $iPassion > 15 || $iMaturity < 56 || ($iArousal < 10 && $iPassion < 10)) {
+        $intensityActive = true;
+    }
+
+    $dimParts = [];
+    foreach ($candidateLines as $entry) {
+        $line = $entry['line'];
+
+        // Apply text intensity to the keywords portion of each line
+        if ($intensityActive) {
+            // Pattern: "Label: Band â keywords" or "NPC internal state (...): keywords"
+            if (preg_match('/^(.+?\xe2\x80\x94\s*)(.+)$/', $line, $m)) {
+                $m[2] = RelationshipDynamics::applyTextIntensity($m[2], $dynamics);
+                $line = $m[1] . $m[2];
+            } elseif (preg_match('/^(.+?\):\s*)(.+)$/', $line, $m)) {
+                $m[2] = RelationshipDynamics::applyTextIntensity($m[2], $dynamics);
+                $line = $m[1] . $m[2];
+            }
+        }
+
+        $dimParts[] = $line;
+    }
+
+    // -----------------------------------------------------------------
+    // Maturity-specific guidance (tier 2+ only)
+    // -----------------------------------------------------------------
+    if ($contextTier >= 2) {
+    $maturityData = $dims['maturity'] ?? null;
+    if ($maturityData && isset($maturityData['x']) && $maturityData['x'] !== null) {
+        $matX = floatval($maturityData['x']);
+        $matBand = RelationshipDynamics::getDimensionBand('maturity', $matX);
+        if ($matBand) {
+            $matLabel = $matBand['label'];
+            $matKeywords = $matBand['keywords'];
+            $matXRounded = round($matX);
+            $dimParts[] = "<maturity_guidance>"
+                . "{$npcName}'s emotional maturity is {$matLabel} ({$matXRounded}/100): {$matKeywords}. "
+                . "This affects HOW they express other emotions — a mature NPC handles jealousy differently than an immature one."
+                . "</maturity_guidance>";
+        }
+    }
+
+
+    // -----------------------------------------------------------------
+    // Dimensional memory context (PR 9 — tier 2+ only)
+    //
+    // Injects <dimensional_memory> block with the NPC's strongest
+    // memories about this bond. Gives the LLM specific events to
+    // reference in dialogue instead of generic emotional statements.
+    // Gated by dimension_context_enabled AND context tier >= 2.
+    // -----------------------------------------------------------------
+    $memoryPlayer = $GLOBALS['PLAYER_NAME'] ?? 'Player';
+    $memoryBlock = RelationshipDynamics::buildMemoryContext($dynamics, $npcName, $memoryPlayer, 5);
+    if ($memoryBlock !== null) {
+        $dimParts[] = $memoryBlock;
+        RelationshipDynamics::log("[RelDyn-CTX] Injected dimensional_memory for {$npcName}, bond={$memoryPlayer}");
+    }
+
+    // -----------------------------------------------------------------
+    // Recent emotional shifts (tier 2+ only, from last_reason stored per dimension)
+    //
+    // When eval processing stores a 'last_reason' string in a dimension's
+    // state, we surface it here so the LLM has specific events to
+    // reference in dialogue. Gracefully no-ops when field is absent.
+    // -----------------------------------------------------------------
+    $shiftLines = [];
+    foreach ($dims as $dimId => $dimData) {
+        if (empty($dimData['last_reason']) || !is_string($dimData['last_reason'])) {
+            continue;
+        }
+        // Determine direction from last_delta if available
+        $shiftDelta = floatval($dimData['last_delta'] ?? 0);
+        $direction = $shiftDelta >= 0 ? 'increased' : 'decreased';
+        $label = RelationshipDynamics::DIMENSION_LABELS[$dimId] ?? ucfirst(str_replace('_', ' ', $dimId));
+
+        // M/F and Arousal/Valence use their combo labels
+        if ($dimId === 'coord_m' || $dimId === 'coord_f') {
+            $label = 'Behavioral Mode';
+            $direction = 'shifted';
+        } elseif ($dimId === 'arousal' || $dimId === 'valence') {
+            $label = 'Emotional State';
+            $direction = 'shifted';
+        }
+
+        $reason = trim($dimData['last_reason']);
+        // Cap reason length to prevent token bloat
+        if (strlen($reason) > 120) {
+            $reason = substr($reason, 0, 117) . '...';
+        }
+        $shiftLines[] = "- {$label} {$direction}: \"{$reason}\"";
+    }
+
+    if (!empty($shiftLines)) {
+        // Cap shift lines to avoid token bloat
+        $shiftLines = array_slice($shiftLines, 0, 5);
+        $dimParts[] = "<recent_emotional_shifts>"
+            . "\n" . implode("\n", $shiftLines) . "\n"
+            . "</recent_emotional_shifts>";
+    }
+    }
+    // -----------------------------------------------------------------
+    // Assemble and inject dimension context
+    // -----------------------------------------------------------------
+    if (!empty($dimParts)) {
+        $dimBlock = "<relational_dimensions>\n" . implode("\n", $dimParts) . "\n</relational_dimensions>";
+        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => $dimBlock];
+
+        $dimCharCount = strlen($dimBlock);
+        $dimCount = count($candidateLines);
+
+        RelationshipDynamics::log("CTX: Injected relational_dimensions for {$npcName}: {$dimCount} dims, {$dimCharCount} chars, tier={$contextTier}");
+
+        // Debug logging — detailed breakdown
+        if ($dimDebug) {
+            $includedStr = implode(', ', $includedDims);
+            $skippedStr = implode(', ', $skippedDims);
+            error_log("[RelDyn-CTX] Dimension context for {$npcName}: {$dimCount} dims, {$dimCharCount} chars, tier={$contextTier}, hwm={$hwmValue}");
+            error_log("[RelDyn-CTX]   Included: {$includedStr}");
+            error_log("[RelDyn-CTX]   Skipped: {$skippedStr}");
+            if (!empty($shiftLines)) {
+                error_log("[RelDyn-CTX]   Shift reasons: " . count($shiftLines));
+            }
+        }
+    } elseif ($dimDebug) {
+        $skippedStr = implode(', ', $skippedDims);
+        error_log("[RelDyn-CTX] Dimension context for {$npcName}: 0 dims (all skipped/inactive), tier={$contextTier}, hwm={$hwmValue}");
+        error_log("[RelDyn-CTX]   Skipped: {$skippedStr}");
+    }
+    }
+}
+

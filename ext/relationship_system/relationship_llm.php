@@ -377,7 +377,7 @@ INFERENCE RULES:
 1. FACTION: Imperial → add "Stormcloak": -60 enemy. Stormcloak → add "Imperial": -60 enemy.
 2. RACIAL: If NPC shows racial attitudes, add race as target (e.g., "Khajit": -40 contempt)
 3. OCCUPATION: Thieves Guild → "Guard": -40 rival. Companions → "Silver Hand": -70 enemy.
-4. "{PLAYER_NAME}" = Player character. Store as "Player".
+4. "{PLAYER_NAME}" = Player character. Store using their name "{PLAYER_NAME}".
 
 OUTPUT (JSON only):
 {"relationships": {"Target": {"aff": 50, "type": "professional", "note": "works together"}}}
@@ -440,10 +440,11 @@ PROMPT;
                 $type = 'neutral';
             }
 
-            // Normalize player references
+            // Normalize player references to actual player name
             $targetLower = strtolower(trim($target));
-            if (in_array($targetLower, ['player', 'the player', 'dragonborn', 'the dragonborn', '#player_name#'])) {
-                $target = 'Player';
+            $realPlayerName = $this->getPlayerName();
+            if (in_array($targetLower, ['player', 'the player', 'dragonborn', 'the dragonborn', '#player_name#', strtolower($realPlayerName)])) {
+                $target = $realPlayerName;
             }
 
             $rel = ['aff' => $aff, 'type' => $type];
@@ -745,8 +746,8 @@ PROMPT;
         // $npcResponse is the NPC's latest response being evaluated
 
         $playerName = $this->getPlayerName();
-        $listenerName = $context['listener_name'] ?? 'Player';
-        $listenerKey = ($listenerName === 'Player' || strcasecmp($listenerName, $playerName) === 0) ? 'Player' : $listenerName;
+        $listenerName = $context['listener_name'] ?? $playerName;
+        $listenerKey = ($listenerName === 'Player' || strcasecmp($listenerName, $playerName) === 0) ? $playerName : $listenerName;
 
         // EXPLICIT SPEAKER/LISTENER HEADER
         $contextStr .= "═══════════════════════════════════════════════════════\n";
@@ -756,6 +757,25 @@ PROMPT;
 
         $contextStr .= "Your task: Record how {$npcName} felt about this exchange with {$listenerKey}.\n";
         $contextStr .= "Your output MUST include \"{$listenerKey}\" - this is mandatory, not optional.\n\n";
+
+        // NPC's pre-computed emotional state — what they actually felt, not inferred from words.
+        // The main LLM already processed their personality, context, and RelDyn state to produce this.
+        if (!empty($context['npc_emotional_state'])) {
+            $emo = $context['npc_emotional_state'];
+            $emotionParts = [];
+            if (!empty($emo['mood']))      $emotionParts[] = $emo['mood'];
+            if (!empty($emo['emotion']))   $emotionParts[] = $emo['emotion'];
+            if (!empty($emo['intensity'])) $emotionParts[] = "(intensity: {$emo['intensity']})";
+            $contextStr .= "{$npcName}'s EMOTIONAL STATE: " . implode(', ', $emotionParts) . "\n";
+        }
+        if (!empty($context['reldyn_state'])) {
+            $rd = $context['reldyn_state'];
+            $contextStr .= "{$npcName}'s RELATIONSHIP DYNAMICS: warmth={$rd['warmth']}, passion={$rd['passion']}, ";
+            $contextStr .= "speed={$rd['speed']}, gears={$rd['gears']}, temperament={$rd['temperament']}\n";
+        }
+        if (!empty($context['npc_emotional_state']) || !empty($context['reldyn_state'])) {
+            $contextStr .= "Use these as the PRIMARY signal for scoring — the NPC's words may not match their true feelings.\n\n";
+        }
 
         $contextStr .= "CONVERSATION:\n";
 
@@ -784,12 +804,13 @@ PROMPT;
         // Only include Player + nearby NPCs + mentioned NPCs (not ALL relationships)
         $relStateStr = "";
 
-        // Always include Player
-        if (isset($currentRels['Player'])) {
-            $data = $currentRels['Player'];
-            $relStateStr .= "  Player: {$data['aff']} ({$data['type']})\n";
+        // Always include Player (use actual name)
+        $playerRelKey = isset($currentRels[$playerName]) ? $playerName : (isset($currentRels['Player']) ? 'Player' : null);
+        if ($playerRelKey) {
+            $data = $currentRels[$playerRelKey];
+            $relStateStr .= "  {$playerName}: {$data['aff']} ({$data['type']})\n";
         } else {
-            $relStateStr .= "  Player: 0 (neutral)\n";
+            $relStateStr .= "  {$playerName}: 0 (neutral)\n";
         }
 
         // Get nearby NPCs from context
@@ -804,7 +825,7 @@ PROMPT;
         $textLower = strtolower($textToScan);
 
         foreach (array_keys($currentRels) as $knownNpc) {
-            if ($knownNpc === 'Player') continue;
+            if ($knownNpc === 'Player' || $knownNpc === $playerName) continue;
             if (stripos($textLower, strtolower($knownNpc)) !== false) {
                 $mentionedNpcs[] = $knownNpc;
             }
@@ -827,10 +848,27 @@ PROMPT;
 
         // Build output key instruction based on listener
         $outputKeyInstruction = "";
-        if ($listenerKey === 'Player') {
-            $outputKeyInstruction = "IMPORTANT: Use \"Player\" as the key (not \"{$playerName}\").";
+        if ($listenerKey === $playerName) {
+            $outputKeyInstruction = "IMPORTANT: Use \"{$playerName}\" as the key for the player character.";
         } else {
             $outputKeyInstruction = "IMPORTANT: Use \"{$listenerKey}\" as the key for the listener NPC.";
+        }
+
+        // Inject RelDyn type constraints if available (relationship preference gating)
+        $typeConstraintStr = '';
+        if (file_exists(dirname(__DIR__) . '/relationship_dynamics/relationship_dynamics.php')) {
+            require_once dirname(__DIR__) . '/relationship_dynamics/relationship_dynamics.php';
+            $reldynCfg = RelationshipDynamics::getConfig();
+            if ($reldynCfg['type_filter_enabled'] ?? true) {
+                $reldynDynamics = RelationshipDynamics::getDynamics($npcName);
+                if (!empty($reldynDynamics['relationship_preference'])) {
+                    $playerRelKey2 = isset($currentRels[$playerName]) ? $playerName : (isset($currentRels['Player']) ? 'Player' : null);
+                    $currentAffForFilter = $playerRelKey2 ? intval($currentRels[$playerRelKey2]['aff'] ?? 0) : 0;
+                    // Check blocked types with CHIM affinity (not RelDyn blob affinity)
+                    $blockedTypes = RelationshipDynamics::getBlockedTypes($reldynDynamics, $currentAffForFilter);
+                    $typeConstraintStr = RelationshipDynamics::getTypeConstraintPrompt($reldynDynamics, $npcName, $currentAffForFilter);
+                }
+            }
         }
 
         $userPrompt = <<<PROMPT
@@ -842,17 +880,18 @@ LISTENER: {$listenerKey} (who they were talking to)
 CURRENT RELATIONSHIPS:
 {$relStateStr}
 
-CONTEXT:
+{$typeConstraintStr}CONTEXT:
 {$contextStr}
 
-Based on this interaction, how did {$npcName}'s feelings toward {$listenerKey} change?
+Based on this interaction, score how {$npcName}'s feelings toward {$listenerKey} changed.
 Consider: Was there kindness, insult, betrayal, gratitude, violence, romance, etc.?
-Only suggest changes for SIGNIFICANT moments - not every interaction needs a change.
+Only score what actually happened - most dimensions should be 0.
 
 {$outputKeyInstruction}
 
-Return JSON: {"changes": {"{$listenerKey}": {"delta": X, "reason": "brief"}}}
-Or if no changes: {"changes": {}}
+Return a flat JSON object with all dimensions (do NOT nest under target name):
+{"affinity_delta": X, "affinity_reason": "brief", "trust_delta": X, "trust_reason": "brief", "comfort_delta": X, "comfort_reason": "brief", "respect_delta": X, "respect_reason": "brief", "maturity_delta": X, "maturity_reason": "brief", "grievance": null}
+If relationship type should change (rare), add: "type": "new_type"
 PROMPT;
 
         $contextData = [
@@ -865,22 +904,30 @@ PROMPT;
         // Make LLM request with scoped global swapping
         $response = $this->makeSafeRequest(
             $contextData,
-            ["MAX_TOKENS" => 512],
+            ["MAX_TOKENS" => 768],
             "relationship_eval"
         );
 
         // Log to audit_request for UI visibility
         $this->logToAudit($contextData, $response, "eval_{$npcName}");
 
-        // Parse the response
-        $changes = $this->parseEvalResponse($response);
+        // Parse the response (returns ['changes' => ..., 'raw_eval' => ...])
+        $evalParsed = $this->parseEvalResponse($response);
+        $changes = $evalParsed['changes'] ?? [];
+        $rawEval = $evalParsed['raw_eval'] ?? [];
 
         if (empty($changes)) {
             return ['ok' => true, 'changes' => [], 'reason' => 'No significant changes'];
         }
 
-        // Apply the changes
-        $applied = $this->applyChanges($npcId, $changes, $currentRels);
+        // NEW multi-delta format returns a single change entry (not keyed by target).
+        // Wrap it with the listener key so applyChanges can iterate it the old way.
+        if (isset($changes['delta']) && !isset($changes[$listenerKey])) {
+            $changes = [$listenerKey => $changes];
+        }
+
+        // Apply the changes (pass rawEval for RelDyn multi-delta storage)
+        $applied = $this->applyChanges($npcId, $changes, $currentRels, $rawEval);
 
         Logger::info("[REL-LLM] Applied " . count($applied) . " changes for {$npcName}");
 
@@ -939,6 +986,40 @@ PROMPT;
         $speakerRels = $speakerExtended['relationships'] ?? [];
         $listenerRels = $listenerExtended['relationships'] ?? [];
 
+        // ── TIERED EVAL ──
+        // Tier 1 (neither NPC > 20 aff with player): original eval — no personality injection
+        // Tier 2 (at least one NPC 20-50 aff with player): keywords only — traits + bonds
+        // Tier 3 (at least one NPC > 50 aff with player): full personality injection
+        $playerName = $this->getPlayerName();
+        $speakerPlayerAff = intval($speakerRels[$playerName]['aff'] ?? 0);
+        $listenerPlayerAff = intval($listenerRels[$playerName]['aff'] ?? 0);
+        $maxPlayerAff = max(abs($speakerPlayerAff), abs($listenerPlayerAff));
+
+        if ($maxPlayerAff > 50) {
+            $evalTier = 3;
+        } elseif ($maxPlayerAff >= 20) {
+            $evalTier = 2;
+        } else {
+            $evalTier = 1;
+        }
+
+        Logger::info("[REL-LLM] NPC-to-NPC tier={$evalTier} (speaker:{$speakerName} playerAff={$speakerPlayerAff}, listener:{$listenerName} playerAff={$listenerPlayerAff})");
+
+        // Build personality context based on tier
+        if ($evalTier >= 3) {
+            // Full personality: speechstyle, personality, traits, bonds, notes
+            $speakerProfile = $this->buildNpcPersonalitySummary($speaker, $speakerExtended);
+            $listenerProfile = $this->buildNpcPersonalitySummary($listener, $listenerExtended);
+        } elseif ($evalTier >= 2) {
+            // Keywords only: traits + significant bonds (no speechstyle/personality paragraphs)
+            $speakerProfile = $this->buildNpcKeywordSummary($speaker, $speakerExtended);
+            $listenerProfile = $this->buildNpcKeywordSummary($listener, $listenerExtended);
+        } else {
+            // Tier 1: no personality injection
+            $speakerProfile = '';
+            $listenerProfile = '';
+        }
+
         // Build context string
         $contextStr = "";
 
@@ -958,22 +1039,34 @@ PROMPT;
         $speakerRelWithListener = $speakerRels[$listenerName] ?? ['aff' => 0, 'type' => 'neutral'];
         $listenerRelWithSpeaker = $listenerRels[$speakerName] ?? ['aff' => 0, 'type' => 'neutral'];
 
-        $systemPrompt = $this->getNpcToNpcEvalPrompt();
+        // Include existing relationship notes if they exist (tier 2+)
+        $speakerNote = ($evalTier >= 2 && !empty($speakerRelWithListener['note'])) ? " — \"{$speakerRelWithListener['note']}\"" : '';
+        $listenerNote = ($evalTier >= 2 && !empty($listenerRelWithSpeaker['note'])) ? " — \"{$listenerRelWithSpeaker['note']}\"" : '';
+
+        // System prompt: tier 3 gets personality-aware version, tier 1-2 get original
+        $systemPrompt = ($evalTier >= 3) ? $this->getNpcToNpcEvalPrompt() : $this->getNpcToNpcEvalPromptOriginal();
+
+        // Eval instruction varies by tier
+        $evalInstruction = ($evalTier >= 3)
+            ? "Evaluate BASED ON EACH CHARACTER'S PERSONALITY — not generic reactions:"
+            : "Evaluate:";
 
         $userPrompt = <<<PROMPT
 NPC-TO-NPC INTERACTION:
 
 SPEAKER (the one who said this): {$speakerName}
-  Currently feels toward {$listenerName}: {$speakerRelWithListener['aff']} ({$speakerRelWithListener['type']})
+{$speakerProfile}
+  Currently feels toward {$listenerName}: {$speakerRelWithListener['aff']} ({$speakerRelWithListener['type']}){$speakerNote}
 
 LISTENER (the one who heard it): {$listenerName}
-  Currently feels toward {$speakerName}: {$listenerRelWithSpeaker['aff']} ({$listenerRelWithSpeaker['type']})
+{$listenerProfile}
+  Currently feels toward {$speakerName}: {$listenerRelWithSpeaker['aff']} ({$listenerRelWithSpeaker['type']}){$listenerNote}
 
 {$contextStr}
 
 {$speakerName} SAID the above dialogue. {$listenerName} HEARD it.
 
-Evaluate:
+{$evalInstruction}
 - "speaker" = Did {$speakerName}'s feelings toward {$listenerName} change?
 - "listener" = Did {$listenerName}'s feelings toward {$speakerName} change after hearing this?
 
@@ -1030,10 +1123,111 @@ PROMPT;
     }
 
     /**
-     * Get the system prompt for NPC-to-NPC evaluation
+     * Build a compact personality summary for NPC-to-NPC eval context.
+     * Keeps token budget low (~60-100 tokens per NPC).
+     * No raw RelDyn metrics (passion/stage) — those confuse the LLM.
+     * Instead, scans relationships for existing bonds and presents naturally.
      */
-    private function getNpcToNpcEvalPrompt() {
-        $fallback = <<<'PROMPT'
+    private function buildNpcPersonalitySummary($npc, $extendedData) {
+        $lines = [];
+
+        // Personality (from CHIM profile)
+        $personality = trim($npc['personality'] ?? '');
+        if (!empty($personality)) {
+            $short = strlen($personality) > 120 ? substr($personality, 0, 120) . '...' : $personality;
+            $lines[] = "  Personality: {$short}";
+        }
+
+        // Speechstyle (tells the eval WHO this character is)
+        $speechstyle = trim($npc['speechstyle'] ?? '');
+        if (!empty($speechstyle)) {
+            $short = strlen($speechstyle) > 150 ? substr($speechstyle, 0, 150) . '...' : $speechstyle;
+            $lines[] = "  Style: {$short}";
+        }
+
+        // RelDyn temperament + relationship preference (personality traits, not metrics)
+        $reldyn = $extendedData['relationship_dynamics'] ?? [];
+        $traits = [];
+        if (!empty($reldyn['temperament'])) {
+            $traits[] = $reldyn['temperament'];
+        }
+        if (!empty($reldyn['relationship_preference'])) {
+            $traits[] = $reldyn['relationship_preference'];
+        }
+        if (!empty($traits)) {
+            $lines[] = "  Traits: " . implode(', ', $traits);
+        }
+
+        // Race/gender for context
+        $meta = [];
+        if (!empty($npc['race'])) $meta[] = $npc['race'];
+        if (!empty($npc['gender'])) $meta[] = $npc['gender'];
+        if (!empty($meta)) {
+            $lines[] = "  Demographics: " . implode(', ', $meta);
+        }
+
+        // Scan relationships for existing significant bonds
+        // This gives the LLM natural context like "already close to Kaida (crush, 70)"
+        $relationships = $extendedData['relationships'] ?? [];
+        $significantBonds = [];
+        $romanticTypes = ['crush', 'romantic', 'lover', 'spouse', 'committed', 'obsessed', 'fond'];
+        foreach ($relationships as $targetName => $rel) {
+            $aff = intval($rel['aff'] ?? 0);
+            $type = strtolower($rel['type'] ?? 'neutral');
+            // Include bonds with aff >= 40 or romantic-leaning types
+            if ($aff >= 40 || in_array($type, $romanticTypes)) {
+                $significantBonds[] = "{$targetName} ({$type}, affinity {$aff})";
+            }
+        }
+        if (!empty($significantBonds)) {
+            $lines[] = "  Significant bonds: " . implode('; ', array_slice($significantBonds, 0, 3));
+        }
+
+        return empty($lines) ? '' : implode("\n", $lines);
+    }
+
+    /**
+     * Build a keyword-only summary for tier 2 eval.
+     * Traits + significant bonds only — no speechstyle or personality paragraphs.
+     * ~20-40 tokens per NPC.
+     */
+    private function buildNpcKeywordSummary($npc, $extendedData) {
+        $lines = [];
+
+        // RelDyn traits (temperament + preference)
+        $reldyn = $extendedData['relationship_dynamics'] ?? [];
+        $traits = [];
+        if (!empty($reldyn['temperament'])) $traits[] = $reldyn['temperament'];
+        if (!empty($reldyn['relationship_preference'])) $traits[] = $reldyn['relationship_preference'];
+        if (!empty($npc['race'])) $traits[] = $npc['race'];
+        if (!empty($npc['gender'])) $traits[] = $npc['gender'];
+        if (!empty($traits)) {
+            $lines[] = "  Traits: " . implode(', ', $traits);
+        }
+
+        // Significant bonds only
+        $relationships = $extendedData['relationships'] ?? [];
+        $significantBonds = [];
+        $romanticTypes = ['crush', 'romantic', 'lover', 'spouse', 'committed', 'obsessed', 'fond'];
+        foreach ($relationships as $targetName => $rel) {
+            $aff = intval($rel['aff'] ?? 0);
+            $type = strtolower($rel['type'] ?? 'neutral');
+            if ($aff >= 40 || in_array($type, $romanticTypes)) {
+                $significantBonds[] = "{$targetName} ({$type}, {$aff})";
+            }
+        }
+        if (!empty($significantBonds)) {
+            $lines[] = "  Bonds: " . implode('; ', array_slice($significantBonds, 0, 3));
+        }
+
+        return empty($lines) ? '' : implode("\n", $lines);
+    }
+
+    /**
+     * Original system prompt — tier 1 and tier 2 (no personality awareness).
+     */
+    private function getNpcToNpcEvalPromptOriginal() {
+        return <<<'PROMPT'
 You are a behavioral psychologist. Evaluate NPC-to-NPC interaction briefly.
 
 DIRECTION:
@@ -1048,6 +1242,38 @@ REASON FORMAT - Under 15 words:
 ✓ "Dark humor built rapport"
 ✓ "Bossy tone caused mild resentment"
 ✓ "Helpful advice appreciated"
+
+OUTPUT - Use exactly "speaker" and "listener":
+{"speaker": {"delta": 0, "reason": "brief"}, "listener": {"delta": 1, "reason": "brief"}}
+
+No changes? Return empty objects: {}
+PROMPT;
+    }
+
+    /**
+     * Get the system prompt for NPC-to-NPC evaluation (tier 3 — personality-aware)
+     */
+    private function getNpcToNpcEvalPrompt() {
+        $fallback = <<<'PROMPT'
+You are a behavioral psychologist evaluating NPC-to-NPC interaction in Skyrim.
+
+CRITICAL: Use each character's PERSONALITY, TRAITS, and EMOTIONAL STATE to judge their reaction.
+A guarded character won't warm to flattery. A demisexual character won't respond to flirtation from strangers.
+A character deeply bonded with someone else may be indifferent to a new person's charm.
+
+DIRECTION:
+- speaker = NPC who SPOKE
+- listener = NPC who HEARD
+- speaker.delta = speaker's feelings toward listener changed?
+- listener.delta = listener's feelings toward speaker changed?
+
+SCALE: +/-1 typical, +/-2-3 notable, +/-5+ significant. Be conservative.
+Characters with guarded/stoic/independent temperaments should rarely give more than +/-1 to strangers.
+
+REASON FORMAT - Under 15 words, reference personality:
+✓ "Guarded temperament — dismissive of performative charm"
+✓ "Bold personality appreciated the direct approach"
+✓ "Demisexual — flattery from stranger has no effect"
 
 OUTPUT - Use exactly "speaker" and "listener":
 {"speaker": {"delta": 0, "reason": "brief"}, "listener": {"delta": 1, "reason": "brief"}}
@@ -1113,35 +1339,64 @@ PROMPT;
      */
     private function getDynamicEvalPrompt() {
         $fallback = <<<'PROMPT'
-You are a behavioral psychologist. Evaluate interactions and provide BRIEF insight.
+You are a behavioral psychologist scoring how an NPC's feelings changed after one interaction.
 
 SPEAKER ATTRIBUTION:
 - [PLAYER] and [NPC] tags show who said what
-- Only evaluate based on what PLAYER did, not the NPC's own words
+- Score based on what PLAYER did/said, not the NPC's own words
 
-AFFINITY SCALE (-100 to +100):
-- +/-1: Normal chat
-- +/-2-3: Notably friendly/rude, small favors
-- +/-5-10: Meaningful help, gifts, insults
-- +/-15-25: Saving life, violence, betrayal
-- +/-50+: Extreme events (killing loved ones, marriage)
+SCORING DIMENSIONS (score each independently; most interactions affect 1-2, rarely all):
 
-MOST INTERACTIONS = 0 or +/-1. Be conservative. Skip trivial exchanges.
+affinity_delta (-10 to +10): Does the NPC like the player more or less after this?
+  +/-1 normal chat, +/-2-3 notably kind/rude, +/-5-10 meaningful act. MOST = 0 or +/-1.
 
-REASON FORMAT - Keep it SHORT (under 15 words):
-✓ "Teasing triggered defensiveness"
-✓ "Genuine interest validates their experience"
-✓ "Protective action builds trust"
-✗ NOT: Long clinical explanations
+trust_delta (-10 to +10): Did the player prove reliable or break trust?
+  Keeping promises, protecting in danger, honesty = positive.
+  Lying, abandoning, breaking word = negative.
+  Casual chat with no trust signal = 0.
+
+comfort_delta (-10 to +10): Did the NPC feel more or less at ease?
+  Relaxed conversation, respecting boundaries = positive.
+  Pushing too hard, invasive questions, ignoring discomfort = negative.
+  Routine exchange = 0.
+
+respect_delta (-10 to +10): Did the player demonstrate competence or fail?
+  Domain-relevant skill, clever solution, leadership = positive.
+  Incompetence at basics, foolish decisions = negative.
+  No skill demonstration = 0.
+
+maturity_delta (-5 to +5): How did the NPC HANDLE this interaction?
+  IMPORTANT: Score the NPC's behavior, NOT the player's.
+  NPC expressed feelings directly, showed growth, thanked sincerely = positive.
+  NPC deflected with sarcasm, went passive-aggressive, shut down = negative.
+  NPC responded normally = 0.
+
+grievance (null or short string): Did the NPC notice something bothersome they did NOT address?
+  Small slights, unkept promises, subject changes when NPC was uncomfortable.
+  If nothing was swept under the rug, use null.
+
+REASON FORMAT - Keep each *_reason SHORT (under 15 words).
+
+INTERACTION SIGNIFICANCE (required):
+significance (1-3): How significant was this interaction for the relationship?
+  1 = Normal: regular conversation, routine exchange, small talk
+  2 = Significant: a meaningful shared experience, genuine vulnerability, notable act of kindness/cruelty
+  3 = Defining: a relationship-changing moment (confession, betrayal, life-saving, witnessing death together)
+  MOST interactions = 1. Be very conservative with 2 and 3.
+  Dimension deltas are MULTIPLIED by this value — higher significance = stronger impact.
+
+BE CONSERVATIVE: most interactions = 0 on most dimensions. Only score what actually happened.
 
 TYPE CHANGES (rare - only for defining moments):
 - Only change type for: romance confession, betrayal, violence, marriage, family reveal
 - Most interactions just adjust affinity, not type
 
-OUTPUT (JSON only):
-{"changes": {"Player": {"delta": 1, "reason": "brief insight"}}}
+OUTPUT (JSON only, flat object):
+{"significance": 1, "affinity_delta": 1, "affinity_reason": "brief insight", "trust_delta": 0, "trust_reason": "no trust signal", "comfort_delta": 0, "comfort_reason": "neutral exchange", "respect_delta": 0, "respect_reason": "no skill shown", "maturity_delta": 0, "maturity_reason": "normal response", "grievance": null}
 
-No changes? Return: {"changes": {}}
+If you also need to change the relationship type, add a "type" key (string).
+
+No changes at all? Still return the full object with all zeros.
 PROMPT;
 
         return $this->loadPrompt('rel_llm_evaluation', $fallback);
@@ -1149,6 +1404,16 @@ PROMPT;
 
     /**
      * Parse the evaluation response
+     *
+     * Handles TWO formats:
+     * 1. NEW multi-delta (flat): {"affinity_delta": 1, "trust_delta": 2, ...}
+     * 2. OLD single-delta (nested): {"changes": {"Player": {"delta": X, "reason": "..."}}}
+     *
+     * Always returns ['changes' => [...], 'raw_eval' => [...]] where:
+     * - 'changes' is the old-format array for applyChanges() backward compat
+     * - 'raw_eval' is the full multi-delta data for RelDyn processEvalDeltas()
+     *
+     * For the new format, affinity_delta is used as the 'delta' in the old format.
      */
     private function parseEvalResponse($response) {
         $jsonResponse = $response;
@@ -1177,13 +1442,62 @@ PROMPT;
             }
         }
 
-        return $parsed['changes'] ?? [];
+        if (empty($parsed) || !is_array($parsed)) {
+            return ['changes' => [], 'raw_eval' => []];
+        }
+
+        // DETECT FORMAT: new multi-delta has '*_delta' keys at top level
+        if (isset($parsed['affinity_delta']) || isset($parsed['trust_delta']) || isset($parsed['comfort_delta'])) {
+            // NEW multi-delta format (flat object)
+            $rawEval = $parsed;
+
+            // Check if ALL deltas are zero (no change)
+            $allZero = true;
+            $deltaKeys = ['affinity_delta', 'trust_delta', 'comfort_delta', 'respect_delta', 'maturity_delta'];
+            foreach ($deltaKeys as $dk) {
+                if (isset($parsed[$dk]) && intval($parsed[$dk]) !== 0) {
+                    $allZero = false;
+                    break;
+                }
+            }
+
+            if ($allZero && empty($parsed['grievance']) && empty($parsed['type'])) {
+                return ['changes' => [], 'raw_eval' => $rawEval];
+            }
+
+            // Build old-format 'changes' entry using affinity_delta as the primary delta
+            // The target name is filled in by evaluateContext() which knows the listener
+            $change = [
+                'delta' => intval($parsed['affinity_delta'] ?? 0),
+                'reason' => $parsed['affinity_reason'] ?? '',
+            ];
+            if (!empty($parsed['type'])) {
+                $change['type'] = $parsed['type'];
+            }
+
+            return ['changes' => $change, 'raw_eval' => $rawEval];
+        }
+
+        // OLD format: {"changes": {"Player": {"delta": X, "reason": "..."}}}
+        // Build raw_eval from the first target's delta for backward compat with RelDyn
+        $oldChanges = $parsed['changes'] ?? [];
+        $rawEval = [];
+
+        if (!empty($oldChanges)) {
+            $firstChange = reset($oldChanges);
+            if (is_array($firstChange)) {
+                $rawEval['affinity_delta'] = intval($firstChange['delta'] ?? 0);
+                $rawEval['affinity_reason'] = $firstChange['reason'] ?? '';
+            }
+        }
+
+        return ['changes' => $oldChanges, 'raw_eval' => $rawEval];
     }
 
     /**
      * Apply relationship changes
      */
-    private function applyChanges($npcId, $changes, $currentRels) {
+    private function applyChanges($npcId, $changes, $currentRels, $rawEval = []) {
         require_once $GLOBALS['ENGINE_PATH'] . "lib/core/npc_master.class.php";
 
         $npcMaster = new NpcMaster();
@@ -1222,12 +1536,12 @@ PROMPT;
                 continue;
             }
 
-            // Normalize player name references to canonical "Player"
+            // Normalize player name references to actual player name
             $playerName = $this->getPlayerName();
             $targetLower = strtolower(trim($target));
             if ($targetLower === strtolower($playerName) ||
                 in_array($targetLower, ['player', 'the player', 'dragonborn', 'the dragonborn', '#player_name#'])) {
-                $target = 'Player';
+                $target = $playerName;
             }
 
             // Initialize if doesn't exist
@@ -1238,20 +1552,66 @@ PROMPT;
             $oldAff = $currentRels[$target]['aff'];
             $oldType = $currentRels[$target]['type'] ?? 'neutral';
             $newAff = max(-100, min(100, $oldAff + $delta));
-            $currentRels[$target]['aff'] = $newAff;
+
+            // When RelDyn is enabled, it owns player↔NPC aff changes (passion-weighted RPM→Speed).
+            // NPC↔NPC aff changes apply directly — RelDyn has no NPC↔NPC passion math.
+            $reldynEnabled = !empty($GLOBALS['RELATIONSHIP_DYNAMICS_ENABLED'])
+                || file_exists(dirname(__DIR__) . '/relationship_dynamics/relationship_dynamics.php');
+            $playerName = $this->getPlayerName();
+            $isPlayerTarget = (strtolower(trim($target)) === strtolower($playerName));
+            if (!$reldynEnabled || !$isPlayerTarget) {
+                // NPC↔NPC or RelDyn not installed: apply delta directly
+                $currentRels[$target]['aff'] = $newAff;
+            } else {
+                // Player↔NPC: defer to RelDyn's passion-weighted RPM→Speed formula
+                $currentRels[$target]['_rel_eval_delta'] = $delta;
+                $newAff = $oldAff; // Keep aff unchanged — RelDyn will handle it
+
+                // Store full multi-delta eval for RelDyn's XYZ dimension engine.
+                // processPendingEvalDeltas() reads _pending_xyz_eval on next postrequest cycle.
+                if (!empty($rawEval)) {
+                    try {
+                        require_once dirname(__DIR__) . '/relationship_dynamics/relationship_dynamics.php';
+                        $reldynDynamics = RelationshipDynamics::getDynamics($npc['npc_name']);
+                        if (!empty($reldynDynamics)) {
+                            $reldynDynamics['_pending_xyz_eval'] = $rawEval;
+                            RelationshipDynamics::saveDynamics($npc['npc_name'], $reldynDynamics);
+                            Logger::info("[REL-LLM] Stored multi-delta eval for RelDyn XYZ: " . json_encode($rawEval));
+                        }
+                    } catch (Exception $e) {
+                        Logger::warn("[REL-LLM] Failed to store XYZ eval: " . $e->getMessage());
+                    }
+                }
+            }
 
             $typeChanged = false;
             $finalType = $oldType;
 
             if ($newType) {
-                // LLM explicitly set a type
                 $newTypeLower = strtolower($newType);
-                if ($oldType !== $newTypeLower) {
+
+                // RelDyn type filter: enforce relationship_preference blocks
+                $typeBlocked = false;
+                if (file_exists(dirname(__DIR__) . '/relationship_dynamics/relationship_dynamics.php')) {
+                    require_once dirname(__DIR__) . '/relationship_dynamics/relationship_dynamics.php';
+                    $reldynDyn = RelationshipDynamics::getDynamics($npc['npc_name']);
+                    if (!empty($reldynDyn['relationship_preference'])) {
+                        $blockedTypes = RelationshipDynamics::getBlockedTypes($reldynDyn, $newAff);
+                        if (in_array($newTypeLower, $blockedTypes)) {
+                            Logger::info("[REL-LLM] TYPE BLOCKED by RelDyn preference: {$npc['npc_name']} -> {$target}: {$oldType} => {$newTypeLower} (pref={$reldynDyn['relationship_preference']})");
+                            $typeBlocked = true;
+                        }
+                    }
+                }
+
+                if (!$typeBlocked && $oldType !== $newTypeLower) {
                     Logger::info("[REL-LLM] TYPE CHANGE: {$npc['npc_name']} -> {$target}: {$oldType} => {$newTypeLower}");
                     $typeChanged = true;
                 }
-                $currentRels[$target]['type'] = $newTypeLower;
-                $finalType = $newTypeLower;
+                if (!$typeBlocked) {
+                    $currentRels[$target]['type'] = $newTypeLower;
+                    $finalType = $newTypeLower;
+                }
             } else {
                 // Auto-evolve type ONLY when leaving neutral
                 // Once you've formed an opinion, you don't go back to neutral
@@ -1375,10 +1735,11 @@ PROMPT;
      */
     public function getPlayerName() {
         $playerName = $GLOBALS['PLAYER_NAME'] ?? 'the Player';
-        if ($playerName === 'the Player') {
-            $playerRow = $this->db->fetchOne("SELECT player_name FROM eventlog WHERE player_name IS NOT NULL AND player_name != '' ORDER BY id DESC LIMIT 1");
-            if ($playerRow && !empty($playerRow['player_name'])) {
-                $playerName = $playerRow['player_name'];
+        // Worker sets PLAYER_NAME to 'Player' or conf.php resets to 'Prisoner' — resolve from DB
+        if (in_array($playerName, ['the Player', 'Player', 'Prisoner'], true)) {
+            $playerRow = $this->db->fetchOne("SELECT value FROM core_player WHERE id = 'player_name' LIMIT 1");
+            if ($playerRow && !empty($playerRow['value'])) {
+                $playerName = trim($playerRow['value']);
             }
         }
         return $playerName;

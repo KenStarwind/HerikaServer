@@ -545,3 +545,50 @@ if ($passionGain > 0) {
 // 8. Save
 // -------------------------------------------------------------------------
 RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+// ========== XYZ EVAL DELTA PROCESSING (PR 3) ==========
+$rdConfig = RelationshipDynamics::getConfig();
+if (!empty($rdConfig['dimension_engine_enabled'])) {
+    $evalResults = RelationshipDynamics::processPendingEvalDeltas($npcName, $dynamics);
+    if (!empty($evalResults)) {
+        error_log("[RelDyn-POST] XYZ eval deltas applied for {$npcName}: " . json_encode($evalResults));
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+    }
+
+    // ========== RESENTMENT DIMENSION (PR 7) ==========
+    // Process pending grievances into resentment buildup
+    $pendingGrievances = $dynamics['dimensions']['resentment']['pending_grievances'] ?? [];
+    if (!empty($pendingGrievances)) {
+        $dynamics['_npc_name'] = $npcName; // Tag for logging
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $grievanceCount = RelationshipDynamics::processGrievances($dynamics, $temperament);
+        if ($grievanceCount > 0) {
+            error_log("[RelDyn-POST] Processed {$grievanceCount} grievances for {$npcName}");
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+        }
+    }
+
+    // Natural resentment decay on positive interactions
+    $wasPositive = ($passionGain ?? 0) > 0;
+    if ($wasPositive) {
+        $dynamics['_npc_name'] = $npcName;
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $decay = RelationshipDynamics::processResentmentDecay($dynamics, $temperament, true);
+        if (abs($decay) > 0.001) {
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+        }
+    }
+
+    // ========== ITEM DIMENSION MODIFIERS (PR 8) ==========
+    // Detect and process consumable, gift, and equip events from this interaction.
+    // Uses MinAI flags (isDrunk, isOnSkooma), eventlog patterns, and ExtCmdGiveItem.
+    $playerName = $GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player';
+    $temperament = $dynamics['inferred_temperament'] ?? null;
+    $itemResults = RelationshipDynamics::processItemEvents(
+        $dynamics, $GLOBALS['gameRequest'], $npcName, $playerName, $temperament
+    );
+    if (!empty($itemResults['consumable']) || !empty($itemResults['gift']) || !empty($itemResults['equip'])) {
+        error_log("[RelDyn-POST] Item events for {$npcName}: " . json_encode($itemResults));
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+    }
+}

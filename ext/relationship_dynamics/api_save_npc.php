@@ -59,6 +59,137 @@ try {
                 unset($dynamics['activity_preferences']);
             }
 
+            // ========== MATURITY DIMENSION (PR 3) ==========
+            // Update maturity overrides if provided
+            if (isset($input['maturity_x']) && $input['maturity_x'] !== null && $input['maturity_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['maturity'])) $dynamics['dimensions']['maturity'] = [];
+                $dynamics['dimensions']['maturity']['x'] = max(0, min(100, floatval($input['maturity_x'])));
+            }
+            if (isset($input['maturity_baseline']) && $input['maturity_baseline'] !== null && $input['maturity_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['maturity'])) $dynamics['dimensions']['maturity'] = [];
+                $dynamics['dimensions']['maturity']['baseline'] = max(0, min(100, floatval($input['maturity_baseline'])));
+            }
+            if (isset($input['maturity_plasticity_type'])) {
+                $validTypes = ['Resilient', 'Growth', 'Brittle', 'Volatile', 'Rigid', 'Adaptive', ''];
+                $mpt = $input['maturity_plasticity_type'];
+                if (in_array($mpt, $validTypes, true)) {
+                    if (!isset($dynamics['dimensions']['maturity'])) $dynamics['dimensions']['maturity'] = [];
+                    // Empty string means "derive from temperament" — store null
+                    $dynamics['dimensions']['maturity']['plasticity_type'] = $mpt !== '' ? $mpt : null;
+                }
+            }
+
+            // ========== TRUST DIMENSION (PR 4) ==========
+            // Update trust overrides if provided
+            if (isset($input['trust_x']) && $input['trust_x'] !== null && $input['trust_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['trust'])) $dynamics['dimensions']['trust'] = [];
+                $dynamics['dimensions']['trust']['x'] = max(0, min(100, floatval($input['trust_x'])));
+            }
+            if (isset($input['trust_baseline']) && $input['trust_baseline'] !== null && $input['trust_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['trust'])) $dynamics['dimensions']['trust'] = [];
+                $dynamics['dimensions']['trust']['baseline'] = max(0, min(100, floatval($input['trust_baseline'])));
+            }
+
+            // ========== RESPECT DIMENSION (PR 4) ==========
+            // Update respect overrides if provided
+            if (isset($input['respect_x']) && $input['respect_x'] !== null && $input['respect_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['respect'])) $dynamics['dimensions']['respect'] = [];
+                $dynamics['dimensions']['respect']['x'] = max(0, min(100, floatval($input['respect_x'])));
+            }
+            if (isset($input['respect_baseline']) && $input['respect_baseline'] !== null && $input['respect_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['respect'])) $dynamics['dimensions']['respect'] = [];
+                $dynamics['dimensions']['respect']['baseline'] = max(0, min(100, floatval($input['respect_baseline'])));
+            }
+
+            // ========== COMFORT DIMENSION (PR 4) ==========
+            // Update comfort overrides if provided
+            if (isset($input['comfort_x']) && $input['comfort_x'] !== null && $input['comfort_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['comfort'])) $dynamics['dimensions']['comfort'] = [];
+                $dynamics['dimensions']['comfort']['x'] = max(0, min(100, floatval($input['comfort_x'])));
+            }
+            if (isset($input['comfort_baseline']) && $input['comfort_baseline'] !== null && $input['comfort_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['comfort'])) $dynamics['dimensions']['comfort'] = [];
+                $dynamics['dimensions']['comfort']['baseline'] = max(0, min(100, floatval($input['comfort_baseline'])));
+            }
+
+            // ========== M/F COORDINATES (PR 6) ==========
+            // Update coord_m overrides if provided (bipolar: -100 to +100)
+            if (isset($input['coord_m_x']) && $input['coord_m_x'] !== null && $input['coord_m_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['coord_m'])) $dynamics['dimensions']['coord_m'] = [];
+                $dynamics['dimensions']['coord_m']['x'] = max(-100, min(100, floatval($input['coord_m_x'])));
+            }
+            if (isset($input['coord_m_baseline']) && $input['coord_m_baseline'] !== null && $input['coord_m_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['coord_m'])) $dynamics['dimensions']['coord_m'] = [];
+                $dynamics['dimensions']['coord_m']['baseline'] = max(-100, min(100, floatval($input['coord_m_baseline'])));
+            }
+
+            // Update coord_f overrides if provided (bipolar: -100 to +100)
+            if (isset($input['coord_f_x']) && $input['coord_f_x'] !== null && $input['coord_f_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['coord_f'])) $dynamics['dimensions']['coord_f'] = [];
+                $dynamics['dimensions']['coord_f']['x'] = max(-100, min(100, floatval($input['coord_f_x'])));
+            }
+            if (isset($input['coord_f_baseline']) && $input['coord_f_baseline'] !== null && $input['coord_f_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['coord_f'])) $dynamics['dimensions']['coord_f'] = [];
+                $dynamics['dimensions']['coord_f']['baseline'] = max(-100, min(100, floatval($input['coord_f_baseline'])));
+            }
+
+            // ========== AROUSAL/VALENCE (PR 6) ==========
+            // Update arousal overrides if provided
+            if (isset($input['arousal_x']) && $input['arousal_x'] !== null && $input['arousal_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['arousal'])) $dynamics['dimensions']['arousal'] = [];
+                $dynamics['dimensions']['arousal']['x'] = max(0, min(100, floatval($input['arousal_x'])));
+            }
+            if (isset($input['arousal_baseline']) && $input['arousal_baseline'] !== null && $input['arousal_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['arousal'])) $dynamics['dimensions']['arousal'] = [];
+                $dynamics['dimensions']['arousal']['baseline'] = max(0, min(100, floatval($input['arousal_baseline'])));
+            }
+
+            // Update valence overrides if provided
+            if (isset($input['valence_x']) && $input['valence_x'] !== null && $input['valence_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['valence'])) $dynamics['dimensions']['valence'] = [];
+                $dynamics['dimensions']['valence']['x'] = max(-100, min(100, floatval($input['valence_x'])));
+            }
+            if (isset($input['valence_baseline']) && $input['valence_baseline'] !== null && $input['valence_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['valence'])) $dynamics['dimensions']['valence'] = [];
+                $dynamics['dimensions']['valence']['baseline'] = max(-100, min(100, floatval($input['valence_baseline'])));
+            }
+
+            // ========== SELF-CONFIDENCE DIMENSION (PR 7) ==========
+            // Update self_confidence overrides if provided
+            if (isset($input['self_confidence_x']) && $input['self_confidence_x'] !== null && $input['self_confidence_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['self_confidence'])) $dynamics['dimensions']['self_confidence'] = [];
+                $dynamics['dimensions']['self_confidence']['x'] = max(0, min(100, floatval($input['self_confidence_x'])));
+            }
+            if (isset($input['self_confidence_baseline']) && $input['self_confidence_baseline'] !== null && $input['self_confidence_baseline'] !== '') {
+                if (!isset($dynamics['dimensions']['self_confidence'])) $dynamics['dimensions']['self_confidence'] = [];
+                $dynamics['dimensions']['self_confidence']['baseline'] = max(0, min(100, floatval($input['self_confidence_baseline'])));
+            }
+
+            // ========== RESENTMENT DIMENSION (PR 7) ==========
+            // Update resentment X if provided (admin override)
+            if (isset($input['resentment_x']) && $input['resentment_x'] !== null && $input['resentment_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['resentment'])) $dynamics['dimensions']['resentment'] = [];
+                $dynamics['dimensions']['resentment']['x'] = max(0, min(100, floatval($input['resentment_x'])));
+            }
+
+            // ========== RESENTMENT_SELF (PR 7) ==========
+            // Update resentment_self X if provided
+            if (isset($input['resentment_self_x']) && $input['resentment_self_x'] !== null && $input['resentment_self_x'] !== '') {
+                if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+                if (!isset($dynamics['dimensions']['resentment_self'])) $dynamics['dimensions']['resentment_self'] = [];
+                $dynamics['dimensions']['resentment_self']['x'] = max(0, min(100, floatval($input['resentment_self_x'])));
+            }
+
             // Re-embed interest vector with updated sliders
             $interests = $dynamics['interests'] ?? RelationshipDynamics::generateInterests();
             RelationshipDynamics::embedInterestVector($npcName, $interests, $dynamics);
@@ -137,6 +268,275 @@ try {
             RelationshipDynamics::saveDynamics($npcName, $dynamics);
 
             echo json_encode(['ok' => true]);
+            break;
+
+        // ========== MATURITY DIMENSION (PR 3) ==========
+        case 'reset_maturity':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset maturity to temperament-derived defaults
+            $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'maturity');
+            $plasticityType = RelationshipDynamics::getMaturityPlasticityType($temperament);
+
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['maturity'] = [
+                'x' => $baseline,
+                'baseline' => $baseline,
+                'active' => true,
+                'plasticity_type' => $plasticityType,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'maturity_x' => $baseline,
+                'maturity_baseline' => $baseline,
+                'maturity_plasticity_type' => $plasticityType,
+            ]);
+            break;
+
+        // ========== TRUST DIMENSION (PR 4) ==========
+        case 'reset_trust':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset trust to temperament-derived defaults
+            $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'trust');
+
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['trust'] = [
+                'x' => $baseline,
+                'baseline' => $baseline,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'trust_x' => $baseline,
+                'trust_baseline' => $baseline,
+            ]);
+            break;
+
+        // ========== RESPECT DIMENSION (PR 4) ==========
+        case 'reset_respect':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset respect to temperament-derived defaults
+            $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'respect');
+
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['respect'] = [
+                'x' => $baseline,
+                'baseline' => $baseline,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'respect_x' => $baseline,
+                'respect_baseline' => $baseline,
+            ]);
+            break;
+
+        // ========== COMFORT DIMENSION (PR 4) ==========
+        case 'reset_comfort':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset comfort to temperament-derived defaults
+            $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'comfort');
+
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['comfort'] = [
+                'x' => $baseline,
+                'baseline' => $baseline,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'comfort_x' => $baseline,
+                'comfort_baseline' => $baseline,
+            ]);
+            break;
+
+
+        // ========== M/F COORDINATES (PR 6) ==========
+        case 'reset_coord_m':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset coord_m to temperament-derived defaults
+            $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'coord_m');
+
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['coord_m'] = [
+                'x' => $baseline,
+                'baseline' => $baseline,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'coord_m_x' => $baseline,
+                'coord_m_baseline' => $baseline,
+            ]);
+            break;
+
+        case 'reset_coord_f':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset coord_f to temperament-derived defaults
+            $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'coord_f');
+
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['coord_f'] = [
+                'x' => $baseline,
+                'baseline' => $baseline,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'coord_f_x' => $baseline,
+                'coord_f_baseline' => $baseline,
+            ]);
+            break;
+        // ========== AROUSAL/VALENCE (PR 6) ==========
+        case 'reset_arousal':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset arousal to resting state defaults
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['arousal'] = [
+                'x' => 10,
+                'baseline' => 10,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'arousal_x' => 10,
+                'arousal_baseline' => 10,
+            ]);
+            break;
+
+        case 'reset_valence':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset valence to neutral
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['valence'] = [
+                'x' => 0,
+                'baseline' => 0,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'valence_x' => 0,
+                'valence_baseline' => 0,
+            ]);
+            break;
+
+        // ========== SELF-CONFIDENCE DIMENSION (PR 7) ==========
+        case 'reset_self_confidence':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset self-confidence to temperament-derived defaults
+            $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'self_confidence');
+
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['self_confidence'] = [
+                'x' => $baseline,
+                'baseline' => $baseline,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'self_confidence_x' => $baseline,
+                'self_confidence_baseline' => $baseline,
+            ]);
+            break;
+
+                // ========== RESENTMENT DIMENSION (PR 7) ==========
+        case 'reset_resentment':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset resentment to 0 and clear all grievance data
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['resentment'] = [
+                'x' => 0,
+                'baseline' => 0,
+                'active' => true,
+                'pending_grievances' => [],
+                'grievance_log' => [],
+                'last_decay_tick' => 0,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'resentment_x' => 0,
+            ]);
+            break;
+
+        case 'clear_grievances':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Clear grievance log but keep resentment value
+            if (isset($dynamics['dimensions']['resentment'])) {
+                $dynamics['dimensions']['resentment']['pending_grievances'] = [];
+                $dynamics['dimensions']['resentment']['grievance_log'] = [];
+            }
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode(['ok' => true]);
+            break;
+
+        // ========== RESENTMENT_SELF (PR 7) ==========
+        case 'reset_resentment_self':
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+
+            // Reset resentment_self to 0 (clean slate)
+            if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
+            $dynamics['dimensions']['resentment_self'] = [
+                'x' => 0,
+                'baseline' => 0,
+                'active' => true,
+            ];
+
+            RelationshipDynamics::saveDynamics($npcName, $dynamics);
+
+            echo json_encode([
+                'ok' => true,
+                'resentment_self_x' => 0,
+                'resentment_self_baseline' => 0,
+            ]);
             break;
 
         default:
