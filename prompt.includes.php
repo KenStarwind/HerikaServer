@@ -68,8 +68,13 @@ if (isset($PROMPTS[$gameRequest[0]]["extra"])) {
 if (file_exists(__DIR__."/functions/user_pref.json")) {
     $currentOnes=json_decode(file_get_contents(__DIR__."/functions/user_pref.json"),true);
 	if (isset($currentOnes) && is_array($currentOnes) && (count($currentOnes) > 0)) {
-		
-		$GLOBALS["ENABLED_FUNCTIONS"]=$currentOnes; // add functions from plugins to existing selection
+
+		// Filter out stale entries that no longer exist in any plugin/core definition
+		if (!empty($GLOBALS["DEFINED_FUNCTIONS"])) {
+			$currentOnes = array_values(array_intersect($currentOnes, $GLOBALS["DEFINED_FUNCTIONS"]));
+		}
+
+		$GLOBALS["ENABLED_FUNCTIONS"]=$currentOnes;
 		
 		error_log("JSON: " . implode('|', $GLOBALS["ENABLED_FUNCTIONS"]) ); //debug		
 	}
