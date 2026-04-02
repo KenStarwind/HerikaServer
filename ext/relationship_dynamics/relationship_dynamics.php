@@ -8209,9 +8209,10 @@ class RelationshipDynamics
      * @param string      $itemName     Gifted item name
      * @param string      $giverName    Who gave the gift (usually the player)
      * @param string|null $temperament  NPC temperament name
+     * @param string|null $npcName      NPC receiving the gift (for logging)
      * @return array  Map of dimension => actual_delta applied
      */
-    public static function processGift(&$dynamics, $itemName, $giverName, $temperament = null)
+    public static function processGift(&$dynamics, $itemName, $giverName, $temperament = null, $npcName = null)
     {
         $config = self::getConfig();
         if (empty($config['dimension_engine_enabled'])) {
@@ -8283,7 +8284,7 @@ class RelationshipDynamics
             $sign = $val >= 0 ? '+' : '';
             $effectStr[] = "{$dim} {$sign}" . round($val, 1);
         }
-        error_log("[RelDyn-ITEM] Gift from {$giverName}: {$itemName} | base={$baseValue} LL={$llMult}x interest={$interestMult}x context={$contextMult}x => delta=" . round($giftDelta, 1)
+        error_log("[RelDyn-ITEM] Gift to {$npcName} from {$giverName}: {$itemName} | base={$baseValue} LL={$llMult}x interest={$interestMult}x context={$contextMult}x => delta=" . round($giftDelta, 1)
             . " | " . implode(', ', $effectStr)
             . ($itemInterest ? " (interest={$itemInterest})" : ' (no interest match)'));
 
@@ -8521,7 +8522,8 @@ class RelationshipDynamics
                         $dynamics,
                         $event['item'],
                         $event['giver'] ?? $playerName,
-                        $temperament
+                        $temperament,
+                        $npcName
                     );
                     if (!empty($results)) {
                         $allResults['gift'][] = ['item' => $event['item'], 'deltas' => $results];
