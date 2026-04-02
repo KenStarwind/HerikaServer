@@ -457,7 +457,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
         } catch (Throwable $e) {
             $_POST['extended_data'] = '{}';
         }
-        
+
+        // Merge relationship_dynamics from DB into posted extended_data
+        // RelDyn saves via its own AJAX endpoint, so the form textarea has stale data
+        if ($id > 0 && is_dir(__DIR__."/../../ext/relationship_dynamics/")) {
+            try {
+                $_rdPosted = json_decode($_POST['extended_data'] ?? '{}', true) ?: [];
+                $_rdRow = $npc->getById($id);
+                $_rdCurrent = json_decode($_rdRow['extended_data'] ?? '{}', true) ?: [];
+                if (isset($_rdCurrent['relationship_dynamics'])) {
+                    $_rdPosted['relationship_dynamics'] = $_rdCurrent['relationship_dynamics'];
+                    $_POST['extended_data'] = json_encode($_rdPosted);
+                }
+            } catch (Throwable $e) {}
+        }
+
         // Handle dynamic_profile: if empty string sent, set to NULL (inherit from profile)
         if (array_key_exists('dynamic_profile', $_POST)) {
             $dynVal = $_POST['dynamic_profile'];

@@ -65,9 +65,28 @@ function _relGetConversationListener($speakerName) {
  */
 function _relIsPlayer($name) {
     if (empty($name)) return false;
-    $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
-    // Case-insensitive comparison
-    return strcasecmp($name, $playerName) === 0 || strcasecmp($name, "Player") === 0;
+    static $resolvedPlayerName = null;
+    if ($resolvedPlayerName === null) {
+        $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
+        if (in_array($playerName, ['Player', 'Prisoner', 'the Player'], true)) {
+            try {
+                $row = $GLOBALS["db"]->fetchOne(
+                    "SELECT value FROM core_player WHERE id = 'player_name' LIMIT 1"
+                );
+                if ($row && !empty($row['value'])) {
+                    $resolvedPlayerName = trim($row['value']);
+                } else {
+                    $resolvedPlayerName = $playerName;
+                }
+            } catch (Throwable $e) {
+                $resolvedPlayerName = $playerName;
+            }
+        } else {
+            $resolvedPlayerName = $playerName;
+        }
+    }
+    return strcasecmp($name, $resolvedPlayerName) === 0
+        || strcasecmp($name, "Player") === 0;
 }
 
 /**
