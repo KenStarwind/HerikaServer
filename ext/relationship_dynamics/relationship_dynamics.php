@@ -3788,8 +3788,11 @@ class RelationshipDynamics
                     continue;
                 }
 
-                // Only inject if arousal is above resting baseline (10)
-                if (floatval($aData['x']) <= 10) {
+                // Inject if EITHER arousal is above resting baseline (10)
+                // OR valence is significantly displaced from baseline (0)
+                $arousalDisplaced = floatval($aData['x']) > 10;
+                $valenceDisplaced = abs(floatval($vData['x'])) > 15;
+                if (!$arousalDisplaced && !$valenceDisplaced) {
                     continue;
                 }
 
@@ -3974,7 +3977,7 @@ class RelationshipDynamics
             'Humble'      => 40, 'Nurturing'   => 60, 'Gentle'      => 50,
             'Jealous'     => 25, 'Stoic'       => 20, 'Proud'       => 20,
             'Bold'        => 35, 'Independent' => 15, 'Defiant'     => 15,
-            'Guarded'     => 15,
+            'Guarded'     => 25,  // "Wants to open up but afraid" — inner warmth exists
         ],
         // Maturity: emotional development starting point
         'maturity' => [
@@ -5066,7 +5069,7 @@ class RelationshipDynamics
 
                 // ========== DIMENSIONAL MEMORY (PR 9) ==========
                 // Store in rolling memory window for confrontation fuel / diary
-                $bondName = $GLOBALS['PLAYER_NAME'] ?? 'Player';
+                $bondName = $GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player';
                 self::storeDimensionalMemory($dynamics, $dimId, $actual, $evalResult[$reasonKey], $bondName);
             }
 
@@ -8610,7 +8613,7 @@ class RelationshipDynamics
     public static function storeDimensionalMemory(&$dynamics, $dimensionId, $delta, $reason, $bondName = null)
     {
         if ($bondName === null) {
-            $bondName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+            $bondName = trim($GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player');
         }
         if (empty($reason) || !is_string($reason) || abs($delta) < 0.0001) {
             return;
@@ -8719,7 +8722,7 @@ class RelationshipDynamics
     public static function getConfrontationFuel($dynamics, $bondName = null)
     {
         if ($bondName === null) {
-            $bondName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+            $bondName = trim($GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player');
         }
         $memories = $dynamics['dimensional_memory'] ?? [];
         if (!is_array($memories) || empty($memories)) {
@@ -10903,6 +10906,8 @@ class RelationshipDynamics
         foreach ($locationInterestMap as $keyword => $interest) {
             if (stripos($locationKeywords, $keyword) !== false && isset($interests[$interest])) {
                 $satisfaction[$interest] = max($satisfaction[$interest] ?? 0, 0.5);
+                // Reset decay timer — location IS satisfying the interest
+                $lastSatisfied[$interest] = $interactionCount;
             }
         }
 
