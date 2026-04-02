@@ -1140,6 +1140,8 @@ class RelationshipDynamics
             // ========== DIARY SELF-EVAL TRACKING (PR 9) ==========
             '_last_diary_reflection' => 0,
             '_intrinsic_goals'       => [],
+            '_director_goal'         => null,    // Active director-assigned goal {text, source, created_gamets, max_age_gamets, priority, active}
+            '_director_goal_history' => [],      // Recent completed/expired goals (cap 5)
             '_diary_snapshots'       => [],
 
             // ========== ACCUMULATED TIME TRACKING ==========
@@ -9712,6 +9714,113 @@ class RelationshipDynamics
     }
 
     // ========== END DIARY SELF-EVAL (PR 9) ==========
+
+    // ========== DIRECTOR-ASSIGNED GOALS (PR 39) ==========
+
+    /**
+     * Set an active director-assigned goal for this NPC.
+     * @param array &$dynamics  The dynamics blob
+     * @param string $goalText  What the NPC should try to do
+     * @param string $source    'director' | 'bgl' | 'intrinsic'
+     * @param int $maxAgeGamets Max age in gamets before expiry (3600=~1h director, 7200=~2h bgl)
+     * @param float $priority   0.0-1.0 urgency
+     */
+    public static function setDirectorGoal(&$dynamics, $goalText, $source = 'director', $maxAgeGamets = 3600, $priority = 0.5) {
+        // Expire current goal if one exists
+        if (!empty($dynamics['_director_goal']) && !empty($dynamics['_director_goal']['active'])) {
+            self::expireDirectorGoal($dynamics);
+        }
+
+        $dynamics['_director_goal'] = [
+            'text'            => trim($goalText),
+            'source'          => $source,
+            'created_at'      => time(),
+            'created_gamets'  => self::getPlayGamets($dynamics),
+            'max_age_gamets'  => $maxAgeGamets,
+            'priority'        => max(0.0, min(1.0, floatval($priority))),
+            'active'          => true,
+        ];
+
+        self::log("[RelDyn-GOAL] Set director goal ({$source}, pri={$priority}): " . substr($goalText, 0, 80));
+    }
+
+    /**
+     * Get the active director goal if it exists and hasn't expired.
+     * Does NOT expire it — call expireDirectorGoal() separately.
+     * @param array $dynamics
+     * @return array|null The goal array, or null if none/expired/disabled
+     */
+    public static function getActiveDirectorGoal($dynamics) {
+        if (!empty($dynamics['_director_goal_disabled'])) return null;
+
+        $goal = $dynamics['_director_goal'] ?? null;
+        if (!$goal || empty($goal['active']) || empty($goal['text'])) return null;
+
+        // Check age
+        $currentGamets = self::getPlayGamets($dynamics);
+        $goalAge = $currentGamets - floatval($goal['created_gamets'] ?? 0);
+        $maxAge = floatval($goal['max_age_gamets'] ?? 3600);
+
+        if ($goalAge > $maxAge) return null; // Expired but not yet cleaned up
+
+        return $goal;
+    }
+
+    /**
+     * Expire the current director goal, moving it to history.
+     * @param array &$dynamics
+     */
+    public static function expireDirectorGoal(&$dynamics) {
+        $goal = $dynamics['_director_goal'] ?? null;
+        if (!$goal || empty($goal['text'])) {
+            $dynamics['_director_goal'] = null;
+            return;
+        }
+
+        $goal['active'] = false;
+        $goal['ended_at'] = time();
+        $goal['ended_gamets'] = self::getPlayGamets($dynamics);
+        $goal['outcome'] = 'expired';
+
+        if (!isset($dynamics['_director_goal_history'])) {
+            $dynamics['_director_goal_history'] = [];
+        }
+        array_unshift($dynamics['_director_goal_history'], $goal);
+        $dynamics['_director_goal_history'] = array_slice($dynamics['_director_goal_history'], 0, 5);
+
+        $dynamics['_director_goal'] = null;
+        self::log("[RelDyn-GOAL] Expired director goal: " . substr($goal['text'], 0, 60));
+    }
+
+    /**
+     * Mark the current director goal as fulfilled.
+     * @param array &$dynamics
+     * @param string $reason How it was fulfilled
+     */
+    public static function fulfillDirectorGoal(&$dynamics, $reason = 'completed') {
+        $goal = $dynamics['_director_goal'] ?? null;
+        if (!$goal || empty($goal['text'])) {
+            $dynamics['_director_goal'] = null;
+            return;
+        }
+
+        $goal['active'] = false;
+        $goal['ended_at'] = time();
+        $goal['ended_gamets'] = self::getPlayGamets($dynamics);
+        $goal['outcome'] = 'fulfilled';
+        $goal['fulfill_reason'] = $reason;
+
+        if (!isset($dynamics['_director_goal_history'])) {
+            $dynamics['_director_goal_history'] = [];
+        }
+        array_unshift($dynamics['_director_goal_history'], $goal);
+        $dynamics['_director_goal_history'] = array_slice($dynamics['_director_goal_history'], 0, 5);
+
+        $dynamics['_director_goal'] = null;
+        self::log("[RelDyn-GOAL] Fulfilled director goal ({$reason}): " . substr($goal['text'], 0, 60));
+    }
+
+    // ========== END DIRECTOR-ASSIGNED GOALS (PR 39) ==========
 
     // ========== ATTRACTION MATRIX — PLAYER DATA (PR 11) ==========
 

@@ -259,6 +259,14 @@ try {
                 $dynamics['dimensions']['resentment_self']['x'] = max(0, min(100, floatval($input['resentment_self_x'])));
             }
 
+            // ========== DIRECTOR GOAL CONTROLS (PR 39) ==========
+            if (isset($input['director_goal_disabled'])) {
+                $dynamics['_director_goal_disabled'] = !empty($input['director_goal_disabled']);
+            }
+            if (isset($input['clear_director_goal']) && $input['clear_director_goal']) {
+                $dynamics['_director_goal'] = null;
+            }
+
             // Re-embed interest vector with updated sliders
             $interests = $dynamics['interests'] ?? RelationshipDynamics::generateInterests();
             RelationshipDynamics::embedInterestVector($npcName, $interests, $dynamics);

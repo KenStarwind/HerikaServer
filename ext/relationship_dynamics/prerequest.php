@@ -468,5 +468,48 @@ if (class_exists('NsfwNpcData')) {
     }
 }
 
+// ========== DIRECTOR GOAL — PASSIVE BRIDGE (PR 39, Step 9) ==========
+// If no director goal is currently active, check CHIM's HERIKA_GOALS for
+// Director/SNQE-assigned goals and bridge them into the RelDyn goal system.
+// HERIKA_GOALS is loaded by npc_master.class.php from the goals column
+// (combined_bio_templates) and may contain SNQE quest-injected goals.
+if (!empty($reldynCfg['director_goals_enabled'] ?? true)) {
+    $existingGoal = RelationshipDynamics::getActiveDirectorGoal($dynamics);
+    if (!$existingGoal) {
+        $chimGoals = trim($GLOBALS['HERIKA_GOALS'] ?? '');
+        if (!empty($chimGoals)) {
+            // Only bridge if the goals text has changed since last bridge
+            // (avoids re-setting the same static bio goal every tick)
+            $lastBridgedHash = $dynamics['_director_goal_last_bridge_hash'] ?? '';
+            $currentHash = md5($chimGoals);
+            if ($currentHash !== $lastBridgedHash) {
+                RelationshipDynamics::setDirectorGoal(
+                    $dynamics,
+                    $chimGoals,
+                    'director',       // source: CHIM Director/SNQE
+                    7200,             // 2h gamets — director quests are longer-lived
+                    0.4               // moderate priority — bio goals are background
+                );
+                $dynamics['_director_goal_last_bridge_hash'] = $currentHash;
+                RelationshipDynamics::log("[RelDyn-PRE] Bridged CHIM goals -> director goal for {$npcName}: " . substr($chimGoals, 0, 80));
+            }
+        }
+    }
+}
+
+// ========== DIRECTOR GOAL EXPIRY CHECK (PR 39, Step 3) ==========
+if (!empty($reldynCfg['director_goals_enabled'] ?? true)) {
+    $activeGoal = RelationshipDynamics::getActiveDirectorGoal($dynamics);
+    if ($activeGoal) {
+        $currentGamets = RelationshipDynamics::getPlayGamets($dynamics);
+        $goalAge = $currentGamets - floatval($activeGoal['created_gamets'] ?? 0);
+        $maxAge = floatval($activeGoal['max_age_gamets'] ?? 3600);
+        if ($goalAge > $maxAge) {
+            RelationshipDynamics::expireDirectorGoal($dynamics);
+        }
+    }
+    $GLOBALS['RELDYN_DIRECTOR_GOAL'] = RelationshipDynamics::getActiveDirectorGoal($dynamics);
+}
+
 // Save dynamics (decay + reunion applied)
 RelationshipDynamics::saveDynamics($npcName, $dynamics);

@@ -110,6 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_reldyn'])) {
         'autonomy_enabled'                   => isset($_POST['autonomy_enabled']),
         'walkaway_enabled'                   => isset($_POST['walkaway_enabled']),
         'hoover_enabled'                     => isset($_POST['hoover_enabled']),
+        // PR 39: Director-Assigned Goals
+        'director_goals_enabled'             => isset($_POST['director_goals_enabled']),
     ];
 
     $jsonConfig = json_encode($newConfig, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -793,6 +795,19 @@ html, body {
                 <tr><td>Deep</td><td>15</td><td>50</td><td>0.8x</td><td>1.0x</td><td>Resilient, hard to break</td></tr>
             </tbody>
         </table>
+    </div>
+
+    <!-- PR 39: Director-Assigned Goals -->
+    <div class="rd-section">
+        <h2>Director-Assigned Goals (PR 39)</h2>
+        <div class="rd-row">
+            <div class="rd-toggle">
+                <input type="hidden" name="director_goals_enabled" value="">
+                <input type="checkbox" name="director_goals_enabled" id="rd_director_goals" <?php if ($cfg['director_goals_enabled'] ?? false) echo 'checked'; ?>>
+                <label for="rd_director_goals" title="Allow the Director/Background Life to assign contextual goals to NPCs (e.g. 'Find shelter before the storm hits')">Enable Director-Assigned Goals</label>
+            </div>
+            <span class="rd-hint">Allow the Director/Background Life to assign contextual goals to NPCs. Goals expire after a configurable game-time window and influence NPC behavior through context steering.</span>
+        </div>
     </div>
 
     <!-- Save -->

@@ -682,6 +682,18 @@ if (!empty($GLOBALS['RELDYN_DIARY_TRIGGERED'])) {
     RelationshipDynamics::markDiaryCompleted($dynamics);
 }
 
+// ========== DIRECTOR GOAL FULFILLMENT CHECK (PR 39, Step 5) ==========
+$rdCfg = $rdCfg ?? RelationshipDynamics::getConfig();
+if (!empty($rdCfg['director_goals_enabled'] ?? true)) {
+    $activeGoal = RelationshipDynamics::getActiveDirectorGoal($dynamics);
+    if ($activeGoal && !empty($activeGoal['text'])) {
+        $evalData = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? null;
+        if (is_array($evalData) && !empty($evalData['goal_addressed'])) {
+            RelationshipDynamics::fulfillDirectorGoal($dynamics, 'eval_confirmed');
+        }
+    }
+}
+
 // -------------------------------------------------------------------------
 // 8. Save
 // -------------------------------------------------------------------------

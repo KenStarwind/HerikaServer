@@ -785,3 +785,15 @@ if (!empty($reldynCfg['hoover_enabled'] ?? true)) {
     }
 }
 
+// ========== DIRECTOR GOAL CONTEXT (PR 39) ==========
+$directorGoal = $GLOBALS['RELDYN_DIRECTOR_GOAL'] ?? RelationshipDynamics::getActiveDirectorGoal($dynamics);
+if ($directorGoal && !empty($directorGoal['text'])) {
+    $goalText = trim($directorGoal['text']);
+    $priority = floatval($directorGoal['priority'] ?? 0.5);
+    $urgency = $priority >= 0.8 ? "This is a strong internal drive right now."
+             : ($priority >= 0.5 ? "This is on their mind." : "This is a background thought.");
+
+    $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' =>
+        "<director_goal>{$npcName}'s current purpose: {$goalText}. {$urgency}</director_goal>"];
+}
+

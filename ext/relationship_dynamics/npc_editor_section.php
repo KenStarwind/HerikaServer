@@ -194,6 +194,11 @@ if ($rdResentmentSelfActive && class_exists('RelationshipDynamics')) {
     $rdResentmentSelfThresholds = RelationshipDynamics::checkResentmentSelfThresholds($rdDynamics);
 }
 
+// ========== DIRECTOR-ASSIGNED GOALS (PR 39) ==========
+$rdDirectorGoal = $rdDynamics['_director_goal'] ?? null;
+$rdDirectorGoalDisabled = !empty($rdDynamics['_director_goal_disabled']);
+$rdDirectorGoalActive = ($rdDirectorGoal && !empty($rdDirectorGoal['active']) && !empty($rdDirectorGoal['text']));
+
 // ========== M/F COORDINATES (PR 6) ==========
 $rdCoordMDims = $rdDynamics['dimensions']['coord_m'] ?? [];
 $rdCoordMX = $rdCoordMDims['x'] ?? null;
@@ -1350,6 +1355,52 @@ if ($rdUiPos !== false) {
         </div>
         <?php endif; ?>
 
+        <!-- ========== DIRECTOR-ASSIGNED GOALS (PR 39) ========== -->
+        <div style="margin-top:16px;">
+            <div style="border:1px solid #3a5a3a; border-radius:6px; padding:12px; background:#1a2a1a;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <label style="font-weight:700; color:#4ade80; font-size:0.85em;">
+                        Director Goal
+                        <span style="color:#2a6a2a; font-weight:400; font-size:0.85em;">(PR 39)</span>
+                    </label>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <?php if ($rdDirectorGoalActive): ?>
+                        <button type="button" onclick="reldynClearDirectorGoal()"
+                            title="Clear the current director-assigned goal"
+                            style="background:#2a1a1a; border:1px solid #7a3a3a; border-radius:4px; color:#f87171; padding:3px 10px; cursor:pointer; font-size:0.75em;">
+                            Clear Goal
+                        </button>
+                        <?php endif; ?>
+                        <label style="font-size:0.75em; color:#888; cursor:pointer;">
+                            <input type="checkbox" id="reldyn_director_goal_disabled"
+                                <?= $rdDirectorGoalDisabled ? 'checked' : '' ?>
+                                style="accent-color:#ef4444; vertical-align:middle;"
+                                onchange="reldynToggleDirectorGoal(this.checked)">
+                            Disable for this NPC
+                        </label>
+                    </div>
+                </div>
+                <?php if ($rdDirectorGoalActive): ?>
+                <div style="padding:8px 12px; background:#0d1f0d; border:1px solid #2a5a2a; border-radius:4px; margin-bottom:6px;">
+                    <div style="color:#e0e0e0; font-size:0.85em; margin-bottom:6px;"><?= htmlspecialchars($rdDirectorGoal['text']) ?></div>
+                    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                        <span style="color:#4ade80; font-size:0.72em;">Source: <strong><?= htmlspecialchars($rdDirectorGoal['source'] ?? 'unknown') ?></strong></span>
+                        <span style="color:#4ade80; font-size:0.72em;">Priority: <strong><?= number_format(floatval($rdDirectorGoal['priority'] ?? 0.5), 2) ?></strong></span>
+                        <span style="color:#888; font-size:0.72em;">Created: <?= date('Y-m-d H:i', intval($rdDirectorGoal['created_at'] ?? 0)) ?></span>
+                        <span style="color:#888; font-size:0.72em;">Max age: <?= number_format(floatval($rdDirectorGoal['max_age_gamets'] ?? 3600)) ?> gamets</span>
+                    </div>
+                </div>
+                <?php else: ?>
+                <div style="padding:8px 12px; background:#0d1f0d; border:1px solid #2a3a2a; border-radius:4px; color:#555; font-size:0.82em; font-style:italic;">
+                    No active goal<?= $rdDirectorGoalDisabled ? ' (goals disabled for this NPC)' : '' ?>
+                </div>
+                <?php endif; ?>
+                <div style="color:#2a5a2a; font-size:0.72em; margin-top:6px; font-style:italic;">
+                    Director/BGL assigns contextual goals that steer NPC behavior. Goals auto-expire after their game-time window.
+                </div>
+            </div>
+        </div>
+
         <!-- Row 4: Interests -->
         <div style="margin-top:16px;">
             <label style="font-weight:700; color:rgb(242, 124, 17); display:block; margin-bottom:8px; font-size:0.85em;">
@@ -1463,6 +1514,8 @@ if ($rdUiPos !== false) {
             attraction_beauty_keywords: document.getElementById('reldyn_attraction_beauty_keywords')?.value || '',
             attraction_intimacy_gate: document.getElementById('reldyn_attraction_intimacy_gate')?.value || '',
             attraction_gender_pref: document.getElementById('reldyn_attraction_gender_pref')?.value || '',
+            // PR 39: Director Goal controls
+            director_goal_disabled: document.getElementById('reldyn_director_goal_disabled')?.checked ? 1 : 0,
         };
         INTERESTS.forEach(int => {
             const slider = document.getElementById('reldyn_int_' + int);
@@ -1918,6 +1971,47 @@ if ($rdUiPos !== false) {
             if (json.ok) {
                 showStatus('Self-resentment cleared ✓', '#86efac');
                 setTimeout(() => location.reload(), 800);
+            } else {
+                showStatus('Error: ' + (json.error || 'Unknown'), '#f87171');
+            }
+        } catch(e) {
+            showStatus('Network error: ' + e.message, '#f87171');
+        }
+    };
+
+    // ========== DIRECTOR-ASSIGNED GOALS (PR 39) ==========
+    window.reldynClearDirectorGoal = async function() {
+        if (!confirm('Clear the active director goal for ' + RELDYN_NPC + '?')) return;
+        showStatus('Clearing goal...', '#fde68a');
+        try {
+            const resp = await fetch(RELDYN_API, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ npc: RELDYN_NPC, action: 'save', clear_director_goal: true })
+            });
+            const json = await resp.json();
+            if (json.ok) {
+                showStatus('Goal cleared', '#86efac');
+                setTimeout(() => location.reload(), 800);
+            } else {
+                showStatus('Error: ' + (json.error || 'Unknown'), '#f87171');
+            }
+        } catch(e) {
+            showStatus('Network error: ' + e.message, '#f87171');
+        }
+    };
+
+    window.reldynToggleDirectorGoal = async function(disabled) {
+        showStatus('Updating goal setting...', '#fde68a');
+        try {
+            const resp = await fetch(RELDYN_API, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ npc: RELDYN_NPC, action: 'save', director_goal_disabled: disabled ? 1 : 0 })
+            });
+            const json = await resp.json();
+            if (json.ok) {
+                showStatus(disabled ? 'Goals disabled for this NPC' : 'Goals enabled for this NPC', '#86efac');
             } else {
                 showStatus('Error: ' + (json.error || 'Unknown'), '#f87171');
             }
