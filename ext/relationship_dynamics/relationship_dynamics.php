@@ -10868,7 +10868,7 @@ class RelationshipDynamics
         // Source 1: Direct interaction interest
         if ($currentInterest && isset($interests[$currentInterest])) {
             $lastSatisfied[$currentInterest] = $interactionCount;
-            $satisfaction[$currentInterest] = 1.0;
+            $satisfaction[$currentInterest] = max($satisfaction[$currentInterest] ?? 0, 1.0);
         }
 
         // Source 2: Companion proximity events
@@ -11046,7 +11046,7 @@ class RelationshipDynamics
         $intimacyWeight = floatval($interests['intimacy'] ?? 0);
         if ($intimacyWeight < 1.0) {
             $passion = floatval($dynamics['dimensions']['passion']['x'] ?? 0);
-            if ($passion > 30) $intimacyWeight = 1.0 + ($passion / 100.0);
+            if ($passion >= 30) $intimacyWeight = 1.0 + ($passion / 100.0);
         }
         if ($intimacyWeight >= 1.0) {
             $intimacySat = floatval($satisfaction['intimacy'] ?? 0);

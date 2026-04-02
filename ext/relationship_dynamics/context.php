@@ -332,6 +332,12 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
             continue;
         }
 
+        // Skip passion — already handled in <emotional_dynamics> block above
+        if ($dimId === 'passion') {
+            $skippedDims[] = 'passion(handled_in_emotional_dynamics)';
+            continue;
+        }
+
         $x = floatval($dimData['x']);
 
         // --- M/F Coordinates: combine into one quadrant entry ---
