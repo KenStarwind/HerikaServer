@@ -144,6 +144,15 @@ class RelationshipDynamics
         'cooking'      => 'domestic',
         'tavern'       => 'social',
         'inn'          => 'social',
+        'pub'          => 'social',
+        'bar'          => 'social',
+        'meadery'      => 'social',
+        'drink'        => 'social',
+        'food'         => 'domestic',
+        'skeever'      => 'social',   // Winking Skeever
+        'mare'         => 'social',   // Bannered Mare
+        'hearth'       => 'social',   // Candlehearth Hall
+        'netch'        => 'social',   // Retching Netch
         'store'        => 'social',
         'city'         => 'social',
         'town'         => 'social',
@@ -2122,7 +2131,7 @@ class RelationshipDynamics
      */
     private static function isNpcInCombatRecently($gameRequest)
     {
-        $npcName = $GLOBALS['HERIKA_NAME'] ?? '';
+        $npcName = $GLOBALS['RELDYN_NPC_NAME'] ?? $GLOBALS['HERIKA_NAME'] ?? '';
         if (empty($npcName)) return false;
 
         try {
@@ -2310,7 +2319,7 @@ class RelationshipDynamics
      */
     public static function detectCurrentInterest()
     {
-        $npcName = $GLOBALS['HERIKA_NAME'] ?? '';
+        $npcName = $GLOBALS['RELDYN_NPC_NAME'] ?? $GLOBALS['HERIKA_NAME'] ?? '';
         if (empty($npcName)) return null;
 
         $db = $GLOBALS['db'] ?? null;
@@ -7569,7 +7578,7 @@ class RelationshipDynamics
             'effects'  => ['comfort' => +5, 'maturity' => +2, 'valence' => +10],
         ],
         'dungeon' => [
-            'keywords' => ['barrow', 'ruins', 'cave', 'mine', 'crypt', 'tomb', 'lair', 'den', 'pit', 'grotto', 'catacomb', 'sewer', 'falmer'],
+            'keywords' => ['barrow', 'ruins', 'cave', 'mine', 'crypt', 'tomb', 'lair', 'pit', 'grotto', 'catacomb', 'sewer', 'falmer'],
             'effects'  => ['comfort' => -8, 'arousal' => +15, 'valence' => -10],
         ],
         'wilderness' => [
@@ -10879,17 +10888,7 @@ class RelationshipDynamics
         }
 
         // Source 3: Location inference
-        $locKey = "_minai_" . strtolower($npcName) . "//locationkeywords";
-        $locationKeywords = '';
-        foreach ($GLOBALS as $gk => $gv) {
-            if (strcasecmp($gk, $locKey) === 0) {
-                $locationKeywords = $gv;
-                break;
-            }
-        }
-        if (empty($locationKeywords)) {
-            $locationKeywords = $GLOBALS['CACHE_LOCATION'] ?? '';
-        }
+        $locationKeywords = $GLOBALS['CACHE_LOCATION'] ?? '';
 
         $locationInterestMap = [
             'forge' => 'crafting', 'workshop' => 'crafting',
@@ -11025,15 +11024,15 @@ class RelationshipDynamics
         // Calculate satisfaction from all 4 sources
         $satisfaction = self::calculateInterestSatisfaction($npcName, $dynamics, $currentInterest, $eventContext);
 
-        // Calculate deprivation ratio (weighted)
-        $deprivedWeight = 0;
+        // Calculate FED ratio — is ANY high-weight interest being satisfied?
+        $fedWeight = 0;
         $totalWeight = 0;
         foreach ($interests as $category => $weight) {
             if ($weight < 1.0) continue;
             $adjustedWeight = $weight - 0.9;
             $sat = floatval($satisfaction[$category] ?? 0);
-            if ($sat < 0.3) {
-                $deprivedWeight += $adjustedWeight * (1.0 - $sat);
+            if ($sat >= 0.3) {
+                $fedWeight += $adjustedWeight * $sat;
             }
             $totalWeight += $adjustedWeight;
         }
@@ -11047,29 +11046,30 @@ class RelationshipDynamics
         if ($intimacyWeight >= 1.0) {
             $intimacySat = floatval($satisfaction['intimacy'] ?? 0);
             $adjustedWeight = $intimacyWeight - 0.9;
-            if ($intimacySat < 0.3) {
-                $deprivedWeight += $adjustedWeight * (1.0 - $intimacySat);
+            if ($intimacySat >= 0.3) {
+                $fedWeight += $adjustedWeight * $intimacySat;
             }
             $totalWeight += $adjustedWeight;
         }
 
-        $ratio = ($totalWeight > 0) ? ($deprivedWeight / $totalWeight) : 0;
+        // High fed ratio = good weather. "One satisfied = good day."
+        $ratio = ($totalWeight > 0) ? ($fedWeight / $totalWeight) : 0;
         $oldWeather = $dynamics['_internal_weather'] ?? 'clear';
 
-        if ($ratio >= 0.6) {
-            $newWeather = 'stormy';
-        } elseif ($ratio >= 0.3) {
-            $newWeather = 'overcast';
-        } elseif ($ratio <= 0.1) {
+        if ($ratio >= 0.4) {
             $newWeather = 'sunny';
-        } else {
+        } elseif ($ratio >= 0.2) {
             $newWeather = 'clear';
+        } elseif ($ratio >= 0.05) {
+            $newWeather = 'overcast';
+        } else {
+            $newWeather = 'stormy';
         }
 
         $dynamics['_internal_weather'] = $newWeather;
 
         if ($newWeather !== $oldWeather) {
-            self::log("[WEATHER] {$npcName}: {$oldWeather} -> {$newWeather} (deprivation=" . round($ratio, 2) . ")");
+            self::log("[WEATHER] {$npcName}: {$oldWeather} -> {$newWeather} (fed=" . round($ratio, 2) . ")");
         }
 
         return $newWeather;
