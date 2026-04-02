@@ -136,6 +136,10 @@ main { padding: 80px 10px 10px; height: 100vh; }
             <button class="tab-button" data-tab="prompts">💬Prompts Manager</button>
             <button class="tab-button" data-tab="xtts">📢 TTS Studio</button>
             <button class="tab-button" data-tab="serverplugins">🔌Server Plugins</button>
+            <?php if (is_dir(__DIR__."/../../ext/relationship_dynamics/")): ?>
+            <span class="tab-divider">|</span>
+            <button class="tab-button" data-tab="reldyn">💠RelDyn</button>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -235,6 +239,13 @@ main { padding: 80px 10px 10px; height: 100vh; }
                 <iframe class="embed" loading="lazy" src="about:blank" data-src="<?php echo $webRoot; ?>/ui/server_plugins.php?embed=1"></iframe>
             </div>
         </div>
+        <?php if (is_dir(__DIR__."/../../ext/relationship_dynamics/")): ?>
+        <div id="reldyn" class="tab-content">
+            <div class="embed-wrap">
+                <iframe class="embed" loading="lazy" src="about:blank" data-src="<?php echo $webRoot; ?>/ext/relationship_dynamics/settings.php?embed=1"></iframe>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 </main>
 
