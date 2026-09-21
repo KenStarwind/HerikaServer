@@ -5,6 +5,7 @@
 !/ext/xLifeLink_plugin
 !/ext/generic_installer.php
 !/ext/relationship_system
+!/ext/jev_tactical
 /log
 /soundcache
 data/CurrentModel_*.json

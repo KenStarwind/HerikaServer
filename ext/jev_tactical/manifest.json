@@ -1,0 +1,5 @@
+{
+    "name":"Jev Tactical Layer",
+    "description":"Experimental. Lets a TypeSafe System One model (Jev) pick the NPC's next CHIM action moment-to-moment while the main LLM only sets goals and handles dialogue.",
+    "version":"0.1.0"
+}
