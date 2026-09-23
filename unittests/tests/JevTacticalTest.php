@@ -62,14 +62,17 @@ final class JevTacticalTest extends TestCase
         $this->assertArrayHasKey("Attack", $catalog);
     }
 
-    public function testAttackFallsBackToAllActorsWhenNoHostileIsKnown(): void
+    public function testAttackIsNotOfferedWhenNoHostileIsKnown(): void
     {
+        // Regression: the first version fell back to every nearby actor (friendlies, the player) as targets.
         $candidates = $this->candidates;
         $candidates["hostile"] = [];
 
-        $catalog = jev_tactical_build_catalog(["Attack"], $candidates);
+        $catalog = jev_tactical_build_catalog(["Attack", "Follow"], $candidates);
 
-        $this->assertSame(["Dragonborn", "Bandit", "Bandit Marauder"], $catalog["Attack"]["options"]["target"]);
+        $this->assertArrayNotHasKey("Attack", $catalog);
+        $this->assertArrayHasKey("Follow", $catalog);
+        $this->assertSame([], jev_tactical_slot_options("hostile", $candidates));
     }
 
     public function testSlotOptionsAreDedupedCappedAndNeverNumeric(): void
@@ -343,5 +346,36 @@ final class JevTacticalTest extends TestCase
         $score = JevClient::answerScore(["threat" => ["type" => "score", "score" => 1.2, "probabilities" => ["none" => 0.2, "low" => 0.7, "moderate" => 0.1]]], "threat");
         $this->assertSame("low", $score["level"]);
         $this->assertEqualsWithDelta(1.2, $score["score"], 0.001);
+    }
+
+    public function testGoalStorageUsesPluginNamespaceAndFreshReads(): void
+    {
+        // Regression: the goal used to live in extended_data and was written back with updateByArray() from a
+        // row copy read at request start, which could undo profile changes made in between.
+        $fake = new class extends NpcMaster {
+            public array $store = [];
+            public int $rowWrites = 0;
+            public function __construct() {}
+            public function getPluginData(int $npcId, string $pluginId): ?array { return $this->store[$npcId][$pluginId] ?? null; }
+            public function setPluginData(int $npcId, string $pluginId, array $data): bool { $this->store[$npcId][$pluginId] = $data; return true; }
+            public function deletePluginData(int $npcId, string $pluginId): bool { unset($this->store[$npcId][$pluginId]); return true; }
+            public function getExtendedData($currentNpcData): array { return []; }
+            public function updateByArray($data) { $this->rowWrites++; return true; }
+            public function update($id, $data) { $this->rowWrites++; return true; }
+        };
+        $row = ["id" => 7, "npc_name" => "Erik"];
+
+        jev_tactical_set_goal($row, $fake, "Guard the camp", "No looting");
+        $this->assertSame("Guard the camp", $fake->store[7]["jev_tactical"]["goal"]["goal"]);
+
+        // Something else changes the stored goal after our row copy was taken; update must build on it.
+        $fake->store[7]["jev_tactical"]["goal"]["issued"] = 5;
+        jev_tactical_update_goal($row, $fake, function (array $g): array { $g["issued"]++; return $g; });
+        $this->assertSame(6, $fake->store[7]["jev_tactical"]["goal"]["issued"]);
+        $this->assertSame("Guard the camp", jev_tactical_get_goal($row, $fake)["goal"]);
+
+        jev_tactical_clear_goal($row, $fake);
+        $this->assertNull(jev_tactical_get_goal($row, $fake));
+        $this->assertSame(0, $fake->rowWrites, "goal storage must never rewrite the NPC row");
     }
 }

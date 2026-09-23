@@ -80,10 +80,10 @@ function jev_tactical_slot_options(string $kind, array $candidates): array
             $options = $get("actor");
             break;
         case "hostile":
+            // Only actors known to be hostile. No fallback to every nearby actor: with no hostile the
+            // Attack action drops out of this tick's catalog instead of offering friendlies/the player
+            // as targets. Player-ordered attacks on non-hostiles go through the main LLM, not Jev.
             $options = $get("hostile");
-            if (count($options) === 0) {
-                $options = $get("actor");
-            }
             break;
         case "place":
             $options = array_merge($get("actor"), $get("location"));
@@ -581,16 +581,56 @@ function jev_tactical_candidates_from_situation(array $situation): array
     ];
 }
 
+const JEV_PLUGIN_ID = "jev_tactical";
+
+/**
+ * Goal storage lives in CHIM's per-plugin namespace (core_npc_master.plugin_extended_data -> "jev_tactical").
+ * NpcMaster::setPluginData() is a single jsonb_set on that key, so it never rewrites the rest of the row.
+ * (The first version kept the goal in extended_data and wrote the whole row back from a copy read earlier in
+ * the request: a stale-row overwrite that could undo profile/relationship changes made in between.)
+ */
+function jev_tactical_npc_id(array $npcData): int
+{
+    return intval($npcData["id"] ?? 0);
+}
+
+/** Raw stored goal (no TTL check); falls back to a legacy extended_data["jev_goal"] read-only. */
+function jev_tactical_load_goal_raw(array $npcData, NpcMaster $npcMaster): ?array
+{
+    $id = jev_tactical_npc_id($npcData);
+    if ($id > 0) {
+        $data = $npcMaster->getPluginData($id, JEV_PLUGIN_ID);
+        if (is_array($data) && isset($data["goal"]) && is_array($data["goal"])) {
+            return $data["goal"];
+        }
+    }
+    $legacy = $npcMaster->getExtendedData($npcData)["jev_goal"] ?? null;
+    return is_array($legacy) ? $legacy : null;
+}
+
+function jev_tactical_store_goal(array $npcData, NpcMaster $npcMaster, ?array $goal): void
+{
+    $id = jev_tactical_npc_id($npcData);
+    if ($id <= 0) {
+        error_log("[jev_tactical] cannot store goal: NPC row has no id");
+        return;
+    }
+    if ($goal === null) {
+        $npcMaster->deletePluginData($id, JEV_PLUGIN_ID);
+    } else {
+        $npcMaster->setPluginData($id, JEV_PLUGIN_ID, ["goal" => $goal]);
+    }
+}
+
 function jev_tactical_get_goal(array $npcData, NpcMaster $npcMaster): ?array
 {
-    $extended = $npcMaster->getExtendedData($npcData);
-    return jev_tactical_goal_from_extended($extended, time(), intval($GLOBALS["JEV_GOAL_TTL_SECONDS"] ?? 900));
+    $goal = jev_tactical_load_goal_raw($npcData, $npcMaster);
+    return jev_tactical_goal_from_extended(["jev_goal" => $goal], time(), intval($GLOBALS["JEV_GOAL_TTL_SECONDS"] ?? 900));
 }
 
 function jev_tactical_set_goal(array $npcData, NpcMaster $npcMaster, string $goal, string $rules, array $gameRequest = []): array
 {
-    $extended = $npcMaster->getExtendedData($npcData);
-    $extended["jev_goal"] = [
+    $stored = [
         "goal"                 => trim($goal),
         "rules"                => trim($rules),
         "set_localts"          => time(),
@@ -603,31 +643,23 @@ function jev_tactical_set_goal(array $npcData, NpcMaster $npcMaster, string $goa
         "last_result"          => null,
         "escalation"           => null,
     ];
-    $npcData = $npcMaster->setExtendedData($npcData, $extended);
-    $npcMaster->updateByArray($npcData);
-    return $extended["jev_goal"];
+    jev_tactical_store_goal($npcData, $npcMaster, $stored);
+    return $stored;
 }
 
 function jev_tactical_clear_goal(array $npcData, NpcMaster $npcMaster): void
 {
-    $extended = $npcMaster->getExtendedData($npcData);
-    if (isset($extended["jev_goal"])) {
-        unset($extended["jev_goal"]);
-        $npcData = $npcMaster->setExtendedData($npcData, $extended);
-        $npcMaster->updateByArray($npcData);
-    }
+    jev_tactical_store_goal($npcData, $npcMaster, null);
 }
 
-/** Apply $mutator(array $goal): array to the stored goal and persist it. */
+/** Apply $mutator(array $goal): array to the freshly stored goal and persist only the plugin namespace. */
 function jev_tactical_update_goal(array $npcData, NpcMaster $npcMaster, callable $mutator): void
 {
-    $extended = $npcMaster->getExtendedData($npcData);
-    if (!isset($extended["jev_goal"]) || !is_array($extended["jev_goal"])) {
+    $goal = jev_tactical_load_goal_raw($npcData, $npcMaster);   // re-read now, not the request-start copy
+    if (!is_array($goal)) {
         return;
     }
-    $extended["jev_goal"] = $mutator($extended["jev_goal"]);
-    $npcData = $npcMaster->setExtendedData($npcData, $extended);
-    $npcMaster->updateByArray($npcData);
+    jev_tactical_store_goal($npcData, $npcMaster, $mutator($goal));
 }
 
 /** One-line human summary of a decision, used for logs and the eventlog. */

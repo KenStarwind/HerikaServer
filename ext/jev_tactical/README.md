@@ -77,7 +77,7 @@ room", the model can answer in character and call:
 {"action":"SetTacticalGoal","goal":"Guard the doorway while Dragonborn searches the room","rules":"Stay near the doorway. Do not start fights. Respond to threats aimed at Dragonborn or Erik."}
 ```
 
-The goal is stored in the NPC's `extended_data` (`jev_goal`) with a TTL (`JEV_GOAL_TTL_SECONDS`).
+The goal is stored in CHIM's per-plugin namespace (`plugin_extended_data` -> `jev_tactical.goal`, written with `NpcMaster::setPluginData`, a single `jsonb_set`, so it never rewrites the rest of the NPC row) with a TTL (`JEV_GOAL_TTL_SECONDS`). A legacy `extended_data.jev_goal` is still read once if present.
 `ClearTacticalGoal` removes it. While a goal exists, every prompt the main model sees carries a
 `<tactical_goal>` section, so it knows what its body is doing and can change its mind.
 
