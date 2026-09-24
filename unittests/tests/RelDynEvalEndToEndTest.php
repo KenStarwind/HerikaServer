@@ -405,6 +405,7 @@ final class RelDynEvalEndToEndTest extends TestCase
         $this->assertSame(['insult', 2, 0.0, 'resentment'], [$g['kind'], $g['severity'], (float) $g['power_gap'], $g['target']]);
         $this->assertEqualsWithDelta(7.5, (float) $g['raw'], 1e-9);
         $this->assertCount(1, $after['dimensions']['resentment']['grievance_log'], 'grievance applied exactly once');
+        $this->assertSame(0.0, (float) $after['dimensions']['comfort']['x'], 'MDD 15.5: 78.9 >= 70 is withdrawal, comfort drops to 0');
         $this->assertSame([], $after['dimensions']['resentment']['pending_grievances'] ?? [], 'not also on the legacy list');
 
         // Jealousy (0..100 points), decisions §5: 10 x intensity-1 mult 1.0 x Jealous 2.0 (MDD 1.3)

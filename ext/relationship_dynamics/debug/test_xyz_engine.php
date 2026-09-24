@@ -6041,17 +6041,17 @@ try {
     check('AP5: Ick active + comfort < 20 = forced walkaway', $ap5['state'], 'walkaway');
 } catch (Throwable $e) { skip('AP5', $e->getMessage()); }
 
-// AP6: Resentment > 70 → forced walkaway
+// AP6: Resentment >= 90 → forced walkaway (MDD 15.5; 70 is withdrawal)
 try {
     $ap6Dyn = makeMultiDynamics([
         'trust' => ['x' => 50, 'baseline' => 50],
         'respect' => ['x' => 50, 'baseline' => 50],
-        'resentment' => ['x' => 75, 'baseline' => 0],
+        'resentment' => ['x' => 90, 'baseline' => 0],
         'self_confidence' => ['x' => 50, 'baseline' => 50],
         'maturity' => ['x' => 50, 'baseline' => 50],
     ]);
     $ap6 = RelationshipDynamics::evaluateAutonomyState($ap6Dyn, 'Stoic');
-    check('AP6: Resentment > 70 = forced walkaway', $ap6['state'], 'walkaway');
+    check('AP6: Resentment >= 90 = forced walkaway', $ap6['state'], 'walkaway');
 } catch (Throwable $e) { skip('AP6', $e->getMessage()); }
 
 // AP7: Refusal type — low conf + low mat = silent

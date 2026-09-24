@@ -112,6 +112,34 @@ final class RelDynResentmentAccumulatorTest extends TestCase
         $this->assertTrue($fx(90.0)['walkaway'], '90: the walkaway');
     }
 
+    /** MDD 15.5: the walkaway is at 90, not 70 (70 is withdrawal). The autonomy state reads the accessor. */
+    public function testTheNpcWalksAwayAtNinetyNotSeventy(): void
+    {
+        $dims = ['trust' => 70.0, 'respect' => 70.0, 'comfort' => 0.0];
+        $withdrawn = $this->npc([], ['resentment' => 75.0] + $dims);
+        $this->assertTrue(RelationshipDynamics::getResentmentEffects($withdrawn)['withdrawn']);
+        $this->assertNotSame('walkaway', RelationshipDynamics::evaluateAutonomyState($withdrawn, 'Stoic')['state'],
+            'withdrawn at 75, still there');
+        $gone = $this->npc([], ['resentment' => 90.0] + $dims);
+        $this->assertSame('walkaway', RelationshipDynamics::evaluateAutonomyState($gone, 'Stoic')['state'], '90: the walkaway');
+    }
+
+    /** MDD 15.5: at 70 the NPC withdraws, comfort drops to 0 and stays there while withdrawn. */
+    public function testWithdrawalDropsComfortToZeroUntilResentmentFalls(): void
+    {
+        $d = $this->npc([], ['resentment' => 66.0, 'maturity' => 40.0, 'comfort' => 55.0]);
+        RelationshipDynamics::recordGrievance($d, ['flag' => true, 'kind' => 'insult', 'severity' => 3], []);
+        $this->assertGreaterThanOrEqual(70.0, self::res($d), 'the grievance crosses 70');
+        $this->assertSame(0.0, (float) $d['dimensions']['comfort']['x'], 'comfort drops to 0');
+
+        RelationshipDynamics::applyDelta('comfort', $d, 10.0, 'Stoic');
+        $this->assertSame(0.0, (float) $d['dimensions']['comfort']['x'], 'no comfort while withdrawn');
+
+        $d['dimensions']['resentment']['x'] = 60.0;   // worked through (confrontation, positive interactions)
+        RelationshipDynamics::applyDelta('comfort', $d, 10.0, 'Stoic');
+        $this->assertGreaterThan(0.0, (float) $d['dimensions']['comfort']['x'], 'comfort can grow again below 70');
+    }
+
     /** The cross-signal cap on affinity gains reads the same accessor (one number). */
     public function testAffinityGainCapReadsTheEffectsAccessor(): void
     {

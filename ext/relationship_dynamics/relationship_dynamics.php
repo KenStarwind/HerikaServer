@@ -3456,6 +3456,7 @@ class RelationshipDynamics
             $after = min($max, $before + $jRaw);
             $dynamics['dimensions']['resentment']['x'] = $after;   // unrounded: slicing must not drift
             $out['resentment'] += $after - $before;
+            self::enforceResentmentWithdrawal($dynamics);
             $out['jealousy_resentment_raw'] = $jRaw;
         }
 
@@ -6667,6 +6668,10 @@ class RelationshipDynamics
         } else {
             $dimState['x'] = round($newX, 4);
         }
+        unset($dimState);
+        if ($dimensionId === 'resentment' || $dimensionId === 'comfort') {
+            self::enforceResentmentWithdrawal($dynamics);
+        }
 
         // Debug logging
         error_log("[RelDyn-XYZ] applyDelta: dim={$dimensionId} X={$x}=>{$newX} "
@@ -7830,6 +7835,30 @@ class RelationshipDynamics
     const RESENTMENT_WALKAWAY_AT = 90;             // the walkaway
     /** MDD 15.4 cross-signal: resentment strictly above this halves affinity gains. */
     const RESENTMENT_HALVES_GAINS_ABOVE = 50;
+
+    /**
+     * MDD 15.5 at 70: emotional withdrawal, comfort drops to 0 and stays there while the NPC
+     * is withdrawn (affinity is frozen by getResentmentEffects()'s affinity_gain_mult). Run
+     * after every resentment or comfort change (applyDelta, the calendar conversion).
+     * Returns true when it lowered comfort.
+     */
+    public static function enforceResentmentWithdrawal(array &$dynamics): bool
+    {
+        if (!self::getResentmentEffects($dynamics)['withdrawn']) {
+            return false;
+        }
+        $comfort = $dynamics['dimensions']['comfort']['x'] ?? null;
+        if (is_numeric($comfort) && floatval($comfort) <= 0.0) {
+            return false;
+        }
+        if (!isset($dynamics['dimensions']['comfort']) || !is_array($dynamics['dimensions']['comfort'])) {
+            $dynamics['dimensions']['comfort'] = [];
+        }
+        $dynamics['dimensions']['comfort']['x'] = 0.0;
+        error_log("[RelDyn-RESENTMENT] withdrawal (resentment " . round(floatval($dynamics['dimensions']['resentment']['x'] ?? 0), 2)
+            . " >= " . self::RESENTMENT_WITHDRAWAL_AT . "): comfort " . (is_numeric($comfort) ? round(floatval($comfort), 2) : 'unset') . " -> 0");
+        return true;
+    }
 
     /**
      * MDD 15.5 effects of the current resentment, the one accessor every consumer reads (the
@@ -15679,7 +15708,8 @@ class RelationshipDynamics
         if ($ickActive && $comfort < 20) {
             $state = 'walkaway';
         }
-        if ($resentment > 70 && !$isPeoplePleaser) {
+        // MDD 15.5: the walkaway is at resentment 90 (70 is withdrawal), from the one accessor
+        if (self::getResentmentEffects($dynamics)['walkaway'] && !$isPeoplePleaser) {
             $state = 'walkaway';
         }
         // MDD 6.5: jealousy (0..100) reaching jealousy_walkaway_at -> walkaway
