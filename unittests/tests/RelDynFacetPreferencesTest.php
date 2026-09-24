@@ -215,6 +215,63 @@ final class RelDynFacetPreferencesTest extends TestCase
         $this->assertLessThan($before, $dyn['_facet_prefs']['prefs']['danger']);
     }
 
+    public function testInterestsAreTheSignedPreferencesThroughTheMddMapping(): void
+    {
+        $db = new RelDynFacetPrefsDb();
+        $db->rows['test huntress'] = RelDynFacetProfiles::huntressRow();
+        $GLOBALS['db'] = $db;
+        RelationshipDynamics::clearConfigCache();
+        $dyn = ['inferred_temperament' => 'Independent', 'traits' => []];
+        RelDynFacets::ensurePreferences('Test Huntress', $dyn);
+        RelDynFacets::setPreferenceOverride($dyn, 'social', -1.0);
+
+        $interests = RelationshipDynamics::getInterests($dyn, 'Test Huntress');
+        $this->assertSame(RelDynFacets::INTERESTS, array_keys($interests), 'the 11 MDD 1.2 interests');
+        $prefs = RelDynFacets::preferences($dyn, 'Test Huntress');
+        foreach ($interests as $interest => $mult) {
+            $this->assertSame(RelDynFacets::interestMultiplier($prefs[$interest]), $mult, $interest);
+            $this->assertGreaterThanOrEqual(0.5, $mult);
+            $this->assertLessThanOrEqual(2.0, $mult);
+        }
+        $this->assertGreaterThan(1.9, $interests['nature']);
+        $this->assertEqualsWithDelta(0.7, $interests['scholarly'], 0.05, 'she can dislike books now (April floor was 0.5-as-tolerates)');
+        $this->assertSame(0.5, $interests['social'], 'override: hates');
+    }
+
+    public function testInterestSliderValuesMapBackToPreferences(): void
+    {
+        foreach ([[0.5, -1.0], [0.7, -0.6], [1.0, 0.0], [1.5, 0.5], [2.0, 1.0]] as [$m, $p]) {
+            $this->assertEqualsWithDelta($p, RelDynFacets::preferenceFromInterestMultiplier($m), 1e-9);
+            $this->assertEqualsWithDelta($m, RelDynFacets::interestMultiplier(RelDynFacets::preferenceFromInterestMultiplier($m)), 1e-9);
+        }
+        $this->assertSame(1.0, RelDynFacets::preferenceFromInterestMultiplier(9.0), 'clamped');
+    }
+
+    /**
+     * interests-11 / activity-preferences-legacy: the April single-label interest model is
+     * gone (MinAI-blind location keywords, 0.5-2.0 class tables, the activity wrappers with
+     * no callers); everything reads the signed facet preferences.
+     */
+    public function testLegacyInterestAndActivityLayersAreRetired(): void
+    {
+        foreach (['detectCurrentActivity', 'getActivityPreferences', 'generateActivityPreferences', 'getActivityMultiplier',
+                  'getActivityResonanceText', 'detectCurrentInterest', 'detectInterestContext', 'generateInterests',
+                  'getInterestResonanceText', 'getEnvironmentalResonanceText', 'calculateInterestSatisfaction'] as $m) {
+            $this->assertFalse(method_exists('RelationshipDynamics', $m), "RelationshipDynamics::{$m} retired");
+        }
+        foreach (['INTEREST_TYPES', 'CLASS_INTEREST_DEFAULTS', 'SKILL_INTEREST_BONUS', 'KEYWORD_TO_INTEREST',
+                  'LL_INTEREST_WEIGHT', 'WEATHER_MODIFIERS', 'FACTION_INTEREST_FLOORS'] as $c) {
+            $this->assertFalse(defined("RelationshipDynamics::{$c}"), "RelationshipDynamics::{$c} retired (config / RelDynFacets now)");
+        }
+        $hooks = '';
+        foreach (['prerequest.php', 'postrequest.php', 'context.php', 'reldyn_facets.php'] as $f) {
+            $hooks .= file_get_contents(__DIR__ . "/../../ext/relationship_dynamics/{$f}");
+        }
+        $this->assertStringNotContainsString("['interests']", $hooks, 'nobody reads the raw April interests key');
+        $this->assertStringNotContainsString('RELDYN_AMBIENT_', $hooks);
+        $this->assertStringNotContainsString('_minai_', file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/reldyn_facets.php'));
+    }
+
     public function testInterestMultiplierMapsSignedPreferenceOntoMddRange(): void
     {
         // MDD 1.2: 0.5x .. 2.0x, 1.0 = indifferent

@@ -331,6 +331,13 @@ class RelDynFacets
         return $p >= 0 ? 1.0 + $p : 1.0 + $p / 2.0;
     }
 
+    /** The inverse of interestMultiplier(): an MDD 1.2 multiplier (0.5..2.0) as a signed preference. */
+    public static function preferenceFromInterestMultiplier(float $m): float
+    {
+        $m = max(0.5, min(2.0, $m));
+        return $m >= 1.0 ? $m - 1.0 : 2.0 * ($m - 1.0);
+    }
+
     /**
      * Appraise a facet vector against preferences. Appraisal lane.
      *

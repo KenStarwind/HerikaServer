@@ -140,57 +140,8 @@ class RelationshipDynamics
     // INTERESTS SYSTEM (modulates ALL love languages)
     // =========================================================================
 
-    const INTEREST_TYPES = [
-        'combat', 'crafting', 'alchemy', 'enchanting', 'scholarly',
-        'nature', 'social', 'domestic', 'adventure', 'spiritual', 'wealth',
-    ];
-
-    // Location keyword → interest category mapping
-    const KEYWORD_TO_INTEREST = [
-        'forge'        => 'crafting',
-        'smithy'       => 'crafting',
-        'smelter'      => 'crafting',
-        'tannery'      => 'crafting',
-        'grindstone'   => 'crafting',
-        'alchemy'      => 'alchemy',
-        'potion_store' => 'alchemy',
-        'enchanter'    => 'enchanting',
-        'cooking'      => 'domestic',
-        'tavern'       => 'social',
-        'inn'          => 'social',
-        'pub'          => 'social',
-        'bar'          => 'social',
-        'meadery'      => 'social',
-        'drink'        => 'social',
-        'food'         => 'domestic',
-        'skeever'      => 'social',   // Winking Skeever
-        'mare'         => 'social',   // Bannered Mare
-        'hearth'       => 'social',   // Candlehearth Hall
-        'netch'        => 'social',   // Retching Netch
-        'store'        => 'social',
-        'city'         => 'social',
-        'town'         => 'social',
-        'village'      => 'social',
-        'settlement'   => 'social',
-        'dungeon'      => 'adventure',
-        'ruin'         => 'adventure',
-        'nordic_ruin'  => 'adventure',
-        'dwemer_ruin'  => 'adventure',
-        'cave'         => 'adventure',
-        'tomb'         => 'adventure',
-        'crypt'        => 'adventure',
-        'barrow'       => 'adventure',
-        'mine'         => 'adventure',
-        'camp'         => 'nature',
-        'bandit_camp'  => 'adventure',
-        'military_camp'=> 'nature',
-        'giant_camp'   => 'nature',
-        'farm'         => 'nature',
-        'lumber_mill'  => 'nature',
-        'library'      => 'scholarly',
-        'college'      => 'scholarly',
-        'temple'       => 'spiritual',
-    ];
+    // The 11 MDD 1.2 interests and every preference/appraisal live in RelDynFacets
+    // (reldyn_facets.php, decisions 2026-09-23 §6).
 
     // Item name keyword → interest category (for gift classification)
     const ITEM_INTEREST_MAP = [
@@ -234,16 +185,6 @@ class RelationshipDynamics
         'amulet of' => 'spiritual', 'blessing' => 'spiritual',
         'divine' => 'spiritual', 'holy' => 'spiritual', 'talos' => 'spiritual',
     ];
-
-    // How strongly interest multiplier affects each love language
-    // Formula: effectiveMult = 1.0 + (rawMult - 1.0) * weight
-    const LL_INTEREST_WEIGHT = [
-        'quality_time'         => 1.0,   // Full weight
-        'gifts'                => 0.8,   // Strong — gift matching is very relevant
-        'acts_of_service'      => 0.6,   // Moderate — context-dependent
-        'words_of_affirmation' => 0.4,   // Mild — conversation topic proxy
-        'physical_touch'       => 0.15,  // Minimal — slight combat context boost
-        ];
 
     // ========== ITEM DIMENSION MODIFIERS (PR 8) ==========
     //
@@ -829,72 +770,6 @@ class RelationshipDynamics
     ];
 
     // ========== END REPUTATION LAYER CONSTANTS (PR 9) ==========
-
-    // Class → default interest preferences
-    const CLASS_INTEREST_DEFAULTS = [
-        'Barbarian' => [
-            'combat' => 1.5, 'adventure' => 1.4, 'nature' => 1.3, 'crafting' => 1.2,
-            'domestic' => 0.9, 'scholarly' => 0.8, 'social' => 0.8, 'wealth' => 0.9,
-            'alchemy' => 0.9, 'enchanting' => 0.9, 'spiritual' => 0.9,
-        ],
-        'Warrior' => [
-            'combat' => 1.5, 'crafting' => 1.3, 'adventure' => 1.2, 'social' => 1.1,
-            'nature' => 1.0, 'domestic' => 1.0, 'wealth' => 1.0,
-            'scholarly' => 0.8, 'alchemy' => 0.9, 'enchanting' => 0.9, 'spiritual' => 0.9,
-        ],
-        'Mage' => [
-            'scholarly' => 1.5, 'enchanting' => 1.4, 'alchemy' => 1.3, 'spiritual' => 1.1,
-            'adventure' => 1.0, 'social' => 1.0, 'domestic' => 1.0, 'wealth' => 1.0,
-            'nature' => 0.9, 'crafting' => 0.8, 'combat' => 0.8,
-        ],
-        'Thief' => [
-            'adventure' => 1.4, 'social' => 1.4, 'wealth' => 1.3, 'crafting' => 1.0,
-            'domestic' => 0.9, 'nature' => 1.0, 'combat' => 1.0,
-            'scholarly' => 0.8, 'enchanting' => 0.9, 'alchemy' => 1.0, 'spiritual' => 0.8,
-        ],
-        'Ranger' => [
-            'nature' => 1.5, 'combat' => 1.3, 'adventure' => 1.3, 'crafting' => 1.2,
-            'domestic' => 1.1, 'alchemy' => 1.1,
-            'social' => 0.8, 'scholarly' => 0.8, 'enchanting' => 0.9, 'wealth' => 0.9, 'spiritual' => 0.9,
-        ],
-        'Healer' => [
-            'alchemy' => 1.5, 'spiritual' => 1.4, 'scholarly' => 1.2, 'domestic' => 1.2,
-            'social' => 1.1, 'nature' => 1.1, 'enchanting' => 1.1,
-            'combat' => 0.8, 'adventure' => 0.9, 'crafting' => 0.9, 'wealth' => 0.9,
-        ],
-        'Noble' => [
-            'social' => 1.4, 'wealth' => 1.4, 'scholarly' => 1.2, 'domestic' => 1.1,
-            'enchanting' => 1.0, 'spiritual' => 1.0, 'alchemy' => 1.0,
-            'crafting' => 0.9, 'nature' => 0.8, 'combat' => 0.8, 'adventure' => 0.9,
-        ],
-        'Merchant' => [
-            'social' => 1.5, 'wealth' => 1.5, 'domestic' => 1.2, 'crafting' => 1.1,
-            'scholarly' => 1.0, 'alchemy' => 1.0, 'enchanting' => 1.0,
-            'combat' => 0.7, 'adventure' => 0.7, 'nature' => 0.8, 'spiritual' => 0.9,
-        ],
-    ];
-
-    // Skill name fragments → interest bonus (+0.2 added to preference for high skills)
-    const SKILL_INTEREST_BONUS = [
-        'two-handed'   => 'combat',
-        'one-handed'   => 'combat',
-        'archery'      => 'combat',
-        'block'        => 'combat',
-        'heavy armor'  => 'combat',
-        'smithing'     => 'crafting',
-        'alchemy'      => 'alchemy',
-        'enchanting'   => 'enchanting',
-        'destruction'  => 'scholarly',
-        'conjuration'  => 'scholarly',
-        'alteration'   => 'scholarly',
-        'illusion'     => 'scholarly',
-        'restoration'  => 'scholarly',
-        'light armor'  => 'adventure',
-        'sneak'        => 'adventure',
-        'lockpicking'  => 'adventure',
-        'pickpocket'   => 'social',
-        'speech'       => 'social',
-    ];
 
     // =========================================================================
     // REQUEST SCOPE (A3: no process-level caches)
@@ -3996,38 +3871,6 @@ class RelationshipDynamics
     }
 
     /**
-     * Detect interest context appropriate for the current love language.
-     */
-    public static function detectInterestContext($interactionLL)
-    {
-        switch ($interactionLL) {
-            case self::LL_TIME:
-            case self::LL_WORDS:
-                return self::detectCurrentInterest();
-
-            case self::LL_GIFTS:
-                return self::detectGiftInterest();
-
-            case self::LL_SERVICE:
-                if (self::isNpcInCombatRecently($GLOBALS['gameRequest'] ?? [])) {
-                    return 'combat';
-                }
-                $itemInterest = self::detectGiftInterest();
-                if ($itemInterest) return $itemInterest;
-                return self::detectCurrentInterest();
-
-            case self::LL_TOUCH:
-                if (self::isNpcInCombatRecently($GLOBALS['gameRequest'] ?? [])) {
-                    return 'combat';
-                }
-                return null;
-
-            default:
-                return null;
-        }
-    }
-
-    /**
      * The item of a gift/item interaction: the LLM response's item field (connectors set
      * LAST_LLM_RESPONSE), else the gameRequest action ExtCmdGiveItem@Name / ExtCmdTradeItem@Name.
      */
@@ -4045,183 +3888,21 @@ class RelationshipDynamics
     }
 
     /**
-     * Detect interest category from a gift/item interaction.
-     * Extracts item name from LLM response or gameRequest action, then classifies.
+     * The 11 MDD 1.2 interests as 0.5x-2.0x multipliers, for consumers that still think in
+     * interest multipliers (topic bonus, attraction archetype, the editor). One source of
+     * truth: the NPC's signed facet preferences, through the documented mapping
+     * RelDynFacets::interestMultiplier() (-1 -> 0.5x, 0 -> 1.0x, +1 -> 2.0x).
+     * $npcName defaults to the NPC of the current request.
      */
-    private static function detectGiftInterest()
+    public static function getInterests($dynamics, ?string $npcName = null)
     {
-        // Source 1: LLM response item field
-        $llmResponse = $GLOBALS['LAST_LLM_RESPONSE'] ?? null;
-        if (is_array($llmResponse) && !empty($llmResponse['item'])) {
-            $interest = self::classifyItemInterest($llmResponse['item']);
-            if ($interest) return $interest;
+        $npcName = $npcName ?? (string) ($GLOBALS['RELDYN_NPC_NAME'] ?? $GLOBALS['HERIKA_NAME'] ?? '');
+        $prefs = RelDynFacets::preferences(is_array($dynamics) ? $dynamics : [], $npcName);
+        $out = [];
+        foreach (RelDynFacets::INTERESTS as $interest) {
+            $out[$interest] = RelDynFacets::interestMultiplier(floatval($prefs[$interest] ?? 0.0));
         }
-
-        // Source 2: gameRequest action (ExtCmdGiveItem@ItemName:Count)
-        $action = $GLOBALS['gameRequest'][3] ?? '';
-        if (preg_match('/ExtCmd(?:Give|Trade)Item@([^:\r\n]+)/i', $action, $m)) {
-            $interest = self::classifyItemInterest(trim($m[1]));
-            if ($interest) return $interest;
-        }
-
-        return null;
-    }
-
-    /**
-     * Detect current interest from location keywords and actor state.
-     */
-    public static function detectCurrentInterest()
-    {
-        $npcName = $GLOBALS['RELDYN_NPC_NAME'] ?? $GLOBALS['HERIKA_NAME'] ?? '';
-        if (empty($npcName)) return null;
-
-        $db = $GLOBALS['db'] ?? null;
-        if (!$db) return null;
-
-        $interest = null;
-
-        try {
-            // 1. Check location keywords
-            $key = '_minai_' . strtolower($npcName) . '//locationkeywords';
-            $row = $db->fetchOne(
-                "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($key)
-            );
-            if ($row && !empty($row['value'])) {
-                $keywords = array_map('trim', explode('~', strtolower($row['value'])));
-                foreach ($keywords as $kw) {
-                    if (isset(self::KEYWORD_TO_INTEREST[$kw])) {
-                        $interest = self::KEYWORD_TO_INTEREST[$kw];
-                        break;
-                    }
-                }
-            }
-
-            // 2. Sneaking overrides to adventure (unless already in adventure)
-            $sneakKey = '_minai_' . strtolower($npcName) . '//issneaking';
-            $sneakRow = $db->fetchOne(
-                "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($sneakKey)
-            );
-            if ($sneakRow && strtolower(trim($sneakRow['value'])) === 'true') {
-                if ($interest !== 'adventure') {
-                    $interest = 'adventure';
-                }
-            }
-
-            // 3. On mount = adventure
-            $mountKey = '_minai_' . strtolower($npcName) . '//isonmount';
-            $mountRow = $db->fetchOne(
-                "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($mountKey)
-            );
-            if ($mountRow && strtolower(trim($mountRow['value'])) === 'true') {
-                $interest = 'adventure';
-            }
-
-            // 4. Sitting outdoors = nature
-            if (!$interest) {
-                $sitKey = '_minai_' . strtolower($npcName) . '//sitstate';
-                $sitRow = $db->fetchOne(
-                    "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($sitKey)
-                );
-                $interiorKey = '_minai_' . strtolower($npcName) . '//isinterior';
-                $intRow = $db->fetchOne(
-                    "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($interiorKey)
-                );
-                $isSitting = ($sitRow && intval($sitRow['value']) == 3);
-                $isInterior = ($intRow && strtolower(trim($intRow['value'])) === 'true');
-
-                if ($isSitting && !$isInterior) {
-                    $interest = 'nature';
-                }
-            }
-
-            // 5. Exterior + no other match = nature
-            if (!$interest) {
-                $interiorKey = '_minai_' . strtolower($npcName) . '//isinterior';
-                $intRow = $db->fetchOne(
-                    "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($interiorKey)
-                );
-                if ($intRow && strtolower(trim($intRow['value'])) !== 'true') {
-                    $interest = 'nature';
-                }
-            }
-        } catch (\Throwable $e) {
-            self::logError('detectCurrentInterest', $e);
-            // Silently fail
-        }
-
-        return $interest;
-    }
-
-    /**
-     * Get or auto-generate interest preferences for an NPC.
-     * Uses the manual 'interests' key, else auto-generates (April 'activity_preferences'
-     * are not carried over: fresh start).
-     */
-    public static function getInterests($dynamics)
-    {
-        if (!empty($dynamics['interests']) && is_array($dynamics['interests'])) {
-            return $dynamics['interests'];
-        }
-
-        return self::generateInterests();
-    }
-
-    /**
-     * Auto-generate interest preferences from NPC class and skills.
-     */
-    public static function generateInterests()
-    {
-        $npcName = $GLOBALS['HERIKA_NAME'] ?? '';
-        $prefs = [];
-
-        // Try to get NPC class
-        $class = null;
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db && !empty($npcName)) {
-                $row = $db->fetchOne(
-                    "SELECT extended_data->>'class' AS class FROM core_npc_master WHERE npc_name = "
-                    . $db->escapeLiteral($npcName)
-                );
-                if ($row && !empty($row['class'])) {
-                    $class = $row['class'];
-                    foreach (array_keys(self::CLASS_INTEREST_DEFAULTS) as $className) {
-                        if (stripos($class, $className) !== false) {
-                            $class = $className;
-                            break;
-                        }
-                    }
-                }
-            }
-        } catch (\Throwable $e) { self::logError('generateInterests', $e); }
-
-        $prefs = self::CLASS_INTEREST_DEFAULTS[$class] ?? [
-            'combat' => 1.0, 'crafting' => 1.0, 'alchemy' => 1.0, 'enchanting' => 1.0,
-            'scholarly' => 1.0, 'nature' => 1.0, 'social' => 1.0, 'domestic' => 1.0,
-            'adventure' => 1.0, 'spiritual' => 1.0, 'wealth' => 1.0,
-        ];
-
-        // Skill-based bonuses
-        $skills = $GLOBALS['HERIKA_SKILLS'] ?? '';
-        if (!empty($skills)) {
-            foreach (self::SKILL_INTEREST_BONUS as $skillFragment => $interestType) {
-                if (stripos($skills, $skillFragment) !== false) {
-                    if (preg_match('/' . preg_quote($skillFragment, '/') . '\D*(\d+)/i', $skills, $m)) {
-                        if (intval($m[1]) >= 20) {
-                            $prefs[$interestType] = ($prefs[$interestType] ?? 1.0) + 0.2;
-                        }
-                    } else {
-                        $prefs[$interestType] = ($prefs[$interestType] ?? 1.0) + 0.1;
-                    }
-                }
-            }
-        }
-
-        foreach ($prefs as $k => $v) {
-            $prefs[$k] = max(0.5, min(2.0, $v));
-        }
-
-        return $prefs;
+        return $out;
     }
 
     /**
@@ -4244,88 +3925,6 @@ class RelationshipDynamics
             }
         }
         return RelDynFacets::sharedActivityPassionMult($dynamics, $interactionLL, $activity);
-    }
-
-    /**
-     * Get narrative text describing NPC's reaction to the current interest context.
-     * Uses raw multiplier (not LL-weighted) for narrative accuracy.
-     */
-    public static function getInterestResonanceText($npcName, $interest, $multiplier)
-    {
-        if ($interest === null || abs($multiplier - 1.0) < 0.05) {
-            return null;
-        }
-
-        $player = $GLOBALS['PLAYER_NAME'] ?? 'the player';
-
-        if ($multiplier >= 1.3) {
-            $positive = [
-                'combat'     => "{$npcName} is energized — there's a shared intensity here, a mutual understanding of what it means to fight and survive alongside {$player}.",
-                'crafting'   => "{$npcName} is drawn to the rhythm of creation — shaping raw materials into something lasting. Being here with {$player} feels right.",
-                'alchemy'    => "{$npcName} watches the ingredients combine with genuine fascination — there's something meditative about this precise, analytical work.",
-                'enchanting' => "{$npcName} studies the enchantment process with quiet intensity — the way magic and matter intertwine speaks to something deep.",
-                'scholarly'  => "{$npcName} is absorbed in the knowledge around them — a rare, unguarded enthusiasm. Sharing this with {$player} feels intimate.",
-                'nature'     => "{$npcName} breathes easier out here — the open sky, the quiet of wild places. More themselves here than behind walls.",
-                'social'     => "{$npcName} settles into the social warmth of this place — surrounded by stories and strangers, sharing a moment of normalcy with {$player}.",
-                'domestic'   => "{$npcName} finds unexpected comfort in the simple domestic rhythm — a quiet warmth that catches them off guard.",
-                'adventure'  => "{$npcName} is alert and engaged — exploring together, relying on each other. This is where trust is forged.",
-                'spiritual'  => "{$npcName} feels a quiet reverence in this place — the sacred atmosphere resonates with something deep and personal.",
-                'wealth'     => "{$npcName}'s eyes light up — beauty and craftsmanship speak to something they genuinely respect and appreciate.",
-            ];
-            return $positive[$interest] ?? null;
-        } elseif ($multiplier <= 0.85) {
-            $negative = [
-                'combat'     => "{$npcName} endures the violence but takes no particular satisfaction in it.",
-                'crafting'   => "{$npcName} tolerates the heat and noise but finds little to engage with here.",
-                'alchemy'    => "{$npcName} watches the work with polite patience, but their attention drifts.",
-                'enchanting' => "{$npcName} waits while the enchanting proceeds — it holds little personal interest.",
-                'scholarly'  => "{$npcName} tries to engage with the scholarly work but their attention wanders.",
-                'nature'     => "{$npcName} endures the open wild but prefers more structured surroundings.",
-                'social'     => "{$npcName} scans for the exit. Crowded places and idle chatter drain their patience.",
-                'domestic'   => "{$npcName} stands aside — the domestic ritual doesn't quite land for them.",
-                'adventure'  => "{$npcName} stays alert but finds no joy in these depths — they'd rather be elsewhere.",
-                'spiritual'  => "{$npcName} respects the place but feels no personal connection to the sacred.",
-                'wealth'     => "{$npcName} is unmoved by material displays — value means something different to them.",
-            ];
-            return $negative[$interest] ?? null;
-        }
-
-        return null;
-    }
-
-    /** @deprecated Use detectCurrentInterest() */
-    public static function detectCurrentActivity()
-    {
-        return self::detectCurrentInterest();
-    }
-
-    /** @deprecated Use getInterests() */
-    public static function getActivityPreferences($dynamics)
-    {
-        return self::getInterests($dynamics);
-    }
-
-    /** @deprecated Use generateInterests() */
-    public static function generateActivityPreferences()
-    {
-        return self::generateInterests();
-    }
-
-    /** @deprecated Use getInterestMultiplier() */
-    public static function getActivityMultiplier($dynamics, $activity = null)
-    {
-        if ($activity === null) {
-            $activity = self::detectCurrentInterest();
-        }
-        if ($activity === null) return 1.0;
-        $prefs = self::getInterests($dynamics);
-        return floatval($prefs[$activity] ?? 1.0);
-    }
-
-    /** @deprecated Use getInterestResonanceText() */
-    public static function getActivityResonanceText($npcName, $activity, $multiplier)
-    {
-        return self::getInterestResonanceText($npcName, $activity, $multiplier);
     }
 
     // =========================================================================
@@ -4727,37 +4326,6 @@ class RelationshipDynamics
         } catch (\Throwable $e) {
             self::logError('getRecentCombatSummary', $e);
             return null;
-        }
-    }
-
-    // =========================================================================
-    // ENVIRONMENTAL RESONANCE TEXT
-    // =========================================================================
-
-    public static function getEnvironmentalResonanceText($npcName, $interest, $resonance, $location)
-    {
-        if ($resonance < 0.3) return '';
-
-        $interestTexts = [
-            'combat'     => 'the thrill of danger and the weight of weapons',
-            'crafting'   => 'the hum of creation, raw materials waiting to become something',
-            'alchemy'    => 'the scent of reagents and the promise of discovery',
-            'enchanting' => 'the crackle of bound magic and soul energy',
-            'scholarly'  => 'ancient knowledge etched into every surface',
-            'nature'     => 'the living world breathing around them',
-            'social'     => 'the warmth of gathered voices and shared stories',
-            'domestic'   => 'the comfort of hearth and home',
-            'adventure'  => 'the call of the unknown, paths yet untaken',
-            'spiritual'  => 'something sacred resonating in the stones',
-            'wealth'     => 'the glint of opportunity and valuable resources',
-        ];
-
-        $desc = $interestTexts[$interest] ?? 'something that catches their attention';
-
-        if ($resonance >= 0.6) {
-            return "This place resonates deeply with {$npcName} — {$desc}. There is a visible ease, an alertness that speaks to genuine engagement with the surroundings.";
-        } else {
-            return "Something about {$location} catches {$npcName}'s attention — {$desc}. A quiet interest, not quite fascination, but the environment holds their gaze.";
         }
     }
 
@@ -11504,18 +11072,13 @@ class RelationshipDynamics
             $llMult = 2.0;
         }
 
-        // --- Interest match ---
-        $interestMult = 0.5; // default: generic gift feels transactional
-        $itemInterest = self::classifyItemInterest($itemName);
-        if ($itemInterest) {
-            $interests = self::getInterests($dynamics);
-            $interestValue = floatval($interests[$itemInterest] ?? 1.0);
-            if ($interestValue > 1.0) {
-                $interestMult = 2.0; // NPC is interested in this category
-            } elseif ($interestValue >= 0.9) {
-                $interestMult = 1.0; // neutral match
-            }
-            // else stays at 0.5 (NPC dislikes this category)
+        // --- Interest match (decisions §6): the item's facets against the NPC's signed
+        // preferences, 0.5x (hated) .. 2.0x (loved) through the MDD 1.2 mapping ---
+        $interestMult = 0.5; // default: a gift nobody can place feels transactional
+        $itemFacets = RelDynFacets::thingFacets('item', (string) $itemName);
+        if ($itemFacets) {
+            $prefs = RelDynFacets::preferences($dynamics, (string) ($npcName ?? $GLOBALS['RELDYN_NPC_NAME'] ?? $GLOBALS['HERIKA_NAME'] ?? ''));
+            $interestMult = RelDynFacets::interestMultiplier(RelDynFacets::appraise($prefs, $itemFacets)['valence']);
         }
 
         // --- Context multiplier ---
@@ -13295,8 +12858,9 @@ class RelationshipDynamics
      */
     public static function getArchetypeProfile($dynamics): array
     {
-        // Try to infer archetype from NPC interests
-        $interests = $dynamics['interests'] ?? [];
+        // Try to infer archetype from NPC interests (signed facet preferences as MDD 1.2
+        // multipliers; only a real liking, above indifferent, names an archetype)
+        $interests = array_filter(self::getInterests($dynamics), fn($m) => $m > 1.0);
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
 
         // Map dominant interest to archetype

@@ -117,15 +117,22 @@ try {
                 $dynamics['_attraction_matrix_cache'] = null;
             }
 
-            // Update interests
+            // Interests (MDD 1.2 sliders, 0.5x-2.0x) are per-NPC overrides of the signed facet
+            // preferences (decisions §6), through the documented mapping; facet_prefs sets any
+            // facet directly (-1..+1, null clears the override).
             if (isset($input['interests']) && is_array($input['interests'])) {
-                $prefs = [];
                 foreach ($input['interests'] as $act => $mult) {
-                    if (in_array($act, RelationshipDynamics::INTEREST_TYPES)) {
-                        $prefs[$act] = max(0.5, min(2.0, floatval($mult)));
+                    if (in_array($act, RelDynFacets::INTERESTS, true) && is_numeric($mult)) {
+                        RelDynFacets::setPreferenceOverride($dynamics, $act, RelDynFacets::preferenceFromInterestMultiplier(floatval($mult)));
                     }
                 }
-                $dynamics['interests'] = !empty($prefs) ? $prefs : null;
+            }
+            if (isset($input['facet_prefs']) && is_array($input['facet_prefs'])) {
+                foreach ($input['facet_prefs'] as $facet => $pref) {
+                    if (!RelDynFacets::setPreferenceOverride($dynamics, (string) $facet, $pref === null ? null : floatval($pref))) {
+                        error_log("[RelDyn] api_save_npc: facet preference {$facet} for {$npcName} rejected");
+                    }
+                }
             }
 
             // ========== MATURITY DIMENSION (PR 3) ==========
@@ -268,7 +275,7 @@ try {
             }
 
             // Re-embed interest vector with updated sliders
-            $interests = $dynamics['interests'] ?? RelationshipDynamics::generateInterests();
+            $interests = RelationshipDynamics::getInterests($dynamics, $npcName);
             RelationshipDynamics::embedInterestVector($npcName, $interests, $dynamics);
 
             // Save
@@ -279,21 +286,15 @@ try {
             break;
 
         case 'autogen':
-            // Load NPC data for auto-generation
-            $npcRow = $db->fetchOne(
-                "SELECT skills, extended_data FROM core_npc_master WHERE lower(npc_name) = lower("
-                . $db->escapeLiteral($npcName) . ") LIMIT 1"
-            );
-
-            // Set GLOBALS so generateInterests() can read them
             $GLOBALS['HERIKA_NAME'] = $npcName;
-            $GLOBALS['HERIKA_SKILLS'] = $npcRow['skills'] ?? '';
 
-            // Generate interests from bio + class + skills
-            $prefs = RelationshipDynamics::generateInterests();
+            // Signed facet preferences from core class, skills, temperament and traits
+            // (decisions §6); the interest sliders show them as MDD 1.2 multipliers.
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+            RelDynFacets::ensurePreferences($npcName, $dynamics);
+            $prefs = RelationshipDynamics::getInterests($dynamics, $npcName);
 
             // Also auto-gen love language if not set
-            $dynamics = RelationshipDynamics::getDynamics($npcName);
             $llPrimary = $dynamics['love_language_primary'] ?? null;
             $llSecondary = $dynamics['love_language_secondary'] ?? null;
             $warmth = $dynamics['warmth_curve'] ?? null;
