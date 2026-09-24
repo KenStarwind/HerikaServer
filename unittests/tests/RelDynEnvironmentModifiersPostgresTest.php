@@ -174,6 +174,37 @@ final class RelDynEnvironmentModifiersPostgresTest extends TestCase
         $this->assertStringStartsWith('The Bannered Mare|night|', $dyn['_active_environment']);
     }
 
+    /**
+     * environmental-modifiers review 2026-09-24: detectPhysicalStates fires on core data now,
+     * but clearPhysicalStateModifiers reversed through applyDelta(-applied), a new experience
+     * that leaves a residue. Walking in and out of a building on a clear night ratcheted
+     * comfort 25 -> 30.4 and passion 0 -> 1.8 over ten cycles. The prerequest's own sequence
+     * (clear, then apply), through the core place, must come back exactly.
+     */
+    public function testPhysicalStatesComeBackExactlyAfterEveryOnOffCycle(): void
+    {
+        $dyn = ['dimensions' => [
+            'comfort' => ['x' => 25.0, 'baseline' => 25], 'passion' => ['x' => 0.0, 'baseline' => 0],
+            'arousal' => ['x' => 10.0, 'baseline' => 10], 'valence' => ['x' => 0.0, 'baseline' => 0],
+        ], 'inferred_temperament' => 'Independent'];
+        $prerequest = function () use (&$dyn): array {
+            $states = RelationshipDynamics::detectPhysicalStates('Lydia', 'Kaida');
+            RelationshipDynamics::clearPhysicalStateModifiers($dyn, $states, 'Independent');
+            RelationshipDynamics::applyPhysicalStateModifiers($dyn, $states, 'Independent');
+            return $states;
+        };
+        $hour = 22.0;
+        for ($i = 0; $i < 10; $i++) {
+            $this->at('(Context location: Riverwood outdoors ,Hold: Whiterun, current date ..., current weather: Pleasant)', $hour += 0.1);
+            $this->assertSame(['clear_night'], $prerequest());
+            $this->assertGreaterThan(25.0, $dyn['dimensions']['comfort']['x'], 'a clear night lifts comfort');
+            $this->at('(Context location: Riverwood Trader ,Hold: Whiterun, current date ..., current weather: outdoors it is Pleasant)', $hour += 0.1);
+            $this->assertSame([], $prerequest());
+            $this->assertEqualsWithDelta(25.0, $dyn['dimensions']['comfort']['x'], 1e-9, "cycle {$i}: comfort back exactly");
+            $this->assertEqualsWithDelta(0.0, $dyn['dimensions']['passion']['x'], 1e-9, "cycle {$i}: passion back exactly");
+        }
+    }
+
     public function testDawnOutsideLiftsMood(): void
     {
         $dyn = self::dynamics();

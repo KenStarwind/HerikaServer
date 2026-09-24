@@ -10143,12 +10143,29 @@ class RelationshipDynamics
     }
 
     /**
+     * Take back temporary dimension effects exactly: x minus what was applied (dim => actual
+     * delta), clamped to the dimension's range. Not a new experience through applyDelta's
+     * physics (rubber band, resistance), which would leave a residue on every on/off cycle.
+     */
+    private static function reverseAppliedDeltas(array &$dynamics, array $applied, string $logTag, string $what): void
+    {
+        foreach ($applied as $dim => $val) {
+            $def = self::getDimensionDefinition($dim);
+            if (abs(floatval($val)) <= 0.0001 || !$def || !isset($dynamics['dimensions'][$dim])) continue;
+            $x = floatval($dynamics['dimensions'][$dim]['x'] ?? 0) - floatval($val);
+            $dynamics['dimensions'][$dim]['x'] = max((float) $def['range_min'], min((float) $def['range_max'], $x));
+            if ($logTag !== '') {
+                error_log("[{$logTag}] Cleared {$what}: {$dim} " . (-floatval($val) >= 0 ? '+' : '') . round(-floatval($val), 2));
+            }
+        }
+    }
+
+    /**
      * Clear (reverse) physical state modifiers when conditions are no longer active.
      *
      * Compares previously applied states ($dynamics['_active_physical_states'])
      * against the current active set.  Any state that was applied but is no
-     * longer active gets its deltas reversed through applyDelta() with
-     * inverted sign.
+     * longer active gets exactly its applied deltas taken back (reverseAppliedDeltas).
      *
      * @param array    &$dynamics     NPC dynamics blob (modified in place)
      * @param string[] $activeStates  Currently active states from detectPhysicalStates()
@@ -10176,15 +10193,8 @@ class RelationshipDynamics
                 continue;
             }
 
-            // Reverse each delta that was applied for this state
-            foreach ($appliedDeltas[$state] as $dimId => $appliedDelta) {
-                $reverseDelta = -1.0 * floatval($appliedDelta);
-                $actual = self::applyDelta($dimId, $dynamics, $reverseDelta, $temperament);
-                if (abs($actual) > 0.001) {
-                    $sign = $actual >= 0 ? '+' : '';
-                    error_log("[RelDyn-PHYS] Cleared state {$state}: {$dimId} {$sign}" . round($actual, 2));
-                }
-            }
+            // Take back exactly what was applied for this state
+            self::reverseAppliedDeltas($dynamics, (array) $appliedDeltas[$state], 'RelDyn-PHYS', "state {$state}");
 
             unset($appliedDeltas[$state]);
         }
@@ -10263,16 +10273,9 @@ class RelationshipDynamics
             return [];
         }
 
-        // Reverse previous environmental effects exactly: take back what was applied (not a
-        // new experience through applyDelta's physics, which would leave a residue each time).
+        // Reverse previous environmental effects exactly (reverseAppliedDeltas).
         if (!empty($dynamics['_env_applied_effects']) && is_array($dynamics['_env_applied_effects'])) {
-            foreach ($dynamics['_env_applied_effects'] as $dim => $val) {
-                $def = self::getDimensionDefinition($dim);
-                if (abs($val) > 0.0001 && $def && isset($dynamics['dimensions'][$dim])) {
-                    $x = floatval($dynamics['dimensions'][$dim]['x'] ?? 0) - floatval($val);
-                    $dynamics['dimensions'][$dim]['x'] = max((float) $def['range_min'], min((float) $def['range_max'], $x));
-                }
-            }
+            self::reverseAppliedDeltas($dynamics, $dynamics['_env_applied_effects'], '', 'environment');
         }
 
         $appliedEffects = [];
