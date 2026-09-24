@@ -338,7 +338,7 @@ final class RelDynAffinityCoreTest extends TestCase
     {
         $cfg = RelationshipDynamics::defaultConfig();
         $off = [
-            // topic_bonus_enabled stays on: with it off postrequest reads an undefined $topicMatch (pre-existing)
+            // topic_bonus_enabled stays on here; the disabled path is covered by testTurnWithTopicBonusDisabledRaisesNoUndefinedVariable
             'ambient_enabled', 'reunion_enabled', 'jealousy_enabled', 'conflict_enabled',
             'flirt_bonus_enabled', 'attraction_matrix_enabled', 'duty_override_enabled', 'internal_weather_enabled',
             'creature_moodifications_enabled', 'social_masking_enabled', 'ick_system_enabled', 'autonomy_enabled',
@@ -578,6 +578,26 @@ final class RelDynAffinityCoreTest extends TestCase
         $this->assertContains('ROLLBACK', $this->db->queries);
         $this->assertFalse($this->db->inTransaction);
         $this->assertEqualsWithDelta(-3.0, $dynamics['_pending_aff_delta'], 0.0001);
+    }
+
+    public function testTurnWithTopicBonusDisabledRaisesNoUndefinedVariable(): void
+    {
+        $this->setConfig(['topic_bonus_enabled' => false]);
+        $this->seedNpc(['Player' => ['aff' => 10, 'type' => 'neutral']]);
+
+        $warnings = [];
+        set_error_handler(function (int $errno, string $errstr) use (&$warnings) {
+            $warnings[] = $errstr;
+            return true;
+        }, E_WARNING | E_NOTICE);
+        try {
+            $this->runTurn();
+        } finally {
+            restore_error_handler();
+        }
+
+        $this->assertSame([], array_values(array_filter($warnings, fn($w) => str_contains($w, 'topicMatch'))));
+        $this->assertNull($GLOBALS['RELDYN_TOPIC_MATCH'] ?? null);
     }
 
     public function testPlayerKeyHelpers(): void

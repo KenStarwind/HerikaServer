@@ -332,8 +332,8 @@ if ($currentInterest) {
 // 1b. Topic Talk Bonus — conversation topic matches NPC interests
 // -------------------------------------------------------------------------
 $topicBonus = 1.0;
-if ($reldynCfg['topic_bonus_enabled'] ?? true) {
 $topicMatch = null;
+if ($reldynCfg['topic_bonus_enabled'] ?? true) {
 try {
     $db_topic = $GLOBALS['db'] ?? null;
     if ($db_topic) {
