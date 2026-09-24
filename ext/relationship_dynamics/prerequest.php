@@ -167,10 +167,9 @@ if (($reldynCfg['conflict_enabled'] ?? true) && $GLOBALS['RELDYN_PRE_AFF'] !== n
 // the next absence. After core's type snapshot above, before weather and contact below.
 RelationshipDynamics::advanceFulfillment($npcName, $dynamics, RelationshipDynamics::currentGamets(), true);
 
+// The reunion is measured before contact is marked; its passion is applied after this
+// request's attraction (below): a reunion spike is a passion gain like any other (rulings §11)
 $reunionPassion = ($reldynCfg['reunion_enabled'] ?? true) ? RelationshipDynamics::checkReunion($dynamics, $npcAffection) : 0;
-if ($reunionPassion > 0) {
-    RelationshipDynamics::addPassion($dynamics, $reunionPassion, 'reunion');
-}
 // Contact now (game calendar + play clock): absence, neglect and the next reunion count from here
 RelationshipDynamics::markContact($dynamics);
 
@@ -211,6 +210,9 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
 // $dynamics['_attraction'] for postrequest, context, the eval consumer and getRelationshipType;
 // passion above its hard cap drops to it here. Off: nothing is gated.
 RelationshipDynamics::updateAttraction($npcName, $dynamics);
+if ($reunionPassion > 0) {
+    RelationshipDynamics::gainPassion($npcName, $dynamics, $reunionPassion, 'reunion');
+}
 
 // ========== ROMANCE OWNERSHIP (rulings §9: RelDyn owns romance promotion) ==========
 // A romance type core wrote since this NPC's last request without RelDyn (core's MODE 2 #TYPE

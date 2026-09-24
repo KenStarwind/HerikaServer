@@ -181,7 +181,10 @@ final class RelDynAttractionMatrixTest extends TestCase
             'Uthgerd x newbie'                => ['Uthgerd the Unbroken', 'newbie', false, false, 'unattracted'],
             'Farengar x scholar: slow burn'   => ['Farengar Secret-Fire', 'scholar', false, false, 'prebond'],
             'Farengar x bard: friend'         => ['Farengar Secret-Fire', 'bard', false, true, 'friendzone'],
-            'Farengar x warrior: friend'      => ['Farengar Secret-Fire', 'warrior', false, true, 'friendzone'],
+            // Rulings §11: only an absent required pillar zeroes passion. A mage reads some
+            // strength in a strong warrior (the generic share of the pillar), so the
+            // bond-gated slow burn is open, faintly (testOnlyAnAbsentPillarZeroes)
+            'Farengar x warrior: faint slow burn' => ['Farengar Secret-Fire', 'warrior', false, false, 'prebond'],
             'Ysolda x bard'                   => ['Ysolda', 'bard', true, false, 'drawn'],
             'Jarl x newbie'                   => ['Jarl Hrothmund', 'newbie', false, false, 'unattracted'],
         ];
@@ -204,6 +207,29 @@ final class RelDynAttractionMatrixTest extends TestCase
             foreach (['score', 'weight', 'rigidity', 'pass'] as $k) $this->assertArrayHasKey($k, $a['pillars'][$p]);
         }
         $this->assertTrue($a['ceiling_tier'] === null || is_string($a['ceiling_tier']));
+    }
+
+    /**
+     * Rulings §11: a required pillar closes the gate only where it is absent to the NPC. What a
+     * mage reads of a strong warrior's strength is little, not nothing: the slow burn is open,
+     * faintly, far below the scholar's; a bard's is absent to him (friendzone, above).
+     */
+    public function testOnlyAnAbsentPillarZeroes(): void
+    {
+        $at = fn(string $kind) => RelationshipDynamics::attractionFor('Farengar Secret-Fire', $this->npc('Farengar Secret-Fire'), self::player($kind));
+        $scholar = $at('scholar');
+        $w = $at('warrior');
+        $this->assertGreaterThan(0.0, $w['passion_mult']);
+        $this->assertLessThan(0.25 * $scholar['passion_mult'], $w['passion_mult'], 'faint next to the scholar');
+        $this->assertFalse($w['pillars']['strength']['pass'], 'still short of the tier bar');
+        $b = $at('bard');
+        $this->assertLessThanOrEqual(RelDynAttraction::config()['passion']['gate_absent_below'], $b['pillars']['strength']['score']);
+        $this->assertSame(0.0, $b['passion_mult']);
+        // Aela and the bard: her lens sees no strength in him at all
+        $b = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA), self::player('bard'));
+        $this->assertLessThanOrEqual(RelDynAttraction::config()['passion']['gate_absent_below'], $b['pillars']['strength']['score']);
+        $this->assertSame(0.0, $b['passion']['gates']['flexible']);
+        $this->assertSame(0.0, $b['passion_mult']);
     }
 
     public function testPillarsAreNpcSubjectiveThroughTheArchetypeLens(): void
@@ -273,7 +299,12 @@ final class RelDynAttractionMatrixTest extends TestCase
         $this->assertLessThan($bar, $b['pillars']['competence']['score']);
     }
 
-    /** MDD 1.4: low = hard block; medium / high tolerate a near miss (passion ceiling -50% / -20%, 2x effort). */
+    /**
+     * MDD 1.4 openness (tolerance of a failed pillar): on the tier axis low = hard block, medium
+     * / high tolerate a near miss (2x effort). On passion (rulings §11) it is how soon a
+     * required pillar's gate opens fully; no step ceiling cut, and only a pillar that is absent
+     * to the NPC closes the gate.
+     */
     public function testOpennessTolerance(): void
     {
         $d = $this->npc('Uthgerd the Unbroken', ['attachment_style' => 'secure']);
@@ -290,20 +321,28 @@ final class RelDynAttractionMatrixTest extends TestCase
             return RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $d, $player);
         };
         $low = $at('low', $near);
-        $this->assertFalse($low['passes'], 'low openness: hard block');
-        $this->assertFalse($low['pillars']['strength']['pass']);
+        $this->assertFalse($low['pillars']['strength']['pass'], 'low openness: hard block on the tier axis');
+        $this->assertFalse($low['pillars']['strength']['tolerated']);
 
         $medium = $at('medium', $near);
-        $this->assertTrue($medium['passes']);
         $this->assertTrue($medium['pillars']['strength']['tolerated']);
-        $this->assertEqualsWithDelta(50.0, $medium['passion_cap'], 1e-9, 'medium: passion ceiling -50%');
-
         $high = $at('high', $near);
-        $this->assertTrue($high['passes']);
-        $this->assertEqualsWithDelta(80.0, $high['passion_cap'], 1e-9, 'high: passion ceiling -20%');
+        $this->assertTrue($high['pillars']['strength']['tolerated']);
 
-        $this->assertFalse($at('high', $far)['passes'], 'openness forgives a near miss, not a far one');
-        $this->assertNull($at('medium', self::player('warrior'))['passion_cap'], 'a clean pass has no ceiling cut');
+        // Passion: a near miss is not an absence; the demanding NPC's gate is only partly open
+        foreach (['low' => $low, 'medium' => $medium, 'high' => $high] as $band => $r) {
+            $this->assertTrue($r['passes'], "{$band}: {$r['reason']}");
+            $this->assertNull($r['passion_cap'], "{$band}: no step ceiling cut (rulings §11)");
+        }
+        $this->assertGreaterThan(0.0, $low['passion']['gates']['strength']);
+        $this->assertLessThan($medium['passion']['gates']['strength'], $low['passion']['gates']['strength'], 'low openness opens slower');
+        $this->assertLessThanOrEqual($high['passion']['gates']['strength'], $medium['passion']['gates']['strength']);
+        $this->assertLessThan($medium['passion_mult'], $low['passion_mult']);
+
+        $farHigh = $at('high', $far);
+        $this->assertSame(0.0, $farHigh['passion']['gates']['strength'], 'far off the mark: absent to her, even at high openness');
+        $this->assertFalse($farHigh['passes']);
+        $this->assertSame(0.0, $farHigh['passion_mult']);
 
         // 2x the significant interactions to advance with a tolerated fail
         $plain = RelDynAttraction::interactionsNeeded($d, $medium['gate'], 'medium', false);
@@ -497,9 +536,11 @@ final class RelDynAttractionMatrixTest extends TestCase
             'same raw gain before the attraction gate');
         $mw = RelationshipDynamics::attractionPassionMult(self::AELA, $warrior);
         $mb = RelationshipDynamics::attractionPassionMult(self::AELA, $bard);
-        $this->assertGreaterThan(5.0, $mw / $mb, 'the warrior stirs Aela; the bard barely');
-        $cfg = RelDynAttraction::config()['passion'];
-        $this->assertEqualsWithDelta($cfg['attachment_mult']['avoidant'] * $cfg['unattracted_mult'], $mb, 1e-9);
+        $this->assertGreaterThan(0.3, $mw, 'the warrior stirs Aela');
+        $this->assertSame(0.0, $mb, 'the bard: her required strength is absent, 100 x 0 = 0 (rulings §11)');
+        $a = $warrior['_attraction']['passion'];
+        $this->assertEqualsWithDelta($a['modifier'] * $a['gate_product'] * RelDynAttraction::config()['passion']['attachment_mult']['avoidant'],
+            $mw, 1e-3, 'modifier x gates x attachment (Aela is avoidant)');
     }
 
     public function testAttachmentStyleSetsThePace(): void
@@ -535,8 +576,7 @@ final class RelDynAttractionMatrixTest extends TestCase
         $pb = RelationshipDynamics::getPassion($bard);
         $this->assertGreaterThan(20.0, $pw, 'the warrior: passion builds');
         $this->assertLessThanOrEqual(20.0, $pb, 'the bard: friendzone hard cap (MDD 6.2)');
-        $this->assertEqualsWithDelta(0.5, array_sum($bardGains), 1e-6, 'from 19.5 the bard gains exactly up to the cap, never past it');
-        $this->assertGreaterThan(0.0, $bardGains[0], 'below the cap a little passion still stirs');
+        $this->assertSame(0.0, max($bardGains), 'the bard: the gate is closed, not one eval adds passion (rulings §11)');
         $this->assertGreaterThan($pb, $pw);
         $this->assertGreaterThan($affBefore, RelationshipDynamics::getCoreAffinity($bard), 'friendzone: affinity can still grow');
         $log = (string) file_get_contents($this->errorLog);

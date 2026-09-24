@@ -186,7 +186,8 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
             // Apply the passion change
             if (abs($gain) > 0.01) {
                 if ($gain > 0) {
-                    RelationshipDynamics::addPassion($dynamics, $gain, 'combat');
+                    // x attraction (rulings §11): fighting beside someone she is not drawn to stirs nothing
+                    $gain = RelationshipDynamics::gainPassion($combatNpc, $dynamics, $gain, 'combat');
                     $dynamics['total_positive_interactions'] = intval($dynamics['total_positive_interactions'] ?? 0) + 1;
                 } else {
                     // Negative drain (bleedout): clamp at zero, don't use addPassion
@@ -407,14 +408,18 @@ $GLOBALS['RELDYN_FLIRT_BONUS'] = $flirtBonus;
 // 2. Calculate and apply passion gain
 // -------------------------------------------------------------------------
 $passionGain = 0.0;
+// A positive exchange the legacy classifier scored, whatever the attraction made of its passion
+// (a closed gate zeroes the passion, not the exchange: affinity, repair and stages still count)
+$positiveExchange = false;
 if ($evalOwnsExchange) {
     RelationshipDynamics::log("POST legacy classifier stands down for {$npcName}: eval job {$evalJobId} scores this exchange (no local passion gain, affinity speed, repair or resentment decay)");
 } elseif (($reldynCfg['passion_enabled'] ?? true) && $interactionLL !== null) {
     $rawPassionGain = RelationshipDynamics::calculatePassionGain($dynamics, $interactionLL);
     // Apply topic and flirt bonuses on top of base passion gain
     $passionGain = $rawPassionGain * $topicBonus * $flirtBonus;
+    $positiveExchange = $passionGain > 0;
 
-    // ========== ATTRACTION x ATTACHMENT PASSION GATE (decisions §9) ==========
+    // ========== ATTRACTION MODIFIER x GATES x ATTACHMENT (rulings §11, §9) ==========
     $matrixPassionMult = RelationshipDynamics::attractionPassionMult($npcName, $dynamics);
     if ($passionGain > 0) {
         $passionGain *= $matrixPassionMult;
@@ -477,7 +482,7 @@ RelationshipDynamics::recordInteraction($dynamics);
 //   passion 50  → ×1.15 (cruising — normal pace)
 //   passion 100 → ×2.0  (redline — maximum)
 $affinityGainMult = RelationshipDynamics::getAffinityGainMultiplier($dynamics);
-$baseDelta = ($passionGain > 0) ? 1 : 0; // +1 per positive interaction
+$baseDelta = $positiveExchange ? 1 : 0; // +1 per positive interaction
 
 try {
     if ($baseDelta != 0) {
@@ -531,10 +536,10 @@ try {
 if (!($reldynCfg['conflict_enabled'] ?? true)) goto skip_conflict;
 // For an exchange the eval scores, its positive_interaction drives repair
 // (applyEvalFeelings); $passionGain is 0 then, so this heuristic stands down.
-if ($passionGain > 0 && !empty($dynamics['in_conflict'])) {
+if ($positiveExchange && !empty($dynamics['in_conflict'])) {
     $repairBurst = RelationshipDynamics::recordConflictPositive($dynamics);
     if ($repairBurst > 0) {
-        RelationshipDynamics::addPassion($dynamics, $repairBurst, 'repair');
+        RelationshipDynamics::gainPassion($npcName, $dynamics, $repairBurst, 'repair');
     }
 }
 
@@ -586,7 +591,7 @@ if (!empty($reldynCfg['charisma_detection_enabled'] ?? true)) {
 // -------------------------------------------------------------------------
 // 7. Track positive interactions + stage advancement
 // -------------------------------------------------------------------------
-if ($passionGain > 0) {
+if ($positiveExchange) {
     $dynamics['total_positive_interactions'] = intval($dynamics['total_positive_interactions'] ?? 0) + 1;
     RelationshipDynamics::checkStageAdvancement($dynamics);
 }
@@ -663,7 +668,7 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
 
     // Natural resentment decay on positive interactions (for an exchange the eval scores,
     // its positive_interaction does this in applyEvalFeelings; $passionGain is 0 then)
-    $wasPositive = ($passionGain ?? 0) > 0;
+    $wasPositive = $positiveExchange ?? false;
     if ($wasPositive) {
         $dynamics['_npc_name'] = $npcName;
         $temperament = $dynamics['inferred_temperament'] ?? null;

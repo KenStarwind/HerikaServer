@@ -1063,7 +1063,7 @@ class RelDynFacets
         }
 
         if (RelationshipDynamics::configValue('ambient_enabled') && RelationshipDynamics::configValue('passion_enabled')) {
-            $out['poi_floor'] = self::holdPoiFloor($dynamics, $v, $cfg);
+            $out['poi_floor'] = self::holdPoiFloor($npcName, $dynamics, $v, $cfg);
         } else {
             unset($dynamics['_poi_passion_floor'], $dynamics['_poi_updated_play_gamets']);
         }
@@ -1301,8 +1301,9 @@ class RelDynFacets
      * MDD 1.5 Point of Interest: in a place loved at poi_valence_min or more, passion is held
      * at poi_passion_floor. Passion below it rises toward it on the filtered play clock (no
      * jump, nothing from waiting); decayPassion() halts while the floor holds. Leaving clears it.
+     * The rise is a passion gain: x the attraction (rulings §11), so a closed gate holds nothing up.
      */
-    private static function holdPoiFloor(array &$dynamics, float $valence, array $cfg): ?float
+    private static function holdPoiFloor(string $npcName, array &$dynamics, float $valence, array $cfg): ?float
     {
         if ($valence < floatval($cfg['poi_valence_min'])) {
             unset($dynamics['_poi_passion_floor'], $dynamics['_poi_updated_play_gamets']);
@@ -1314,7 +1315,11 @@ class RelDynFacets
         $passion = RelationshipDynamics::getPassion($dynamics);
         if ($since !== null && $passion < $floor) {
             $minutes = $since / (RelationshipDynamics::GAMETS_PER_REAL_SECOND * 60.0);
-            RelationshipDynamics::setPassion($dynamics, min($floor, $passion + $minutes * floatval($cfg['poi_rise_per_play_minute'])));
+            $rise = $minutes * floatval($cfg['poi_rise_per_play_minute'])   // passion points
+                * RelationshipDynamics::attractionPassionMult($npcName, $dynamics);
+            if ($rise > 0.0) {
+                RelationshipDynamics::setPassion($dynamics, min($floor, $passion + $rise));
+            }
         }
         RelationshipDynamics::markPlayCheckpoint($dynamics, '_poi_updated_play_gamets');
         return $floor;
