@@ -96,11 +96,11 @@ class RelDynFacets
             'faction_weight' => 0.5,
             'skills_min_level' => 25,
             'archetype_prefs' => [
-                'Warrior'   => ['combat' => 0.6, 'crafting' => 0.2, 'adventure' => 0.3, 'danger' => 0.2, 'social' => 0.1,
+                'Warrior'   => ['combat' => 0.6, 'crafting' => 0.2, 'adventure' => 0.2, 'danger' => 0.2, 'social' => 0.1,
                                 'scholarly' => -0.2, 'quiet' => -0.1],
                 'Barbarian' => ['combat' => 0.7, 'adventure' => 0.4, 'nature' => 0.3, 'wild' => 0.3, 'danger' => 0.3,
                                 'scholarly' => -0.4, 'luxury' => -0.3, 'confined' => -0.2],
-                'Ranger'    => ['nature' => 0.7, 'wild' => 0.5, 'combat' => 0.2, 'adventure' => 0.3, 'danger' => 0.1,
+                'Ranger'    => ['nature' => 0.7, 'wild' => 0.5, 'combat' => 0.2, 'adventure' => 0.1, 'danger' => 0.1,
                                 'scholarly' => -0.5, 'confined' => -0.4, 'crowd' => -0.3, 'luxury' => -0.2],
                 'Mage'      => ['scholarly' => 0.6, 'enchanting' => 0.4, 'alchemy' => 0.2, 'adventure' => 0.2, 'quiet' => 0.3,
                                 'crowd' => -0.2, 'wild' => -0.2, 'combat' => -0.1],
@@ -117,13 +117,13 @@ class RelDynFacets
                 'Bard'      => ['social' => 0.7, 'crowd' => 0.5, 'scholarly' => 0.2, 'luxury' => 0.2, 'quiet' => -0.2, 'confined' => -0.1],
             ],
             'skill_facets' => [
-                'archery'     => ['combat' => 0.3, 'nature' => 0.3, 'adventure' => 0.1],   // hunting
+                'archery'     => ['combat' => 0.3, 'nature' => 0.3],   // hunting
                 'onehanded'   => ['combat' => 0.4],
                 'twohanded'   => ['combat' => 0.4],
                 'block'       => ['combat' => 0.3],
                 'heavyarmor'  => ['combat' => 0.3],
-                'lightarmor'  => ['adventure' => 0.3, 'combat' => 0.1],
-                'sneak'       => ['adventure' => 0.3, 'dark' => 0.2],
+                'lightarmor'  => ['adventure' => 0.2, 'combat' => 0.1],
+                'sneak'       => ['adventure' => 0.2, 'dark' => 0.2],
                 'lockpicking' => ['adventure' => 0.2, 'wealth' => 0.1],
                 'pickpocket'  => ['wealth' => 0.2, 'crowd' => 0.1],
                 'speech'      => ['social' => 0.4, 'crowd' => 0.2],
@@ -339,7 +339,42 @@ class RelDynFacets
      */
     public static function appraise(array $prefs, array $facets): array
     {
-        return ['valence' => 0.0, 'intensity' => 0.0, 'dominant' => null, 'dominant_sign' => 1, 'contributions' => []];
+        // contribution = facet weight (clamped 0..1) x preference (clamped -1..+1)
+        // valence   = sum(contributions) / sum(facet weights)   -> -1..+1 (weighted mean preference)
+        // intensity = sum(|contributions|) / sum(facet weights) ->  0..1  (how strongly it is felt:
+        //             a place that is both loved and hated is intense even when valence is ~0)
+        // dominant  = facet with the biggest |contribution|, ties to the earlier FACETS entry
+        $contributions = [];
+        $weight = 0.0;
+        $sum = 0.0;
+        $abs = 0.0;
+        $dominant = null;
+        $best = 0.0;
+        foreach (self::FACETS as $facet) {
+            if (!isset($facets[$facet]) || !is_numeric($facets[$facet])) continue;
+            $w = max(0.0, min(1.0, floatval($facets[$facet])));
+            if ($w <= 0.0) continue;
+            $p = max(-1.0, min(1.0, floatval($prefs[$facet] ?? 0.0)));
+            $c = $w * $p;
+            $contributions[$facet] = $c;
+            $weight += $w;
+            $sum += $c;
+            $abs += abs($c);
+            if (abs($c) > $best + 1e-12) {
+                $best = abs($c);
+                $dominant = $facet;
+            }
+        }
+        if ($weight <= 0.0) {
+            return ['valence' => 0.0, 'intensity' => 0.0, 'dominant' => null, 'dominant_sign' => 1, 'contributions' => []];
+        }
+        return [
+            'valence'       => max(-1.0, min(1.0, $sum / $weight)),
+            'intensity'     => min(1.0, $abs / $weight),
+            'dominant'      => $dominant,
+            'dominant_sign' => ($dominant !== null && $contributions[$dominant] < 0) ? -1 : 1,
+            'contributions' => $contributions,
+        ];
     }
 
     /**

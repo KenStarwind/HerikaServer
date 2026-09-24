@@ -36,6 +36,54 @@ final class RelDynFacetPrefsDb
 }
 
 /**
+ * Core-shaped NPC profiles for the facet tests (also used by RelDynFacetAppraisalTest):
+ * rows as CHIM 3.4.1 stores them, and the profile the real temperament vote derives.
+ */
+final class RelDynFacetProfiles
+{
+    /** A core_npc_master row as CHIM 3.4.1 stores it (processor/comm.php addnpc), jsonb as text. */
+    public static function coreRow(string $name, string $class, array $factions, array $skills, string $race, string $voice, string $personality = ''): array
+    {
+        $baseSkills = array_fill_keys(['archery', 'block', 'onehanded', 'twohanded', 'conjuration', 'destruction',
+            'restoration', 'alteration', 'illusion', 'heavyarmor', 'lightarmor', 'lockpicking', 'pickpocket',
+            'sneak', 'speech', 'smithing', 'alchemy', 'enchanting'], '15');
+        $f = [];
+        foreach ($factions as $i => $fname) {
+            $f[] = ['formid' => sprintf('0x%08x', 0x48362 + $i), 'rank' => 0, 'name' => $fname];
+        }
+        return [
+            'npc_name' => $name, 'gender' => 'female', 'race' => $race, 'voiceid' => $voice,
+            'personality' => $personality, 'speechstyle' => '', 'core' => "Roleplay as {$name}", 'npc_static_bio' => '',
+            'metadata' => json_encode(['skills' => array_merge($baseSkills, array_map('strval', $skills))]),
+            'extended_data' => json_encode(['class' => ['name' => $class, 'formid' => '0x0001317f'], 'factions' => $f]),
+        ];
+    }
+
+    /** A huntress of the Companions: hunter class, Companions factions, archery/sneak/light armor. */
+    public static function huntressRow(): array
+    {
+        return self::coreRow('Test Huntress', 'Hunter', ['CompanionsFaction', 'CompanionsCircle'],
+            ['archery' => 70, 'sneak' => 55, 'lightarmor' => 50, 'onehanded' => 45], 'NordRace', 'FemaleEvenToned');
+    }
+
+    /** A scholar-mage follower: sorcerer class, destruction/alteration/enchanting. */
+    public static function scholarRow(): array
+    {
+        return self::coreRow('Test Scholar', 'Sorcerer', [],
+            ['destruction' => 60, 'alteration' => 55, 'enchanting' => 55, 'conjuration' => 40, 'lightarmor' => 45,
+             'onehanded' => 30, 'restoration' => 35], 'BretonRace', 'FemaleEvenToned');
+    }
+
+    /** The profile the real temperament auto-generation derives from that row. */
+    public static function profileFor(array $row): array
+    {
+        $p = RelationshipDynamics::deriveNpcProfile($row['npc_name'], $row);
+        return ['temperament' => $p['temperament'], 'traits' => $p['traits']];
+    }
+
+}
+
+/**
  * signed-preferences / interests-11 (decisions 2026-09-23 §6): each NPC has a preference
  * per facet from -1 (hates) to +1 (loves), derived from class, skills, temperament and
  * traits in CHIM core data, with a per-NPC override; the MDD 1.2 0.5x-2.0x interest
@@ -60,50 +108,10 @@ final class RelDynFacetPreferencesTest extends TestCase
         RelationshipDynamics::clearConfigCache();
     }
 
-    /** A core_npc_master row as CHIM 3.4.1 stores it (processor/comm.php addnpc), jsonb as text. */
-    private static function coreRow(string $name, string $class, array $factions, array $skills, string $race, string $voice, string $personality = ''): array
-    {
-        $baseSkills = array_fill_keys(['archery', 'block', 'onehanded', 'twohanded', 'conjuration', 'destruction',
-            'restoration', 'alteration', 'illusion', 'heavyarmor', 'lightarmor', 'lockpicking', 'pickpocket',
-            'sneak', 'speech', 'smithing', 'alchemy', 'enchanting'], '15');
-        $f = [];
-        foreach ($factions as $i => $fname) {
-            $f[] = ['formid' => sprintf('0x%08x', 0x48362 + $i), 'rank' => 0, 'name' => $fname];
-        }
-        return [
-            'npc_name' => $name, 'gender' => 'female', 'race' => $race, 'voiceid' => $voice,
-            'personality' => $personality, 'speechstyle' => '', 'core' => "Roleplay as {$name}", 'npc_static_bio' => '',
-            'metadata' => json_encode(['skills' => array_merge($baseSkills, array_map('strval', $skills))]),
-            'extended_data' => json_encode(['class' => ['name' => $class, 'formid' => '0x0001317f'], 'factions' => $f]),
-        ];
-    }
-
-    /** A huntress of the Companions: hunter class, Companions factions, archery/sneak/light armor. */
-    private static function huntressRow(): array
-    {
-        return self::coreRow('Test Huntress', 'Hunter', ['CompanionsFaction', 'CompanionsCircle'],
-            ['archery' => 70, 'sneak' => 55, 'lightarmor' => 50, 'onehanded' => 45], 'NordRace', 'FemaleEvenToned');
-    }
-
-    /** A scholar-mage follower: sorcerer class, destruction/alteration/enchanting. */
-    private static function scholarRow(): array
-    {
-        return self::coreRow('Test Scholar', 'Sorcerer', [],
-            ['destruction' => 60, 'alteration' => 55, 'enchanting' => 55, 'conjuration' => 40, 'lightarmor' => 45,
-             'onehanded' => 30, 'restoration' => 35], 'BretonRace', 'FemaleEvenToned');
-    }
-
-    /** The profile the real temperament auto-generation derives from that row. */
-    private static function profileFor(array $row): array
-    {
-        $p = RelationshipDynamics::deriveNpcProfile($row['npc_name'], $row);
-        return ['temperament' => $p['temperament'], 'traits' => $p['traits']];
-    }
-
     public function testHuntressDerivesNatureCombatLoveAndScholarlyConfinedDislike(): void
     {
-        $row = self::huntressRow();
-        $profile = self::profileFor($row);
+        $row = RelDynFacetProfiles::huntressRow();
+        $profile = RelDynFacetProfiles::profileFor($row);
         $this->assertSame('Independent', $profile['temperament'], 'Ranger class votes Independent (MDD 1.3)');
 
         $prefs = RelDynFacets::derivePreferences($row, $profile)['prefs'];
@@ -115,8 +123,8 @@ final class RelDynFacetPreferencesTest extends TestCase
 
     public function testScholarDerivesScholarlyEnchantingAdventureLoveAndCrowdDislike(): void
     {
-        $row = self::scholarRow();
-        $profile = self::profileFor($row);
+        $row = RelDynFacetProfiles::scholarRow();
+        $profile = RelDynFacetProfiles::profileFor($row);
         $this->assertSame('Guarded', $profile['temperament'], 'Mage class votes Guarded (MDD 1.3)');
 
         $prefs = RelDynFacets::derivePreferences($row, $profile)['prefs'];
@@ -128,8 +136,8 @@ final class RelDynFacetPreferencesTest extends TestCase
 
     public function testEveryFacetIsPresentSignedAndDeterministic(): void
     {
-        foreach ([self::huntressRow(), self::scholarRow(), []] as $row) {
-            $profile = $row ? self::profileFor($row) : ['temperament' => 'Stoic', 'traits' => []];
+        foreach ([RelDynFacetProfiles::huntressRow(), RelDynFacetProfiles::scholarRow(), []] as $row) {
+            $profile = $row ? RelDynFacetProfiles::profileFor($row) : ['temperament' => 'Stoic', 'traits' => []];
             $a = RelDynFacets::derivePreferences($row, $profile);
             $b = RelDynFacets::derivePreferences($row, $profile);
             $this->assertSame($a, $b, 'same row and profile give the same preferences');
@@ -143,7 +151,7 @@ final class RelDynFacetPreferencesTest extends TestCase
 
     public function testTemperamentAndTraitsShiftPreferences(): void
     {
-        $row = self::scholarRow();
+        $row = RelDynFacetProfiles::scholarRow();
         $guarded = RelDynFacets::derivePreferences($row, ['temperament' => 'Guarded', 'traits' => []])['prefs'];
         $anxious = RelDynFacets::derivePreferences($row, ['temperament' => 'Anxious', 'traits' => []])['prefs'];
         $this->assertLessThan($guarded['danger'], $anxious['danger'], 'Anxious dislikes danger more (MDD 1.3 "terrified")');
@@ -159,7 +167,7 @@ final class RelDynFacetPreferencesTest extends TestCase
         $GLOBALS['db'] = $db;
         RelationshipDynamics::clearConfigCache();
 
-        $prefs = RelDynFacets::derivePreferences(self::scholarRow(), ['temperament' => 'Guarded', 'traits' => []])['prefs'];
+        $prefs = RelDynFacets::derivePreferences(RelDynFacetProfiles::scholarRow(), ['temperament' => 'Guarded', 'traits' => []])['prefs'];
         $this->assertEqualsWithDelta(-1.0, $prefs['crowd'], 1e-9, 'Mage -0.2 + stored Guarded -0.9, clamped to -1');
         $this->assertGreaterThan(0.5, $prefs['scholarly'], 'tables the stored config leaves out keep their defaults');
     }
@@ -167,7 +175,7 @@ final class RelDynFacetPreferencesTest extends TestCase
     public function testPreferencesStoresDerivationAndOverrideWins(): void
     {
         $db = new RelDynFacetPrefsDb();
-        $db->rows['test huntress'] = self::huntressRow();
+        $db->rows['test huntress'] = RelDynFacetProfiles::huntressRow();
         $GLOBALS['db'] = $db;
         RelationshipDynamics::clearConfigCache();
 
@@ -193,7 +201,7 @@ final class RelDynFacetPreferencesTest extends TestCase
     public function testTemperamentChangeRederivesStoredPreferences(): void
     {
         $db = new RelDynFacetPrefsDb();
-        $db->rows['test scholar'] = self::scholarRow();
+        $db->rows['test scholar'] = RelDynFacetProfiles::scholarRow();
         $GLOBALS['db'] = $db;
         RelationshipDynamics::clearConfigCache();
 
