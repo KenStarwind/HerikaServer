@@ -1131,7 +1131,9 @@ class RelationshipDynamics
             // XYZ Dimension Engine — on by default: the MDD section 15 eval signals,
             // modifier pipeline and resentment accumulator all run through it.
             'dimension_engine_enabled' => true,
-            'dimension_context_enabled' => false,
+            // Dimension state reaches the LLM as band keywords (felt steering, never numbers;
+            // decisions 2026-09-23 section 3).
+            'dimension_context_enabled' => true,
             'dimension_debug_logging' => false,
             'dimension_max_context_lines' => 10,
             // Diary reflection mode: 'baseline' (math-only) or 'trajectory' (LLM-scored)
@@ -1160,7 +1162,9 @@ class RelationshipDynamics
             'emergent_emotions_enabled' => true,
             'significance_scaling_enabled' => true,
             // PR 14: Social Masking + Autonomous Diary
-            'social_masking_enabled' => true,
+            // Off by default: <social_mask> can only state comfort/resentment/warmth as numbers
+            // (generateMaskingContext) until its felt-steering rewrite.
+            'social_masking_enabled' => false,
             'autonomous_diary_enabled' => true,
             'diary_interaction_gap' => 15,           // interactions
             'mask_maturity_cost' => 0.15,            // maturity points per masked interaction
@@ -4033,7 +4037,7 @@ class RelationshipDynamics
             ['label' => 'Simmering',   'range' => [16, 30],  'keywords' => 'occasionally bites tongue, small things bother more than they should'],
             ['label' => 'Edged',       'range' => [31, 50],  'keywords' => 'passive-aggressive edge creeping in, sighs instead of speaking up, shorter patience'],
             ['label' => 'Frustrated',  'range' => [51, 70],  'keywords' => 'visibly frustrated, withdrawing emotionally, affinity gains frozen'],
-            ['label' => 'Withdrawn',   'range' => [71, 90],  'keywords' => 'cold, distant, stopped trying, comfort drops to 0, considering leaving'],
+            ['label' => 'Withdrawn',   'range' => [71, 90],  'keywords' => 'cold, distant, stopped trying, no longer at ease around them, considering leaving'],
             ['label' => 'Done',        'range' => [91, 100], 'keywords' => 'walkaway imminent, done, emotionally checked out'],
         ],
         'self_confidence' => [
@@ -9476,7 +9480,7 @@ class RelationshipDynamics
             $reason = $mem['reason'] ?? '';
             $ts = $mem['ts'] ?? '';
 
-            // Human-readable time ago
+            // Human-readable time ago, in words (felt steering: no numbers reach the LLM)
             $timeAgo = 'recently';
             if (!empty($ts)) {
                 $memTime = strtotime($ts);
@@ -9485,11 +9489,11 @@ class RelationshipDynamics
                     if ($diffSec < 3600) {
                         $timeAgo = 'moments ago';
                     } elseif ($diffSec < 86400) {
-                        $hours = max(1, intval($diffSec / 3600));
-                        $timeAgo = $hours === 1 ? '1 hour ago' : "{$hours} hours ago";
+                        $timeAgo = 'earlier today';
+                    } elseif ($diffSec < 7 * 86400) {
+                        $timeAgo = 'a few days ago';
                     } else {
-                        $days = max(1, intval($diffSec / 86400));
-                        $timeAgo = $days === 1 ? '1 day ago' : "{$days} days ago";
+                        $timeAgo = 'a while ago';
                     }
                 }
             }
