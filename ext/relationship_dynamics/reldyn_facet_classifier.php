@@ -113,9 +113,17 @@ final class RelDynFacetClassifier
             // name (topic, aliases) says what it IS; its tags name related things (a sabre cat's
             // tags mention 'alchemy eyes', Whiterun's mention the Skyforge and a temple).
             'prior_weights' => ['knowledge_class' => 0.6, 'category' => 1.0, 'name' => 1.0, 'tags' => 0.6],
-            // Oghma knowledge_class tokens ("who knows this"), comma-separated in the row.
+            // Oghma knowledge_class is WHO may know a topic (core oghma_parity.php
+            // chimOghmaKnowledgeClassDecision), a comma-separated audience, not what the topic is
+            // about. Only a narrow audience says something: each listed class that has a row here
+            // counts x prior_weights.knowledge_class / n^knowledge_class_dilution (n = the number of
+            // such classes in the row), so 'alchemist' alone reads alchemy while Solitude's six
+            // audiences (nobles, travelers, the Legion, the Thalmor ...) say next to nothing.
+            // Broad audiences (scholar, holds, races) have no row: scholars may know Alduin,
+            // Balgruuf and Skyrim without those being scholarly (live 3.4.1: 473 of 1,615 rows
+            // list 'scholar').
+            'knowledge_class_dilution' => 0.5,
             'knowledge_class_prior' => [
-                'scholar'               => ['scholarly' => 1.0],
                 'mage'                  => ['enchanting' => 0.7, 'scholarly' => 0.5],
                 'college_of_winterhold' => ['scholarly' => 0.7, 'enchanting' => 0.6],
                 'collegeofwinterhold'   => ['scholarly' => 0.7, 'enchanting' => 0.6],
@@ -160,15 +168,22 @@ final class RelDynFacetClassifier
                 'miraak_cult'           => ['spiritual' => 0.4, 'danger' => 0.6, 'dark' => 0.4],
                 'thalmor'               => ['danger' => 0.4],
             ],
+            // A row whose ONLY class is one of these: knowledge nobody but that audience has.
+            // Only-scholars-know is esoteric learning (in-game histories, treatises).
+            'knowledge_class_sole_prior' => [
+                'scholar' => ['scholarly' => 1.0],
+            ],
             // Oghma category (one per row). Hold categories (whiterun, rift, ...) carry no facet:
             // the place's own tags say what kind of place it is.
             'category_prior' => [
+                // No 'lore' row: that category holds the in-game books and histories (those are
+                // scholar-only, knowledge_class_sole_prior) but also factions, races and gods
+                // (companions, bosmer, the Silver Hand), so it says nothing about what an entry is.
                 'spells'    => ['enchanting' => 0.8, 'scholarly' => 0.3],
-                'lore'      => ['scholarly' => 0.8],
-                'figures'   => ['social' => 0.3, 'scholarly' => 0.3],
+                'figures'   => ['social' => 0.3],
                 'creatures' => ['nature' => 0.4, 'danger' => 0.5, 'combat' => 0.4, 'wild' => 0.4],
                 'equipment' => ['combat' => 0.8, 'crafting' => 0.4],
-                'artifacts' => ['adventure' => 0.5, 'scholarly' => 0.4, 'wealth' => 0.4, 'enchanting' => 0.3],
+                'artifacts' => ['adventure' => 0.5, 'wealth' => 0.4, 'enchanting' => 0.3],
             ],
             // Words in an Oghma entry's topic, aliases and tags (and topic / place names without
             // an Oghma entry). No 'mountain': lore tags name Red Mountain / Velothi Mountains as
@@ -214,6 +229,7 @@ final class RelDynFacetClassifier
                 'museum'          => ['scholarly' => 0.7, 'adventure' => 0.3, 'quiet' => 0.4],
                 'artifact'        => ['scholarly' => 0.5, 'adventure' => 0.5],
                 'college'         => ['scholarly' => 0.7, 'enchanting' => 0.6],
+                'bards college'   => ['social' => 0.8],
                 'magic'           => ['enchanting' => 0.7, 'scholarly' => 0.3],
                 'arcane'          => ['enchanting' => 0.7, 'scholarly' => 0.4],
                 'spell'           => ['enchanting' => 0.7, 'scholarly' => 0.3],
@@ -583,6 +599,14 @@ final class RelDynFacetClassifier
             if (!array_key_exists($key, $cfg)) {
                 continue;
             }
+            if (!is_array($cfg[$key])) {   // a number setting (knowledge_class_dilution)
+                if (is_numeric($value)) {
+                    $cfg[$key] = (float) $value;
+                } else {
+                    error_log("[RelDyn-FACETS] ERROR config facet_classifier.{$key} is not a number; using its default");
+                }
+                continue;
+            }
             if (!is_array($value)) {
                 error_log("[RelDyn-FACETS] ERROR config facet_classifier.{$key} is not an object; using its default");
                 continue;
@@ -704,19 +728,30 @@ final class RelDynFacetClassifier
     }
 
     /**
-     * The deterministic prior of one Oghma row: knowledge_class tokens, category, the words of
-     * its name (topic, aliases) and of its tags through the tables, each source x its
-     * prior_weights entry; per-facet maximum over the sources.
+     * The deterministic prior of one Oghma row: knowledge_class (an audience: the sole-class
+     * table, then each class row diluted by the number of such classes, see
+     * knowledge_class_prior), category, the words of its name (topic, aliases) and of its tags
+     * through the tables, each source x its prior_weights entry; per-facet maximum over the sources.
      */
     public static function priorFacets(array $row, ?array $cfg = null): array
     {
         $cfg = $cfg ?? self::config();
         $w = array_replace(['knowledge_class' => 1.0, 'category' => 1.0, 'name' => 1.0, 'tags' => 1.0], (array) ($cfg['prior_weights'] ?? []));
         $parts = [];
-        foreach (explode(',', (string) ($row['knowledge_class'] ?? '')) as $token) {
-            $t = strtolower(trim($token));
-            if ($t !== '' && isset($cfg['knowledge_class_prior'][$t])) {
-                $parts[] = self::scaled((array) $cfg['knowledge_class_prior'][$t], (float) $w['knowledge_class']);
+        $classes = array_values(array_unique(array_filter(
+            array_map(fn($t) => strtolower(trim($t)), explode(',', (string) ($row['knowledge_class'] ?? ''))),
+            fn($t) => $t !== ''
+        )));
+        $sole = (array) ($cfg['knowledge_class_sole_prior'] ?? []);
+        if (count($classes) === 1 && isset($sole[$classes[0]])) {
+            $parts[] = self::scaled((array) $sole[$classes[0]], (float) $w['knowledge_class']);
+        }
+        $table = (array) ($cfg['knowledge_class_prior'] ?? []);
+        $mapped = array_values(array_filter($classes, fn($t) => isset($table[$t])));
+        if ($mapped !== []) {
+            $k = (float) $w['knowledge_class'] / pow(count($mapped), max(0.0, (float) ($cfg['knowledge_class_dilution'] ?? 0.0)));
+            foreach ($mapped as $t) {
+                $parts[] = self::scaled((array) $table[$t], $k);
             }
         }
         $cat = strtolower(trim((string) ($row['category'] ?? '')));

@@ -104,8 +104,9 @@ final class RelDynFacetClassifierTest extends TestCase
         $row = ['topic' => 'dwemer', 'knowledge_class' => 'scholar', 'category' => 'lore', 'aliases' => 'dwarves, Deep Elves',
             'tags' => 'Mer, Morrowind, Red Mountain, Velothi Mountains, Chimer, Heart of Lorkhan, disappearance, underground cities, Dwarven ruins, First Era, Rourken'];
         $f = RelDynFacetClassifier::priorFacets($row);
-        // category lore 0.8 beats knowledge_class scholar 1.0 x 0.6 and the alias 'deep elves' 0.6
-        $this->assertSame(0.8, $f['scholarly']);
+        // its name 'dwemer' and the alias 'deep elves' (0.6 x 1.0) beat the only-scholars-know
+        // prior 1.0 x 0.6; category 'lore' says nothing
+        $this->assertSame(0.6, $f['scholarly']);
         // its own name 'dwemer' (x1.0) beats the tags 'underground' 0.7 x 0.6 and 'ruins' 0.7 x 0.6
         $this->assertSame(0.5, $f['confined']);
         $this->assertSame(0.6, $f['adventure']);
@@ -113,6 +114,86 @@ final class RelDynFacetClassifierTest extends TestCase
         $this->assertSame(0.3, $f['dark'], "tag 'underground' 0.5 x 0.6");
         $this->assertSame('scholarly', array_key_first($f));
         $this->assertArrayNotHasKey('nature', $f, "'Red Mountain' is geography, not nature");
+    }
+
+    /**
+     * Live 3.4.1 oghma rows (topic, aliases, knowledge_class, category, tags; read-only SELECT
+     * 2026-09-24). knowledge_class is WHO may know the topic (core oghma_parity.php
+     * chimOghmaKnowledgeClassDecision), not what it is about.
+     */
+    private const LIVE_ROWS = [
+        'alduin'     => ['topic' => 'alduin', 'aliases' => '', 'knowledge_class' => 'scholar, dragon, priest, miraak_cult', 'category' => 'figures',
+            'tags' => 'World-Eater, Akatosh, Dragon Language, dragons, dragon priests, draugr, Nord mythology, end times'],
+        'balgruuf'   => ['topic' => 'balgruuf', 'aliases' => 'Balgruuf the Greater', 'knowledge_class' => 'scholar, noble', 'category' => 'figures',
+            'tags' => 'Whiterun, King Olaf One-Eye, Greybeards, High Hrothgar, Ulfric Stormcloak, Jarl, Nord warriors, Pilgrimage'],
+        'companions' => ['topic' => 'companions', 'aliases' => '', 'knowledge_class' => 'companions', 'category' => 'lore',
+            'tags' => 'Whiterun, Jorrvaskr, Ysgramor, Atmora, Merethic Era, lycanthropy, Glenmoril Witches, Kodlak Whitemane, Harbinger, mercenaries, Five Hundred Companions'],
+        'kynareth'   => ['topic' => 'kynareth', 'aliases' => 'Kyne, Goddess of Air, Khenarthi, Tava, Goddess of the Heavens', 'knowledge_class' => 'priest, scholar', 'category' => 'figures',
+            'tags' => "Nine Divines, Lorkhan, Shor, Mundus, Gildergreen, Whiterun, thu'um, Khajiit, Boots of the Crusader, Lord's Mail, sailors, nature"],
+        'solitude'   => ['topic' => 'solitude', 'aliases' => '', 'knowledge_class' => 'haafingar, noble, scholar, traveler, east_empire_company, imperial_legion, thalmor, guard', 'category' => 'haafingar',
+            'tags' => 'Haafingar, Imperial Legion, Blue Palace, Thalmor Embassy, Castle Dour, Bards College, Temple of the Divines, East Empire Company Warehouse, High King Torygg, Jarl Elisif the Fair, Sea of Ghosts, The Winking Skeever'],
+        'goblin'     => ['topic' => 'goblin', 'aliases' => '', 'knowledge_class' => 'scholar, hunter', 'category' => 'creatures',
+            'tags' => 'Tamriel, Akavir, caves, sewers, ancient ruins, clan-based societies, primitive humanoids, violent creatures, intelligence, adaptability'],
+        'skyrim'     => ['topic' => 'skyrim', 'aliases' => 'Keizaal, Mereth', 'knowledge_class' => 'scholar, nord, noble, traveler, thalmor', 'category' => 'locationother',
+            'tags' => 'Nords, High King, Moot, Dragon Cult, Dwemer, Pact of Chieftains, Thalmor, The Red Year, Morrowind, Cyrodiil, Hammerfell, High Rock'],
+        'arkay'      => ['topic' => 'arkay', 'aliases' => 'Lord of the Wheel of Life', 'knowledge_class' => 'priest, scholar', 'category' => 'figures',
+            'tags' => "Divines, Orkey, Mara, Sword of the Crusader, Great Chapel of Arkay, necromancy, undead, burial rites, Arkay's Law, Bretons, Green Pact"],
+        'azura'      => ['topic' => 'azura', 'aliases' => 'Queen of Dawn and Dusk', 'knowledge_class' => 'dunmer, khajiit, daedra, scholar', 'category' => 'figures',
+            'tags' => 'Daedric Prince, Dunmer, Khajiit, Moonshadow, Azurites, prophecy, twilight, fate, Good Daedra, Ashlanders'],
+        // controls: only scholars know it (a history), the College, an alchemists-only reagent
+        'the_red_year' => ['topic' => 'the_red_year', 'aliases' => '', 'knowledge_class' => 'scholar', 'category' => 'lore',
+            'tags' => 'Red Mountain, Morrowind, Dunmer, Melis Ravel, Tear, Vivec City, Mournhold, eruption, survival, resilience, catastrophe'],
+        'college_of_winterhold' => ['topic' => 'college_of_winterhold', 'aliases' => '', 'knowledge_class' => 'collegeofwinterhold, scholar, mage', 'category' => 'winterhold', 'tags' => ''],
+        'aloe_vera_leaves' => ['topic' => 'aloe_vera_leaves', 'aliases' => '', 'knowledge_class' => 'alchemist', 'category' => 'items', 'tags' => ''],
+    ];
+
+    private static function huntressAndScholarPrefs(): array
+    {
+        require_once __DIR__ . '/RelDynFacetPreferencesTest.php';   // RelDynFacetProfiles
+        $h = RelDynFacetProfiles::huntressRow();
+        $s = RelDynFacetProfiles::scholarRow();
+        return [
+            RelDynFacets::derivePreferences($h, RelDynFacetProfiles::profileFor($h))['prefs'],
+            RelDynFacets::derivePreferences($s, RelDynFacetProfiles::profileFor($s))['prefs'],
+        ];
+    }
+
+    /**
+     * topic-talk-bonus / oghma-facet-classifier review 2026-09-24: 'scholar' in knowledge_class
+     * (473 of 1,615 live rows) and category 'lore' made a third of Oghma scholarly, so Aela found
+     * Alduin, Balgruuf and Skyrim "too bookish" and Ashe lit up at 'companions'. Who may know a
+     * topic is not what it is about: a broad audience says nothing, only-scholars-know says
+     * esoteric learning, a specialist audience (only alchemists) still says what it is.
+     */
+    public function testKnowledgeClassIsWhoKnowsATopicNotWhatItIsAbout(): void
+    {
+        [$aela, $ashe] = self::huntressAndScholarPrefs();
+        $min = (float) RelDynFacetClassifier::appraisalConfig()['topic_match_min_valence'];
+        foreach (['alduin', 'balgruuf', 'companions', 'kynareth', 'solitude', 'goblin', 'skyrim', 'arkay', 'azura'] as $topic) {
+            $f = RelDynFacetClassifier::priorFacets(self::LIVE_ROWS[$topic]);
+            $this->assertNotSame('scholarly', array_key_first($f), "{$topic} is not mainly about scholarship: " . json_encode($f));
+            $a = RelDynFacets::appraise($aela, $f);
+            $felt = (string) RelDynFacets::feltText('Aela', $a, 'topic', $topic);
+            $this->assertStringNotContainsString('bookish', $felt, "{$topic} for the huntress");
+            $this->assertFalse($a['dominant'] === 'scholarly' && $a['dominant_sign'] < 0, "{$topic}: scholarly must not be what Aela sees");
+        }
+        // (skyrim is left out: its tags do name the Dwemer and the Red Year, a real scholarly hint)
+        foreach (['companions', 'solitude', 'goblin'] as $topic) {
+            $s = RelDynFacets::appraise($ashe, RelDynFacetClassifier::priorFacets(self::LIVE_ROWS[$topic]));
+            $this->assertLessThan($min, $s['valence'], "{$topic} is no topic match for the scholar");
+            $this->assertStringNotContainsString('light up', (string) RelDynFacets::feltText('Ashe', $s, 'topic', $topic));
+        }
+        $this->assertSame('combat', array_key_first(RelDynFacetClassifier::priorFacets(self::LIVE_ROWS['companions'])));
+
+        // controls: esoteric history and the College stay scholarly; a specialist audience speaks
+        foreach (['the_red_year', 'college_of_winterhold'] as $topic) {
+            $f = RelDynFacetClassifier::priorFacets(self::LIVE_ROWS[$topic]);
+            $this->assertSame('scholarly', array_key_first($f), $topic);
+            $s = RelDynFacets::appraise($ashe, $f);
+            $this->assertGreaterThanOrEqual($min, $s['valence'], "{$topic} is a topic match for the scholar");
+            $this->assertStringContainsString('light up', (string) RelDynFacets::feltText('Ashe', $s, 'topic', $topic));
+        }
+        $this->assertSame('alchemy', array_key_first(RelDynFacetClassifier::priorFacets(self::LIVE_ROWS['aloe_vera_leaves'])));
     }
 
     /** The hold says where, not what kind of place: only 'traveler' (adventure 0.3 x 0.6) speaks. */
