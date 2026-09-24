@@ -339,10 +339,9 @@ try {
 
 $interactionLL = RelationshipDynamics::classifyInteraction($GLOBALS['gameRequest'], $lastMood);
 $GLOBALS['RELDYN_LAST_INTERACTION_LL'] = $interactionLL;
-// A touch request (hug, kiss) feeds intimacy (PR 13 deprivation, on the game calendar)
-RelationshipDynamics::recordIntimacyFromRequest($dynamics, $interactionLL, RelationshipDynamics::currentGamets());
-// The same exchange as a love-language delivery to fulfillment (rulings §9), unless the eval
-// scores it (its tags deliver then, in processEvalContractItem).
+// The exchange as a love-language delivery to fulfillment (rulings §9; a touch request such as
+// a hug, a kiss or a scene also feeds the intimacy axes, rulings §10), unless the eval scores it
+// (its tags deliver then, in processEvalContractItem; the request's observed touch joins them).
 if (!$evalOwnsExchange) {
     RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets());
 }

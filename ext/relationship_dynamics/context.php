@@ -688,8 +688,10 @@ foreach ($fulfillmentFelt['texts'] as $feltKind => $feltText) {
     $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<{$feltTag}>{$feltText}</{$feltTag}>"];
 }
 
-// ========== INTIMACY DEPRIVATION CONTEXT (PR 13) ==========
-$intimacyContext = RelationshipDynamics::generateIntimacyDeprivationContext($npcName, $dynamics);
+// ========== INTIMACY DEPRIVATION CONTEXT (PR 13; rulings 2026-09-24 §10) ==========
+// The intimacy axis this NPC actually needs (physical or emotional) gone uncovered, as a feeling.
+$intimacyContext = RelDynIntimacy::feltText($npcName, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'), $dynamics,
+    RelationshipDynamics::currentGamets());
 if ($intimacyContext) {
     $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<intimacy_state>{$intimacyContext}</intimacy_state>"];
 }

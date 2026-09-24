@@ -4,8 +4,9 @@
  *
  * Rulings 2026-09-24 §9: neglect is the absence of fulfillment, not only of the player. Each
  * NPC has a needs vector (the spider graph's axes): the facets it loves (signed preferences,
- * reldyn_facets.php), its love languages (MDD 1.2) and trait-driven needs (egocentric wants
- * admiration, insecure / anxious want reassurance and time). The relationship delivers
+ * reldyn_facets.php), its love languages (MDD 1.2), trait-driven needs (egocentric wants
+ * admiration, insecure / anxious want reassurance and time) and its physical / emotional
+ * intimacy need (rulings §10, reldyn_intimacy.php). The relationship delivers
  * against those axes over game time (eval source tags, places and things experienced
  * together); each axis keeps a level that decays on the game calendar, so recent matters
  * more. Coverage per axis and the weighted band are -1..+1. A low band is neglect even when
@@ -34,9 +35,10 @@ class RelDynFulfillment
     const STATE_KEY = '_fulfillment';
     const VERSION = 1;
 
-    /** Kinds of axes: facets (FACETS), love languages (LL_*), trait-driven needs (the rest). */
+    /** Kinds of axes: facets (FACETS), love languages (LL_*), intimacy (RelDynIntimacy::AXES), trait-driven needs (the rest). */
     const KIND_FACET = 'facet';
     const KIND_LOVE_LANGUAGE = 'love_language';
+    const KIND_INTIMACY = 'intimacy';
     const KIND_NEED = 'need';
 
     const LOVE_LANGUAGES = [
@@ -73,21 +75,25 @@ class RelDynFulfillment
 
             // --- deliveries (what the relationship gives, in delivery units) ---
             // Eval source tag => axis => units at full significance. Negative units take coverage away.
+            // Intimacy axes (rulings §10): physical from intimacy (and a little from touch);
+            // emotional from quality time, confiding, reassurance, praise and non-sexual touch.
             'tag_delivery' => [
                 'gift'             => [RelationshipDynamics::LL_GIFTS => 1.0, 'admiration' => 0.4],
-                'praise'           => [RelationshipDynamics::LL_WORDS => 1.0, 'admiration' => 1.0],
-                'reassurance'      => [RelationshipDynamics::LL_WORDS => 0.6, 'reassurance' => 1.0],
+                'praise'           => [RelationshipDynamics::LL_WORDS => 1.0, 'admiration' => 1.0, RelDynIntimacy::EMOTIONAL => 0.4],
+                'reassurance'      => [RelationshipDynamics::LL_WORDS => 0.6, 'reassurance' => 1.0, RelDynIntimacy::EMOTIONAL => 0.6],
                 'apology'          => [RelationshipDynamics::LL_WORDS => 0.3, 'reassurance' => 0.6],
-                'quality_time'     => [RelationshipDynamics::LL_TIME => 1.0, 'reassurance' => 0.4],
-                'touch'            => [RelationshipDynamics::LL_TOUCH => 1.0],
-                'intimacy'         => [RelationshipDynamics::LL_TOUCH => 1.0, 'reassurance' => 0.3],
+                'quality_time'     => [RelationshipDynamics::LL_TIME => 1.0, 'reassurance' => 0.4, RelDynIntimacy::EMOTIONAL => 1.0],
+                'confiding'        => [RelationshipDynamics::LL_TIME => 0.3, RelDynIntimacy::EMOTIONAL => 1.0],
+                'touch'            => [RelationshipDynamics::LL_TOUCH => 1.0, RelDynIntimacy::EMOTIONAL => 0.8, RelDynIntimacy::PHYSICAL => 0.15],
+                'intimacy'         => [RelationshipDynamics::LL_TOUCH => 1.0, 'reassurance' => 0.3,
+                                       RelDynIntimacy::PHYSICAL => 1.0, RelDynIntimacy::EMOTIONAL => 0.5],
                 'help'             => [RelationshipDynamics::LL_SERVICE => 1.0],
                 'rescue'           => [RelationshipDynamics::LL_SERVICE => 1.0, 'reassurance' => 0.3],
                 'insult'           => [RelationshipDynamics::LL_WORDS => -1.0, 'admiration' => -1.0],
                 'criticism'        => [RelationshipDynamics::LL_WORDS => -0.5, 'admiration' => -0.6],
-                'neglect'          => [RelationshipDynamics::LL_TIME => -1.0, 'reassurance' => -0.6],
+                'neglect'          => [RelationshipDynamics::LL_TIME => -1.0, 'reassurance' => -0.6, RelDynIntimacy::EMOTIONAL => -0.5],
                 'jealousy_trigger' => ['reassurance' => -1.0],
-                'betrayal'         => ['reassurance' => -1.5, RelationshipDynamics::LL_TIME => -0.5],
+                'betrayal'         => ['reassurance' => -1.5, RelationshipDynamics::LL_TIME => -0.5, RelDynIntimacy::EMOTIONAL => -1.0],
                 'lie'              => ['reassurance' => -0.6],
                 'command'          => ['admiration' => -0.3],
             ],
@@ -97,6 +103,10 @@ class RelDynFulfillment
             'significance_floor' => 0.3,
             // A local-classifier love-language exchange (the eval did not score it): units to that LL.
             'legacy_love_language_units' => 0.5,
+            // ... and its intimacy axes: the tag_delivery row of the tag the eval would have given
+            // (a hug or a scene request is 'touch'), intimacy axes only, x legacy_love_language_units.
+            'legacy_love_language_tag' => [RelationshipDynamics::LL_TOUCH => 'touch', RelationshipDynamics::LL_TIME => 'quality_time',
+                                           RelationshipDynamics::LL_WORDS => 'praise'],
             // Places and things experienced together (facet weight 0..1 x units):
             'place_units_per_game_hour' => 0.5,   // per game hour spent in a place (placeTurn exposure)
             'experience_units'          => 0.5,   // per discrete experience (a fight, a gift's facets)
@@ -162,6 +172,8 @@ class RelDynFulfillment
                 RelationshipDynamics::LL_GIFTS   => 'small signs of thought',
                 'admiration'  => 'being admired and respected',
                 'reassurance' => 'reassurance that they are wanted',
+                RelDynIntimacy::PHYSICAL  => 'being wanted, body and all',
+                RelDynIntimacy::EMOTIONAL => 'real closeness, being truly known',
                 'combat'      => 'a real fight side by side',
                 'nature'      => 'time out in the wilds',
                 'wild'        => 'open country',
@@ -213,6 +225,7 @@ class RelDynFulfillment
     {
         if (in_array($axis, RelDynFacets::FACETS, true)) return self::KIND_FACET;
         if (in_array($axis, self::LOVE_LANGUAGES, true)) return self::KIND_LOVE_LANGUAGE;
+        if (RelDynIntimacy::isAxis($axis)) return self::KIND_INTIMACY;
         return self::KIND_NEED;
     }
 
@@ -220,7 +233,8 @@ class RelDynFulfillment
      * The NPC's needs vector: axis => weight 0..1 (sorted, heaviest first). Sources:
      *   facets whose signed preference is at least facet_need_min (weight = preference);
      *   love_language_primary / _secondary (love_language_weights);
-     *   need_rules matching the NPC's traits, attachment style or temperament.
+     *   need_rules matching the NPC's traits, attachment style or temperament;
+     *   the physical / emotional intimacy axes (RelDynIntimacy::fulfillmentNeeds).
      * Pure: $prefs from RelDynFacets::preferences().
      */
     public static function needs(array $dynamics, array $prefs, ?array $cfg = null): array
@@ -252,6 +266,9 @@ class RelDynFulfillment
             foreach ((array) ($rule['axes'] ?? []) as $axis => $v) {
                 if (is_numeric($v)) $add((string) $axis, floatval($v));
             }
+        }
+        foreach (RelDynIntimacy::fulfillmentNeeds($dynamics) as $axis => $v) {
+            $add($axis, $v);
         }
         arsort($w);
         return array_map(fn($v) => round($v, 4), $w);
@@ -312,8 +329,10 @@ class RelDynFulfillment
 
     /**
      * Internal weather's relationship deprivation (0..1) at $now: clamp(-band, 0, 1) x
-     * weather_deprivation_scale; null with no state or fulfillment off (the weather then reads
-     * facet deprivation alone), 0 once the bond is not one whose neglect matters (neglectBond).
+     * weather_deprivation_scale, or a deprived intimacy axis's own deprivation when larger
+     * (RelDynIntimacy::weatherDeprivation: going without weighs by how much the NPC needs it);
+     * null with no state or fulfillment off (the weather then reads facet deprivation alone),
+     * 0 once the bond is not one whose neglect matters (neglectBond).
      */
     public static function weatherDeprivation(array $dynamics, float $now): ?float
     {
@@ -322,7 +341,8 @@ class RelDynFulfillment
         if (RelationshipDynamics::neglectBond($dynamics) === null) return 0.0;   // no bond whose needs weigh on her
         $cfg = self::config();
         $band = self::bandAt($state, max($now, floatval($state['gamets'] ?? 0)), $cfg);
-        return max(0.0, min(1.0, -$band * floatval($cfg['weather_deprivation_scale'])));
+        return max(0.0, min(1.0, max(-$band * floatval($cfg['weather_deprivation_scale']),
+            RelDynIntimacy::weatherDeprivation($dynamics, $now))));
     }
 
     /** Least-squares slope of the last trend_game_days daily samples (band per game day); 0 below two. */
