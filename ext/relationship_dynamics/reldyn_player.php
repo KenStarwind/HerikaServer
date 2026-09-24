@@ -30,6 +30,11 @@
  *                           quests the engine starts in the background (live 2026-09-24: seven
  *                           Companions radiant quests at stage 0/1 for a level-1 prisoner).
  *   core_player.appearance  Player Management text (beauty input; beauty itself is per NPC)
+ *   eventlog 'npcspellcast' "<player> casts <spell>[ on <target>]" (Plugin.cpp TESSpellCastEvent for
+ *                           the player, logged while DETECT_MAGIC_EVENT is on): the magic the player
+ *                           uses, with the spell in either hand (core_player.equipment), read by
+ *                           subject (decisions §10: nature magic is the druid's, not the scholar's)
+ *   core_player.transformation_state   is_werewolf_form: beast form (druid deed)
  *   core_player.reldyn_gold_ledger     RelDyn's own ledger (recordGoldSnapshot): gold moved
  *                           = sum of |wallet change| between inventory snapshots, plus the wallet
  *                           at the first snapshot (gold earned before RelDyn watched). Economic
@@ -98,9 +103,14 @@ class RelDynPlayer
      *   'eventlog:powerful_kills'    player kills the plugin marked "(powerful enemy)"
      *   'ledger:moved'               economic footprint: opening wallet + gold moved (RelDyn
      *                                gold ledger); unknown while it is 0 (a lower bound of 0 says nothing)
-     * Gear tables map an equipment keyword (core_player.equipment *_keywords) to a weight;
-     * 'hand_names' maps a word in the name of what is held in either hand (a spell, a staff)
-     * to a weight (decisions §10: a spell reads by its subject, not by its school).
+     *   'form:beast'                 1 while the player is in beast form (core_player.transformation_state)
+     * Gear tables map an equipment keyword (core_player.equipment *_keywords) to a weight.
+     * The 'spells' component (decisions §10: a spell reads by its subject, not by its school):
+     * the player's magic is every spell held in either hand (spell_held_uses uses) and every
+     * spell the player cast (eventlog 'npcspellcast' "<player> casts <spell>[ on <target>]",
+     * one use each), each read by RelDynFacetClassifier::spellReading (school + subject ->
+     * archetype weights); spells = share x volume, share = sum(uses x weight) / sum(uses),
+     * volume = sat(sum(uses), spell_uses_half). No magic read at all: unknown.
      * An archetype's 'requires' lists components that must be known, else the archetype is null.
      */
     public static function configDefaults(): array
@@ -112,6 +122,10 @@ class RelDynPlayer
             'archetype_identity_floor' => 0.25, // raw archetype score (0..1) a character needs to be "formed"
             // Default component weights of an archetype (an archetype may override with 'components').
             'archetype_components' => ['skills' => 0.6, 'deeds' => 0.3, 'gear' => 0.1],
+            // The spells component (decisions §10)
+            'spell_held_uses' => 5,            // uses a spell in hand counts for (a cast counts 1)
+            'spell_uses_half' => 10,           // total uses at which the magic reads half its volume
+            'spell_cast_scan_limit' => 2000,   // newest player spell-cast lines read from the eventlog
             // Questline -> quest editor-id prefixes (quests.id_quest). Vanilla + DLC.
             'questlines' => [
                 'main'             => ['MQ'],
@@ -136,6 +150,7 @@ class RelDynPlayer
                         'WeapTypeWarhammer' => 0.8, 'WeapTypeSword' => 0.6, 'WeapTypeWarAxe' => 0.6, 'WeapTypeMace' => 0.6],
                 ],
                 'mage' => [
+                    'components' => ['skills' => 0.5, 'deeds' => 0.25, 'gear' => 0.1, 'spells' => 0.15],
                     'skills' => ['destruction' => 1.0, 'conjuration' => 1.0, 'alteration' => 0.8, 'illusion' => 0.8], 'top' => 2,
                     'deeds' => [
                         'stat:Spells Learned' => [15, 0.7], 'stat:Souls Trapped' => [20, 0.4],
@@ -145,18 +160,17 @@ class RelDynPlayer
                 ],
                 'druid' => [
                     // Decisions §10: nature magic reads by subject (animals, plants, weather,
-                    // shapeshifting), never by school, so no magic school counts here: herb
-                    // lore (alchemy), harvesting and beast blood, and a nature spell in hand.
-                    'components' => ['skills' => 0.4, 'deeds' => 0.4, 'gear' => 0.2],
+                    // shapeshifting, beast calls), never by school, so no magic school counts
+                    // here: herb lore (alchemy), harvesting, beast form, and the nature share of
+                    // the magic the player holds and casts (spells).
+                    'components' => ['skills' => 0.25, 'deeds' => 0.35, 'gear' => 0.1, 'spells' => 0.3],
                     'skills' => ['alchemy' => 1.0], 'top' => 1,
                     'deeds' => [
                         'stat:Ingredients Harvested' => [100, 0.8], 'stat:Nirnroots Found' => [5, 0.6],
                         'stat:Wings Plucked' => [20, 0.4], 'stat:Werewolf Transformations' => [5, 0.5],
+                        'form:beast' => [1, 0.6],
                     ],
                     'gear' => ['ArmorMaterialForsworn' => 0.8, 'ArmorMaterialHide' => 0.3],
-                    'hand_names' => ['familiar' => 0.8, 'wolf' => 0.7, 'bear' => 0.7, 'spriggan' => 0.9, 'animal' => 0.8,
-                        'beast' => 0.7, 'nature' => 0.9, 'thorn' => 0.7, 'vine' => 0.7, 'root' => 0.5, 'storm' => 0.6,
-                        'lightning storm' => 0.6, 'weather' => 0.8, 'wild' => 0.6, 'kyne' => 0.9, 'hircine' => 0.7],
                 ],
                 'thief' => [
                     'skills' => ['sneak' => 1.0, 'lockpicking' => 1.0, 'pickpocket' => 1.0, 'lightarmor' => 0.5], 'top' => 2,
@@ -194,6 +208,7 @@ class RelDynPlayer
                     'gear' => ['WeapTypeBow' => 1.0, 'ArmorMaterialHide' => 0.5, 'ArmorMaterialLeather' => 0.3],
                 ],
                 'healer' => [
+                    'components' => ['skills' => 0.5, 'deeds' => 0.25, 'gear' => 0.1, 'spells' => 0.15],
                     'skills' => ['restoration' => 1.0, 'alchemy' => 0.7], 'top' => 1,
                     'deeds' => ['stat:Potions Mixed' => [20, 0.7]],
                     'gear' => ['MagicRestoreHealth' => 1.0],
@@ -271,7 +286,8 @@ class RelDynPlayer
             $parts = [
                 'skills' => self::skillComponent($facts, (array) ($spec['skills'] ?? []), intval($spec['top'] ?? 1), $cfg),
                 'deeds'  => self::evidenceOr($ev, (array) ($spec['deeds'] ?? [])),
-                'gear'   => self::gearComponent($facts, (array) ($spec['gear'] ?? []), (array) ($spec['hand_names'] ?? [])),
+                'gear'   => self::gearComponent($facts, (array) ($spec['gear'] ?? [])),
+                'spells' => self::spellComponent($facts, $name, $cfg),
             ];
             $weights = (array) ($spec['components'] ?? $cfg['archetype_components']);
             $missing = array_filter((array) ($spec['requires'] ?? []), fn($c) => ($parts[$c] ?? null) === null);
@@ -317,7 +333,7 @@ class RelDynPlayer
 
     private static function anyKnown(array $facts): bool
     {
-        foreach (['skills', 'level', 'equipment_keywords', 'gold_carried', 'gold_footprint'] as $k) {
+        foreach (['skills', 'level', 'equipment_keywords', 'gold_carried', 'gold_footprint', 'spells'] as $k) {
             if (($facts[$k]['value'] ?? null) !== null) return true;
         }
         foreach ($facts as $k => $f) {
@@ -398,6 +414,7 @@ class RelDynPlayer
         }
         $facts['held_names'] = self::fact($held, 'core_player.equipment (left_hand / right_hand)',
             'what is held: a spell or a staff reads by its subject (decisions §10)');
+        $facts['spells'] = self::spellFacts($db, is_array($equipment) ? $equipment : null, $cfg);
 
         // wallet (a fact, not status) and the gold ledger (footprint)
         $inventory = self::decodeRow($player, 'inventory');
@@ -434,6 +451,8 @@ class RelDynPlayer
             $facts['level'] = self::fact(null, null);
         }
         $transformation = self::decodeRow($player, 'transformation_state');
+        $facts['beast_form'] = self::fact(is_array($transformation) && array_key_exists('is_werewolf_form', $transformation)
+            ? (bool) $transformation['is_werewolf_form'] : null, 'core_player.transformation_state');
         if (is_array($transformation) && !empty($transformation['race_name'])) {
             $facts['race'] = self::fact((string) $transformation['race_name'], 'core_player.transformation_state');
         } else {
@@ -605,6 +624,92 @@ class RelDynPlayer
     }
 
     /**
+     * The player's magic (decisions §10): each spell held in either hand (core_player.equipment;
+     * a hand is magic unless its keywords name a weapon other than a staff, or a shield) and
+     * each spell the player cast (eventlog 'npcspellcast', written by the plugin's
+     * TESSpellCastEvent for the player as "<player> casts <spell> [on <target>]" while core's
+     * DETECT_MAGIC_EVENT is on), read by RelDynFacetClassifier::spellReading. A name the reading
+     * does not know is listed under 'unread' and counts for nothing.
+     *
+     * value: spell name => [held, casts, uses, school, subjects, archetypes]; null when there is
+     * no magic read (nothing held that reads as a spell, no cast line). 'facets': the use-weighted
+     * mean facet mix of the player's magic.
+     */
+    private static function spellFacts($db, ?array $equipment, array $cfg): array
+    {
+        $uses = [];   // name => [held, casts]
+        foreach (['left_hand', 'right_hand'] as $slot) {
+            $name = trim((string) ($equipment[$slot] ?? ''));
+            if ($name === '' || !self::handIsMagic((array) ($equipment[$slot . '_keywords'] ?? []))) continue;
+            $uses[$name] = [true, $uses[$name][1] ?? 0];
+        }
+        foreach (self::playerCasts($db, intval($cfg['spell_cast_scan_limit'])) as $name => $n) {
+            $uses[$name] = [$uses[$name][0] ?? false, $n];
+        }
+        $held = max(0.0, floatval($cfg['spell_held_uses']));
+        $value = [];
+        $unread = [];
+        $mix = [];
+        $total = 0.0;
+        foreach ($uses as $name => [$isHeld, $casts]) {
+            $r = RelDynFacetClassifier::spellReading((string) $name, '', null, true);
+            if ($r === null) {
+                $unread[] = (string) $name;
+                continue;
+            }
+            $u = ($isHeld ? $held : 0.0) + $casts;
+            $value[(string) $name] = ['held' => $isHeld, 'casts' => $casts, 'uses' => $u, 'school' => $r['school'],
+                'subjects' => $r['subjects'], 'archetypes' => $r['archetypes']];
+            foreach ($r['facets'] as $facet => $w) $mix[$facet] = ($mix[$facet] ?? 0.0) + $u * $w;
+            $total += $u;
+        }
+        $facets = [];
+        foreach ($mix as $facet => $sum) $facets[$facet] = round($total > 0 ? $sum / $total : 0.0, 4);
+        arsort($facets);
+        $known = $value !== [] && $total > 0;
+        $f = self::fact($known ? $value : null, 'core_player.equipment (hands) + eventlog npcspellcast (player casts)',
+            'magic reads by its subject (decisions §10); unread names count for nothing');
+        $f['facets'] = $known ? $facets : null;
+        $f['unread'] = $unread;
+        return $f;
+    }
+
+    /** A hand holds magic unless its keywords name a weapon (a staff is magic) or a shield. */
+    private static function handIsMagic(array $keywords): bool
+    {
+        foreach ($keywords as $kw) {
+            $kw = strtolower((string) $kw);
+            if ($kw === 'weaptypestaff') return true;
+            if (str_starts_with($kw, 'weaptype') || $kw === 'armorshield') return false;
+        }
+        return true;
+    }
+
+    /** Spell name => times the player cast it (newest $limit cast lines); [] without a player name. */
+    private static function playerCasts($db, int $limit): array
+    {
+        $name = trim((string) ($GLOBALS['PLAYER_NAME'] ?? ''));
+        if (!$db || $name === '' || $limit <= 0) return [];
+        $prefix = $name . ' casts ';
+        $like = $db->escapeLiteral(RelationshipDynamics::escapeLike($prefix) . '%');
+        try {
+            $rows = $db->fetchAll("SELECT data FROM eventlog WHERE type = 'npcspellcast' AND data LIKE {$like} ESCAPE '\\' "
+                . "ORDER BY rowid DESC LIMIT {$limit}");
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('RelDynPlayer eventlog spell casts', $e);
+            return [];
+        }
+        $out = [];
+        foreach ((array) $rows as $r) {
+            $rest = substr((string) $r['data'], strlen($prefix));
+            $at = strpos($rest, ' on ');
+            $spell = trim($at === false ? $rest : substr($rest, 0, $at));
+            if ($spell !== '') $out[$spell] = ($out[$spell] ?? 0) + 1;
+        }
+        return $out;
+    }
+
+    /**
      * Distinct journal quests per questline (quests.id_quest = editor id). Unknown until the
      * journal has a row. Only ACTIVE quests are in the journal table (the plugin skips completed
      * ones), so finished questlines are counted by the "<Guild> Quests Completed" tracked stats.
@@ -653,6 +758,7 @@ class RelDynPlayer
         $ev['eventlog:powerful_kills'] = $facts['eventlog_powerful_kills']['value'];
         $ev['ledger:moved'] = $facts['gold_footprint']['value'];
         $ev['journal:quests'] = $facts['questlines']['journal_quests'];
+        $ev['form:beast'] = $facts['beast_form']['value'] === null ? null : ($facts['beast_form']['value'] ? 1 : 0);
         foreach ((array) ($facts['questlines']['value'] ?? []) as $line => $n) $ev['questline:' . strtolower((string) $line)] = $n;
         return $ev;
     }
@@ -704,27 +810,37 @@ class RelDynPlayer
         return array_sum($vals) / count($vals);
     }
 
-    /**
-     * Soft-or of the worn keywords' weights and of the words found in what is held in either
-     * hand (whole-word, case-insensitive). null when equipment is unknown.
-     */
-    private static function gearComponent(array $facts, array $table, array $handNames = []): ?float
+    /** Soft-or of the worn keywords' weights. null when equipment is unknown. */
+    private static function gearComponent(array $facts, array $table): ?float
     {
         $keywords = $facts['equipment_keywords']['value'];
-        if ($keywords === null || (!$table && !$handNames)) return null;
+        if ($keywords === null || !$table) return null;
         $worn = array_flip(array_map('strtolower', $keywords));
         $none = 1.0;
         foreach ($table as $kw => $w) {
             if (isset($worn[strtolower((string) $kw)])) $none *= 1.0 - max(0.0, min(1.0, floatval($w)));
         }
-        $held = strtolower(implode(' | ', (array) ($facts['held_names']['value'] ?? [])));
-        foreach ($handNames as $word => $w) {
-            $word = strtolower(trim((string) $word));
-            if ($word !== '' && $held !== '' && preg_match('/\b' . preg_quote($word, '/') . '/u', $held)) {
-                $none *= 1.0 - max(0.0, min(1.0, floatval($w)));
-            }
-        }
         return 1.0 - $none;
+    }
+
+    /**
+     * The player's magic as archetype $archetype (0..1): share x volume over the spells read
+     * (see configDefaults). null when no spell of the player's is read at all.
+     */
+    private static function spellComponent(array $facts, string $archetype, array $cfg): ?float
+    {
+        $spells = $facts['spells']['value'] ?? null;
+        if (!is_array($spells) || $spells === []) return null;
+        $total = 0.0;
+        $mine = 0.0;
+        foreach ($spells as $spell) {
+            $uses = max(0.0, floatval($spell['uses'] ?? 0));
+            $total += $uses;
+            $mine += $uses * max(0.0, min(1.0, floatval($spell['archetypes'][$archetype] ?? 0.0)));
+        }
+        if ($total <= 0.0) return null;
+        $half = max(1e-9, floatval($cfg['spell_uses_half']));
+        return ($mine / $total) * ($total / ($total + $half));
     }
 
     /** Weighted mean over the components that are known (non-null); null when none is. */
