@@ -199,7 +199,8 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
         // ========== DEATH/GRIEF SYSTEM (PR 10) ==========
         if ($reqType === 'death' && !empty($reldynCfg['grief_system_enabled'] ?? true)) {
             $deceasedName = null;
-            $eventData2 = $GLOBALS['HERIKA_EVENT_DATA'] ?? ($GLOBALS['event_data'] ?? ($eventData ?? ''));
+            // 3.4.1 has no HERIKA_EVENT_DATA/event_data globals; $eventData is $gameRequest[3]
+            $eventData2 = $eventData ?? '';
 
             // Pattern 1: "X has defeated Y"
             if (preg_match('/has defeated\s+(.+?)[\.\s]*$/i', $eventData2, $m)) {

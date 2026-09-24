@@ -1287,15 +1287,7 @@ class RelationshipDynamics
     {
         // Resolve current gamets: parameter > gameRequest > DB fallback
         if ($currentGamets === null) {
-            global $gameRequest;
-            if (isset($gameRequest[2]) && floatval($gameRequest[2]) > 0) {
-                $currentGamets = floatval($gameRequest[2]);
-            } else {
-                // DB fallback: most recent eventlog gamets
-                if (function_exists('DataLastKnownGameTS')) {
-                    $currentGamets = floatval(DataLastKnownGameTS());
-                }
-            }
+            $currentGamets = self::currentGamets();
         } else {
             $currentGamets = floatval($currentGamets);
         }
@@ -1358,6 +1350,42 @@ class RelationshipDynamics
      */
     public static function getPlayGamets($dynamics) {
         return floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+    }
+
+    // ========== GAME CLOCK (CHIM 3.4.1) ==========
+    //
+    // 3.4.1 no longer defines GAMETS / gamets / HERIKA_TIME. The live game clock is
+    // $gameRequest[2] (raw gamets, 1 game day = 1e7, day starts at midnight — same
+    // math as lib/utils_game_timestamp.php). Outside a game request (worker, pages)
+    // fall back to the newest eventlog gamets via core DataLastKnownGameTS().
+
+    /** Raw gamets per game day (core convert_gamets2days: gamets * 0.0000001). */
+    const GAMETS_PER_DAY = 10000000;
+
+    /**
+     * Current raw game timestamp, or 0.0 when no game clock is available.
+     */
+    public static function currentGamets(): float
+    {
+        $gameRequest = $GLOBALS['gameRequest'] ?? null;
+        if (is_array($gameRequest) && isset($gameRequest[2]) && floatval($gameRequest[2]) > 0) {
+            return floatval($gameRequest[2]);
+        }
+        if (function_exists('DataLastKnownGameTS') && isset($GLOBALS['db'])) {
+            return max(0.0, floatval(DataLastKnownGameTS()));
+        }
+        return 0.0;
+    }
+
+    /**
+     * In-game hour of day (0 <= h < 24) for a gamets value (default: current clock).
+     * Returns null when the game clock is unknown.
+     */
+    public static function gameHourOfDay(?float $gamets = null): ?float
+    {
+        $gamets = $gamets ?? self::currentGamets();
+        if ($gamets <= 0) return null;
+        return fmod($gamets / self::GAMETS_PER_DAY, 1.0) * 24.0;
     }
 
     /**
@@ -9876,7 +9904,7 @@ class RelationshipDynamics
     }
 
     /**
-     * Get player appearance text from core_player or PLAYER_BIOS config.
+     * Get player appearance text from core_player or the player bio.
      */
     public static function getPlayerAppearance(): string
     {
@@ -9889,9 +9917,15 @@ class RelationshipDynamics
                     return $row['value'];
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+            self::log("getPlayerAppearance: core_player read failed: " . $e->getMessage());
+        }
 
-        // Fallback to PLAYER_BIOS global
+        // Fallback to the player bio. 3.4.1 has no PLAYER_BIOS global; core resolves
+        // core_player 'bio' first, then legacy PLAYER_BIOS (global / conf_opts).
+        if (function_exists('ResolvePlayerBackstory')) {
+            return ResolvePlayerBackstory();
+        }
         return $GLOBALS['PLAYER_BIOS'] ?? '';
     }
 
@@ -11214,35 +11248,22 @@ class RelationshipDynamics
     /**
      * Check if it's night in-game (8PM-5AM).
      */
-    public static function isGameNight(): bool
+    public static function isGameNight(?float $gamets = null): bool
     {
-        // Try HERIKA_TIME first
-        $timeStr = $GLOBALS['HERIKA_TIME'] ?? '';
-        if (preg_match('/(\d{1,2}):?(\d{0,2})\s*(am|pm)/i', $timeStr, $m)) {
-            $hour = intval($m[1]);
-            $isPM = strtolower($m[3]) === 'pm';
-            if ($isPM && $hour !== 12) $hour += 12;
-            if (!$isPM && $hour === 12) $hour = 0;
-            return ($hour >= 20 || $hour < 5);
-        }
-
-        // Fallback: gamets-based
-        $gamets = floatval($GLOBALS['GAMETS'] ?? ($GLOBALS['gamets'] ?? 0));
-        if ($gamets <= 0) return false;
-
-        $gameHour = fmod($gamets / self::GAMETS_PER_HOUR, 24);
+        $gameHour = self::gameHourOfDay($gamets);
+        if ($gameHour === null) return false;
         return ($gameHour >= 20 || $gameHour < 5);
     }
 
     /**
      * Estimate full moon (every 5th game day).
      */
-    public static function isFullMoon(): bool
+    public static function isFullMoon(?float $gamets = null): bool
     {
-        $gamets = floatval($GLOBALS['GAMETS'] ?? ($GLOBALS['gamets'] ?? 0));
+        $gamets = $gamets ?? self::currentGamets();
         if ($gamets <= 0) return false;
 
-        $gameDays = $gamets / (24 * self::GAMETS_PER_HOUR);
+        $gameDays = $gamets / self::GAMETS_PER_DAY;
         $dayInCycle = fmod($gameDays, 5);
         return ($dayInCycle >= 4 && $dayInCycle < 5);
     }
