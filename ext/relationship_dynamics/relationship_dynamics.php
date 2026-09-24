@@ -13103,15 +13103,26 @@ class RelationshipDynamics
     }
 
     /**
-     * Emotional gravity (MDD 4.1): the weather pulls dimensions every request, by config
-     * facet_appraisal.weather_modifiers (raw points) x weather_modifier_scale.
+     * Emotional gravity (MDD 4.1, a constant pull): the weather pulls dimensions by config
+     * facet_appraisal.weather_modifiers (raw points) x weather_modifier_per_game_hour for every
+     * game hour since the last pull (_weather_gravity_gamets; at most
+     * exposure_max_gap_game_hours of them). Requests without game time passing pull nothing,
+     * the first request only starts the clock.
      */
-    public static function applyWeatherModifiers(string $npcName, array &$dynamics, string $temperament): void
+    public static function applyWeatherModifiers(string $npcName, array &$dynamics, string $temperament, ?float $nowGamets = null): void
     {
+        $now = $nowGamets ?? self::currentGamets();
+        if ($now <= 0) return;   // game clock unknown: no time can be credited
         $cfg = RelDynFacets::getAppraisalConfig();
+        $last = floatval($dynamics['_weather_gravity_gamets'] ?? 0);
+        if ($last > 0 && $now <= $last) return;
+        $dynamics['_weather_gravity_gamets'] = $now;
+        if ($last <= 0) return;
+        $hours = min(($now - $last) / (self::GAMETS_PER_DAY / 24.0), floatval($cfg['exposure_max_gap_game_hours']));
+
         $weather = $dynamics['_internal_weather'] ?? 'clear';
         $modifiers = (array) (((array) ($cfg['weather_modifiers'] ?? []))[$weather] ?? []);
-        $scale = floatval($cfg['weather_modifier_scale'] ?? 0.1);
+        $scale = floatval($cfg['weather_modifier_per_game_hour']) * $hours;
 
         foreach ($modifiers as $dimId => $delta) {
             self::applyDelta($dimId, $dynamics, floatval($delta) * $scale, $temperament);

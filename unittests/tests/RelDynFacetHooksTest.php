@@ -93,8 +93,10 @@ final class RelDynFacetHooksTest extends TestCase
         $this->assertSame('The Arcanaeum', $r['place']);
         $this->assertEqualsWithDelta(-0.6, $d['_facet_prefs']['prefs']['scholarly'], 0.1, 'preferences derived from core and stored');
         $this->assertSame('The Arcanaeum', $d['_place_appraisal']['place']);
-        $this->assertLessThan($c0, $d['dimensions']['comfort']['x']);
+        $this->assertSame($c0, $d['dimensions']['comfort']['x'], 'arrival: no time spent there yet');
         $this->assertStringContainsString('restless', $r['text']);
+        $r = RelDynFacetsWithPlace::contextTurn('Aela the Huntress', $d, self::T0 + self::HOUR);
+        $this->assertLessThan($c0, $d['dimensions']['comfort']['x'], 'an hour in the library wears on her');
         $this->assertDoesNotMatchRegularExpression('/\d/', $r['text']);
     }
 

@@ -466,8 +466,9 @@ final class RelDynAsheAelaTest extends TestCase
         $comfortBefore = $this->comfort(self::AELA);
         $this->turn(self::AELA, 'Truly, one more moment.');   // same game minute
         $this->assertEqualsWithDelta($before, floatval($this->dynamics(self::AELA)['_place_discomfort']['points']), 1e-9);
-        // ...while each turn still gets its own (single) comfort nudge from the place read.
-        $this->assertLessThan($comfortBefore, $this->comfort(self::AELA));
+        // ...and nor do comfort and mood move by more than that minute's worth (review
+        // 2026-09-24: the place nudges follow game hours spent there, not lines spoken).
+        $this->assertEqualsWithDelta($comfortBefore, $this->comfort(self::AELA), 0.02);
 
         // Where is each happiest? Aela: the woods. Ashe: the library.
         $this->assertGreaterThan($ruinRead[self::AELA]['valence'], $forestRead[self::AELA]['valence']);

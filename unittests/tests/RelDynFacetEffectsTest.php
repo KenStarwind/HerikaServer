@@ -76,20 +76,53 @@ final class RelDynFacetEffectsTest extends TestCase
 
     public function testLovedPlaceRaisesComfortAndMoodHatedPlaceLowersThem(): void
     {
-        self::at(self::T0);
+        $t1 = self::T0 + self::HOUR;
         $forest = self::huntress();
         $c0 = self::dim($forest, 'comfort');
+        self::at(self::T0);
         $r = RelDynFacets::placeTurn('Aela', $forest, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, self::huntressPrefs(), self::T0);
         $this->assertGreaterThan(0.7, $r['appraisal']['valence']);
+        $this->assertSame($c0, self::dim($forest, 'comfort'), 'arriving is not yet time spent there');
+        self::at($t1);
+        RelDynFacets::placeTurn('Aela', $forest, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, self::huntressPrefs(), $t1);
         $this->assertGreaterThan($c0, self::dim($forest, 'comfort'));
         $this->assertGreaterThan(0.0, self::dim($forest, 'valence'), 'mood lifts');
 
         $library = self::huntress();
+        self::at(self::T0);
         RelDynFacets::placeTurn('Aela', $library, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, self::huntressPrefs(), self::T0);
+        self::at($t1);
+        RelDynFacets::placeTurn('Aela', $library, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, self::huntressPrefs(), $t1);
         $this->assertLessThan($c0, self::dim($library, 'comfort'));
         $this->assertLessThan(0.0, self::dim($library, 'valence'), 'mood sinks');
         $this->assertSame('The Arcanaeum', $library['_place_appraisal']['place']);
         $this->assertSame(-1, $library['_place_appraisal']['dominant_sign']);
+    }
+
+    /**
+     * internal-weather review 2026-09-24: 30 lines about 5 game seconds apart in the Arcanaeum
+     * turned Aela stormy (pressure -0.96) with mood -22.7 and comfort -9.7. Comfort, mood and
+     * weather pressure follow the game hours spent in the place, not the lines spoken; so does
+     * the weather's emotional gravity.
+     */
+    public function testTalkingALotWithoutGameTimeMovesNothing(): void
+    {
+        $this->config(['weather_roll_amplitude' => 0.0]);
+        $prefs = self::huntressPrefs();
+        $d = self::huntress();
+        $d['_internal_weather'] = 'clear';
+        $c0 = self::dim($d, 'comfort');
+        $gameSecond = RelationshipDynamics::GAMETS_PER_DAY / 86400;
+        $t = self::T0;
+        for ($i = 0; $i < 30; $i++, $t += 5 * $gameSecond) {
+            self::at($t);
+            RelDynFacets::placeTurn('Aela', $d, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, $t);
+            RelationshipDynamics::applyWeatherModifiers('Aela', $d, 'Independent', $t);
+        }
+        $this->assertSame('clear', RelDynFacets::updateWeather('Aela', $d, $prefs, $t));
+        $this->assertGreaterThan(-0.02, $d['_weather_state']['pressure'], '2.4 game minutes of library');
+        $this->assertGreaterThan($c0 - 0.1, self::dim($d, 'comfort'));
+        $this->assertGreaterThan(-0.3, self::dim($d, 'valence'));
     }
 
     public function testDimensionEngineOffLeavesComfortAndMoodAlone(): void
@@ -128,12 +161,12 @@ final class RelDynFacetEffectsTest extends TestCase
         $perHour = RelDynFacets::appraisalDefaults()['discomfort_per_game_hour'];
         $this->assertEqualsWithDelta(2 * $perHour * $v, $d['_place_discomfort']['points'], 1e-6);
 
-        // a long gap is credited only up to discomfort_max_gap_game_hours
+        // a long gap is credited only up to exposure_max_gap_game_hours
         $before = $d['_place_discomfort']['points'];
         $t += 48 * self::HOUR;
         self::at($t);
         RelDynFacets::placeTurn('Aela', $d, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, $t);
-        $maxGap = RelDynFacets::appraisalDefaults()['discomfort_max_gap_game_hours'];
+        $maxGap = RelDynFacets::appraisalDefaults()['exposure_max_gap_game_hours'];
         $this->assertEqualsWithDelta(min(100.0, $before + $maxGap * $perHour * $v), $d['_place_discomfort']['points'], 1e-6);
     }
 
@@ -141,18 +174,22 @@ final class RelDynFacetEffectsTest extends TestCase
     {
         $d = self::huntress();
         $prefs = self::huntressPrefs();
-        $d['_place_discomfort'] = ['place' => 'The Arcanaeum', 'points' => 80.0, 'gamets' => self::T0];
-        self::at(self::T0);
+        $t1 = self::T0 + self::HOUR;
         $plain = self::huntress();
+        self::at(self::T0);
         RelDynFacets::placeTurn('Aela', $plain, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, self::T0);
         RelDynFacets::placeTurn('Aela', $d, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, self::T0);
+        $d['_place_discomfort'] = ['place' => 'The Arcanaeum', 'points' => 80.0, 'gamets' => self::T0];
+        self::at($t1);
+        RelDynFacets::placeTurn('Aela', $plain, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, $t1);
+        RelDynFacets::placeTurn('Aela', $d, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, $t1);
         $this->assertLessThan(self::dim($plain, 'comfort'), self::dim($d, 'comfort'), 'discomfort drains comfort on top');
 
-        $text = RelDynFacets::placeFeltText('Aela', $d, self::T0);
+        $text = RelDynFacets::placeFeltText('Aela', $d, $t1);
         $this->assertStringContainsString('restless', $text);
         $this->assertStringContainsString('wearing on them', $text);
         $this->assertDoesNotMatchRegularExpression('/\d/', $text);
-        $this->assertStringNotContainsString('wearing on them', RelDynFacets::placeFeltText('Aela', $plain, self::T0));
+        $this->assertStringNotContainsString('wearing on them', RelDynFacets::placeFeltText('Aela', $plain, $t1));
     }
 
     public function testLeavingAHatedPlaceRelievesDiscomfort(): void
@@ -176,25 +213,29 @@ final class RelDynFacetEffectsTest extends TestCase
         $t = self::T0;
         self::at($t);
 
+        // hours spent in a place, one turn an hour (MDD 4.1: a background, daily weather)
+        $stay = function (array &$d, string $place, array $facets, int $hours) use (&$t, $prefs) {
+            for ($i = 0; $i <= $hours; $i++) {
+                if ($i > 0) $t += self::HOUR;
+                self::at($t);
+                RelDynFacets::placeTurn('Aela', $d, $place, $facets, $prefs, $t);
+            }
+        };
+        $start = $t;
         $happy = self::huntress();
-        for ($i = 0; $i < 6; $i++) {
-            RelDynFacets::placeTurn('Aela', $happy, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, $t);
-        }
-        $this->assertSame('sunny', RelDynFacets::updateWeather('Aela', $happy, $prefs, $t));
+        $stay($happy, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, 12);
+        $this->assertSame('sunny', RelDynFacets::updateWeather('Aela', $happy, $prefs, $t), 'half a day in the woods');
 
+        $t = $start;
         $sad = self::huntress();
         $sad['_internal_weather'] = 'stormy';
-        for ($i = 0; $i < 6; $i++) {
-            RelDynFacets::placeTurn('Aela', $sad, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, $t);
-        }
+        $stay($sad, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, 12);
         $weather = RelDynFacets::updateWeather('Aela', $sad, $prefs, $t);
-        $this->assertContains($weather, ['overcast', 'stormy']);
+        $this->assertContains($weather, ['overcast', 'stormy'], 'half a day in the library');
         $this->assertLessThan(0.0, $sad['_weather_state']['pressure']);
 
         // not stuck: loved things lift a stormy NPC, and pressure relaxes over game time
-        for ($i = 0; $i < 12; $i++) {
-            RelDynFacets::placeTurn('Aela', $sad, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, $t);
-        }
+        $stay($sad, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, 18);
         $this->assertSame('sunny', RelDynFacets::updateWeather('Aela', $sad, $prefs, $t));
         $later = $t + 20 * self::HOUR;   // well past the half-life, still inside the deprivation grace
         self::at($later);
@@ -245,17 +286,31 @@ final class RelDynFacetEffectsTest extends TestCase
         $this->assertGreaterThan(5, count(array_unique(array_map(fn($r) => round($r, 4), $rolls))), 'the roll changes day to day');
     }
 
-    public function testWeatherModifiersComeFromConfig(): void
+    /** Emotional gravity (MDD 4.1: a constant pull) works on the game clock, not per request. */
+    public function testWeatherModifiersComeFromConfigAndPullPerGameHour(): void
     {
-        $this->config(['weather_modifiers' => ['sunny' => ['comfort' => 10]], 'weather_modifier_scale' => 1.0]);
+        $this->config(['weather_modifiers' => ['sunny' => ['comfort' => 10]], 'weather_modifier_per_game_hour' => 1.0]);
         $d = self::huntress();
         $d['_internal_weather'] = 'sunny';
         $c0 = self::dim($d, 'comfort');
-        RelationshipDynamics::applyWeatherModifiers('Aela', $d, 'Independent');
-        $this->assertGreaterThan($c0, self::dim($d, 'comfort'));
+        for ($i = 0; $i < 10; $i++) {
+            RelationshipDynamics::applyWeatherModifiers('Aela', $d, 'Independent', self::T0);
+        }
+        $this->assertSame($c0, self::dim($d, 'comfort'), 'requests without game time pull nothing');
+        RelationshipDynamics::applyWeatherModifiers('Aela', $d, 'Independent', self::T0 + self::HOUR);
+        $oneHour = self::dim($d, 'comfort') - $c0;
+        $this->assertGreaterThan(0.0, $oneHour);
+        $e = self::huntress();
+        $e['_internal_weather'] = 'sunny';
+        RelationshipDynamics::applyWeatherModifiers('Aela', $e, 'Independent', self::T0);
+        RelationshipDynamics::applyWeatherModifiers('Aela', $e, 'Independent', self::T0 + 50 * self::HOUR);
+        $maxGap = RelDynFacets::appraisalDefaults()['exposure_max_gap_game_hours'];
+        $this->assertLessThanOrEqual($maxGap * $oneHour + 1e-6, self::dim($e, 'comfort') - $c0, 'a long gap counts only up to the cap');
+
         $d2 = self::huntress();
         $d2['_internal_weather'] = 'stormy';   // the stored table has no stormy row
-        RelationshipDynamics::applyWeatherModifiers('Aela', $d2, 'Independent');
+        RelationshipDynamics::applyWeatherModifiers('Aela', $d2, 'Independent', self::T0);
+        RelationshipDynamics::applyWeatherModifiers('Aela', $d2, 'Independent', self::T0 + self::HOUR);
         $this->assertSame(self::dim(self::huntress(), 'comfort'), self::dim($d2, 'comfort'));
     }
 

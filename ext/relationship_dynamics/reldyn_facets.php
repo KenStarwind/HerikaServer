@@ -854,10 +854,14 @@ class RelDynFacets
                 'thing' => self::THING_FELT_TEXT,
             ],
 
-            // --- each turn in a place (placeTurn) ---
-            'nudge_deadband'   => 0.05,   // |valence| below this nudges nothing
-            'comfort_per_turn' => 1.0,    // raw comfort points per turn at valence +-1
-            'mood_per_turn'    => 3.0,    // raw mood (valence dimension) points per turn at valence +-1
+            // --- time spent in a place (placeTurn), on the game calendar ---
+            // Every place effect below counts the game hours since the previous turn in the SAME
+            // place (at most exposure_max_gap_game_hours of them), never the lines spoken: thirty
+            // lines in a minute are a minute (review 2026-09-24).
+            'exposure_max_gap_game_hours' => 3.0, // longest gap between two turns counted as time spent there
+            'nudge_deadband'       => 0.05,   // |valence| below this nudges nothing
+            'comfort_per_game_hour' => 1.0,   // raw comfort points per game hour at valence +-1
+            'mood_per_game_hour'    => 3.0,   // raw mood (valence dimension) points per game hour at valence +-1
             // A place read older than this (game hours) no longer counts: not for passion, not for the felt read.
             'place_appraisal_max_age_game_hours' => 2.0,
 
@@ -865,9 +869,8 @@ class RelDynFacets
             'discomfort_valence_below'        => -0.15, // a place appraised below this valence is hated
             'discomfort_per_game_hour'        => 8.0,   // discomfort points per game hour at valence -1 (x |valence|)
             'discomfort_relief_per_game_hour' => 15.0,  // discomfort points shed per game hour anywhere not hated
-            'discomfort_max_gap_game_hours'   => 3.0,   // longest gap between two turns counted as continuous exposure
-            'discomfort_drain_at'             => 30.0,  // discomfort points from which comfort drains every turn
-            'discomfort_comfort_per_turn'     => 2.0,   // raw comfort points drained per turn at discomfort 100 (linear)
+            'discomfort_drain_at'             => 30.0,  // discomfort points from which comfort drains
+            'discomfort_comfort_per_game_hour' => 2.0,  // raw comfort points drained per game hour at discomfort 100 (linear)
             'discomfort_felt_at'              => 50.0,  // discomfort points from which the felt read says it is wearing on them
             'discomfort_text' => "{NAME} has been in {THING} too long now; it is wearing on them and their patience is thinning.",
 
@@ -892,7 +895,11 @@ class RelDynFacets
             'poi_rise_per_play_minute' => 0.5,   // passion points per filtered play minute while below the floor
 
             // --- internal weather (MDD 4.1; decisions §6: fed both ways) ---
-            'weather_feed_per_turn'                 => 0.08, // pressure per turn / experience at valence +-1
+            // Pressure fed per game hour spent in a place at valence +-1 (placeTurn). With the
+            // 12 h half-life a place held all day settles near valence x 0.05 x 17.3: half a day in
+            // the woods makes Aela sunny, half a day in the Arcanaeum overcast.
+            'weather_feed_per_game_hour'            => 0.05,
+            'weather_feed_per_experience'           => 0.08, // pressure per discrete experience (a fight) at valence +-1
             'weather_pressure_half_life_game_hours' => 12.0, // pressure relaxes toward 0 on the game calendar
             'weather_loved_at'                      => 0.5,  // preference from which a facet can be deprived
             'weather_fed_min_weight'                => 0.3,  // facet weight from which an experience feeds a loved facet
@@ -902,14 +909,16 @@ class RelDynFacets
             'weather_roll_amplitude'                => 0.2,  // the daily roll: +- this, fixed per NPC and game day
             // score = pressure + roll - deprivation x weight; weather = first threshold the score reaches
             'weather_thresholds' => ['sunny' => 0.3, 'clear' => -0.1, 'overcast' => -0.45],   // below: stormy
-            // Emotional gravity (MDD 4.1): raw dimension points per request x weather_modifier_scale
+            // Emotional gravity (MDD 4.1, a constant pull): raw dimension points x
+            // weather_modifier_per_game_hour, per game hour since the last pull (at most
+            // exposure_max_gap_game_hours of them), never per request
             'weather_modifiers' => [
                 'sunny'    => ['comfort' => 3, 'warmth' => 2, 'valence' => 5],
                 'clear'    => [],
                 'overcast' => ['comfort' => -2, 'passion' => -1, 'valence' => -5],
                 'stormy'   => ['comfort' => -5, 'warmth' => -3, 'valence' => -10, 'arousal' => 5],
             ],
-            'weather_modifier_scale' => 0.1,
+            'weather_modifier_per_game_hour' => 0.1,
             // Activities RelDyn itself sees (combat events) when thingFacets('activity', ...) knows nothing
             'event_facets' => [
                 'combat' => ['combat' => 1.0, 'danger' => 0.7, 'adventure' => 0.3],
@@ -942,10 +951,12 @@ class RelDynFacets
     /**
      * One turn of the NPC in a place, after CHIM core has set its caches (context hook).
      * Appraises the place, stores the read (_place_appraisal: numbers for Jev and for the
-     * passion multiplier, never for the LLM) and applies its effects:
-     *   - comfort and mood nudged by valence (dimension engine);
+     * passion multiplier, never for the LLM) and applies its effects for the game hours spent
+     * there since the previous turn in the same place (exposureHours; a first turn in a place
+     * is arrival, 0 hours), never per line spoken:
+     *   - comfort and mood nudged by valence x hours (dimension engine);
      *   - discomfort built up on the game calendar while the place is hated, relieved elsewhere;
-     *   - internal weather pressure fed by valence, loved facets marked as fed (deprivation);
+     *   - internal weather pressure fed by valence x hours, loved facets marked as fed (deprivation);
      *   - the Point-of-Interest passion floor while the place is loved (ambient presence).
      *
      * @param array $facets place facet vector (placeFacets)
@@ -960,6 +971,7 @@ class RelDynFacets
         $appraisal = self::appraise($prefs, $facets);
         $v = $appraisal['valence'];
         $out = ['appraisal' => $appraisal, 'comfort' => 0.0, 'mood' => 0.0, 'discomfort' => 0.0, 'pressure' => 0.0, 'poi_floor' => null];
+        $hours = self::exposureHours($dynamics['_place_appraisal'] ?? null, $placeName, $now, $cfg);
 
         $dynamics['_place_appraisal'] = [
             'place' => $placeName, 'gamets' => $now,
@@ -970,20 +982,20 @@ class RelDynFacets
 
         $temperament = $dynamics['inferred_temperament'] ?? null;
         $dimensionsOn = (bool) RelationshipDynamics::configValue('dimension_engine_enabled');
-        if ($dimensionsOn && abs($v) >= floatval($cfg['nudge_deadband'])) {
-            $out['comfort'] += RelationshipDynamics::applyDelta('comfort', $dynamics, $v * floatval($cfg['comfort_per_turn']), $temperament);
-            $out['mood'] = RelationshipDynamics::applyDelta('valence', $dynamics, $v * floatval($cfg['mood_per_turn']), $temperament);
+        if ($dimensionsOn && $hours > 0 && abs($v) >= floatval($cfg['nudge_deadband'])) {
+            $out['comfort'] += RelationshipDynamics::applyDelta('comfort', $dynamics, $v * floatval($cfg['comfort_per_game_hour']) * $hours, $temperament);
+            $out['mood'] = RelationshipDynamics::applyDelta('valence', $dynamics, $v * floatval($cfg['mood_per_game_hour']) * $hours, $temperament);
         }
 
         $out['discomfort'] = self::updateDiscomfort($dynamics, $placeName, $v, $now, $cfg);
-        if ($dimensionsOn && $out['discomfort'] >= floatval($cfg['discomfort_drain_at'])) {
-            $drain = -floatval($cfg['discomfort_comfort_per_turn']) * $out['discomfort'] / 100.0;
+        if ($dimensionsOn && $hours > 0 && $out['discomfort'] >= floatval($cfg['discomfort_drain_at'])) {
+            $drain = -floatval($cfg['discomfort_comfort_per_game_hour']) * $out['discomfort'] / 100.0 * $hours;
             $out['comfort'] += RelationshipDynamics::applyDelta('comfort', $dynamics, $drain, $temperament);
         }
 
         if (RelationshipDynamics::configValue('internal_weather_enabled')) {
             self::markFed($dynamics, $facets, $prefs, $now, $cfg);
-            $out['pressure'] = self::feedWeather($dynamics, $v, $now, $cfg);
+            $out['pressure'] = self::feedWeather($dynamics, $v * floatval($cfg['weather_feed_per_game_hour']) * $hours, $now, $cfg);
         }
 
         if (RelationshipDynamics::configValue('ambient_enabled') && RelationshipDynamics::configValue('passion_enabled')) {
@@ -995,9 +1007,23 @@ class RelDynFacets
     }
 
     /**
+     * Game hours spent in $placeName since the previous place read $previous (the stored
+     * _place_appraisal): 0 when that read was elsewhere, missing or not earlier (arrival, or no
+     * game time passed), at most exposure_max_gap_game_hours (a long gap is not known to have
+     * been spent there).
+     */
+    private static function exposureHours($previous, string $placeName, float $now, array $cfg): float
+    {
+        if (!is_array($previous) || ($previous['place'] ?? null) !== $placeName || $now <= 0) return 0.0;
+        $last = floatval($previous['gamets'] ?? 0);
+        if ($last <= 0 || $now <= $last) return 0.0;
+        return min(self::gameHours($now - $last), floatval($cfg['exposure_max_gap_game_hours']));
+    }
+
+    /**
      * Discomfort (0..100 points) from sustained exposure to a hated place, on the game
      * calendar: each turn in a hated place adds |valence| x discomfort_per_game_hour per game
-     * hour since the last turn (at most discomfort_max_gap_game_hours of it); a turn anywhere
+     * hour since the last turn (at most exposure_max_gap_game_hours of it); a turn anywhere
      * not hated sheds discomfort_relief_per_game_hour per game hour. Turns without game time
      * passing change nothing, so talking a lot does not count as staying longer.
      */
@@ -1012,7 +1038,7 @@ class RelDynFacets
         $hours = ($last > 0 && $now > $last) ? self::gameHours($now - $last) : 0.0;
         $hated = $valence < floatval($cfg['discomfort_valence_below']);
         if ($hated && ($state['place'] ?? null) === $placeName) {
-            $hours = min($hours, floatval($cfg['discomfort_max_gap_game_hours']));
+            $hours = min($hours, floatval($cfg['exposure_max_gap_game_hours']));
             $points += abs($valence) * floatval($cfg['discomfort_per_game_hour']) * $hours;
         } elseif (!$hated) {
             $points -= floatval($cfg['discomfort_relief_per_game_hour']) * $hours;
@@ -1050,19 +1076,24 @@ class RelDynFacets
         return $p;
     }
 
-    /** Loved things feed the weather, hated things drain it (decisions §6). Returns the new pressure. */
-    private static function feedWeather(array &$dynamics, float $valence, float $now, array $cfg): float
+    /**
+     * Loved things feed the weather, hated things drain it (decisions §6): $delta pressure
+     * (valence x the per-game-hour or per-experience rate, signed) added to the relaxed
+     * pressure. Returns the new pressure.
+     */
+    private static function feedWeather(array &$dynamics, float $delta, float $now, array $cfg): float
     {
         if ($now <= 0) return floatval($dynamics['_weather_state']['pressure'] ?? 0.0);
-        $p = max(-1.0, min(1.0, self::pressureAt($dynamics, $now, $cfg) + $valence * floatval($cfg['weather_feed_per_turn'])));
+        $p = max(-1.0, min(1.0, self::pressureAt($dynamics, $now, $cfg) + $delta));
         $state = is_array($dynamics['_weather_state'] ?? null) ? $dynamics['_weather_state'] : [];
         $dynamics['_weather_state'] = array_merge($state, ['pressure' => $p, 'gamets' => $now]);
         return $p;
     }
 
     /**
-     * Something other than a place (an activity, an item) experienced now: appraised, its
-     * loved facets marked fed and the weather fed by its valence. $facets defaults to
+     * Something other than a place (an activity, an item) experienced now, a discrete event:
+     * appraised, its loved facets marked fed and the weather fed by its valence x
+     * weather_feed_per_experience. $facets defaults to
      * thingFacets($kind, $name), then config event_facets for activities RelDyn sees itself.
      */
     public static function experienceThing(string $npcName, array &$dynamics, string $kind, string $name, array $prefs, float $now, ?array $facets = null): array
@@ -1075,7 +1106,7 @@ class RelDynFacets
         $appraisal = self::appraise($prefs, $facets);
         if ($facets && RelationshipDynamics::configValue('internal_weather_enabled')) {
             self::markFed($dynamics, $facets, $prefs, $now, $cfg);
-            self::feedWeather($dynamics, $appraisal['valence'], $now, $cfg);
+            self::feedWeather($dynamics, $appraisal['valence'] * floatval($cfg['weather_feed_per_experience']), $now, $cfg);
         }
         return $appraisal;
     }
