@@ -26,6 +26,11 @@ class RelationshipDynamics
     private static $config = null;
     private static $bondCache = [];
     private static $requestScopePid = null;
+    private static $requestScopeStartedAt = null;
+
+    // A scope nobody closed (a hook that returned early, a long-lived process that ran
+    // a hook once) stops caching after this long, so config changes are always picked up.
+    const REQUEST_SCOPE_MAX_SECONDS = 30;
 
     // Love language types
     const LL_WORDS   = 'words_of_affirmation';
@@ -918,6 +923,7 @@ class RelationshipDynamics
         self::$config = null;
         self::$bondCache = [];
         self::$requestScopePid = getmypid();
+        self::$requestScopeStartedAt = microtime(true);
     }
 
     public static function endRequest()
@@ -925,11 +931,20 @@ class RelationshipDynamics
         self::$config = null;
         self::$bondCache = [];
         self::$requestScopePid = null;
+        self::$requestScopeStartedAt = null;
     }
 
     private static function inRequestScope()
     {
-        return self::$requestScopePid !== null && self::$requestScopePid === getmypid();
+        if (self::$requestScopePid === null || self::$requestScopePid !== getmypid()) {
+            return false;
+        }
+        if (self::$requestScopeStartedAt === null
+            || microtime(true) - self::$requestScopeStartedAt > self::REQUEST_SCOPE_MAX_SECONDS) {
+            self::endRequest();
+            return false;
+        }
+        return true;
     }
 
     // =========================================================================
@@ -1018,9 +1033,10 @@ class RelationshipDynamics
         ];
     }
 
+    /** Drop cached config and close any open request scope, so nothing stays cached. */
     public static function clearConfigCache()
     {
-        self::$config = null;
+        self::endRequest();
     }
 
     public static function isEnabled()
