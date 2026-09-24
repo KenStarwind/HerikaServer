@@ -1179,6 +1179,8 @@ class RelationshipDynamics
             'hoover_enabled' => true,
             // PR 39: Director-Assigned Goals (the hooks ran them unless switched off)
             'director_goals_enabled' => true,
+            // Temperament / attachment / maturity-type / trait auto-generation tables
+            'temperament_autogen' => self::temperamentAutogenDefaults(),
         ];
     }
 
@@ -1222,6 +1224,8 @@ class RelationshipDynamics
             if (is_array($rd) && !empty($rd)) {
                 $base = self::normalizeStoredDynamics($rd);
                 $merged = $base;
+                // Resolved into the copy (not the base) so the next save persists it.
+                self::ensureTemperamentProfile($npcName, $merged);
                 // ========== REPUTATION LAYER (PR 9) ==========
                 if (isset($GLOBALS['PLAYER_NAME']) && !empty($GLOBALS['PLAYER_NAME'])) {
                     $temperament = $merged['inferred_temperament'] ?? $merged['temperament'] ?? 'Stoic';
@@ -1234,6 +1238,7 @@ class RelationshipDynamics
             if (!empty($GLOBALS['db']) && RelDynStorage::resolveNpcId($npcName) !== null) {
                 $defaults = self::defaultDynamics();
                 $defaults[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase(self::defaultDynamics());
+                self::ensureTemperamentProfile($npcName, $defaults);
                 return $defaults;
             }
         } catch (\Throwable $e) {
@@ -1855,30 +1860,659 @@ class RelationshipDynamics
     }
 
     // =========================================================================
+    // NPC PROFILE AUTO-GENERATION
+    // Temperament (MDD 1.3), attachment style (MDD 6.1), maturity type (MDD 15.6)
+    // and trait tags (design decisions 2026-09-23 §1), derived from CHIM core data.
+    // =========================================================================
+
+    /** Bump when the derivation changes so that stored NPCs are resolved again. */
+    const PROFILE_AUTOGEN_VERSION = 1;
+
+    /** The 13 temperaments of MDD 1.3, in table order. The order also breaks vote ties. */
+    const TEMPERAMENT_TYPES = [
+        'Romantic', 'Anxious', 'Bold', 'Playful', 'Humble', 'Nurturing', 'Gentle',
+        'Jealous', 'Proud', 'Defiant', 'Guarded', 'Independent', 'Stoic',
+    ];
+
+    /** MDD 6.1. 'toxic' is only ever set by hand (pipeline doc, MDD 6.1). */
+    const ATTACHMENT_STYLE_TYPES = ['secure', 'avoidant', 'anxious', 'toxic'];
+
+    /** Profile fields a per-NPC override can set (stored in $dynamics['profile_overrides']). */
+    const PROFILE_OVERRIDE_FIELDS = ['temperament', 'attachment_style', 'maturity_type', 'traits'];
+
+    /** Dimensions whose x/baseline migrateDimensions() seeds from the temperament baseline. */
+    const TEMPERAMENT_SEEDED_DIMENSIONS = ['maturity', 'trust', 'comfort', 'respect', 'coord_m', 'coord_f', 'self_confidence'];
+
+    /**
+     * Default mapping tables for the profile auto-generation. They live in the RelDyn config
+     * (key 'temperament_autogen'), so every table can be retuned without code changes; a
+     * stored config replaces whole tables, tables it leaves out keep these defaults.
+     *
+     * Temperament is a vote: each core signal adds points (unitless vote points, 'weights')
+     * to one temperament; the most points win, ties go to the earlier row of MDD 1.3.
+     * Class, faction and skills first resolve to an archetype (the MDD 1.3 class presets),
+     * voice type, race and profile text vote for a temperament directly.
+     * Matching is case-insensitive on letters and digits only, so the class FULL name
+     * ("Spell Vendor") and editor id ("VendorSpells") both match.
+     */
+    public static function temperamentAutogenDefaults(): array
+    {
+        return [
+            'weights' => [
+                'class'   => 3,   // points for the class archetype's temperament
+                'text'    => 2,   // points per distinct keyword found in the profile text
+                'voice'   => 2,   // points for the voice type's temperament
+                'faction' => 2,   // points per distinct faction archetype
+                'skills'  => 1,   // points for the skill archetype's temperament
+                'race'    => 1,   // points for the race's temperament
+            ],
+            'text_max_hits'  => 3,    // distinct keywords counted per temperament
+            'skills_min_level' => 25, // Skyrim skill level (0-100) a skill needs to name an archetype
+            'fallback_temperament' => 'Stoic', // only when no signal votes at all
+            'text_fields' => ['personality', 'speechstyle', 'core', 'npc_static_bio'],
+
+            // Skyrim.esm CLAS names (FULL and editor id). First match wins, so the more
+            // specific entries come first ("Spell Vendor" is a mage, not a merchant).
+            'class_archetypes' => [
+                ['match' => ['spellvendor', 'vendorspells'], 'archetype' => 'Mage'],
+                ['match' => ['barbarian', 'orcwarrior', 'guardorc'], 'archetype' => 'Barbarian'],
+                ['match' => ['assassin', 'nightblade'], 'archetype' => 'Assassin'],
+                ['match' => ['thief', 'rogue', 'pickpocket'], 'archetype' => 'Thief'],
+                ['match' => ['ranger', 'scout', 'archer', 'hunter'], 'archetype' => 'Ranger'],
+                ['match' => ['mage', 'sorcerer', 'conjurer', 'wizard', 'warlock', 'mystic', 'spellsword', 'witchblade', 'necro'], 'archetype' => 'Mage'],
+                ['match' => ['priest', 'monk', 'healer', 'apothecary'], 'archetype' => 'Healer'],
+                ['match' => ['bard'], 'archetype' => 'Bard'],
+                ['match' => ['guard', 'soldier', 'jailor', 'blade', 'penitus', 'vigilant', 'housecarl'], 'archetype' => 'Guard'],
+                ['match' => ['noble', 'jarl', 'steward'], 'archetype' => 'Noble'],
+                ['match' => ['vendor', 'merchant', 'blacksmith', 'pawnbroker', 'tailor', 'fletcher', 'innkeeper', 'trader'], 'archetype' => 'Merchant'],
+                ['match' => ['warrior'], 'archetype' => 'Warrior'],
+            ],
+            // Faction names as the plugin sends them (editor ids such as "JobJarlFaction").
+            'faction_archetypes' => [
+                ['match' => ['jarl', 'steward', 'thane', 'noble'], 'archetype' => 'Noble'],
+                ['match' => ['courtwizard', 'collegeofwinterhold', 'winterholdcollege'], 'archetype' => 'Mage'],
+                ['match' => ['companions'], 'archetype' => 'Warrior'],
+                ['match' => ['thievesguild'], 'archetype' => 'Thief'],
+                ['match' => ['darkbrotherhood'], 'archetype' => 'Assassin'],
+                ['match' => ['bardscollege', 'bardsinger', 'jobbard'], 'archetype' => 'Bard'],
+                ['match' => ['housecarl', 'guard', 'penitus', 'vigilant', 'dawnguard'], 'archetype' => 'Guard'],
+                ['match' => ['priest', 'healer', 'temple'], 'archetype' => 'Healer'],
+                ['match' => ['merchant', 'innkeeper', 'vendor', 'blacksmith', 'apothecary'], 'archetype' => 'Merchant'],
+            ],
+            // metadata.skills names; the archetype whose best skill is highest (and at least
+            // skills_min_level) wins, a tie names none.
+            'skill_archetypes' => [
+                'Warrior' => ['onehanded', 'twohanded', 'block', 'heavyarmor'],
+                'Ranger'  => ['archery'],
+                'Mage'    => ['destruction', 'conjuration', 'alteration', 'illusion', 'enchanting'],
+                'Thief'   => ['sneak', 'lockpicking', 'pickpocket', 'lightarmor'],
+                'Healer'  => ['restoration', 'alchemy'],
+                'Merchant'=> ['speech'],
+            ],
+            // MDD 1.3 class defaults (Warrior/Barbarian Bold, Ranger Independent, Mage Guarded,
+            // Thief Playful, Noble Proud, Merchant Humble, Healer Nurturing) plus RelDyn's
+            // own archetypes for vanilla classes the MDD does not name.
+            'archetype_temperament' => [
+                'Warrior' => 'Bold', 'Barbarian' => 'Bold', 'Ranger' => 'Independent',
+                'Mage' => 'Guarded', 'Thief' => 'Playful', 'Noble' => 'Proud',
+                'Merchant' => 'Humble', 'Healer' => 'Nurturing',
+                'Guard' => 'Stoic',       // "duty-first" (MDD 1.3 Stoic)
+                'Bard' => 'Playful',
+                'Assassin' => 'Stoic',
+            ],
+            // core_npc_master.voiceid (e.g. "sk_malecommander"); first match wins.
+            'voice_temperament' => [
+                ['match' => ['darkelfcynical'], 'temperament' => 'Guarded'],
+                ['match' => ['condescending', 'haughty', 'arrogant'], 'temperament' => 'Proud'],
+                ['match' => ['commander', 'brute'], 'temperament' => 'Bold'],
+                ['match' => ['coward', 'shrill'], 'temperament' => 'Anxious'],
+                ['match' => ['youngeager', 'slycynical', 'drunk'], 'temperament' => 'Playful'],
+                ['match' => ['sultry'], 'temperament' => 'Romantic'],
+                ['match' => ['soldier', 'guard'], 'temperament' => 'Stoic'],
+                ['match' => ['oldkindly'], 'temperament' => 'Nurturing'],
+                ['match' => ['warlock'], 'temperament' => 'Guarded'],
+                ['match' => ['bandit'], 'temperament' => 'Defiant'],
+            ],
+            // core_npc_master.race (e.g. "Nord", "NordRace", "DarkElfRaceVampire"); first match wins.
+            'race_temperament' => [
+                ['match' => ['darkelf', 'dunmer'], 'temperament' => 'Guarded'],
+                ['match' => ['highelf', 'altmer'], 'temperament' => 'Proud'],
+                ['match' => ['woodelf', 'bosmer'], 'temperament' => 'Playful'],
+                ['match' => ['nord'], 'temperament' => 'Bold'],
+                ['match' => ['orc', 'orsimer'], 'temperament' => 'Proud'],
+                ['match' => ['redguard'], 'temperament' => 'Independent'],
+                ['match' => ['imperial'], 'temperament' => 'Humble'],
+                ['match' => ['breton'], 'temperament' => 'Guarded'],
+                ['match' => ['khajiit'], 'temperament' => 'Playful'],
+                ['match' => ['argonian'], 'temperament' => 'Stoic'],
+            ],
+            // Word stems searched in the profile text fields (word start, any ending). Stems that
+            // hit common lore phrases are left out ("in vain", "the rebellion").
+            'text_keywords' => [
+                'Romantic'    => ['romantic', 'passionate', 'affectionate', 'amorous', 'lovesick'],
+                'Anxious'     => ['anxious', 'nervous', 'insecure', 'timid', 'shy', 'fearful', 'worrie', 'clingy', 'skittish'],
+                'Bold'        => ['bold', 'confident', 'brash', 'fearless', 'daring', 'courageous', 'brave', 'headstrong'],
+                'Playful'     => ['playful', 'flirt', 'mischiev', 'cheeky', 'lighthearted', 'carefree', 'teasing', 'charming'],
+                'Humble'      => ['humble', 'modest', 'unassuming', 'hardworking', 'hard-working'],
+                'Nurturing'   => ['nurturing', 'caring', 'motherly', 'fatherly', 'compassionate', 'maternal'],
+                'Gentle'      => ['gentle', 'soft-spoken', 'calm', 'peaceful', 'serene', 'empathetic'],
+                'Jealous'     => ['jealous', 'possessive', 'envious', 'controlling'],
+                'Proud'       => ['proud', 'arrogant', 'haughty', 'vanity', 'pompous', 'condescending', 'smug', 'conceited', 'snob'],
+                'Defiant'     => ['defiant', 'rebellious', 'stubborn', 'hot-tempered', 'hotheaded'],
+                'Guarded'     => ['guarded', 'wary', 'distrustful', 'suspicious', 'cautious', 'secretive', 'reserved'],
+                'Independent' => ['independent', 'self-reliant', 'self-sufficient', 'loner', 'solitary', 'aloof'],
+                'Stoic'       => ['stoic', 'dutiful', 'disciplined', 'taciturn', 'stern', 'quiet', 'unflappable'],
+            ],
+
+            // Attachment (MDD 6.1) = temperament default, shifted by the warmth curve.
+            'temperament_attachment' => self::TEMPERAMENT_ATTACHMENT_DEFAULTS,
+            'attachment_curve_shift' => [
+                self::CURVE_QUICK   => ['avoidant' => 'secure'],   // warms fast: not avoidant
+                self::CURVE_GUARDED => ['secure' => 'avoidant'],   // hardest to crack
+            ],
+            // Maturity type (MDD 15.6) = class archetype first, then temperament.
+            'archetype_maturity_type' => [
+                'Bard' => 'Volatile',     // MDD 15.6: "dramatic bard -> big swings both ways"
+            ],
+            'temperament_maturity_type' => self::TEMPERAMENT_MATURITY_PLASTICITY,
+            // Trait tags (decisions §1): the vocabulary, and what temperament/class imply.
+            'trait_vocabulary' => ['egocentric', 'insecure'],
+            'temperament_traits' => [
+                'Proud' => ['egocentric'],   // decisions §1: "Egocentric (default for Proud)"
+                'Anxious' => ['insecure'],
+                'Jealous' => ['insecure'],   // MDD 1.3: "Possessive, insecure, controlling"
+            ],
+            'archetype_traits' => [
+                'Noble' => ['egocentric'],
+            ],
+
+            // Named NPCs from the MDD are presets for those NPCs, not rules for their class.
+            // Keyed by lower-case npc_name. A per-NPC override in RelDyn state beats these.
+            'npc_overrides' => [
+                'ashe'   => ['temperament' => 'Stoic', 'maturity_type' => 'Resilient'],  // MDD 15.6
+                'mikael' => ['maturity_type' => 'Volatile'],                            // MDD 15.6
+                'serana' => ['maturity_type' => 'Growth'],                              // MDD 15.6
+                'nazeem' => ['maturity_type' => 'Rigid'],                               // MDD 15.6
+                'ysolda' => ['temperament' => 'Anxious'],                               // MDD 8.2 C
+            ],
+        ];
+    }
+
+    /** The auto-generation tables: stored config per table, defaults for the rest. */
+    public static function getTemperamentAutogenConfig(): array
+    {
+        $defaults = self::temperamentAutogenDefaults();
+        $stored = self::getConfig()['temperament_autogen'] ?? null;
+        return is_array($stored) ? array_replace($defaults, $stored) : $defaults;
+    }
+
+    /** Lower-case letters and digits only, so "Spell Vendor", "VendorSpells" and "sk_Vendor" compare alike. */
+    private static function profileMatchKey($value): string
+    {
+        return preg_replace('/[^a-z0-9]/', '', strtolower((string) $value));
+    }
+
+    /** First entry of a [['match' => [...], $field => value], ...] table whose keyword occurs in $haystack. */
+    private static function firstProfileMatch(array $table, string $haystack, string $field): ?string
+    {
+        if ($haystack === '') return null;
+        foreach ($table as $entry) {
+            foreach ((array) ($entry['match'] ?? []) as $needle) {
+                $needle = self::profileMatchKey($needle);
+                if ($needle !== '' && strpos($haystack, $needle) !== false) {
+                    return $entry[$field] ?? null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A jsonb column as PostgreSQL returns it (JSON text) or already decoded. */
+    private static function decodeProfileJson($value): array
+    {
+        if (is_array($value)) return $value;
+        if (is_string($value) && $value !== '') {
+            $decoded = json_decode($value, true);
+            return is_array($decoded) ? $decoded : [];
+        }
+        return [];
+    }
+
+    private static function validTemperament($t): ?string
+    {
+        if (!is_string($t)) return null;
+        foreach (self::TEMPERAMENT_TYPES as $name) {
+            if (strcasecmp($name, trim($t)) === 0) return $name;
+        }
+        return null;
+    }
+
+    private static function validAttachmentStyle($s): ?string
+    {
+        $s = is_string($s) ? strtolower(trim($s)) : null;
+        return in_array($s, self::ATTACHMENT_STYLE_TYPES, true) ? $s : null;
+    }
+
+    private static function validMaturityType($m): ?string
+    {
+        if (!is_string($m)) return null;
+        foreach (array_keys(self::MATURITY_PLASTICITY_VALUES) as $name) {
+            if (strcasecmp($name, trim($m)) === 0) return $name;
+        }
+        return null;
+    }
+
+    /** Known trait tags only, lower-case, de-duplicated, in vocabulary order; null if any is unknown. */
+    private static function normalizeTraits($traits, array $cfg): ?array
+    {
+        if (!is_array($traits)) return null;
+        $vocab = array_map('strtolower', (array) ($cfg['trait_vocabulary'] ?? []));
+        $wanted = [];
+        foreach ($traits as $t) {
+            $t = strtolower(trim((string) $t));
+            if (!in_array($t, $vocab, true)) return null;
+            $wanted[$t] = true;
+        }
+        return array_values(array_filter($vocab, fn($v) => isset($wanted[$v])));
+    }
+
+    /**
+     * Archetype (MDD 1.3 class preset) from class, then faction, then skills.
+     * Returns [classArchetype, factionArchetypes[], skillArchetype].
+     */
+    private static function profileArchetypes(array $ext, array $meta, array $cfg): array
+    {
+        $class = $ext['class'] ?? null;
+        $classKey = self::profileMatchKey(is_array($class) ? ($class['name'] ?? '') : $class);
+        $classArch = self::firstProfileMatch((array) ($cfg['class_archetypes'] ?? []), $classKey, 'archetype');
+
+        $factionArchs = [];
+        foreach ((array) ($ext['factions'] ?? []) as $faction) {
+            if (!is_array($faction) || intval($faction['rank'] ?? 0) < 0) continue;   // rank -1: not a member
+            $arch = self::firstProfileMatch((array) ($cfg['faction_archetypes'] ?? []),
+                self::profileMatchKey($faction['name'] ?? ''), 'archetype');
+            if ($arch !== null && !in_array($arch, $factionArchs, true)) $factionArchs[] = $arch;
+        }
+
+        // Skill levels are Skyrim skill levels (0-100) sent as strings.
+        $skills = array_change_key_case((array) ($meta['skills'] ?? []), CASE_LOWER);
+        $best = [];
+        foreach ((array) ($cfg['skill_archetypes'] ?? []) as $arch => $names) {
+            $level = 0.0;
+            foreach ((array) $names as $n) $level = max($level, floatval($skills[strtolower($n)] ?? 0));
+            $best[$arch] = $level;
+        }
+        $skillArch = null;
+        if ($best) {
+            arsort($best);
+            $levels = array_values($best);
+            $top = $levels[0];
+            if ($top >= floatval($cfg['skills_min_level'] ?? 25) && (count($levels) < 2 || $levels[1] < $top)) {
+                $skillArch = array_key_first($best);
+            }
+        }
+        return [$classArch, $factionArchs, $skillArch];
+    }
+
+    /**
+     * Derive an NPC's profile from its core_npc_master row. Pure: same row, options and
+     * config give the same result. $row is the row as PostgreSQL returns it (jsonb as text).
+     *
+     * $options: 'config' (auto-generation tables, default getTemperamentAutogenConfig()),
+     *           'overrides' (per-NPC state overrides, PROFILE_OVERRIDE_FIELDS),
+     *           'sharmat_style' (Sharmat sex_speech_style when Sharmat is installed),
+     *           'warmth_curve' (the NPC's curve, else the temperament default).
+     *
+     * Priority per field: per-NPC override > named preset (config npc_overrides) > derived.
+     * Temperament is derived from MARAS, then Sharmat (pipeline §5.1), then the core-data vote.
+     */
+    public static function deriveNpcProfile(string $npcName, array $row, array $options = []): array
+    {
+        $cfg = $options['config'] ?? self::getTemperamentAutogenConfig();
+        $overrides = (array) ($options['overrides'] ?? []);
+        $preset = (array) (((array) ($cfg['npc_overrides'] ?? []))[strtolower(trim($npcName))] ?? []);
+        $ext = self::decodeProfileJson($row['extended_data'] ?? null);
+        $meta = self::decodeProfileJson($row['metadata'] ?? null);
+        $weights = (array) ($cfg['weights'] ?? []);
+
+        [$classArch, $factionArchs, $skillArch] = self::profileArchetypes($ext, $meta, $cfg);
+        $archetype = $classArch ?? ($factionArchs[0] ?? $skillArch);
+        $archTemp = (array) ($cfg['archetype_temperament'] ?? []);
+
+        // --- core-data vote (points are unitless) ---
+        $votes = [];
+        $signals = [];
+        $vote = function (?string $temperament, $points, string $signal) use (&$votes, &$signals) {
+            $temperament = self::validTemperament($temperament);
+            $points = floatval($points);
+            if ($temperament === null || $points <= 0) return;
+            $votes[$temperament] = ($votes[$temperament] ?? 0) + $points;
+            $signals[] = "{$signal}->{$temperament}+{$points}";
+        };
+        if ($classArch !== null) $vote($archTemp[$classArch] ?? null, $weights['class'] ?? 0, "class:{$classArch}");
+        foreach ($factionArchs as $fa) $vote($archTemp[$fa] ?? null, $weights['faction'] ?? 0, "faction:{$fa}");
+        if ($skillArch !== null) $vote($archTemp[$skillArch] ?? null, $weights['skills'] ?? 0, "skills:{$skillArch}");
+        $vote(self::firstProfileMatch((array) ($cfg['voice_temperament'] ?? []), self::profileMatchKey($row['voiceid'] ?? ''), 'temperament'),
+            $weights['voice'] ?? 0, 'voice');
+        $vote(self::firstProfileMatch((array) ($cfg['race_temperament'] ?? []), self::profileMatchKey($row['race'] ?? ''), 'temperament'),
+            $weights['race'] ?? 0, 'race');
+
+        $text = '';
+        foreach ((array) ($cfg['text_fields'] ?? []) as $field) {
+            if (!empty($row[$field]) && is_string($row[$field])) $text .= ' ' . $row[$field];
+        }
+        if ($text !== '') {
+            $maxHits = max(0, intval($cfg['text_max_hits'] ?? 3));
+            foreach ((array) ($cfg['text_keywords'] ?? []) as $temperament => $stems) {
+                $hits = 0;
+                foreach ((array) $stems as $stem) {
+                    if ($hits >= $maxHits) break;
+                    if (preg_match('/\b' . preg_quote((string) $stem, '/') . '/iu', $text)) $hits++;
+                }
+                if ($hits > 0) $vote($temperament, $hits * floatval($weights['text'] ?? 0), "text:{$hits}");
+            }
+        }
+
+        $voted = null;
+        $bestPoints = 0;
+        foreach (self::TEMPERAMENT_TYPES as $t) {          // MDD 1.3 order breaks ties
+            if (($votes[$t] ?? 0) > $bestPoints) { $bestPoints = $votes[$t]; $voted = $t; }
+        }
+
+        // --- temperament ---
+        $sources = [];
+        $marasTemp = self::validTemperament(self::getPlayerRelationshipFromExtended($ext)['maras']['temperament'] ?? null);
+        $sharmatTemp = !empty($options['sharmat_style'])
+            ? self::validTemperament(self::speechStyleToTemperament($options['sharmat_style'])) : null;
+        if ($marasTemp !== null) {
+            $autoTemp = $marasTemp; $autoSource = 'maras';
+        } elseif ($sharmatTemp !== null) {
+            $autoTemp = $sharmatTemp; $autoSource = 'sharmat';
+        } elseif ($voted !== null) {
+            $autoTemp = $voted; $autoSource = 'core';
+        } else {
+            $autoTemp = self::validTemperament($cfg['fallback_temperament'] ?? null) ?? 'Stoic'; $autoSource = 'fallback';
+        }
+        $preset = [
+            'temperament'      => self::validTemperament($preset['temperament'] ?? null),
+            'attachment_style' => self::validAttachmentStyle($preset['attachment_style'] ?? null),
+            'maturity_type'    => self::validMaturityType($preset['maturity_type'] ?? null),
+            'traits'           => isset($preset['traits']) ? self::normalizeTraits($preset['traits'], $cfg) : null,
+        ];
+        $clean = [
+            'temperament'      => self::validTemperament($overrides['temperament'] ?? null),
+            'attachment_style' => self::validAttachmentStyle($overrides['attachment_style'] ?? null),
+            'maturity_type'    => self::validMaturityType($overrides['maturity_type'] ?? null),
+            'traits'           => isset($overrides['traits']) ? self::normalizeTraits($overrides['traits'], $cfg) : null,
+        ];
+
+        [$temperament, $sources['temperament']] = self::pickProfileValue($clean['temperament'], $preset['temperament'], $autoTemp, $autoSource);
+        // What each dependent is without a per-NPC override: preset, else derived from the temperament.
+        $auto = self::profileDefaultDependents($temperament, $archetype, $options['warmth_curve'] ?? null, $cfg, $preset);
+        $profile = ['temperament' => $temperament];
+        foreach (['attachment_style', 'maturity_type', 'traits'] as $dep) {
+            [$profile[$dep], $sources[$dep]] = self::pickProfileValue($clean[$dep], $preset[$dep], $auto[$dep], 'derived');
+        }
+
+        return $profile + [
+            'archetype'        => $archetype,
+            'sources'          => $sources,
+            'base_temperament' => $preset['temperament'] ?? $autoTemp,   // temperament without a per-NPC override
+            'preset'           => array_filter($preset, fn($v) => $v !== null),
+            'auto'             => $auto,
+            'votes'            => $votes,
+            'signals'          => $signals,
+        ];
+    }
+
+    /** [value, source]: override, else preset, else the automatic value. */
+    private static function pickProfileValue($override, $preset, $auto, string $autoSource): array
+    {
+        if ($override !== null) return [$override, 'override'];
+        if ($preset !== null) return [$preset, 'preset'];
+        return [$auto, $autoSource];
+    }
+
+    /** Dependents without a per-NPC override: the named preset's value, else derived. */
+    private static function profileDefaultDependents(string $temperament, ?string $archetype, ?string $warmthCurve, array $cfg, array $preset): array
+    {
+        $auto = self::deriveProfileDependents($temperament, $archetype, $warmthCurve, $cfg);
+        foreach (['attachment_style', 'maturity_type', 'traits'] as $dep) {
+            if (isset($preset[$dep])) $auto[$dep] = $preset[$dep];
+        }
+        return $auto;
+    }
+
+    /** Attachment style, maturity type and traits implied by a temperament and archetype. */
+    private static function deriveProfileDependents(string $temperament, ?string $archetype, ?string $warmthCurve, array $cfg): array
+    {
+        $curve = $warmthCurve ?: self::temperamentToWarmthCurve($temperament);
+        $attachment = self::validAttachmentStyle(((array) ($cfg['temperament_attachment'] ?? []))[$temperament] ?? null) ?? 'secure';
+        $shift = ((array) ($cfg['attachment_curve_shift'] ?? []))[$curve][$attachment] ?? null;
+        $attachment = self::validAttachmentStyle($shift) ?? $attachment;
+        if ($attachment === 'toxic') {
+            $attachment = 'secure';   // Toxic is never auto-assigned (MDD 6.1 pipeline notes)
+        }
+
+        $maturityType = ($archetype !== null ? self::validMaturityType(((array) ($cfg['archetype_maturity_type'] ?? []))[$archetype] ?? null) : null)
+            ?? self::validMaturityType(((array) ($cfg['temperament_maturity_type'] ?? []))[$temperament] ?? null)
+            ?? 'Adaptive';
+
+        $traits = array_merge(
+            (array) (((array) ($cfg['temperament_traits'] ?? []))[$temperament] ?? []),
+            $archetype !== null ? (array) (((array) ($cfg['archetype_traits'] ?? []))[$archetype] ?? []) : []
+        );
+        $traits = self::normalizeTraits($traits, $cfg) ?? [];
+
+        return ['attachment_style' => $attachment, 'maturity_type' => $maturityType, 'traits' => $traits];
+    }
+
+    /** The core_npc_master columns the derivation reads; [] when the NPC has no row. Throws on DB errors. */
+    private static function fetchCoreProfileRow(string $npcName): array
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return [];
+        $row = $db->fetchOne(
+            'SELECT npc_name, gender, race, voiceid, personality, speechstyle, core, npc_static_bio, metadata, extended_data'
+            . ' FROM core_npc_master WHERE lower(npc_name) = lower($1) ORDER BY id LIMIT 1',
+            [$npcName]
+        );
+        return is_array($row) ? $row : [];
+    }
+
+    /**
+     * Resolve temperament, attachment style, maturity type and traits once per NPC and store
+     * them in RelDyn state (inferred_temperament, attachment_style,
+     * dimensions.maturity.plasticity_type, traits; provenance in _profile_autogen).
+     * Values an NPC already carries (set by the editor, Sharmat, or an arc) are kept.
+     * Returns true when it changed $dynamics. A failed core read is logged and retried
+     * on the next call rather than stored as a fallback.
+     */
+    public static function ensureTemperamentProfile($npcName, &$dynamics): bool
+    {
+        if (intval($dynamics['_profile_autogen']['version'] ?? 0) >= self::PROFILE_AUTOGEN_VERSION) {
+            return false;
+        }
+        $npcName = (string) $npcName;
+        try {
+            $row = self::fetchCoreProfileRow($npcName);
+        } catch (Throwable $e) {
+            error_log("[RelDyn] temperament auto-generation: core_npc_master read failed for {$npcName}: " . $e->getMessage());
+            return false;
+        }
+
+        $prevTemp = self::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $prevAttachment = self::validAttachmentStyle($dynamics['attachment_style'] ?? null);
+        $prevMaturityType = self::validMaturityType($dynamics['dimensions']['maturity']['plasticity_type'] ?? null);
+        $prevTraits = is_array($dynamics['traits'] ?? null) ? $dynamics['traits'] : null;
+        // After a PROFILE_AUTOGEN_VERSION bump, values that were automatic last time are derived again.
+        $prevGen = (array) ($dynamics['_profile_autogen'] ?? []);
+        $wasAuto = fn(string $key, $value) => $value !== null
+            && ($key === 'temperament' ? ($prevGen['base_temperament'] ?? null) : ($prevGen['auto'][$key] ?? null)) === $value;
+
+        // Values already on the NPC (editor, Sharmat, an arc) count as overrides for this
+        // resolution without being written to profile_overrides. A plasticity type seeded from
+        // the null-temperament fallback ('Stoic') was never a choice, so it is derived again.
+        $overrides = (array) ($dynamics['profile_overrides'] ?? []);
+        $kept = [];
+        if ($prevTemp !== null && !isset($overrides['temperament']) && !$wasAuto('temperament', $prevTemp)) {
+            $overrides['temperament'] = $prevTemp; $kept['temperament'] = true;
+        }
+        if ($prevAttachment !== null && !isset($overrides['attachment_style']) && !$wasAuto('attachment_style', $prevAttachment)) {
+            $overrides['attachment_style'] = $prevAttachment; $kept['attachment_style'] = true;
+        }
+        if ($prevTemp !== null && $prevMaturityType !== null && !isset($overrides['maturity_type']) && !$wasAuto('maturity_type', $prevMaturityType)) {
+            $overrides['maturity_type'] = $prevMaturityType; $kept['maturity_type'] = true;
+        }
+        if ($prevTraits !== null && !isset($overrides['traits']) && !$wasAuto('traits', $prevTraits)) {
+            $overrides['traits'] = $prevTraits; $kept['traits'] = true;
+        }
+
+        $sharmatStyle = self::getSharmatSpeechStyle($npcName);
+        $profile = self::deriveNpcProfile($npcName, $row, [
+            'overrides' => $overrides,
+            'sharmat_style' => is_string($sharmatStyle) ? $sharmatStyle : null,
+            'warmth_curve' => $dynamics['warmth_curve'] ?? null,
+        ]);
+        foreach ($kept as $field => $_) {
+            if ($profile['sources'][$field] === 'override') $profile['sources'][$field] = 'stored';
+        }
+
+        $dynamics['inferred_temperament'] = $profile['temperament'];
+        $dynamics['attachment_style'] = $profile['attachment_style'];
+        $dynamics['dimensions']['maturity']['plasticity_type'] = $profile['maturity_type'];
+        $dynamics['traits'] = $profile['traits'];
+
+        // Seed the temperament-based dimensions here, as migrateDimensions() would: a first
+        // save merges this copy onto a normalized empty state, which is seeded from the
+        // null-temperament fallback ('Stoic'). Dimensions already seeded from that fallback
+        // and untouched since (x and baseline still equal the seed) are seeded again.
+        foreach (self::TEMPERAMENT_SEEDED_DIMENSIONS as $dim) {
+            if (!is_array($dynamics['dimensions'][$dim] ?? null)) continue;
+            $x = $dynamics['dimensions'][$dim]['x'] ?? null;
+            $base = $dynamics['dimensions'][$dim]['baseline'] ?? null;
+            $new = self::getTemperamentBaseline($profile['temperament'], $dim);
+            $stoicSeed = self::getTemperamentBaseline('Stoic', $dim);
+            $untouchedFallbackSeed = $prevTemp === null && $x !== null && $base !== null
+                && abs(floatval($x) - $stoicSeed) < 1e-9 && abs(floatval($base) - $stoicSeed) < 1e-9;
+            if ($x === null || $untouchedFallbackSeed) {
+                $dynamics['dimensions'][$dim]['x'] = $new;
+                $dynamics['dimensions'][$dim]['baseline'] = $new;
+            }
+        }
+
+        $dynamics['_profile_autogen'] = [
+            'version'          => self::PROFILE_AUTOGEN_VERSION,
+            'archetype'        => $profile['archetype'],
+            'base_temperament' => $profile['base_temperament'],
+            'preset'           => $profile['preset'],
+            'temperament_source'      => $profile['sources']['temperament'],
+            'attachment_style_source' => $profile['sources']['attachment_style'],
+            'maturity_type_source'    => $profile['sources']['maturity_type'],
+            'traits_source'           => $profile['sources']['traits'],
+            'auto'             => $profile['auto'],
+            'signals'          => $profile['signals'],
+        ];
+        self::log("Profile auto-gen for {$npcName}: temperament={$profile['temperament']} ({$profile['sources']['temperament']}), "
+            . "attachment={$profile['attachment_style']}, maturity_type={$profile['maturity_type']}, traits=" . implode(',', $profile['traits'])
+            . ' [' . implode(' ', $profile['signals']) . ']');
+        return true;
+    }
+
+    /** Effective trait tags (lower-case). */
+    public static function getTraits(array $dynamics): array
+    {
+        $traits = $dynamics['profile_overrides']['traits'] ?? $dynamics['traits'] ?? [];
+        return is_array($traits) ? array_values(array_map('strtolower', array_map('strval', $traits))) : [];
+    }
+
+    public static function hasTrait(array $dynamics, string $trait): bool
+    {
+        return in_array(strtolower(trim($trait)), self::getTraits($dynamics), true);
+    }
+
+    /**
+     * Set (or with null, clear) a per-NPC override for temperament, attachment_style,
+     * maturity_type or traits, and apply it. Changing the temperament re-derives the
+     * dependents that still hold their automatic value (an arc-shifted attachment stays).
+     * Returns false and changes nothing for an unknown field or value.
+     */
+    public static function setProfileOverride(array &$dynamics, string $field, $value): bool
+    {
+        if (!in_array($field, self::PROFILE_OVERRIDE_FIELDS, true)) return false;
+        $cfg = self::getTemperamentAutogenConfig();
+        if ($value !== null) {
+            $value = match ($field) {
+                'temperament'      => self::validTemperament($value),
+                'attachment_style' => self::validAttachmentStyle($value),
+                'maturity_type'    => self::validMaturityType($value),
+                'traits'           => self::normalizeTraits($value, $cfg),
+            };
+            if ($value === null) return false;
+        }
+
+        $overrides = (array) ($dynamics['profile_overrides'] ?? []);
+        if ($value === null) unset($overrides[$field]); else $overrides[$field] = $value;
+        $dynamics['profile_overrides'] = $overrides;
+
+        $autogen = (array) ($dynamics['_profile_autogen'] ?? []);
+        $prevAuto = (array) ($autogen['auto'] ?? []);
+        $temperament = $overrides['temperament'] ?? self::validTemperament($autogen['base_temperament'] ?? null)
+            ?? self::validTemperament($dynamics['inferred_temperament'] ?? null) ?? 'Stoic';
+        $auto = self::profileDefaultDependents($temperament, $autogen['archetype'] ?? null, $dynamics['warmth_curve'] ?? null,
+            $cfg, (array) ($autogen['preset'] ?? []));
+
+        $current = [
+            'attachment_style' => $dynamics['attachment_style'] ?? null,
+            'maturity_type'    => $dynamics['dimensions']['maturity']['plasticity_type'] ?? null,
+            'traits'           => $dynamics['traits'] ?? null,
+        ];
+        $effective = ['temperament' => $temperament];
+        foreach (['attachment_style', 'maturity_type', 'traits'] as $dep) {
+            if (array_key_exists($dep, $overrides)) {
+                $effective[$dep] = $overrides[$dep];
+            } elseif ($current[$dep] === null || $current[$dep] === ($prevAuto[$dep] ?? null) || $dep === $field) {
+                $effective[$dep] = $auto[$dep];    // still automatic (or its override was just cleared)
+            } else {
+                $effective[$dep] = $current[$dep]; // changed since by something else: keep
+            }
+        }
+
+        $dynamics['inferred_temperament'] = $effective['temperament'];
+        $dynamics['attachment_style'] = $effective['attachment_style'];
+        $dynamics['dimensions']['maturity']['plasticity_type'] = $effective['maturity_type'];
+        $dynamics['traits'] = $effective['traits'];
+        $autogen['auto'] = $auto;
+        $dynamics['_profile_autogen'] = $autogen;
+        return true;
+    }
+
+    // =========================================================================
     // LOVE LANGUAGE AUTO-GENERATION
     // =========================================================================
 
     /**
      * Ensure NPC has love languages assigned. Auto-generates if missing.
-     * Priority: MARAS temperament > Sharmat profile > CHIM race/faction
+     * Temperament comes from ensureTemperamentProfile() (override > MARAS > Sharmat >
+     * core data); primary LL: MARAS temperament > Sharmat profile > CHIM race.
      */
     public static function ensureLoveLanguage($npcName, &$dynamics)
     {
+        self::ensureTemperamentProfile($npcName, $dynamics);
+
         if (!empty($dynamics['love_language_primary'])) {
             return; // Already set
         }
 
         $primary = null;
         $secondary = null;
-        $temperament = null;
-        $warmthCurve = null;
+        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $warmthCurve = $temperament !== null ? self::temperamentToWarmthCurve($temperament) : null;
 
         // Priority 1: MARAS temperament
         $marasTemp = self::getMarasTemperament($npcName);
         if ($marasTemp) {
-            $temperament = $marasTemp;
             $primary = self::temperamentToLoveLanguage($marasTemp);
-            $warmthCurve = self::temperamentToWarmthCurve($marasTemp);
         }
 
         // Priority 2: Sharmat profile inference
@@ -1886,16 +2520,13 @@ class RelationshipDynamics
             $speechStyle = self::getSharmatSpeechStyle($npcName);
             if ($speechStyle) {
                 $primary = self::speechStyleToLoveLanguage($speechStyle);
-                $temperament = self::speechStyleToTemperament($speechStyle);
-                $warmthCurve = self::temperamentToWarmthCurve($temperament);
             }
         }
 
-        // Priority 3: CHIM race/faction fallback
+        // Priority 3: CHIM race fallback
         if (!$primary) {
             $race = self::getNpcRace($npcName);
             $primary = self::raceToLoveLanguage($race);
-            $warmthCurve = self::CURVE_MODERATE; // default
         }
 
         // Secondary from social context
@@ -1910,7 +2541,6 @@ class RelationshipDynamics
         $dynamics['love_language_primary'] = $primary ?: self::LL_TIME;
         $dynamics['love_language_secondary'] = $secondary ?: self::LL_WORDS;
         $dynamics['warmth_curve'] = $warmthCurve ?: self::CURVE_MODERATE;
-        $dynamics['inferred_temperament'] = $temperament;
 
         self::log("Auto-gen LL for {$npcName}: primary={$dynamics['love_language_primary']}, secondary={$dynamics['love_language_secondary']}, curve={$dynamics['warmth_curve']}, temp={$temperament}");
     }

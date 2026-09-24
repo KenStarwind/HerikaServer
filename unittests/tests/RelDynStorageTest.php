@@ -133,6 +133,12 @@ final class RelDynStorageFakeDb
             return ['id' => (string) $id];
         }
 
+        // ---- Temperament auto-generation: the NPC's core profile columns ----
+        if (strpos($sql, 'SELECT npc_name, gender, race, voiceid, personality, speechstyle, core, npc_static_bio, metadata, extended_data FROM core_npc_master WHERE lower(npc_name) = lower($1)') === 0) {
+            $row = $this->findByName((string) $params[0]);
+            return $row ? ['npc_name' => $row['npc_name'], 'extended_data' => json_encode((object) $row['extended_data'])] : [];
+        }
+
         // ---- Pre-3.4.1 storage (April engine): whole blob in extended_data ----
         if (preg_match("/^SELECT (?:id, )?extended_data FROM core_npc_master WHERE lower\(npc_name\) = lower\('((?:[^']|'')*)'\)/", $sql, $m)) {
             $row = $this->findByName(str_replace("''", "'", $m[1]));
