@@ -237,6 +237,9 @@ class RelationshipDynamics
     /** Kill-streak window on the eventlog game clock: 5 min of real play. */
     const COMBAT_KILL_STREAK_WINDOW_GAMETS = 694500; // 300 * GAMETS_PER_REAL_SECOND
 
+    /** A fight is still on if its newest core combat row is this recent: 1 min of real play. */
+    const COMBAT_ACTIVE_WINDOW_GAMETS = 138900; // 60 * GAMETS_PER_REAL_SECOND
+
     /** Recent gift/consume window on the eventlog game clock: 30 s of real play. */
     const ITEM_EVENT_WINDOW_GAMETS = 69450; // 30 * GAMETS_PER_REAL_SECOND
 
@@ -1166,6 +1169,24 @@ class RelationshipDynamics
             // game-calendar gap longer than this; a drop of conflict_threshold_affinity_drop core
             // affinity points below the session's high opens a conflict.
             'conflict_session_gap_game_hours' => 6,
+            // ===== Place facets (decisions 2026-09-23 §6) =====
+            // Core location tags / name keywords / inside-outside / time of day / weather ->
+            // facet vector (facet => weight 0..1). See RelDynFacets::placeFacets().
+            'place_facets' => RelDynFacets::placeFacetDefaults(),
+            // Environmental modifiers (applyEnvironmentalModifiers, dimension engine on): what a
+            // place and the hour do to anyone, whatever they like (liking is the appraisal's).
+            // Raw dimension deltas (applyDelta); facet rows scale with the facet weight 0..1.
+            // April values: danger = the dungeon arousal (+15), dark = the night row
+            // (arousal +5, comfort -3), dawn / dusk rows as April TIME_MODIFIERS.
+            'environment_modifiers_enabled' => true,
+            'environment_facet_effects' => [
+                'danger' => ['arousal' => 15],
+                'dark'   => ['arousal' => 5, 'comfort' => -3],
+            ],
+            'environment_time_effects' => [
+                'dawn' => ['valence' => 5, 'comfort' => 2],
+                'dusk' => ['passion' => 3, 'warmth' => 2],
+            ],
         ];
     }
 
@@ -3736,62 +3757,21 @@ class RelationshipDynamics
     }
 
     /**
-     * Check if the NPC was in combat recently (within last 5 minutes real-time).
-     * Queries MinAI actor variables if available, falls back to conf_opts.
+     * Was the NPC in (or just out of) a fight: any core combat event within the last
+     * COMBAT_KILL_STREAK_WINDOW_GAMETS (5 min of real play on the game clock). See
+     * coreCombatState(); the current request being a combat event counts too.
      */
     private static function isNpcInCombatRecently($gameRequest)
     {
         $npcName = $GLOBALS['RELDYN_NPC_NAME'] ?? $GLOBALS['HERIKA_NAME'] ?? '';
         if (empty($npcName)) return false;
-
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if (!$db) return false;
-
-            // Check MinAI inCombat flag via conf_opts
-            $key = '_minai_' . strtolower($npcName) . '//incombat';
-            $row = $db->fetchOne(
-                "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($key)
-            );
-            if ($row && strtolower(trim($row['value'])) === 'true') {
-                return true;
-            }
-
-            // Check InCombatState (0=none, 1=searching, 2=in combat)
-            $key2 = '_minai_' . strtolower($npcName) . '//incombatstate';
-            $row2 = $db->fetchOne(
-                "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($key2)
-            );
-            if ($row2 && intval($row2['value']) >= 1) {
-                return true;
-            }
-        } catch (\Throwable $e) {
-            self::logError('isNpcInCombatRecently', $e);
-            // Silently fail — combat detection is a bonus, not critical
-        }
-
-        return false;
+        if (in_array($gameRequest[0] ?? '', self::CORE_COMBAT_REQUEST_TYPES, true)) return true;
+        return self::coreCombatState($npcName)['recent'];
     }
 
     // =========================================================================
     // INTEREST-WEIGHTED PASSION — Detection, Classification & Preferences
     // =========================================================================
-
-    // minai_items.category → interest mapping (100% coverage for giveable items)
-    const ITEM_CATEGORY_TO_INTEREST = [
-        'Weapon'     => 'combat',
-        'Armor'      => 'combat',
-        'Ammo'       => 'combat',
-        'Potion'     => 'alchemy',
-        'Ingredient' => 'alchemy',
-        'Book'       => 'scholarly',
-        'Scroll'     => 'enchanting',
-        'SoulGem'    => 'enchanting',
-        'Key'        => 'adventure',
-        'Currency'   => 'wealth',
-        'Light'      => 'domestic',
-        'Misc'       => null, // falls through to keyword matching
-    ];
 
     // Oghma knowledge_class → interest mapping (for items with lore entries)
     const KNOWLEDGE_CLASS_TO_INTEREST = [
@@ -3807,7 +3787,8 @@ class RelationshipDynamics
 
     /**
      * Classify an item name into an interest category.
-     * 3-tier lookup: minai_items.category → oghma.knowledge_class → keyword fallback
+     * Lookup: core oghma.knowledge_class / category -> keyword fallback. (MinAI's minai_items
+     * table is not part of CHIM 3.4.1 and is not read.)
      */
     public static function classifyItemInterest($itemName)
     {
@@ -3815,22 +3796,7 @@ class RelationshipDynamics
 
         $db = $GLOBALS['db'] ?? null;
 
-        // Tier 1: minai_items.category (100% coverage for registered items)
-        if ($db) {
-            try {
-                $row = $db->fetchOne(
-                    "SELECT category FROM minai_items WHERE lower(name) = lower("
-                    . $db->escapeLiteral(trim($itemName)) . ") LIMIT 1"
-                );
-                if ($row && !empty($row['category'])) {
-                    $interest = self::ITEM_CATEGORY_TO_INTEREST[$row['category']] ?? null;
-                    if ($interest) return $interest;
-                    // category=Misc falls through to Tier 2
-                }
-            } catch (\Throwable $e) { self::logError('classifyItemInterest minai_items', $e); }
-        }
-
-        // Tier 2: oghma.knowledge_class (8% coverage, finer classification)
+        // Tier 1: oghma.knowledge_class (8% coverage, finer classification)
         if ($db) {
             try {
                 $topic = strtolower(str_replace(' ', '_', trim($itemName)));
@@ -3857,7 +3823,7 @@ class RelationshipDynamics
             } catch (\Throwable $e) { self::logError('classifyItemInterest oghma', $e); }
         }
 
-        // Tier 3: keyword fallback (for items not in any DB)
+        // Tier 2: keyword fallback (for items not in any DB)
         $lower = strtolower(trim($itemName));
         $map = self::ITEM_INTEREST_MAP;
         uksort($map, function($a, $b) { return strlen($b) - strlen($a); });
@@ -4199,47 +4165,85 @@ class RelationshipDynamics
     // COMBAT SYSTEM
     // =========================================================================
 
+    /** Request types that are combat events in CHIM 3.4.1 core (Plugin.cpp / main.php). */
+    const CORE_COMBAT_REQUEST_TYPES = ['radiantcombatfriend', 'combatend', 'combatendmighty', 'death', 'bleedout'];
+
+    /**
+     * Fight around the player from CHIM 3.4.1 core eventlog rows (no MinAI):
+     *   infoaction "... (X shouts during combat)"  core logs each combatbark this way (main.php)
+     *   death "X has defeated Y ..."               a kill in the player's scene
+     *   bleedout "X falls to the ground almost unconscious" / instruction "X has lost combat
+     *   and is wounded bleedingout."                 X is down
+     *   combatend / combatendmighty                the player's fight is over
+     * RelDyn's hooks run for the NPC in the player's scene, so a fight there is its fight.
+     *
+     * in_combat:    the newest combat row is a fighting row (not a combat end) and is within
+     *               COMBAT_ACTIVE_WINDOW_GAMETS (1 min of real play on the game clock)
+     * recent:       any combat row within COMBAT_KILL_STREAK_WINDOW_GAMETS (5 min of play)
+     * bleeding_out: this NPC went down (bleedout / lost combat) since the last combat end,
+     *               within the active window
+     *
+     * @return array{in_combat: bool, recent: bool, bleeding_out: bool, source: string}
+     */
+    public static function coreCombatState(string $npcName): array
+    {
+        $state = ['in_combat' => false, 'recent' => false, 'bleeding_out' => false, 'source' => 'none'];
+        $db = $GLOBALS['db'] ?? null;
+        $now = self::currentGamets();
+        if (!$db || $now <= 0 || trim($npcName) === '') return $state;
+
+        $since = intval($now - self::COMBAT_KILL_STREAK_WINDOW_GAMETS);
+        try {
+            $rows = $db->fetchAll("SELECT type, data, gamets FROM eventlog WHERE gamets > {$since} AND ("
+                . "type IN ('combatend', 'combatendmighty', 'death', 'bleedout') "
+                . "OR (type = 'infoaction' AND data LIKE '%shouts during combat%') "
+                . "OR (type = 'instruction' AND data LIKE '%has lost combat and is wounded bleedingout%')"
+                . ") ORDER BY gamets DESC, ts DESC LIMIT 20");
+        } catch (\Throwable $e) {
+            self::logError('coreCombatState', $e);
+            return $state;
+        }
+        if (!is_array($rows) || empty($rows)) return $state;
+
+        $state['recent'] = true;
+        $state['source'] = 'eventlog';
+        $activeSince = $now - self::COMBAT_ACTIVE_WINDOW_GAMETS;
+        $name = trim($npcName);
+        foreach ($rows as $i => $row) {
+            $type = (string) ($row['type'] ?? '');
+            if ($type === 'combatend' || $type === 'combatendmighty') break;   // fight over
+            if (floatval($row['gamets'] ?? 0) <= $activeSince) break;           // too old to be now
+            if ($i === 0) $state['in_combat'] = true;
+            $data = (string) ($row['data'] ?? '');
+            if (($type === 'bleedout' && stripos($data, $name . ' falls to the ground') !== false)
+                || ($type === 'instruction' && stripos($data, $name . ' has lost combat') !== false)) {
+                $state['bleeding_out'] = true;
+            }
+        }
+        return $state;
+    }
+
     public static function getCombatContext($npcName)
     {
         try {
             $db = $GLOBALS['db'] ?? null;
             if (!$db) return null;
 
-            $inCombat = false;
-            $healthPct = 1.0;
-            $bleedingOut = false;
+            // Core 3.4.1 combat events (coreCombatState). Health is not reported by core for
+            // NPCs: null = unknown (never assumed healthy or hurt).
+            $state = self::coreCombatState($npcName);
+            $inCombat = $state['in_combat'];
+            $healthPct = null;
+            $bleedingOut = $state['bleeding_out'];
             $recentKills = 0;
-            $source = 'none';
+            $source = $state['source'];
 
-            // Check MinAI combat state from conf_opts
-            $npcLower = strtolower($npcName);
-            try {
-                $combatRow = $db->fetchOne("SELECT value FROM conf_opts WHERE id = 'minai_combat_{$db->escape($npcLower)}'");
-                if ($combatRow) {
-                    $combatData = json_decode($combatRow['value'], true);
-                    $inCombat = !empty($combatData['inCombat']);
-                    $healthPct = floatval($combatData['healthPct'] ?? 1.0);
-                    $bleedingOut = !empty($combatData['bleedingOut']);
-                }
-            } catch (\Throwable $e) { self::logError('getCombatContext minai_combat', $e); }
-
-            // Fallback: check gameRequest for combat event types
+            // The current request is itself a combat event
             $reqType = $GLOBALS['gameRequest'][0] ?? '';
-            $combatTypes = ['radiantcombatfriend', 'combatend', 'combatendmighty', 'death', 'bleedout',
-                'minai_bleedoutself', 'minai_combatendvictory', 'minai_combatenddefeat'];
-            if (in_array($reqType, $combatTypes)) {
+            if (in_array($reqType, self::CORE_COMBAT_REQUEST_TYPES, true)) {
                 $inCombat = true;
                 $source = 'event';
             }
-
-            // Check MinAI conf_opts flags directly
-            try {
-                $flagRow = $db->fetchOne("SELECT value FROM conf_opts WHERE id = 'inCombat'");
-                if ($flagRow && $flagRow['value'] === '1') {
-                    $inCombat = true;
-                    $source = 'minai_flag';
-                }
-            } catch (\Throwable $e) { self::logError('getCombatContext inCombat flag', $e); }
 
             // Count recent kills from eventlog (last 5 minutes of play on the game clock)
             $nowGamets = self::currentGamets();
@@ -4276,7 +4280,7 @@ class RelationshipDynamics
             if (!$db) return null;
 
             $player = $GLOBALS['PLAYER_NAME'] ?? 'the player';
-            $combatTypes = "'death','bleedout','combatend','combatendmighty','minai_combatendvictory','minai_combatenddefeat'";
+            $combatTypes = "'death','bleedout','combatend','combatendmighty'";
 
             // Check last 10 combat events, filter to recent ones
             $rows = $db->fetchAll(
@@ -4298,7 +4302,7 @@ class RelationshipDynamics
                 if (strpos($people, $npcLower) !== false) {
                     $npcInvolved = true;
                     if ($row['type'] === 'death') $killCount++;
-                    if (in_array($row['type'], ['bleedout', 'minai_bleedoutself'])) $wasBleedout = true;
+                    if ($row['type'] === 'bleedout') $wasBleedout = true;
                 }
                 if (strpos($people, $playerLower) !== false && strpos($people, $npcLower) !== false) {
                     $sharedCombat = true;
@@ -10113,12 +10117,9 @@ class RelationshipDynamics
 
     // ========== PHYSICAL STATE BRIDGES (PR 8) ==========
     //
-    // Read real signals from MinAI/game mods and apply temporary dimension
+    // Read real signals from CHIM core data and apply temporary dimension
     // modifiers.  These are session-scoped: they apply while the physical
-    // condition is active and are reversed when it clears.
-    //
-    // All MinAI reads are soft-gated behind function_exists('GetActorValue')
-    // so RelDyn never hard-depends on MinAI being loaded.
+    // condition is active and are reversed when it clears. No MinAI reads.
     // ====================================================
 
     /**
@@ -10146,99 +10147,40 @@ class RelationshipDynamics
     ];
 
     /**
-     * Detect currently active physical states from MinAI/game signals.
+     * Currently active physical states from CHIM core data.
      *
      * Returns a flat array of state name strings (keys from PHYSICAL_STATE_MODIFIERS).
-     * Every read is wrapped in function_exists() so this degrades gracefully
-     * when MinAI is not loaded.
+     * Weather states come from the core place (RelDynFacets::currentPlaceContext: the weather
+     * the plugin reports and whether the player is inside) and apply only outside:
+     *   rain -> raining; snow -> snowing + cold; night with known clear/pleasant weather ->
+     *   clear_night.
+     * CHIM 3.4.1 core reports no health, stamina, dirt or blood, so injured / exhausted /
+     * well_rested / dirty / bloody (April: MinAI vitals, Dirt and Blood) are unknown and
+     * never detected; warm_fire has no core source either.
      *
      * @param string $npcName    The NPC being spoken to
-     * @param string $playerName The player character name
-     * @return string[] Active state names, e.g. ['cold', 'injured', 'clear_night']
+     * @param string $playerName The player character name (unused: the place is the scene's)
+     * @return string[] Active state names, e.g. ['snowing', 'cold']
      */
     public static function detectPhysicalStates($npcName, $playerName)
     {
         $states = [];
-
-        // All MinAI reads gated behind function_exists
-        if (!function_exists('GetActorValue')) {
-            return $states;
+        $place = RelDynFacets::currentPlaceContext((string) $npcName);
+        if (empty($place['known']) || $place['is_interior'] !== false) {
+            return $states;   // indoors (or unknown): the weather outside does not reach the NPC
         }
 
-        // ----------------------------------------------------------
-        // Weather -> cold / raining / snowing / clear states
-        // weatherClassification: 0=Clear, 1=Overcast, 2=Rain, 3=Snow
-        // ----------------------------------------------------------
-        $weatherClass = GetActorValue($playerName, 'weatherClassification');
-        if ($weatherClass !== '' && $weatherClass !== null) {
-            $wc = intval($weatherClass);
-            if ($wc === 2) {
-                $states[] = 'raining';
-            } elseif ($wc === 3) {
-                $states[] = 'snowing';
-                $states[] = 'cold';
-            }
-
-            // Clear night detection (wc === 0 and night hours)
-            if ($wc === 0) {
-                $gameHour = GetActorValue($playerName, 'currentGameHour');
-                if ($gameHour !== '' && $gameHour !== null) {
-                    $hour = intval($gameHour);
-                    if ($hour >= 21 || $hour <= 5) {
-                        $states[] = 'clear_night';
-                    }
-                }
-            }
+        $weather = (array) $place['weather'];
+        if (in_array('rain', $weather, true)) {
+            $states[] = 'raining';
         }
-
-        // ----------------------------------------------------------
-        // Health -> injured (player health ratio < 0.3)
-        // vitals format: health~maxHealth~magicka~maxMagicka~stamina~maxStamina~weaponsDrawn
-        // ----------------------------------------------------------
-        $vitalsStr = GetActorValue($playerName, 'vitals');
-        if (!empty($vitalsStr)) {
-            $vitals = explode('~', $vitalsStr);
-            if (count($vitals) >= 2) {
-                $health    = floatval($vitals[0]);
-                $maxHealth = floatval($vitals[1]);
-                if ($maxHealth > 0 && ($health / $maxHealth) < 0.3) {
-                    $states[] = 'injured';
-                }
-            }
-
-            // Stamina -> exhausted / well_rested
-            if (count($vitals) >= 6) {
-                $stamina    = floatval($vitals[4]);
-                $maxStamina = floatval($vitals[5]);
-                if ($maxStamina > 0) {
-                    $staminaRatio = $stamina / $maxStamina;
-                    if ($staminaRatio < 0.2) {
-                        $states[] = 'exhausted';
-                    } elseif ($staminaRatio > 0.9) {
-                        $states[] = 'well_rested';
-                    }
-                }
-            }
+        if (in_array('snow', $weather, true)) {
+            $states[] = 'snowing';
+            $states[] = 'cold';
         }
-
-        // ----------------------------------------------------------
-        // Dirt & Blood -> dirty / bloody
-        // dirtAndBlood value is a tag string like "Dirt2,Blood1"
-        // ----------------------------------------------------------
-        $dirtBlood = GetActorValue($playerName, 'dirtAndBlood', true);
-        if (!empty($dirtBlood)) {
-            $dbLower = strtolower($dirtBlood);
-            // Dirt levels 2+ count as dirty
-            if (strpos($dbLower, 'dirt2') !== false
-                || strpos($dbLower, 'dirt3') !== false
-                || strpos($dbLower, 'dirt4') !== false
-            ) {
-                $states[] = 'dirty';
-            }
-            // Any blood level counts
-            if (strpos($dbLower, 'blood') !== false) {
-                $states[] = 'bloody';
-            }
+        $clearSky = !empty($weather) && empty(array_intersect($weather, ['rain', 'snow', 'cloudy', 'fog']));
+        if ($clearSky && $place['time_of_day'] === 'night') {
+            $states[] = 'clear_night';
         }
 
         return $states;
@@ -10388,388 +10330,109 @@ class RelationshipDynamics
 
     // ========== END PHYSICAL STATE BRIDGES ==========
 
-    // ========== LOCATION + ACTIVITY SENSING (PR 8) ==========
+    // ========== ENVIRONMENTAL MODIFIERS (PR 8, rewired on place facets 2026-09-24) ==========
+    //
+    // What a place and the hour do to anyone's body, whatever the NPC likes: danger keeps
+    // them alert, the dark makes them uneasy, dawn and dusk have their moods. Driven by the
+    // core place facets (RelDynFacets::placeFacets) and the game clock; the amounts are the
+    // April values, in config (environment_facet_effects / environment_time_effects).
+    // Whether a place is loved or hated (Ashe at ease in a library, Aela restless) is the
+    // appraisal's job (decisions §6), so the April place-type comfort / valence rows
+    // (tavern +comfort, dungeon -valence, temple +valence ...) are not applied here.
+    // Temporary: re-applied only when the effects change, the previous ones reversed first.
 
     /**
-     * Location categories: keyword-based classification of game locations.
-     * Each category has a set of lowercase keywords to match against the
-     * eventlog infoloc data, plus dimension effects that apply while present.
+     * Dimension effects (dimension => raw delta) of an environment:
+     *   environment_facet_effects[facet][dim] x facet weight, for each facet of the place
+     *   + environment_time_effects[time of day][dim]
+     * Deltas under 0.01 are dropped; values are rounded to 0.01.
      */
-    const LOCATION_CATEGORIES = [
-        'home' => [
-            'keywords' => ['breezehome', 'honeyside', 'hjerim', 'vlindrel', 'proudspire', 'severin', 'windstad', 'lakeview', 'heljarchen', 'playerhouse', 'elysium estate'],
-            'effects'  => ['comfort' => +10, 'warmth' => +5],
-        ],
-        'tavern' => [
-            'keywords' => ['inn', 'tavern', 'bannered mare', 'bee and barb', 'sleeping giant', 'candlehearth', 'winking skeever', 'silver-blood', 'retching netch', 'nightgate', 'old hroldan', 'four shields', 'vilemyr', 'moorside', 'windpeak', 'frostfruit', 'braidwood', 'dead man\'s drink', 'frozen hearth', 'wayward rest', 'dancing horse'],
-            'effects'  => ['comfort' => +5, 'warmth' => +3, 'passion' => +3],
-        ],
-        'temple' => [
-            'keywords' => ['temple', 'shrine', 'chapel', 'hall of the dead'],
-            'effects'  => ['comfort' => +5, 'maturity' => +2, 'valence' => +10],
-        ],
-        'dungeon' => [
-            'keywords' => ['barrow', 'ruins', 'cave', 'mine', 'crypt', 'tomb', 'lair', 'pit', 'grotto', 'catacomb', 'sewer', 'falmer'],
-            'effects'  => ['comfort' => -8, 'arousal' => +15, 'valence' => -10],
-        ],
-        'wilderness' => [
-            'keywords' => ['wilderness', 'exterior', 'worldspace', 'outdoors'],
-            'effects'  => ['comfort' => -3],
-        ],
-        'city' => [
-            'keywords' => ['whiterun', 'solitude', 'riften', 'windhelm', 'markarth', 'winterhold', 'falkreath', 'morthal', 'dawnstar', 'raven rock'],
-            'effects'  => ['comfort' => +3],
-        ],
-        'college' => [
-            'keywords' => ['college of winterhold', 'arcanaeum', 'hall of attainment', 'hall of countenance', 'hall of the elements'],
-            'effects'  => ['respect' => +3, 'maturity' => +1],
-        ],
-        'companion_hall' => [
-            'keywords' => ['jorrvaskr'],
-            'effects'  => ['comfort' => +5, 'respect' => +2],
-        ],
-    ];
-
-    /**
-     * Time-of-day modifiers: game hour ranges and their dimension effects.
-     * The 'campfire_night' entry is a special composite condition.
-     */
-    const TIME_MODIFIERS = [
-        'dawn'  => ['hours' => [5, 6, 7],                              'effects' => ['valence' => +5, 'comfort' => +2]],
-        'day'   => ['hours' => [8, 9, 10, 11, 12, 13, 14, 15, 16],    'effects' => []],
-        'dusk'  => ['hours' => [17, 18, 19],                           'effects' => ['passion' => +3, 'warmth' => +2]],
-        'night' => ['hours' => [20, 21, 22, 23, 0, 1, 2, 3, 4],       'effects' => ['arousal' => +5, 'comfort' => -3]],
-        // Special composite: night + near a warm fire
-        'campfire_night' => ['condition' => 'night + warm_fire',        'effects' => ['comfort' => +15, 'warmth' => +10, 'passion' => +5]],
-    ];
-
-    /**
-     * Detect the current location category for the player/NPC.
-     *
-     * Reads the most recent eventlog infoloc entry, extracts the location
-     * name, and matches it against LOCATION_CATEGORIES keywords.
-     *
-     * @param string $npcName  NPC name (unused currently, but reserved for per-NPC location if needed)
-     * @return string  Location category key or 'unknown'
-     */
-    public static function detectLocation($npcName)
+    public static function environmentEffects(array $facets, ?string $timeOfDay): array
     {
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if (!$db) return 'unknown';
-
-            // Query most recent infoloc entry
-            $row = $db->fetchOne(
-                "SELECT data FROM eventlog WHERE type IN ('infoloc') AND data ILIKE '(Context location:%' ORDER BY gamets DESC, ts DESC LIMIT 1"
-            );
-            if (!$row || empty($row['data'])) return 'unknown';
-
-            $locData = strtolower($row['data']);
-
-            // Extract the location name: "(Context location: {name} ,Hold:" or "(Context location: {name} outdoors"
-            $locName = '';
-            if (preg_match('/context location:\s*([^,]+)/i', $row['data'], $m)) {
-                $locName = strtolower(trim($m[1]));
-            }
-
-            // Match against categories -- first match wins (most specific categories first)
-            // We check both the extracted name and the full data string for keyword coverage
-            foreach (self::LOCATION_CATEGORIES as $category => $def) {
-                foreach ($def['keywords'] as $keyword) {
-                    if (strpos($locName, $keyword) !== false || strpos($locData, $keyword) !== false) {
-                        return $category;
-                    }
-                }
-            }
-
-            return 'unknown';
-        } catch (\Throwable $e) {
-            self::logError('detectLocation', $e);
-            return 'unknown';
-        }
-    }
-
-    /**
-     * Detect the current time of day from game hour.
-     *
-     * Reads _minai_{playerName}//CurrentGameHour from conf_opts.
-     * Soft-gated: returns 'day' if MinAI data is unavailable.
-     *
-     * @return string  Time period key: 'dawn', 'day', 'dusk', or 'night'
-     */
-    public static function detectTimeOfDay()
-    {
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if (!$db) return 'day';
-
-            // Soft-gate: read game hour from MinAI conf_opts
-            $playerName = $GLOBALS['PLAYER_NAME'] ?? '';
-            if (empty($playerName)) return 'day';
-
-            $key = '_minai_' . strtolower($playerName) . '//currentgamehour';
-            $row = $db->fetchOne(
-                "SELECT value FROM conf_opts WHERE lower(id) = " . $db->escapeLiteral($key)
-            );
-
-            if (!$row || !is_numeric($row['value'])) {
-                // Fallback: try parsing from the infoloc data string
-                return self::detectTimeOfDayFromInfoLoc();
-            }
-
-            $hour = intval(floatval($row['value']));
-            // Wrap to 0-23
-            $hour = (($hour % 24) + 24) % 24;
-
-            // Match against TIME_MODIFIERS (skip campfire_night -- that is composite)
-            foreach (self::TIME_MODIFIERS as $period => $def) {
-                if ($period === 'campfire_night') continue;
-                if (isset($def['hours']) && in_array($hour, $def['hours'], true)) {
-                    return $period;
-                }
-            }
-
-            return 'day';
-        } catch (\Throwable $e) {
-            self::logError('detectTimeOfDay', $e);
-            return 'day';
-        }
-    }
-
-    /**
-     * Fallback time-of-day detection from the infoloc data string.
-     * Parses timestamps like "6:39 PM" or "10:29 AM" from the context.
-     *
-     * @return string  Time period key
-     */
-    private static function detectTimeOfDayFromInfoLoc()
-    {
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if (!$db) return 'day';
-
-            $row = $db->fetchOne(
-                "SELECT data FROM eventlog WHERE type IN ('infoloc') AND data LIKE '%Current Date%' ORDER BY gamets DESC, ts DESC LIMIT 1"
-            );
-            if (!$row || empty($row['data'])) return 'day';
-
-            // Parse time like "6:39 PM" or "10:29 AM"
-            if (preg_match('/(\d{1,2}):(\d{2})\s*(AM|PM)/i', $row['data'], $m)) {
-                $hour = intval($m[1]);
-                $isPM = strtoupper($m[3]) === 'PM';
-                if ($isPM && $hour < 12) $hour += 12;
-                if (!$isPM && $hour === 12) $hour = 0;
-
-                foreach (self::TIME_MODIFIERS as $period => $def) {
-                    if ($period === 'campfire_night') continue;
-                    if (isset($def['hours']) && in_array($hour, $def['hours'], true)) {
-                        return $period;
-                    }
-                }
-            }
-
-            return 'day';
-        } catch (\Throwable $e) {
-            self::logError('detectTimeOfDayFromInfoLoc', $e);
-            return 'day';
-        }
-    }
-
-    /**
-     * Get combined environmental modifiers for location + time of day.
-     *
-     * Merges location category effects with time-of-day effects.
-     * Special case: if it is night AND the NPC is near a warm fire (campfire/hearth),
-     * the campfire_night bonus replaces the normal night effects (the "golden moment").
-     *
-     * @param string $locationCategory   Location category from detectLocation()
-     * @param string $timeOfDay          Time period from detectTimeOfDay()
-     * @param array  $activePhysicalStates  Currently active physical states (for campfire detection)
-     * @return array  Merged dimension effects ['comfort' => +X, 'warmth' => +Y, ...]
-     */
-    public static function getLocationModifiers($locationCategory, $timeOfDay, $activePhysicalStates = [])
-    {
+        $cfg = self::getConfig();
         $effects = [];
-
-        // Location effects
-        if (isset(self::LOCATION_CATEGORIES[$locationCategory])) {
-            foreach (self::LOCATION_CATEGORIES[$locationCategory]['effects'] as $dim => $val) {
-                $effects[$dim] = ($effects[$dim] ?? 0) + $val;
+        foreach ((array) ($cfg['environment_facet_effects'] ?? []) as $facet => $dims) {
+            $w = floatval($facets[$facet] ?? 0.0);
+            if ($w <= 0.0) continue;
+            foreach ((array) $dims as $dim => $delta) {
+                $effects[$dim] = ($effects[$dim] ?? 0.0) + $w * floatval($delta);
             }
         }
-
-        // Time effects -- check for campfire night golden moment first
-        $isCampfireNight = false;
-        if ($timeOfDay === 'night' && in_array('warm_fire', $activePhysicalStates, true)) {
-            $isCampfireNight = true;
-            // Apply campfire_night effects instead of normal night
-            $campfireEffects = self::TIME_MODIFIERS['campfire_night']['effects'] ?? [];
-            foreach ($campfireEffects as $dim => $val) {
-                $effects[$dim] = ($effects[$dim] ?? 0) + $val;
-            }
-        } else {
-            // Normal time-of-day effects
-            if (isset(self::TIME_MODIFIERS[$timeOfDay]['effects'])) {
-                foreach (self::TIME_MODIFIERS[$timeOfDay]['effects'] as $dim => $val) {
-                    $effects[$dim] = ($effects[$dim] ?? 0) + $val;
-                }
+        if ($timeOfDay !== null) {
+            foreach ((array) (($cfg['environment_time_effects'] ?? [])[$timeOfDay] ?? []) as $dim => $delta) {
+                $effects[$dim] = ($effects[$dim] ?? 0.0) + floatval($delta);
             }
         }
-
-        return $effects;
+        $out = [];
+        foreach ($effects as $dim => $v) {
+            if (abs($v) >= 0.01) $out[$dim] = round($v, 2);
+        }
+        ksort($out);
+        return $out;
     }
 
     /**
-     * Apply environmental modifiers to NPC dynamics.
+     * Apply environmental modifiers to NPC dynamics (prerequest, dimension engine on).
      *
-     * Detects location + time of day, combines modifiers, and applies them
-     * via applyDelta. Environmental effects are TEMPORARY -- they only apply
-     * when the location or time period changes.
+     * Reads the NPC's core place (RelDynFacets::currentPlaceContext), turns it into facets
+     * and effects (environmentEffects). When the effects differ from the ones applied last
+     * time, those are reversed and the new ones applied through applyDelta. Tracked in
+     * $dynamics['_env_applied_effects'] (dim => applied delta) and
+     * $dynamics['_active_environment'] ("place|time of day" + effect signature).
      *
-     * Tracks the active environment in $dynamics['_active_environment'] to
-     * prevent re-application on the same location+time combination.
-     *
-     * Uses physical states from Chunk 2 (detectPhysicalStates) to detect
-     * warm_fire for the campfire night golden moment.
-     *
-     * @param array  &$dynamics    NPC dynamics blob (by reference)
-     * @param string $npcName      NPC name
-     * @param string $playerName   Player name
-     * @param string $temperament  Inferred temperament
-     * @return array  Applied effects or empty array if no change
+     * @return array Applied effects, or [] when nothing changed
      */
     public static function applyEnvironmentalModifiers(&$dynamics, $npcName, $playerName, $temperament)
     {
         $config = self::getConfig();
-        if (empty($config['dimension_engine_enabled'])) {
+        if (empty($config['dimension_engine_enabled']) || empty($config['environment_modifiers_enabled'])) {
             return [];
         }
 
-        // Detect current environment
-        $locationCategory = self::detectLocation($npcName);
-        $timeOfDay = self::detectTimeOfDay();
-
-        // Get physical states from Chunk 2 for campfire detection
-        $physicalStates = $dynamics['_active_physical_states'] ?? [];
-        // If no physical states tracked yet, try detecting them
-        if (empty($physicalStates)) {
-            $physicalStates = self::detectPhysicalStates($npcName, $playerName);
-        }
-
-        // Check if environment has changed since last application
-        $hasWarmFire = in_array('warm_fire', $physicalStates, true);
-        $envKey = $locationCategory . ':' . $timeOfDay . ':' . ($hasWarmFire ? 'fire' : '');
-        $prevEnv = $dynamics['_active_environment'] ?? '';
-
-        if ($envKey === $prevEnv) {
-            // No change -- skip re-application
+        $place = RelDynFacets::currentPlaceContext((string) $npcName);
+        $effects = empty($place['known']) ? [] : self::environmentEffects(RelDynFacets::placeFacets($place), $place['time_of_day']);
+        $envKey = ($place['name'] !== '' ? $place['name'] : ($place['known'] ? 'wilderness' : 'unknown'))
+            . '|' . ($place['time_of_day'] ?? 'unknown') . '|' . json_encode($effects);
+        if ($envKey === ($dynamics['_active_environment'] ?? '')) {
             return [];
         }
 
-        // Reverse previous environmental effects if tracked
+        // Reverse previous environmental effects exactly: take back what was applied (not a
+        // new experience through applyDelta's physics, which would leave a residue each time).
         if (!empty($dynamics['_env_applied_effects']) && is_array($dynamics['_env_applied_effects'])) {
             foreach ($dynamics['_env_applied_effects'] as $dim => $val) {
-                if (abs($val) > 0.0001 && isset($dynamics['dimensions'][$dim])) {
-                    self::applyDelta($dim, $dynamics, -$val, $temperament);
+                $def = self::getDimensionDefinition($dim);
+                if (abs($val) > 0.0001 && $def && isset($dynamics['dimensions'][$dim])) {
+                    $x = floatval($dynamics['dimensions'][$dim]['x'] ?? 0) - floatval($val);
+                    $dynamics['dimensions'][$dim]['x'] = max((float) $def['range_min'], min((float) $def['range_max'], $x));
                 }
             }
         }
 
-        // Get new combined modifiers
-        $effects = self::getLocationModifiers($locationCategory, $timeOfDay, $physicalStates);
-
-        if (empty($effects)) {
-            // Clear tracking
-            $dynamics['_active_environment'] = $envKey;
-            $dynamics['_env_applied_effects'] = [];
-            return [];
-        }
-
-        // Apply new environmental effects via applyDelta
         $appliedEffects = [];
         foreach ($effects as $dim => $val) {
-            if (abs($val) < 0.0001) continue;
             if (!isset($dynamics['dimensions'][$dim])) continue;
-
             $actual = self::applyDelta($dim, $dynamics, floatval($val), $temperament);
             if (abs($actual) > 0.0001) {
                 $appliedEffects[$dim] = $actual;
             }
         }
 
-        // Track current environment state
         $dynamics['_active_environment'] = $envKey;
         $dynamics['_env_applied_effects'] = $appliedEffects;
 
-        // Log
-        if (!empty($config['dimension_debug_logging']) || !empty($config['log_enabled'])) {
+        if (!empty($appliedEffects) && (!empty($config['dimension_debug_logging']) || !empty($config['log_enabled']))) {
             $effectStr = [];
             foreach ($appliedEffects as $dim => $val) {
-                $sign = $val > 0 ? '+' : '';
-                $effectStr[] = "{$dim}={$sign}" . round($val, 1);
+                $effectStr[] = "{$dim}=" . ($val > 0 ? '+' : '') . round($val, 1);
             }
-            $isCampfire = $hasWarmFire ? ' [CAMPFIRE]' : '';
-            self::log("[RelDyn-ENV] Location={$locationCategory} Time={$timeOfDay}{$isCampfire}: " . implode(', ', $effectStr));
+            self::log("[RelDyn-ENV] {$npcName} @ " . ($place['name'] ?: 'wilderness') . " ({$place['time_of_day']}): " . implode(', ', $effectStr));
         }
 
         return $appliedEffects;
     }
 
-    /**
-     * Get the current environment state summary for context building.
-     *
-     * Returns a human-readable description of the environmental influences
-     * currently affecting the NPC, for use in LLM context injection.
-     *
-     * @param array $dynamics  NPC dynamics blob
-     * @return string|null  Environment description or null if none active
-     */
-    public static function getEnvironmentSummary($dynamics)
-    {
-        $envKey = $dynamics['_active_environment'] ?? '';
-        if (empty($envKey)) return null;
-
-        $parts = explode(':', $envKey);
-        $location = $parts[0] ?? 'unknown';
-        $time = $parts[1] ?? 'day';
-        $hasFire = ($parts[2] ?? '') === 'fire';
-
-        if ($location === 'unknown' && $time === 'day' && !$hasFire) return null;
-
-        $locationNames = [
-            'home'           => 'at home',
-            'tavern'         => 'in a tavern',
-            'temple'         => 'in a temple',
-            'dungeon'        => 'in a dangerous place',
-            'wilderness'     => 'in the wilderness',
-            'city'           => 'in the city',
-            'college'        => 'at the College',
-            'companion_hall' => 'in Jorrvaskr',
-        ];
-
-        $timeNames = [
-            'dawn'  => 'early morning light',
-            'day'   => null,
-            'dusk'  => 'the fading light of dusk',
-            'night' => 'the dark of night',
-        ];
-
-        $desc = [];
-        if (isset($locationNames[$location])) {
-            $desc[] = $locationNames[$location];
-        }
-        if (isset($timeNames[$time]) && $timeNames[$time] !== null) {
-            $desc[] = $timeNames[$time];
-        }
-        if ($hasFire) {
-            $desc[] = 'the warmth of a nearby fire';
-        }
-
-        if (empty($desc)) return null;
-        return implode(', ', $desc);
-    }
-
-    // ========== END LOCATION + ACTIVITY SENSING ==========
+    // ========== END ENVIRONMENTAL MODIFIERS ==========
 
 
     // ========== ITEM DIMENSION MODIFIER METHODS (PR 8) ==========
@@ -11192,7 +10855,7 @@ class RelationshipDynamics
      * Detect item events from the current interaction context.
      *
      * Parses gameRequest action data and eventlog for:
-     *   - Consume: MinAI isDrunk/isOnSkooma flags, or itemfound with consume keywords
+     *   - Consume: eventlog itemfound with consume keywords
      *   - Gift:    ExtCmdGiveItem action pattern, or "gave X to NPC" eventlog
      *
      * Returns an array of detected events, each:
@@ -11259,23 +10922,8 @@ class RelationshipDynamics
             }
         }
 
-        // --- Consumable detection: MinAI state flags ---
-        if (function_exists('IsEnabled')) {
-            if (IsEnabled($npcName, 'isDrunk')) {
-                $events[] = [
-                    'action' => 'consume',
-                    'item'   => 'Ale',
-                    'source' => 'minai_flag',
-                ];
-            }
-            if (IsEnabled($npcName, 'isOnSkooma')) {
-                $events[] = [
-                    'action' => 'consume',
-                    'item'   => 'Skooma',
-                    'source' => 'minai_flag',
-                ];
-            }
-        }
+        // (Drunk / on-skooma states were MinAI flags; CHIM 3.4.1 core has none, so only
+        // the eventlog consume lines below count.)
 
         // --- Consumable detection: eventlog consume patterns ---
         if ($db && $nowGamets > 0) {
@@ -11311,8 +10959,7 @@ class RelationshipDynamics
      * Process all detected item events for this interaction.
      *
      * Orchestrator that calls processConsumable, processEquipChange, and
-     * processGift based on detected events. Deduplicates MinAI flag-based
-     * consumable detection to avoid double-applying (tracks in _last_consumable_flags).
+     * processGift based on detected events.
      *
      * @param array       &$dynamics    NPC dynamics blob
      * @param array       $gameRequest  Current game request
@@ -11335,25 +10982,9 @@ class RelationshipDynamics
 
         $allResults = ['consumable' => [], 'gift' => [], 'equip' => []];
 
-        // Track which MinAI flags we've already processed to avoid re-applying
-        // each interaction while the flag remains active
-        if (!isset($dynamics['_last_consumable_flags'])) {
-            $dynamics['_last_consumable_flags'] = [];
-        }
-
         foreach ($events as $event) {
             switch ($event['action']) {
                 case 'consume':
-                    // Deduplicate MinAI flag-based detection
-                    $source = $event['source'] ?? 'unknown';
-                    if ($source === 'minai_flag') {
-                        $flagKey = strtolower($event['item']);
-                        if (in_array($flagKey, $dynamics['_last_consumable_flags'], true)) {
-                            continue 2; // Already processed while this flag was active
-                        }
-                        $dynamics['_last_consumable_flags'][] = $flagKey;
-                    }
-
                     $results = self::processConsumable($dynamics, $event['item'], $temperament);
                     if (!empty($results)) {
                         $allResults['consumable'][] = ['item' => $event['item'], 'deltas' => $results];
@@ -11386,27 +11017,6 @@ class RelationshipDynamics
                         $allResults['equip'][] = ['item' => $event['item'], 'action' => 'unequip', 'deltas' => $results];
                     }
                     break;
-            }
-        }
-
-        // Clear MinAI consumable flags that are no longer active
-        if (function_exists('IsEnabled')) {
-            $flagsToClear = [];
-            foreach ($dynamics['_last_consumable_flags'] as $flagKey) {
-                $minaiKey = null;
-                if ($flagKey === 'ale' || $flagKey === 'mead' || $flagKey === 'wine') {
-                    $minaiKey = 'isDrunk';
-                } elseif ($flagKey === 'skooma') {
-                    $minaiKey = 'isOnSkooma';
-                }
-                if ($minaiKey && !IsEnabled($npcName, $minaiKey)) {
-                    $flagsToClear[] = $flagKey;
-                }
-            }
-            if (!empty($flagsToClear)) {
-                $dynamics['_last_consumable_flags'] = array_values(
-                    array_diff($dynamics['_last_consumable_flags'], $flagsToClear)
-                );
             }
         }
 
@@ -11669,149 +11279,76 @@ class RelationshipDynamics
     // ========== REPUTATION LAYER METHODS (PR 9) ==========
 
     /**
-     * Calculate reputation modifiers for a player-NPC pair.
+     * Calculate reputation modifiers for a player-NPC pair from player stats.
      *
-     * Reads player data from MinAI (factions, achievements, crime stats)
-     * and computes per-dimension reputation bonuses/penalties.
+     * $stats (all optional; a missing key is unknown and adds nothing):
+     *   dragon_kills int, quests_completed int, bounty_gold int (all holds), murders int,
+     *   thane_holds string[] (hold names as NPC_HOLD_KEYWORDS values), level int,
+     *   player_factions string[] and npc_factions string[] (FACTION_REPUTATION_MAP names),
+     *   dragonborn bool.
+     * April read these from MinAI actor values; CHIM 3.4.1 core has no such source wired yet
+     * (playerReputationStats()), so nothing is invented here.
      *
-     * All reads are soft-gated: if MinAI functions are unavailable or data
-     * is missing, the corresponding source is silently skipped.
-     *
-     * @param string      $playerName   Player character name
-     * @param string      $npcName      NPC name
-     * @param string|null $temperament  NPC temperament (for faction-selective weighting)
      * @return array  Per-dimension modifiers, e.g. ['trust' => 5, 'respect' => 12, 'comfort' => 3]
      */
-    public static function calculateReputation($playerName, $npcName, $temperament)
+    public static function calculateReputation($playerName, $npcName, $temperament, array $stats = [])
     {
         $modifiers = ['trust' => 0.0, 'respect' => 0.0, 'comfort' => 0.0];
 
         if (empty($playerName)) {
             return $modifiers;
         }
-
-        // Soft-gate: MinAI functions must be loaded
-        $hasMinAI = function_exists('GetActorValue') && function_exists('IsInFaction');
-
-        // ------------------------------------------------------------------
-        // 1. Dragon kills: fame from slaying dragons
-        // ------------------------------------------------------------------
-        if ($hasMinAI) {
-            $dragonKills = intval(GetActorValue($playerName, "DragonKills", true));
-            if ($dragonKills > 0) {
-                $capped = min($dragonKills, 10); // Cap at 10 kills for modifier
-                foreach (self::REPUTATION_SOURCES['dragon_kills'] as $dim => $perUnit) {
-                    $modifiers[$dim] += $capped * $perUnit;
-                }
+        $add = function (string $source, float $units) use (&$modifiers) {
+            foreach (self::REPUTATION_SOURCES[$source] as $dim => $perUnit) {
+                $modifiers[$dim] += $units * $perUnit;
             }
-        }
+        };
 
-        // ------------------------------------------------------------------
-        // 2. Quests completed: general fame from helpfulness
-        // ------------------------------------------------------------------
-        if ($hasMinAI) {
-            $quests = intval(GetActorValue($playerName, "QuestsCompleted", true));
-            if ($quests > 0) {
-                $capped = min($quests, 40); // Cap at 40 quests
-                foreach (self::REPUTATION_SOURCES['quests_completed'] as $dim => $perUnit) {
-                    $modifiers[$dim] += $capped * $perUnit;
-                }
-            }
-        }
+        // 1. Dragon kills: fame from slaying dragons (capped at 10 kills)
+        $dragonKills = intval($stats['dragon_kills'] ?? 0);
+        if ($dragonKills > 0) $add('dragon_kills', min($dragonKills, 10));
 
-        // ------------------------------------------------------------------
-        // 3. Crimes committed: infamy from criminal activity
-        // ------------------------------------------------------------------
-        if ($hasMinAI) {
-            // Crime gold across holds is tracked via bountyContext
-            $bountyInfo = GetActorValue($playerName, "bountyContext", true);
-            if (!empty($bountyInfo)) {
-                $totalBounty = 0;
-                $bounties = explode(";", $bountyInfo);
-                foreach ($bounties as $bounty) {
-                    $parts = explode(":", trim($bounty));
-                    if (count($parts) == 2) {
-                        $totalBounty += abs(intval(trim($parts[1])));
-                    }
-                }
-                // Convert bounty gold to "crime units": 1 unit per 100 gold
-                $crimeUnits = min(intval($totalBounty / 100), 20); // Cap at 20 units
-                if ($crimeUnits > 0) {
-                    foreach (self::REPUTATION_SOURCES['crimes_committed'] as $dim => $perUnit) {
-                        $modifiers[$dim] += $crimeUnits * $perUnit;
+        // 2. Quests completed: general fame from helpfulness (capped at 40)
+        $quests = intval($stats['quests_completed'] ?? 0);
+        if ($quests > 0) $add('quests_completed', min($quests, 40));
+
+        // 3. Crimes: 1 unit per 100 bounty gold across holds (capped at 20 units)
+        $crimeUnits = min(intdiv(abs(intval($stats['bounty_gold'] ?? 0)), 100), 20);
+        if ($crimeUnits > 0) $add('crimes_committed', $crimeUnits);
+
+        // 4. Murders: heavy infamy with fear-respect component (capped at 5)
+        $murders = intval($stats['murders'] ?? 0);
+        if ($murders > 0) $add('murders', min($murders, 5));
+
+        // 5. Thane status: only counts in the NPC's hold
+        $thaneHolds = (array) ($stats['thane_holds'] ?? []);
+        if (!empty($thaneHolds)) {
+            $npcHold = self::detectNpcHold($npcName);
+            if ($npcHold !== null) {
+                foreach ($thaneHolds as $hold) {
+                    if (strcasecmp(trim((string) $hold), $npcHold) === 0) {
+                        $add('thane', 1);
+                        break;
                     }
                 }
             }
         }
 
-        // ------------------------------------------------------------------
-        // 4. Murders: heavy infamy with fear-respect component
-        // ------------------------------------------------------------------
-        if ($hasMinAI) {
-            $murders = intval(GetActorValue($playerName, "Murders", true));
-            if ($murders > 0) {
-                $capped = min($murders, 5); // Cap at 5 murders
-                foreach (self::REPUTATION_SOURCES['murders'] as $dim => $perUnit) {
-                    $modifiers[$dim] += $capped * $perUnit;
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // 5. Thane status: local respect + comfort (only if NPC is in that hold)
-        // ------------------------------------------------------------------
-        if ($hasMinAI) {
-            $thaneStr = trim(GetActorValue($playerName, "thane_achievement", true));
-            if (!empty($thaneStr)) {
-                $thaneHolds = array_filter(explode("~", $thaneStr));
-                $npcHold = self::detectNpcHold($npcName);
-
-                if ($npcHold !== null) {
-                    foreach ($thaneHolds as $hold) {
-                        if (strcasecmp(trim($hold), $npcHold) === 0) {
-                            foreach (self::REPUTATION_SOURCES['thane'] as $dim => $perUnit) {
-                                $modifiers[$dim] += $perUnit;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
         // 6. Faction rank: selective respect based on shared/rival factions
-        // ------------------------------------------------------------------
-        if ($hasMinAI) {
-            $factionBonus = self::calculateFactionReputation($playerName, $npcName);
-            $modifiers['respect'] += $factionBonus;
-        }
+        $modifiers['respect'] += self::calculateFactionReputation(
+            (array) ($stats['npc_factions'] ?? []), (array) ($stats['player_factions'] ?? []));
 
-        // ------------------------------------------------------------------
-        // 7. Player level: raw power signal (mild respect)
-        // ------------------------------------------------------------------
-        if ($hasMinAI) {
-            $level = intval(GetActorValue($playerName, "level", true));
-            if ($level > 10) {
-                // Only levels above 10 contribute (everyone starts somewhere)
-                $effectiveLevel = min($level - 10, 40); // Cap benefit at level 50
-                foreach (self::REPUTATION_SOURCES['player_level'] as $dim => $perUnit) {
-                    $modifiers[$dim] += $effectiveLevel * $perUnit;
-                }
-            }
-        }
+        // 7. Player level: only levels above 10 contribute, capped at level 50
+        $level = intval($stats['level'] ?? 0);
+        if ($level > 10) $add('player_level', min($level - 10, 40));
 
-        // ------------------------------------------------------------------
-        // 8. Dragonborn recognition: bonus for being known as Dragonborn
-        // ------------------------------------------------------------------
-        if ($hasMinAI && IsInFaction($playerName, "Greybeards")) {
+        // 8. Dragonborn recognition
+        if (!empty($stats['dragonborn'])) {
             $modifiers['respect'] += 10.0;
             $modifiers['trust']   += 3.0;
         }
 
-        // ------------------------------------------------------------------
         // Apply caps
-        // ------------------------------------------------------------------
         foreach (self::REPUTATION_CAPS as $dim => $caps) {
             if (isset($modifiers[$dim])) {
                 $modifiers[$dim] = max($caps['min'], min($caps['max'], $modifiers[$dim]));
@@ -11821,6 +11358,16 @@ class RelationshipDynamics
         self::log("Reputation calculated for {$playerName} -> {$npcName}: " . json_encode($modifiers));
 
         return $modifiers;
+    }
+
+    /**
+     * Player stats calculateReputation() reads. CHIM 3.4.1 core keeps Skyrim stats in
+     * core_player, but no reader is wired yet (roadmap player-stats-pipeline), and April's
+     * source was MinAI: unknown, so [] and reputation applies nothing.
+     */
+    public static function playerReputationStats($playerName): array
+    {
+        return [];
     }
 
     /**
@@ -11865,8 +11412,9 @@ class RelationshipDynamics
      */
     public static function applyReputationModifiers(&$dynamics, $playerName, $npcName, $temperament)
     {
-        // Skip if MinAI is not available
-        if (!function_exists('GetActorValue')) {
+        // No player stats known (no core source wired yet): nothing to apply
+        $stats = self::playerReputationStats($playerName);
+        if (empty($stats)) {
             return;
         }
 
@@ -11883,7 +11431,7 @@ class RelationshipDynamics
 
         // Calculate raw reputation (only once -- cache the raw values)
         if (!isset($dynamics['_reputation_raw']) || empty($dynamics['_reputation_raw'])) {
-            $rawReputation = self::calculateReputation($playerName, $npcName, $temperament);
+            $rawReputation = self::calculateReputation($playerName, $npcName, $temperament, $stats);
             $dynamics['_reputation_raw'] = $rawReputation;
         } else {
             $rawReputation = $dynamics['_reputation_raw'];
@@ -11924,81 +11472,62 @@ class RelationshipDynamics
     }
 
     /**
-     * Detect which hold an NPC belongs to, based on their faction data.
-     *
-     * Uses MinAI's faction cache to read the NPC's AllFactions string,
-     * then matches against NPC_HOLD_KEYWORDS.
+     * The hold the NPC is in: the hold of its current core place (the player's scene;
+     * RelDynFacets::currentPlaceContext), or of the place name, matched against
+     * NPC_HOLD_KEYWORDS. null when core has no location or no keyword matches.
+     * (April read MinAI's AllFactions / locationkeywords.)
      *
      * @param string $npcName  NPC name
      * @return string|null  Hold name (e.g., 'Whiterun') or null if unknown
      */
     public static function detectNpcHold($npcName)
     {
-        if (!function_exists('GetActorValue')) {
+        $place = RelDynFacets::currentPlaceContext((string) $npcName);
+        if (empty($place['known'])) {
             return null;
         }
-
-        $allFactions = strtolower(GetActorValue($npcName, "AllFactions"));
-        if (empty($allFactions)) {
-            return null;
-        }
-
-        foreach (self::NPC_HOLD_KEYWORDS as $keyword => $holdName) {
-            if (strpos($allFactions, $keyword) !== false) {
-                return $holdName;
-            }
-        }
-
-        // Fallback: check location keywords if available
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db) {
-                $escaped = $db->escape(strtolower($npcName));
-                $row = $db->fetchOne("SELECT value FROM conf_opts WHERE LOWER(id) = LOWER('_minai_{$escaped}//locationkeywords') LIMIT 1");
-                if (!empty($row['value'])) {
-                    $locLower = strtolower($row['value']);
-                    foreach (self::NPC_HOLD_KEYWORDS as $keyword => $holdName) {
-                        if (strpos($locLower, $keyword) !== false) {
-                            return $holdName;
-                        }
-                    }
+        foreach ([$place['hold'], $place['name']] as $text) {
+            $lower = strtolower((string) $text);
+            if ($lower === '') continue;
+            foreach (self::NPC_HOLD_KEYWORDS as $keyword => $holdName) {
+                if (strpos($lower, $keyword) !== false) {
+                    return $holdName;
                 }
             }
-        } catch (\Throwable $e) {
-            self::logError('detectNpcHold', $e);
-            // Silent failure -- reputation is non-critical
         }
-
         return null;
     }
 
     /**
-     * Calculate faction-based reputation bonus/penalty.
+     * Faction-based reputation bonus/penalty (respect points).
      *
-     * Checks if the NPC belongs to any faction in FACTION_REPUTATION_MAP,
-     * then checks if the player belongs to any of the respected/disdained factions.
+     * For each FACTION_REPUTATION_MAP faction the NPC is in, the player's membership in a
+     * respected faction adds faction_rank respect, a disdained one costs half of it.
+     * Faction names as in FACTION_REPUTATION_MAP (case-insensitive). Pure: the membership
+     * lists come from the caller (April asked MinAI's IsInFaction).
      *
-     * @param string $playerName  Player character name
-     * @param string $npcName     NPC name
+     * @param string[] $npcFactions     factions the NPC belongs to
+     * @param string[] $playerFactions  factions the player belongs to
      * @return float  Net respect modifier from faction relationships
      */
-    public static function calculateFactionReputation($playerName, $npcName)
+    public static function calculateFactionReputation(array $npcFactions, array $playerFactions)
     {
-        if (!function_exists('IsInFaction')) {
-            return 0.0;
-        }
+        $in = function (string $faction, array $list): bool {
+            foreach ($list as $member) {
+                if (strcasecmp(trim((string) $member), $faction) === 0) return true;
+            }
+            return false;
+        };
 
         $netBonus = 0.0;
-        $matchFound = false;
-
         foreach (self::FACTION_REPUTATION_MAP as $npcFaction => $rules) {
-            if (!IsInFaction($npcName, $npcFaction)) {
+            if (!$in($npcFaction, $npcFactions)) {
                 continue;
             }
 
-            // NPC is in this faction -- check player allegiances
+            $matchFound = false;
             foreach ($rules['respects'] as $playerFaction) {
-                if (IsInFaction($playerName, $playerFaction)) {
+                if ($in($playerFaction, $playerFactions)) {
                     $netBonus += self::REPUTATION_SOURCES['faction_rank']['respect'];
                     $matchFound = true;
                     break; // One match per faction group is enough
@@ -12006,7 +11535,7 @@ class RelationshipDynamics
             }
 
             foreach ($rules['disdains'] as $playerFaction) {
-                if (IsInFaction($playerName, $playerFaction)) {
+                if ($in($playerFaction, $playerFactions)) {
                     $netBonus -= self::REPUTATION_SOURCES['faction_rank']['respect'] * 0.5;
                     break;
                 }

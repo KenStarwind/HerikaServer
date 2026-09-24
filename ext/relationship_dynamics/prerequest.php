@@ -168,8 +168,8 @@ RelationshipDynamics::markContact($dynamics);
 // the place read needs core's CACHE_LOCATION, which main.php sets after these hooks.
 
 // -------------------------------------------------------------------------
-// Physical State Bridges (PR 8): detect physical conditions from MinAI
-// signals and apply/clear temporary dimension modifiers.
+// Physical State Bridges (PR 8): detect physical conditions from core data
+// (weather outside, time of day) and apply/clear temporary dimension modifiers.
 // Gated behind dimension_engine_enabled.
 // -------------------------------------------------------------------------
 if (!empty($reldynCfg['dimension_engine_enabled'])) {
@@ -189,6 +189,10 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
 
     // Store active states in globals for context.php to reference
     $GLOBALS['RELDYN_ACTIVE_PHYS_STATES'] = $activePhysStates;
+
+    // Environmental modifiers: the core place's facets (danger, dark) and the hour (dawn,
+    // dusk) move arousal / comfort / mood for anyone; re-applied only when they change.
+    RelationshipDynamics::applyEnvironmentalModifiers($dynamics, $npcName, $physPlayerName, $physTemperament);
 }
 
 // ========== ATTRACTION MATRIX EVALUATION (PR 11) ==========
