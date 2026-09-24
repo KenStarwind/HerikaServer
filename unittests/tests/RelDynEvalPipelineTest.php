@@ -338,6 +338,21 @@ final class RelDynEvalPipelineTest extends TestCase
         $this->assertEqualsWithDelta(5.75, $this->coreAffinityMoved($n0, $npc), 1e-3);
     }
 
+    public function testResentmentAtSeventyFreezesEvalGainsAndLossesStillLand(): void
+    {
+        // MDD 15.5: resentment 70 = withdrawal, affinity frozen. M's 0.25 floor cannot express
+        // 0, so on the eval path the cap applies getResentmentEffects()'s freeze (and only it).
+        $npc = $this->npc(['temperament' => 'Humble', 'core_aff' => 25, 'passion' => 50, 'resentment' => 75]);
+        $n0 = $npc;
+        RelationshipDynamics::applyEvalSignal('Hulda', $npc, 'affinity', 10, ['help'], 1.0);
+        $this->assertEqualsWithDelta(0.0, $this->coreAffinityMoved($n0, $npc), 1e-9, 'gain frozen');
+        $this->assertStringContainsString('affinity gain x0', (string) file_get_contents($this->errorLog));
+
+        // Losses are not frozen: Humble R 1.0, maturity 50 -> x1.0 = -10 core
+        RelationshipDynamics::applyEvalSignal('Hulda', $npc, 'affinity', -10, ['insult'], 1.0);
+        $this->assertEqualsWithDelta(-10.0, $this->coreAffinityMoved($n0, $npc), 1e-3);
+    }
+
     // ---- relational dimensions + maturity (same pipeline, no M) -----------------------------
 
     public static function dimensionCases(): array
@@ -435,7 +450,7 @@ final class RelDynEvalPipelineTest extends TestCase
         $this->assertStringContainsString('affinity 45 outside -30..30', $log);
     }
 
-    public function testContractItemAppliesEverySignalAndQueuesTheGrievance(): void
+    public function testContractItemAppliesEverySignalAndRecordsTheGrievance(): void
     {
         $npc = $this->npc(['temperament' => 'Stoic', 'core_aff' => 15, 'maturity_type' => 'Adaptive', 'maturity' => 55]);
         $npc['dimensions']['trust'] = ['x' => 35, 'baseline' => 35];
@@ -453,10 +468,14 @@ final class RelDynEvalPipelineTest extends TestCase
         $this->assertEqualsWithDelta(-7.0, $totals['trust'], 1e-3);
         $this->assertEqualsWithDelta(-2.0, $totals['maturity'], 1e-3);
         $this->assertArrayNotHasKey('comfort', $totals, 'zero signals are not applied');
-        $pending = $npc['dimensions']['resentment']['pending_grievances'] ?? [];
-        $this->assertCount(1, $pending);
-        $this->assertSame('broken_promise', $pending[0]['kind']);
-        $this->assertSame(2, $pending[0]['severity']);
+        // The grievance goes through the resentment accumulator (applyEvalFeelings ->
+        // recordGrievance) once, not onto the legacy pending list as well.
+        $this->assertSame([], $npc['dimensions']['resentment']['pending_grievances'] ?? []);
+        $logged = $npc['dimensions']['resentment']['grievance_log'] ?? [];
+        $this->assertCount(1, $logged);
+        $this->assertSame('broken_promise', $logged[0]['kind']);
+        $this->assertSame(2, $logged[0]['severity']);
+        $this->assertGreaterThan(0, (float) $npc['dimensions']['resentment']['x']);
     }
 
     public function testContractItemForAnotherNpcIsRejected(): void

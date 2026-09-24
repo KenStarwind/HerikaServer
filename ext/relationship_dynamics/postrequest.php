@@ -523,83 +523,18 @@ try {
 }
 
 // -------------------------------------------------------------------------
-// 5. Jealousy scan — check nearby NPCs
+// 5. Jealousy — bystanders are scanned after the eval items are applied (below,
+//    XYZ EVAL DELTA PROCESSING): the eval's intimacy/touch tags are the trigger, the
+//    bystander's core Player.type the commitment (no MARAS on 3.4.1).
 // -------------------------------------------------------------------------
-if (!($reldynCfg['jealousy_enabled'] ?? true)) goto skip_jealousy;
-$romanticInteraction = in_array($interactionLL, [
-    RelationshipDynamics::LL_TOUCH,
-    RelationshipDynamics::LL_WORDS,
-]);
-
-if ($romanticInteraction) {
-    // CACHE_PEOPLE is pipe-delimited: "|Ashe|Lydia|Faendal|"
-    $nearbyNpcs = array_values(array_filter(array_map('trim', explode('|', $GLOBALS['CACHE_PEOPLE'] ?? ''))));
-
-    foreach ($nearbyNpcs as $nearbyNpc) {
-        if (empty($nearbyNpc) || strtolower($nearbyNpc) === strtolower($npcName)) {
-            continue;
-        }
-
-        // Load nearby NPC's dynamics
-        $nearbyDynamics = RelationshipDynamics::getDynamics($nearbyNpc);
-        if (empty($nearbyDynamics['love_language_primary'])) {
-            continue; // Not initialized — skip
-        }
-
-        // Check if they have reason to be jealous
-        $relPref = null;
-        $marasStatus = null;
-        $marasAff = 0;
-
-        // Read relationship_preference: RelDyn first, Sharmat fallback
-        $nearbyDynamics = RelationshipDynamics::getDynamics($nearbyNpc);
-        $relPref = $nearbyDynamics['relationship_preference'] ?? null;
-        if (empty($relPref) && class_exists('NsfwNpcData')) {
-            $relPref = NsfwNpcData::getKey($nearbyNpc, 'relationship_preference');
-        }
-
-        try {
-            $db2 = $GLOBALS['db'] ?? null;
-            if ($db2) {
-                $nearbyEsc = $db2->escape($nearbyNpc);
-                $nRow = $db2->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$nearbyEsc}') LIMIT 1");
-                if (is_array($nRow) && !empty($nRow['extended_data'])) {
-                    $nExt = json_decode($nRow['extended_data'], true) ?: [];
-                    $nRel = RelationshipDynamics::getPlayerRelationshipFromExtended($nExt); // CHIM 3.4.1 key "Player"
-                    if ($nRel && isset($nRel['maras'])) {
-                        $marasStatus = $nRel['maras']['status'] ?? null;
-                        $marasAff = intval($nRel['maras']['affection'] ?? 0);
-                    }
-                }
-            }
-        } catch (Throwable $e) {
-            error_log("[RelDyn-POST] Jealousy relationship read failed for {$nearbyNpc}: " . $e->getMessage());
-            continue;
-        }
-
-        $jealousyGain =RelationshipDynamics::calculateJealousyGain(
-            $nearbyNpc, $npcName, $nearbyDynamics,
-            $relPref, $marasStatus, $marasAff
-        );
-
-        // Attachment style jealousy multiplier (PR 10)
-        $jealousyMult = RelationshipDynamics::getAttachmentModifier($nearbyDynamics, 'jealousy_mult') ?? 1.0;
-        $jealousyGain *= $jealousyMult;
-
-        if ($jealousyGain > 0) {
-            RelationshipDynamics::addJealousy($nearbyDynamics, $jealousyGain, $npcName);
-            RelationshipDynamics::saveDynamics($nearbyNpc, $nearbyDynamics);
-        }
-    }
-}
-
-skip_jealousy:
 
 // -------------------------------------------------------------------------
 // 6. Conflict resolution check
 // -------------------------------------------------------------------------
 if (!($reldynCfg['conflict_enabled'] ?? true)) goto skip_conflict;
-if ($passionGain > 0 && !empty($dynamics['in_conflict'])) {
+// Once contract evals flow for this NPC, their positive_interaction drives repair
+// (applyEvalFeelings); the passion-gain heuristic stands down so nothing counts twice.
+if ($passionGain > 0 && !empty($dynamics['in_conflict']) && !RelationshipDynamics::evalFeelingsActive($dynamics)) {
     $repairBurst = RelationshipDynamics::recordConflictPositive($dynamics);
     if ($repairBurst > 0) {
         RelationshipDynamics::addPassion($dynamics, $repairBurst, 'repair');
@@ -706,6 +641,20 @@ if ($dutyFactor < 1.0) {
 $rdConfig = RelationshipDynamics::getConfig();
 if (!empty($rdConfig['dimension_engine_enabled'])) {
     $evalResults = RelationshipDynamics::processPendingEvalDeltas($npcName, $dynamics);
+    $evalFeelings = $GLOBALS['RELDYN_EVAL_FEELINGS'] ?? [];
+    if (!empty($evalFeelings)) {
+        // Grievances, jealousy, resentment decay and repair from contract items
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+        // The player was intimate with this NPC: committed bystanders nearby get jealous
+        if ($reldynCfg['jealousy_enabled'] ?? true) {
+            foreach ($evalFeelings as $f) {
+                if (!empty($f['romantic_exposure'])) {
+                    RelationshipDynamics::scanBystanderJealousy($npcName);
+                    break;
+                }
+            }
+        }
+    }
     if (!empty($evalResults)) {
         error_log("[RelDyn-POST] XYZ eval deltas applied for {$npcName}: " . json_encode($evalResults));
         // affinity_delta moved the mirror; push it to core as a locked delta
@@ -750,7 +699,8 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
     }
 
     // Natural resentment decay on positive interactions
-    $wasPositive = ($passionGain ?? 0) > 0;
+    // (the contract eval's positive_interaction does this once evals flow: applyEvalFeelings)
+    $wasPositive = ($passionGain ?? 0) > 0 && !RelationshipDynamics::evalFeelingsActive($dynamics);
     if ($wasPositive) {
         $dynamics['_npc_name'] = $npcName;
         $temperament = $dynamics['inferred_temperament'] ?? null;

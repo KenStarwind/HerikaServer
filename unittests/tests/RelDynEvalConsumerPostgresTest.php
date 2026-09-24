@@ -257,8 +257,9 @@ final class RelDynEvalConsumerPostgresTest extends TestCase
         $this->assertSame(12, $this->coreAff($id));
         $stored = $this->plugin($id)['dynamics'];
         $this->assertEqualsWithDelta(-0.6225, (float) $stored['_pending_aff_delta'], 1e-3, 'mirror rounding: 4 places x2');
-        $this->assertCount(1, $stored['dimensions']['resentment']['pending_grievances'], 'grievance queued once');
-        $this->assertSame('mocked', $stored['dimensions']['resentment']['pending_grievances'][0]['kind']);
+        $this->assertSame([], $stored['dimensions']['resentment']['pending_grievances'] ?? [], 'not on the legacy list');
+        $this->assertCount(1, $stored['dimensions']['resentment']['grievance_log'], 'grievance recorded once');
+        $this->assertSame('mocked', $stored['dimensions']['resentment']['grievance_log'][0]['kind']);
         $this->assertStringContainsString('eval item already applied', (string) file_get_contents($this->errorLog));
 
         // A later request finds nothing to apply and leaves core alone.

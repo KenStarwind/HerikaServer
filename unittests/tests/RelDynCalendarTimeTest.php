@@ -219,8 +219,9 @@ final class RelDynCalendarTimeTest extends TestCase
 
     public function testNegativeStatesDoNotDecayWithTimeAlone(): void
     {
-        // Not bonded, no open conflict: a month passes and nothing negative moves.
-        $d = $this->npc(['jealousy_anger' => 35.0], ['resentment' => 40.0, 'resentment_self' => 12.0]);
+        // Not bonded, no open conflict, jealousy below the §5 conversion threshold (30): a month
+        // passes and nothing negative moves (RelDynJealousyConflictTest covers the conversion).
+        $d = $this->npc(['jealousy_anger' => 25.0], ['resentment' => 40.0, 'resentment_self' => 12.0]);
         $d['dimensions']['resentment']['grievance_log'] = [['text' => 'insulted', 'amount' => 5]];
 
         RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 30 * self::DAY);
@@ -243,7 +244,7 @@ final class RelDynCalendarTimeTest extends TestCase
 
         $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 3 * self::DAY);
 
-        $this->assertGreaterThan(10.0 + 3 * $rate * 1.5 - 1e-6, self::resentment($d), 'MDD 15.5 +50% for maturity < 50, then the accumulator physics');
+        $this->assertGreaterThan(10.0 + 3 * $rate * 1.5 - 1e-6, self::resentment($d), 'the accumulator physics (maturity-derived Y, inverted rubber band)');
         $this->assertEqualsWithDelta(self::resentment($expected), self::resentment($d), 1e-6);
         $this->assertEqualsWithDelta(3 * $rate, $r['resentment_raw'], 1e-9);
     }

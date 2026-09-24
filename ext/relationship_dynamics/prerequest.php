@@ -152,6 +152,10 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
         RelationshipDynamics::refreshAffinityMirror($dynamics, $chimAff);  // -100→0, 0→50, 100→100
     }
 }
+// Conflict from an affinity drop within a session, whoever lowered Player.aff (core eval too)
+if (($reldynCfg['conflict_enabled'] ?? true) && $GLOBALS['RELDYN_PRE_AFF'] !== null) {
+    RelationshipDynamics::observeCoreAffinity($dynamics, floatval($GLOBALS['RELDYN_PRE_AFF']), RelationshipDynamics::currentGamets());
+}
 
 $reunionPassion = ($reldynCfg['reunion_enabled'] ?? true) ? RelationshipDynamics::checkReunion($dynamics, $npcAffection) : 0;
 if ($reunionPassion > 0) {
@@ -343,6 +347,8 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
             $reason = 'ick_comfort';
         } elseif ($resentment > 70) {
             $reason = 'resentment';
+        } elseif (floatval($dynamics['jealousy_anger'] ?? 0) >= floatval(RelationshipDynamics::configValue('jealousy_walkaway_at'))) {
+            $reason = 'jealousy';   // MDD 6.5
         } else {
             $reason = 'autonomy';
         }
