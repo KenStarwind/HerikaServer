@@ -289,6 +289,11 @@ $evalJobId = RelDynEval::onPostrequest($npcName, $GLOBALS['gameRequest']);
 // does not score (eval off, no connector, chance, cooldown) keeps the local heuristics.
 $evalOwnsExchange = ($evalJobId !== null);
 
+// ── OGHMA FACETS (oghma-facet-classifier) ──
+// The facet table topics and gifts are appraised from is built in the background when it is
+// missing or stale (RelDynFacetClassifier::maybeLaunchBuild; the game-time path never embeds).
+RelDynFacetClassifier::maybeLaunchBuild($GLOBALS['db'] ?? null, RelationshipDynamics::currentGamets());
+
 // ── NPC-TO-NPC FILTER ──
 // Radiant dialogue is NPC-to-NPC — player isn't involved.
 // Passion/affinity between those NPCs is handled by CHIM core's relationship_system.

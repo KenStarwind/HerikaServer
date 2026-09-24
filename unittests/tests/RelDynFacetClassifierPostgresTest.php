@@ -180,6 +180,7 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
             if (str_starts_with((string) $key, 'RELDYN_')) unset($GLOBALS[$key]);
         }
         RelDynFacetClassifier::setEmbedder(null);
+        RelDynFacetClassifier::setBuildLauncher(null);
         RelationshipDynamics::clearConfigCache();
         Logger::unsetCustomLog();
         pg_close($this->db->link);
@@ -583,5 +584,94 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
         $this->assertSame(1, $gAsheGem['appraisal']['dominant_sign']);
         $this->assertSame(RelDynFacets::feltText('Ashe', $gAsheGem['appraisal'], 'item', 'Soul Gem'), $dAsheGem['_last_gift_felt']);
         $this->assertDoesNotMatchRegularExpression('/\d/', $dAela['_last_gift_felt'] . $dAsheGem['_last_gift_felt']);
+    }
+
+    // ------------------------------------------------------------------
+    // The build runs by itself (review 2026-09-24: only a manual CLI tool ever ran it)
+    // ------------------------------------------------------------------
+
+    private const HOUR = RelationshipDynamics::GAMETS_PER_DAY / 24;
+    private const T0 = 90 * RelationshipDynamics::GAMETS_PER_DAY;
+
+    private array $launched = [];
+
+    /** Every background build the trigger launches runs for real, in-process (only the process spawn is stubbed). */
+    private function runLaunchedBuilds(): void
+    {
+        $this->launched = [];
+        RelDynFacetClassifier::setBuildLauncher(function (string $reason) {
+            $this->launched[] = $reason;
+            $this->build();
+        });
+    }
+
+    public function testTheBuildIsLaunchedInTheBackgroundWhenTheTableIsMissingOrStale(): void
+    {
+        $this->runLaunchedBuilds();
+        $this->assertTrue(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0));
+        $this->assertSame(['missing'], $this->launched);
+        $this->assertSame('embedding_raw', $this->stored('dwemer')['method'], 'the launched build embedded');
+
+        // current: nothing to do, however often it is asked
+        $this->assertFalse(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + 2 * self::HOUR));
+        $this->assertFalse(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + 50 * self::HOUR));
+
+        // core added an Oghma entry: rebuilt (the builder only computes what changed)
+        pg_query($this->db->link, "INSERT INTO oghma (topic, knowledge_class, category, aliases, tags, topic_desc) VALUES ('mead', 'innkeeper', 'items', '', 'tavern', 'Honey mead.')");
+        $this->assertTrue(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + 51 * self::HOUR));
+        $this->assertSame(['missing', 'rows'], $this->launched);
+        $this->assertNotNull($this->stored('mead'));
+
+        // a mapping table edited in config: rebuilt
+        $cfg = RelDynFacetClassifier::configDefaults();
+        $cfg['tag_keywords']['museum'] = ['scholarly' => 0.9];
+        $this->config(['facet_classifier' => ['tag_keywords' => $cfg['tag_keywords']]]);
+        $this->assertTrue(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + 53 * self::HOUR));
+        $this->assertSame(['missing', 'rows', 'config'], $this->launched);
+        $this->assertFalse(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + 55 * self::HOUR));
+    }
+
+    public function testAPriorOnlyBuildRetriesTheEmbeddingOnTheGameCalendarNotEveryRequest(): void
+    {
+        $this->runLaunchedBuilds();
+        $this->serviceDown = true;
+        $this->assertTrue(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0));
+        $this->assertSame('prior', $this->stored('dwemer')['method']);
+        $retry = RelDynFacetClassifier::config()['build']['embedding_retry_game_hours'];
+        $this->assertFalse(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + self::HOUR), 'no respawn while the service is down');
+        $this->assertFalse(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + ($retry - 1) * self::HOUR));
+
+        $this->serviceDown = false;
+        $this->assertTrue(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + ($retry + 1) * self::HOUR));
+        $this->assertSame(['missing', 'embedding'], $this->launched);
+        $this->assertSame('embedding_raw', $this->stored('dwemer')['method']);
+    }
+
+    public function testNoLaunchWhileOneRunsOrWhenSwitchedOffAndOneBuildAtATime(): void
+    {
+        $launched = [];
+        RelDynFacetClassifier::setBuildLauncher(function (string $reason) use (&$launched) { $launched[] = $reason; });
+        $this->assertTrue(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0));
+        // the launched build has not finished yet: a request a few game minutes later does not start another
+        $gap = RelDynFacetClassifier::config()['build']['min_gap_game_hours'];
+        $this->assertFalse(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + 0.5 * $gap * self::HOUR));
+        $this->assertSame(['missing'], $launched);
+
+        // two builds never run together (advisory lock)
+        $other = pg_connect($this->dsn, PGSQL_CONNECT_FORCE_NEW);
+        pg_query($other, "SELECT pg_advisory_lock(hashtext('" . RelDynFacetClassifier::TABLE . "'))");
+        $this->assertSame('locked', $this->build()['skipped'] ?? null);
+        pg_close($other);
+        $this->assertArrayNotHasKey('skipped', $this->build());
+
+        $this->config(['facet_classifier' => ['build' => ['auto' => false]]]);
+        pg_query($this->db->link, 'DROP TABLE ' . RelDynFacetClassifier::TABLE);
+        $this->assertFalse(RelDynFacetClassifier::maybeLaunchBuild($this->db, self::T0 + 100 * self::HOUR), 'auto build off');
+    }
+
+    public function testThePostrequestHookAsksForTheBuild(): void
+    {
+        $hook = (string) file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/postrequest.php');
+        $this->assertStringContainsString('RelDynFacetClassifier::maybeLaunchBuild(', $hook);
     }
 }

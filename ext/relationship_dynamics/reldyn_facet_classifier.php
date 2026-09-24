@@ -41,8 +41,11 @@
  *  so either source alone keeps its own strength (the embedding at most `weight`) and agreement
  *  raises it. Weights stay absolute (not rescaled to a max of 1): weak evidence reads weak.
  *
- * Results are precomputed into RelDyn's own table reldyn_oghma_facets (tools/build_oghma_facets.php,
- * idempotent, versioned by the config tables + method so a change recomputes). The game-time path
+ * Results are precomputed into RelDyn's own table reldyn_oghma_facets (build(), idempotent,
+ * versioned by the config tables + method so a change recomputes). The postrequest hook starts
+ * it in the background by itself (maybeLaunchBuild: table missing, Oghma rows added or removed,
+ * a mapping edited; a prior-only build retries the embedding on the game calendar); the CLI
+ * tool tools/build_oghma_facets.php runs the same build by hand. The game-time path
  * (thingFacets) never calls the embedding service: it reads the table, and when the table or the
  * row is missing it computes the prior live from core's oghma row, then falls back to the keyword
  * tables for items, creatures and activities.
@@ -54,12 +57,16 @@ final class RelDynFacetClassifier
 {
     const TABLE = 'reldyn_oghma_facets';
     const ANCHOR_TABLE = 'reldyn_facet_anchors';
+    /** key => value state of the background build (last_launch_gamets). */
+    const BUILD_STATE_TABLE = 'reldyn_facet_build';
     const KINDS = ['item', 'topic', 'creature', 'place', 'activity'];
     /** Bumped when the math (not the tables) changes, so every row is recomputed. */
     const ALGORITHM = 1;
 
     /** @var callable|null fn(string $text): ?array  -- the embedding HTTP call (tests stub it) */
     private static $embedder = null;
+    /** @var callable|null fn(string $reason): void  -- the background process spawn (tests stub it) */
+    private static $buildLauncher = null;
 
     // =========================================================================
     // Config
@@ -108,6 +115,12 @@ final class RelDynFacetClassifier
                 'weight'         => 0.7,    // noisy-OR discount of the embedding evidence (0..1)
                 'text_chars'     => 600,    // entry text sent to the embedder (MiniLM reads ~256 tokens)
                 'timeout_s'      => 20,     // HTTP timeout per embed call (seconds, builder only)
+            ],
+            // The background build (maybeLaunchBuild, postrequest). Game hours on the game calendar.
+            'build' => [
+                'auto'                       => true,
+                'min_gap_game_hours'         => 1.0,   // no second launch this soon (the first may still run)
+                'embedding_retry_game_hours' => 24.0,  // a build that fell back to the prior retries the embedding this often
             ],
             // How much each source of the prior counts (x its table weight): the entry's own
             // name (topic, aliases) says what it IS; its tags name related things (a sabre cat's
@@ -611,7 +624,7 @@ final class RelDynFacetClassifier
                 error_log("[RelDyn-FACETS] ERROR config facet_classifier.{$key} is not an object; using its default");
                 continue;
             }
-            $cfg[$key] = ($key === 'embedding') ? array_replace($cfg[$key], $value) : $value;
+            $cfg[$key] = in_array($key, ['embedding', 'build'], true) ? array_replace($cfg[$key], $value) : $value;
         }
         return $cfg;
     }
@@ -635,7 +648,7 @@ final class RelDynFacetClassifier
     public static function version(array $cfg, string $method): string
     {
         $shape = $cfg;
-        unset($shape['embedding']['timeout_s']);
+        unset($shape['embedding']['timeout_s'], $shape['build']);
         if ($method === 'prior') {
             unset($shape['anchors'], $shape['embedding']);
         }
@@ -959,6 +972,7 @@ final class RelDynFacetClassifier
             version text NOT NULL,
             mean double precision,
             std double precision)');
+        $db->execQuery('CREATE TABLE IF NOT EXISTS ' . self::BUILD_STATE_TABLE . ' (key text PRIMARY KEY, value text)');
     }
 
     private static function tableExists($db, string $table): bool
@@ -1061,6 +1075,22 @@ final class RelDynFacetClassifier
      *               skipped_current, embedded, reused_vectors, embed_failed, calibrated_on, removed
      */
     public static function build($db, array $opts = []): array
+    {
+        // One build at a time (the background launch and the CLI tool): a session advisory lock.
+        $lock = "hashtext('" . self::TABLE . "')";
+        $got = $db->fetchOne("SELECT pg_try_advisory_lock({$lock}) AS got");
+        if (!in_array($got['got'] ?? null, ['t', true, 1, '1'], true)) {
+            error_log('[RelDyn-FACETS] another Oghma facet build is running; this one is skipped');
+            return ['method' => null, 'skipped' => 'locked'];
+        }
+        try {
+            return self::buildUnlocked($db, $opts);
+        } finally {
+            $db->fetchOne("SELECT pg_advisory_unlock({$lock}) AS released");
+        }
+    }
+
+    private static function buildUnlocked($db, array $opts): array
     {
         $cfg = self::config();
         $p = $cfg['embedding'];
@@ -1165,6 +1195,102 @@ final class RelDynFacetClassifier
         $removed = $db->fetchAll('DELETE FROM ' . self::TABLE . ' f WHERE NOT EXISTS (SELECT 1 FROM oghma o WHERE o.topic = f.topic) RETURNING f.topic');
         $stats['removed'] = is_array($removed) ? count($removed) : 0;
         return $stats;
+    }
+
+    // =========================================================================
+    // Background build (oghma-facet-classifier review 2026-09-24: only a CLI tool ran it)
+    // =========================================================================
+
+    /** Replace the background process spawn (tests); null restores the real one. */
+    public static function setBuildLauncher(?callable $fn): void
+    {
+        self::$buildLauncher = $fn;
+    }
+
+    private static function buildState($db, string $key): ?string
+    {
+        if (!self::tableExists($db, self::BUILD_STATE_TABLE)) return null;
+        $row = $db->fetchOne('SELECT value FROM ' . self::BUILD_STATE_TABLE . ' WHERE key = $1', [$key]);
+        return isset($row['value']) ? (string) $row['value'] : null;
+    }
+
+    /**
+     * Why the stored facets need a build now, or null: 'missing' (no table), 'rows' (Oghma
+     * entries added or removed), 'config' (a row built from other mapping tables / anchors),
+     * 'embedding' (rows only have the prior, and the last launch is embedding_retry_game_hours
+     * of game time ago).
+     */
+    public static function buildNeeded($db, float $now, ?float $lastLaunch = null): ?string
+    {
+        if (!self::tableExists($db, self::TABLE)) return 'missing';
+        $n = $db->fetchOne("SELECT (SELECT count(*) FROM oghma WHERE trim(topic) <> '') AS oghma, (SELECT count(*) FROM " . self::TABLE . ') AS stored');
+        if (intval($n['oghma'] ?? 0) !== intval($n['stored'] ?? 0)) return 'rows';
+        $cfg = self::config();
+        $prior = self::version($cfg, 'prior');
+        $current = [$prior, self::version($cfg, 'embedding'), self::version($cfg, 'embedding_raw')];
+        $versions = array_column((array) $db->fetchAll('SELECT DISTINCT version FROM ' . self::TABLE), 'version');
+        if (array_diff($versions, $current) !== []) return 'config';
+        if (in_array($prior, $versions, true)) {
+            $hours = floatval($cfg['build']['embedding_retry_game_hours']);
+            if ($lastLaunch === null || ($now - $lastLaunch) >= $hours * RelationshipDynamics::GAMETS_PER_DAY / 24.0) return 'embedding';
+        }
+        return null;
+    }
+
+    /**
+     * The postrequest hook's check: when the stored facets need a build (buildNeeded), start
+     * it in the background (tools/build_oghma_facets.php, detached) and stamp the launch.
+     * Never twice within build.min_gap_game_hours of game time (one may still be running;
+     * build() itself also locks). Returns true when it launched one.
+     */
+    public static function maybeLaunchBuild($db, float $now): bool
+    {
+        $b = self::config()['build'];
+        if (!$db || empty($b['auto']) || $now <= 0) return false;
+        try {
+            if (!self::tableExists($db, 'oghma')) return false;
+            $last = self::buildState($db, 'last_launch_gamets');
+            $last = is_numeric($last) ? floatval($last) : null;
+            if ($last !== null && $now > $last && ($now - $last) < floatval($b['min_gap_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0) {
+                return false;
+            }
+            $reason = self::buildNeeded($db, $now, $last);
+            if ($reason === null) return false;
+            self::ensureTables($db);
+            $db->fetchOne('INSERT INTO ' . self::BUILD_STATE_TABLE . ' (key, value) VALUES ($1, $2)'
+                . ' ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value RETURNING key', ['last_launch_gamets', json_encode($now)]);   // exact round trip
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('RelDynFacetClassifier::maybeLaunchBuild', $e);
+            return false;
+        }
+        RelationshipDynamics::log("[FACETS] Oghma facet build launched in the background ({$reason})");
+        return self::launchBuild($reason);
+    }
+
+    /** Start tools/build_oghma_facets.php detached (as RelDynEval::launchWorker starts its worker). */
+    private static function launchBuild(string $reason): bool
+    {
+        if (self::$buildLauncher !== null) {
+            (self::$buildLauncher)($reason);
+            return true;
+        }
+        if (getenv('PHPUNIT_TEST')) {
+            RelationshipDynamics::log('Oghma facet build not launched under PHPUNIT_TEST');
+            return false;
+        }
+        $enginePath = $GLOBALS['ENGINE_PATH'] ?? (dirname(__DIR__, 2) . '/');
+        $php = is_executable('/usr/bin/php') ? '/usr/bin/php' : PHP_BINARY;
+        $log = rtrim($enginePath, '/') . '/log/reldyn_oghma_facets.log';
+        $cmd = (is_executable('/usr/bin/setsid') ? '/usr/bin/setsid ' : '')
+            . escapeshellarg($php) . ' ' . escapeshellarg(__DIR__ . '/tools/build_oghma_facets.php')
+            . ' >> ' . escapeshellarg($log) . ' 2>&1 &';
+        $proc = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'a'], 2 => ['file', '/dev/null', 'a']], $pipes);
+        if (!is_resource($proc)) {
+            error_log('[RelDyn-FACETS] ERROR launchBuild: proc_open failed');
+            return false;
+        }
+        proc_close($proc);   // returns once the shell has backgrounded the build
+        return true;
     }
 
     /** PostgreSQL text[] literal for a bound parameter: {"a","b"} with " and \ escaped. */
