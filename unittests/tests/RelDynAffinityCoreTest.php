@@ -580,6 +580,45 @@ final class RelDynAffinityCoreTest extends TestCase
         $this->assertEqualsWithDelta(-3.0, $dynamics['_pending_aff_delta'], 0.0001);
     }
 
+    public function testLockedRelationshipsAreNeverWritten(): void
+    {
+        // The user pinned Lydia's relationships in the editor (extended_data.relationships_locked);
+        // core's applyChanges/saveRelationships skip such NPCs, and so must RelDyn.
+        $this->seedNpc(['Player' => ['aff' => 22, 'type' => 'platonic']]);
+        $ext = $this->db->extended(self::NPC_ID);
+        $ext['relationships_locked'] = true;
+        $this->db->setExtended(self::NPC_ID, $ext);
+
+        $dynamics = RelationshipDynamics::getDynamics(self::NPC);
+        RelationshipDynamics::refreshAffinityMirror($dynamics, 22);
+        RelationshipDynamics::queueAffinityDelta($dynamics, -5.4);
+        $result = RelationshipDynamics::commitPlayerAffinity(self::NPC, $dynamics);
+
+        $this->assertSame(22, $this->coreAff(), 'locked aff must not change');
+        $this->assertSame([], $this->db->relationshipWrites, 'no write at all to a locked NPC');
+        $this->assertTrue($this->db->extended(self::NPC_ID)['relationships_locked']);
+        $this->assertFalse($this->db->inTransaction, 'lock transaction closed');
+        $this->assertSame(0, $result['delta'] ?? null);
+        $this->assertTrue($result['locked'] ?? false);
+        $this->assertEqualsWithDelta(0.0, $dynamics['_pending_aff_delta'], 0.0001,
+            'the change is dropped, not held back to land the moment the user unlocks');
+        $this->assertEqualsWithDelta(61.0, $dynamics['dimensions']['affinity']['x'], 0.01, 'mirror follows the pinned value');
+    }
+
+    public function testLockedNpcWithoutPlayerEntryGetsNoEntryCreated(): void
+    {
+        $this->seedNpc(['Ulfric Stormcloak' => ['aff' => -20, 'type' => 'enemy']]);
+        $ext = $this->db->extended(self::NPC_ID);
+        $ext['relationships_locked'] = true;
+        $this->db->setExtended(self::NPC_ID, $ext);
+
+        $result = RelationshipDynamics::applyPlayerAffinityDelta(self::NPC, 3);
+
+        $this->assertSame(0, $result['delta']);
+        $this->assertArrayNotHasKey('Player', $this->db->extended(self::NPC_ID)['relationships']);
+        $this->assertSame([], $this->db->relationshipWrites);
+    }
+
     public function testTurnWithTopicBonusDisabledRaisesNoUndefinedVariable(): void
     {
         $this->setConfig(['topic_bonus_enabled' => false]);

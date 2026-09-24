@@ -13553,8 +13553,10 @@ class RelationshipDynamics
             return null; // keep the delta queued; logged by applyPlayerAffinityDelta
         }
 
-        // Drop what was requested (a clamped remainder at +/-100 is not retried forever)
-        $dynamics['_pending_aff_delta'] = round($pending - $whole, 4);
+        // Drop what was requested (a clamped remainder at +/-100 is not retried forever).
+        // A user-locked NPC drops the whole queue: holding it back would land it the
+        // moment the lock is lifted, over the value the user pinned.
+        $dynamics['_pending_aff_delta'] = !empty($result['locked']) ? 0.0 : round($pending - $whole, 4);
         self::refreshAffinityMirror($dynamics, $result['new']);
         return $result;
     }
@@ -13566,8 +13568,10 @@ class RelationshipDynamics
      * serialises with core relationship_system's pg_advisory_lock on the same key. Only
      * relationships.Player.aff is written (the whole relationships object only when the
      * Player entry is missing or a legacy real-name entry must be folded into it).
+     * Nothing is written when extended_data.relationships_locked is set (editor lock).
      *
-     * @return array|null ['old' => int, 'new' => int, 'delta' => int] or null on failure
+     * @return array|null ['old' => int, 'new' => int, 'delta' => int] (plus 'locked' => true
+     *                    when skipped for the editor lock) or null on failure
      */
     public static function applyPlayerAffinityDelta($npcName, $delta)
     {
@@ -13605,6 +13609,17 @@ class RelationshipDynamics
             $rels = self::normalizeRelationshipMap($rawRels);
             $playerRel = $rels[self::PLAYER_RELATIONSHIP_KEY] ?? ['aff' => 0, 'type' => 'neutral'];
             $oldAff = intval($playerRel['aff'] ?? 0);
+
+            // USER LOCK: the relationship editor pinned this NPC's relationships. Core's
+            // writers (applyChanges, saveRelationships) skip such NPCs; so does RelDyn.
+            if (!empty($extended['relationships_locked'])) {
+                if ($db->execQuery("COMMIT") === false) {
+                    throw new RuntimeException("COMMIT failed");
+                }
+                self::log("[AFF] SKIP {$npcName} -> Player " . sprintf('%+d', $delta) . ": relationships_locked (manual edits protected, aff stays {$oldAff})");
+                return ['old' => $oldAff, 'new' => $oldAff, 'delta' => 0, 'locked' => true];
+            }
+
             $newAff = max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, $oldAff + $delta));
 
             $hasLegacyKey = false;
