@@ -6208,6 +6208,13 @@ class RelationshipDynamics
         return self::RELATIONSHIP_TIERS[$tierName]['min'] ?? 0;
     }
 
+    /** Position of a tier in RELATIONSHIP_TIERS (hostile = 0), -1 when unknown. */
+    public static function tierRank($tierName)
+    {
+        $rank = array_search($tierName, array_keys(self::RELATIONSHIP_TIERS), true);
+        return $rank === false ? -1 : $rank;
+    }
+
     /**
      * Check whether tier demotion should happen based on floor gates.
      *
@@ -6226,11 +6233,16 @@ class RelationshipDynamics
      * @return array ['should_demote' => bool, 'reason' => string, 'new_tier' => string|null,
      *               'floor_active' => bool, 'gate_status' => string]
      */
-    public static function checkTierDemotion($dynamics, $temperament, $relationshipType)
+    public static function checkTierDemotion($dynamics, $temperament, $relationshipType, $heldTier = null)
     {
         $dims = $dynamics['dimensions'] ?? [];
         $affinity = floatval($dims['affinity']['x'] ?? 0);
         $currentTier = self::getCurrentTier($affinity);
+        // The label being defended is the tier held so far, which is above the tier the
+        // decayed number maps to in exactly the cases this check exists for.
+        if (is_string($heldTier) && self::tierRank($heldTier) > self::tierRank($currentTier)) {
+            $currentTier = $heldTier;
+        }
         $tierFloor = self::getTierFloor($currentTier);
 
         // Default result
@@ -6258,6 +6270,7 @@ class RelationshipDynamics
         // --- Get retention threshold from temperament ---
         $retention = self::TEMPERAMENT_TIER_RETENTION[$temperament] ?? -15;
         $demotionThreshold = $tierFloor + $retention; // retention is negative, so this lowers the threshold
+        $result['demotion_threshold'] = $demotionThreshold;
 
         // Affinity hasn't dropped far enough past the floor
         if ($affinity > $demotionThreshold) {
@@ -6465,6 +6478,11 @@ class RelationshipDynamics
 
         $oldAffinity = floatval($dynamics['dimensions']['affinity']['x'] ?? 0);
         $oldTier = self::getCurrentTier($oldAffinity);
+        // A label held by an earlier decay run outranks the tier of the (already decayed) number
+        $heldTier = $dynamics['_current_tier'] ?? null;
+        if (is_string($heldTier) && self::tierRank($heldTier) > self::tierRank($oldTier)) {
+            $oldTier = $heldTier;
+        }
 
         $result = [
             'decay_amount'   => 0.0,
@@ -6529,7 +6547,7 @@ class RelationshipDynamics
 
         // --- Check tier demotion ---
         $newTierRaw = self::getCurrentTier($newAffinity);
-        $demotionCheck = self::checkTierDemotion($dynamics, $temperament, $relationshipType);
+        $demotionCheck = self::checkTierDemotion($dynamics, $temperament, $relationshipType, $oldTier);
         $result['demotion_info'] = $demotionCheck;
 
         if ($demotionCheck['should_demote']) {
@@ -6541,6 +6559,19 @@ class RelationshipDynamics
             // The affinity NUMBER still decayed, but the TIER is retained
             $result['new_tier'] = $oldTier;
             $result['tier_changed'] = false;
+
+            // ...down to the retention threshold: going further would trigger demotion,
+            // which the floor gate just refused. (The number reaches core aff since A2.)
+            if (isset($demotionCheck['demotion_threshold'])) {
+                $bound = min($oldAffinity, floatval($demotionCheck['demotion_threshold']));
+                if ($newAffinity < $bound) {
+                    $newAffinity = $bound;
+                    $actualDecay = $newAffinity - $oldAffinity;
+                    $dynamics['dimensions']['affinity']['x'] = $newAffinity;
+                    $result['decay_amount'] = $actualDecay;
+                    $result['new_affinity'] = $newAffinity;
+                }
+            }
         }
 
         // --- Store tier on dynamics for other systems to read ---
@@ -7206,6 +7237,14 @@ class RelationshipDynamics
         }
 
         $gametsSinceDecay = max(0, $accumulated - $lastDecayGamets);
+
+        // Absence, not conversation: a turn less than one tick after the previous one means
+        // the player is still with this NPC. Move the checkpoint on so such gaps never add up.
+        if ($gametsSinceDecay < self::GAMETS_PER_DECAY_TICK) {
+            $dynamics['_decay_last_play_gamets'] = $accumulated;
+            return 0.0;
+        }
+
         $ticksElapsed = $gametsSinceDecay / self::GAMETS_PER_DECAY_TICK;
 
         return $ticksElapsed;
