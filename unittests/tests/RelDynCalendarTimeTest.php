@@ -228,6 +228,41 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->assertEqualsWithDelta((float) RelationshipDynamics::STAGE_PARAMS['deep']['floor'], RelationshipDynamics::getPassion($d), 1e-9);
     }
 
+    /** Decisions §2: positive states (passion spikes, warmth) fade with absence, by attachment. */
+    public function testWarmthFadesWithAbsenceScaledByAttachment(): void
+    {
+        $cfg = RelationshipDynamics::defaultConfig();
+        $rate = (float) $cfg['warmth_absence_fade_per_game_day'];     // warmth points (0..100) per game day
+        $graceDays = (float) $cfg['warmth_absence_grace_game_hours'] / 24.0;
+        $this->assertGreaterThan(0.0, $rate);
+        $absent = 5.0 - $graceDays;                                   // absent game days past the grace
+
+        $fade = [];
+        foreach (['secure' => 1.0, 'anxious' => 2.0, 'avoidant' => 0.5] as $style => $mult) {
+            $d = $this->npc(['attachment_style' => $style], ['warmth' => 80.0]);
+            $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 5 * self::DAY);
+            $fade[$style] = 80.0 - (float) $d['dimensions']['warmth']['x'];
+            $this->assertEqualsWithDelta($rate * $absent * $mult, $fade[$style], 1e-6, "{$style} x{$mult}");
+            $this->assertEqualsWithDelta($fade[$style], $r['warmth_fade'], 1e-6);
+        }
+        $this->assertEqualsWithDelta(2.0, $fade['anxious'] / $fade['secure'], 1e-9, 'Anxious x2');
+        $this->assertEqualsWithDelta(0.5, $fade['avoidant'] / $fade['secure'], 1e-9, 'Avoidant x0.5');
+    }
+
+    public function testWarmthFadeStopsAtItsBaselineAndNeverRaisesLowWarmth(): void
+    {
+        $d = $this->npc([], ['warmth' => 70.0]);
+        $baseline = RelationshipDynamics::getTemperamentBaseline('Stoic', 'warmth');   // warmth points (0..100)
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 12 * self::GAME_HOUR);
+        $this->assertSame(70.0, (float) $d['dimensions']['warmth']['x'], 'within the grace');
+        RelationshipDynamics::advanceCalendar($d, self::T0 + 12 * self::GAME_HOUR, self::T0 + 365 * self::DAY);
+        $this->assertEqualsWithDelta($baseline, (float) $d['dimensions']['warmth']['x'], 1e-9, 'fades to the baseline, not below');
+
+        $cold = $this->npc([], ['warmth' => 5.0]);   // below the baseline: absence neither heals nor deepens it
+        RelationshipDynamics::advanceCalendar($cold, self::T0, self::T0 + 30 * self::DAY);
+        $this->assertSame(5.0, (float) $cold['dimensions']['warmth']['x']);
+    }
+
     public function testNeglectAccruesForABondedNpcPastItsGrace(): void
     {
         $bond = RelationshipDynamics::defaultConfig()['neglect_bond_types']['bonded'];
@@ -348,11 +383,12 @@ final class RelDynCalendarTimeTest extends TestCase
 
     public function testNoNeglectOrFadeWhileTheyAreTheOneWhoLeft(): void
     {
-        $d = $this->npc(['relationship_type' => 'bonded', '_walkaway_state' => 'boundary_test']);
+        $d = $this->npc(['relationship_type' => 'bonded', '_walkaway_state' => 'boundary_test'], ['warmth' => 80.0]);
         RelationshipDynamics::setPassion($d, 50.0);
         $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 10 * self::DAY);
         $this->assertSame(0.0, $r['neglect_days']);
         $this->assertSame(50.0, RelationshipDynamics::getPassion($d));
+        $this->assertSame(80.0, (float) $d['dimensions']['warmth']['x']);
         $this->assertSame(0.0, self::resentment($d));
     }
 

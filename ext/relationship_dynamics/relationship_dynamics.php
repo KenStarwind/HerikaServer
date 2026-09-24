@@ -1211,13 +1211,21 @@ class RelationshipDynamics
             // Starting value 1.0: half the §5 jealousy-conversion k=2, because of that physics.
             'fester_resentment_per_game_day' => 1.0,
             'fester_maturity_below' => 50,
-            // Positive-state fade with absence (decisions §2), passion only: after
+            // Positive-state fade with absence (decisions §2), passion (warmth below): after
             // passion_absence_grace_game_hours without contact, passion (0..100) loses
             // passion_absence_fade_per_game_day per game-calendar day x attachment multiplier,
             // down to the stage floor. In-contact decay stays decayPassion() on the play clock.
             'passion_absence_grace_game_hours' => 24,
             'passion_absence_fade_per_game_day' => 3.0,
             'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
+            // Warmth fades with absence too (decisions §2): after warmth_absence_grace_game_hours
+            // without contact, warmth (0..100) above its baseline loses
+            // warmth_absence_fade_per_game_day per game-calendar day x attachment multiplier,
+            // down to the baseline (never below: absence does not deepen coldness either).
+            // Starting value 1.0: warmth is the slow, deep state, a third of passion's rate.
+            'warmth_absence_grace_game_hours' => 24,
+            'warmth_absence_fade_per_game_day' => 1.0,
+            'warmth_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
             // Global neglect (decisions §2): per RelDyn bond type (getRelationshipType), game days
             // without contact before neglect starts, and RAW resentment (0..100 points, through
             // applyDelta like fester) per game day after that. Types not listed never accrue.
@@ -3177,16 +3185,17 @@ class RelationshipDynamics
      *  - neglect: bonded NPC past its grace since _last_contact_gamets -> raw resentment per
      *    day, logged as one 'neglect' grievance per absence;
      *  - passion fade: past the absence grace, passion fades per day x attachment multiplier
-     *    down to the stage floor.
+     *    down to the stage floor;
+     *  - warmth fade: the same for warmth above its baseline, at its own rate.
      * Nothing negative is ever reduced here. Neglect and fade are skipped while the NPC is
      * the one who left (walkaway). Pure: no database, no clock reads.
      *
-     * @return array ['game_days', 'resentment_raw', 'resentment', 'neglect_days', 'passion_fade', 'bond_type']
+     * @return array ['game_days', 'resentment_raw', 'resentment', 'neglect_days', 'passion_fade', 'warmth_fade', 'bond_type']
      */
     public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
     {
         $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0,
-                'neglect_days' => 0.0, 'passion_fade' => 0.0, 'bond_type' => null];
+                'neglect_days' => 0.0, 'passion_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
         if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
             return $out;
         }
@@ -3237,6 +3246,22 @@ class RelationshipDynamics
                     $new = max($floor, $passion - $fade);
                     self::setPassion($dynamics, $new);
                     $out['passion_fade'] = $passion - $new;
+                }
+            }
+
+            // Warmth (0..100) above its baseline fades the same way, at its own rate.
+            $warmth = $dynamics['dimensions']['warmth']['x'] ?? null;
+            $graceGamets = floatval(self::configValue('warmth_absence_grace_game_hours')) * self::GAMETS_PER_DAY / 24.0;
+            $absentDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceGamets);
+            if (is_numeric($warmth) && $absentDays > 0) {
+                $baseline = $dynamics['dimensions']['warmth']['baseline'] ?? null;
+                $baseline = is_numeric($baseline) ? floatval($baseline) : self::getTemperamentBaseline($temperament, 'warmth');
+                if (floatval($warmth) > $baseline) {
+                    $mult = floatval((self::configValue('warmth_absence_attachment_mult') ?? [])[$attachment] ?? 1.0);
+                    $fade = floatval(self::configValue('warmth_absence_fade_per_game_day')) * $absentDays * $mult;
+                    $new = max($baseline, floatval($warmth) - $fade);
+                    $dynamics['dimensions']['warmth']['x'] = round($new, 6);
+                    $out['warmth_fade'] = floatval($warmth) - $new;
                 }
             }
         }
@@ -3376,7 +3401,7 @@ class RelationshipDynamics
         if (!$firstSight) {
             $step = self::advanceCalendar($dyn, $from, $now);
             $result['calendar'] = $step;
-            $changed = $changed || $step['resentment_raw'] > 0 || $step['passion_fade'] > 0;
+            $changed = $changed || $step['resentment_raw'] > 0 || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0;
         }
 
         // A walkaway resolves (or a Toxic sleeper hoovers back) while the player is elsewhere.
