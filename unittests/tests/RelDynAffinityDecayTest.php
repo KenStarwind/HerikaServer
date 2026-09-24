@@ -70,6 +70,31 @@ final class RelDynAffinityDecayTest extends TestCase
         $this->assertSame('close_friend', $d['_current_tier']);
     }
 
+    /**
+     * The 203f8f40 build judged tiers on the 0..100 mirror, so it stored 'bonded' for core 45
+     * (mirror 72.5) and 'friend' for a core-0 stranger. Such a label is not a core-unit tier
+     * and must not hold (or freeze) decay; the label this build writes is marked as core units.
+     */
+    public function testATierLabelStoredOnTheOldMirrorScaleIsNotTrusted(): void
+    {
+        $fresh = $this->npc(45.0, ['comfort' => 70.0, 'maturity' => 55.0]);
+        $fromMirrorBuild = $fresh;
+        $fromMirrorBuild['_current_tier'] = 'bonded';   // base build: mirror 72.5 fell in its 71-85 'bonded' band
+
+        $a = RelationshipDynamics::processAffinityDecay($fresh, 'Lydia', 'Stoic', 'friend', 200);
+        $b = RelationshipDynamics::processAffinityDecay($fromMirrorBuild, 'Lydia', 'Stoic', 'friend', 200);
+
+        $this->assertSame('friend', $b['old_tier'], 'core 45 is friend; the mirror-scale bonded label is dropped');
+        $this->assertEqualsWithDelta(RelationshipDynamics::getCoreAffinity($fresh),
+            RelationshipDynamics::getCoreAffinity($fromMirrorBuild), 0.001, 'decay as if no label were stored');
+        $this->assertLessThan(45.0, RelationshipDynamics::getCoreAffinity($fromMirrorBuild), 'decay is not frozen');
+
+        // A label written by this build (core units) still holds on the next run.
+        $this->assertSame($a['new_tier'], $fresh['_current_tier']);
+        $again = RelationshipDynamics::processAffinityDecay($fresh, 'Lydia', 'Stoic', 'friend', 1);
+        $this->assertSame($a['new_tier'], $again['old_tier']);
+    }
+
     public function testFailedGateDemotesAndDecayContinues(): void
     {
         $d = $this->npc(70.0, ['comfort' => 30.0, 'maturity' => 55.0]);

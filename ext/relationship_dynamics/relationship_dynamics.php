@@ -7383,6 +7383,9 @@ class RelationshipDynamics
         'devoted'      => 3,
     ];
 
+    /** Stamp next to _current_tier: the label was judged on core affinity (-100..100) tiers. */
+    const TIER_LABEL_UNITS = 'core_aff';
+
     /** Default gate threshold: floor holds if gate signal > this */
     const TIER_GATE_THRESHOLD = 50;
 
@@ -7757,8 +7760,11 @@ class RelationshipDynamics
 
         $oldAffinity = self::getCoreAffinity($dynamics); // core units: tiers, rates and retention are too
         $oldTier = self::getCurrentTier($oldAffinity);
-        // A label held by an earlier decay run outranks the tier of the (already decayed) number
-        $heldTier = $dynamics['_current_tier'] ?? null;
+        // A label held by an earlier decay run outranks the tier of the (already decayed) number.
+        // Only a label judged on core units counts: the 203f8f40 build stored labels from the
+        // 0..100 mirror (core 0 = 'friend', core 45 = 'bonded'), which would hold or freeze decay.
+        $heldTier = ($dynamics['_current_tier_units'] ?? null) === self::TIER_LABEL_UNITS
+            ? ($dynamics['_current_tier'] ?? null) : null;
         if (is_string($heldTier) && self::tierRank($heldTier) > self::tierRank($oldTier)) {
             $oldTier = $heldTier;
         }
@@ -7879,6 +7885,7 @@ class RelationshipDynamics
 
         // --- Store tier on dynamics for other systems to read ---
         $dynamics['_current_tier'] = $result['new_tier'];
+        $dynamics['_current_tier_units'] = self::TIER_LABEL_UNITS;
         // (the absence checkpoint is moved by calculateDecayTicks, which consumed the ticks)
 
         // --- Log ---
