@@ -105,7 +105,7 @@ final class RelDynPlaceFacetsTest extends TestCase
         $v = self::place(['name' => 'Arcanaeum', 'is_interior' => true]);
         $this->assertSame(1.0, $v['scholarly']);
         $this->assertSame(0.8, $v['quiet']);
-        $this->assertSame(0.5, $v['confined'], 'the interior row (0.5) beats the library row (0.4)');
+        $this->assertSame(0.4, $v['confined'], 'the library row (0.4) beats the bare interior row (0.25)');
         $this->assertArrayNotHasKey('combat', $v);
         $this->assertArrayNotHasKey('nature', $v);
     }
@@ -133,7 +133,7 @@ final class RelDynPlaceFacetsTest extends TestCase
         $inn = self::place(['name' => 'The Bannered Mare', 'tags' => 'Dwelling,Inn,', 'is_interior' => true]);
         $this->assertSame(0.9, $inn['social']);
         $this->assertSame(0.6, $inn['crowd']);
-        $this->assertSame(0.5, $inn['confined']);
+        $this->assertSame(0.25, $inn['confined'], 'the interior row; Dwelling 0.2 is less');
 
         $town = self::place(['name' => 'Riverwood', 'tags' => 'Town,Habitation,', 'is_interior' => false]);
         $this->assertSame(0.6, $town['social']);
@@ -153,6 +153,27 @@ final class RelDynPlaceFacetsTest extends TestCase
         $this->assertTrue(RelDynFacets::nameHasKeyword('Riverwood', 'wood'));
         $this->assertArrayNotHasKey('nature', self::place(['name' => 'Riverwood', 'tags' => ['Town'], 'is_interior' => false]));
         $this->assertSame(0.9, self::place(['name' => 'Candlehearth Hall', 'is_interior' => true])['social']);
+    }
+
+    /**
+     * place-facets-core review 2026-09-24: the live locations table had 9 rows, so most interiors
+     * are known by name only. Houses, shops and shacks read as what they are; an interior nothing
+     * describes is only faintly 'indoors'.
+     */
+    public function testHomesAndShopsByNameAndABareInteriorIsFaint(): void
+    {
+        $top = function (string $name): string {
+            $v = self::place(['name' => $name, 'is_interior' => true]);
+            arsort($v);
+            return (string) array_key_first($v);
+        };
+        $this->assertSame('domestic', $top("Faendal's House"));
+        $this->assertSame('domestic', $top('Hunters Shack'));
+        $this->assertSame('wealth', $top('Riverwood Trader'));
+        $this->assertSame('wealth', $top("Belethor's General Goods"));
+        $bare = self::place(['name' => 'Some Cellar', 'is_interior' => true]);
+        $this->assertSame(['confined'], array_keys($bare));
+        $this->assertLessThanOrEqual(0.3, $bare['confined'], 'a room is not a crypt');
     }
 
     public function testNightIsDarkOutsideButNotIndoors(): void
@@ -229,7 +250,7 @@ final class RelDynPlaceFacetsTest extends TestCase
         $v = self::place(['name' => 'Somewhere', 'tags' => ['Inn'], 'is_interior' => true]);
         $this->assertSame(0.2, $v['social']);
         $this->assertSame(0.9, $v['quiet']);
-        $this->assertSame(0.5, $v['confined'], 'sub-tables not in the stored row keep their defaults');
+        $this->assertSame(0.25, $v['confined'], 'sub-tables not in the stored row keep their defaults');
         $this->assertArrayNotHasKey('crowd', $v);
     }
 }

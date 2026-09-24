@@ -416,6 +416,10 @@ class RelDynFacets
                 'apothecary' => ['alchemy' => 0.9], 'alchemist' => ['alchemy' => 0.9], 'cauldron' => ['alchemy' => 0.9],
                 'white phial' => ['alchemy' => 0.9], 'aromatics' => ['alchemy' => 0.9],
                 'inn' => $inn, 'tavern' => $inn, 'pub' => $inn, 'mead' => $inn, 'mare' => $inn, 'hearth' => $inn,
+                // Homes and shops (most interiors have no locations row: the live table had 9)
+                'house' => 'House', 'home' => 'House', 'shack' => 'Dwelling', 'cabin' => 'Dwelling',
+                'hut' => 'Dwelling', 'cottage' => 'Dwelling', 'hovel' => 'Dwelling',
+                'trader' => 'Store', 'goods' => 'Store', 'shop' => 'Store', 'store' => 'Store', 'outfitter' => 'Store',
                 'skeever' => $inn,
                 'jorrvaskr' => ['combat' => 0.8, 'social' => 0.7],
                 'palace' => ['wealth' => 0.7, 'luxury' => 0.8, 'social' => 0.5],
@@ -432,7 +436,9 @@ class RelDynFacets
                 'bthardamz' => 'Dwarven Ruin', 'avanchnzel' => 'Dwarven Ruin', 'nchardak' => 'Dwarven Ruin',
                 'dwemer' => 'Dwarven Ruin',
             ],
-            'interior' => ['confined' => 0.5],
+            // Indoors and nothing else known: faintly enclosed, not a crypt (appraise() reads a
+            // vector this thin as weak evidence).
+            'interior' => ['confined' => 0.25],
             'exterior' => ['wild' => 0.3],
             // An exterior place no tag or keyword describes: the open wild.
             'wilderness' => ['nature' => 0.8, 'wild' => 0.8],
@@ -741,9 +747,12 @@ class RelDynFacets
     public static function appraise(array $prefs, array $facets): array
     {
         // contribution = facet weight (clamped 0..1) x preference (clamped -1..+1)
-        // valence   = sum(contributions) / sum(facet weights)   -> -1..+1 (weighted mean preference)
-        // intensity = sum(|contributions|) / sum(facet weights) ->  0..1  (how strongly it is felt:
+        // valence   = sum(contributions) / D   -> -1..+1 (weighted mean preference)
+        // intensity = sum(|contributions|) / D ->  0..1  (how strongly it is felt:
         //             a place that is both loved and hated is intense even when valence is ~0)
+        //   D = max(sum(facet weights), appraise_min_weight): a thin vector is thin evidence (a
+        //       bare interior {confined .3} is not a full-strength read of the confined preference);
+        //       a vector with at least that much total weight is its weighted mean as before
         // dominant  = facet with the biggest |contribution|, ties to the earlier FACETS entry
         $contributions = [];
         $weight = 0.0;
@@ -769,9 +778,10 @@ class RelDynFacets
         if ($weight <= 0.0) {
             return ['valence' => 0.0, 'intensity' => 0.0, 'dominant' => null, 'dominant_sign' => 1, 'contributions' => []];
         }
+        $divisor = max($weight, floatval(self::getAppraisalConfig()['appraise_min_weight']));
         return [
-            'valence'       => max(-1.0, min(1.0, $sum / $weight)),
-            'intensity'     => min(1.0, $abs / $weight),
+            'valence'       => max(-1.0, min(1.0, $sum / $divisor)),
+            'intensity'     => min(1.0, $abs / $divisor),
             'dominant'      => $dominant,
             'dominant_sign' => ($dominant !== null && $contributions[$dominant] < 0) ? -1 : 1,
             'contributions' => $contributions,
@@ -833,6 +843,9 @@ class RelDynFacets
     public static function appraisalDefaults(): array
     {
         return [
+            // total facet weight (sum of 0..1 weights) below which a facet vector is thin
+            // evidence: appraise() divides by this instead of the vector's own total
+            'appraise_min_weight'   => 1.0,
             'felt_min_intensity'    => 0.1,
             'felt_min_contribution' => 0.15,
             'felt_strong_at'        => 0.45,

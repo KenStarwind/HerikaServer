@@ -108,4 +108,30 @@ final class RelDynFacetAppraisalTest extends TestCase
         $b = RelDynFacets::appraise(self::prefs(RelDynFacetProfiles::huntressRow()), []);
         $this->assertSame(['valence' => 0.0, 'intensity' => 0.0, 'dominant' => null, 'dominant_sign' => 1, 'contributions' => []], $b);
     }
+
+    /**
+     * place-facets-core review 2026-09-24: a thin facet vector is thin evidence. Divided by its
+     * own total weight, a bare interior {confined} read as Aela's raw confined preference: every
+     * unknown building was hated (discomfort, bad date) and worse than the library she is meant
+     * to hate. Below appraise_min_weight of total facet weight the divisor is that floor.
+     */
+    public function testAThinFacetVectorIsAWeakRead(): void
+    {
+        $aela = self::prefs(RelDynFacetProfiles::huntressRow());
+        $cfg = RelDynFacets::getAppraisalConfig();
+        $bare = RelDynFacets::appraise($aela, RelDynFacets::placeFacets(['name' => 'Frostflow Lighthouse', 'is_interior' => true, 'tags' => []]));
+        $library = RelDynFacets::appraise($aela, self::LIBRARY);
+        $this->assertLessThan(0.0, $bare['valence'], 'Aela still prefers the open air');
+        $this->assertGreaterThan($library['valence'], $bare['valence'], 'the library is worse than an unknown building');
+        $this->assertGreaterThanOrEqual((float) $cfg['discomfort_valence_below'], $bare['valence'], 'not a hated place');
+        $this->assertGreaterThan((float) $cfg['bad_date_valence'], $bare['valence'], 'not a bad date');
+        $plain = RelDynFacets::appraise($aela, RelDynFacets::placeFacets(['name' => 'Some Cellar', 'is_interior' => true, 'tags' => []]));
+        $this->assertNull(RelDynFacets::feltText('Aela', $plain, 'place', 'Some Cellar'), 'nothing stands out in a bare room');
+
+        // the floor is evidence, not a cap: a fully described place still reads at full strength
+        $love = array_fill_keys(RelDynFacets::FACETS, 1.0);
+        $this->assertEqualsWithDelta(1.0, RelDynFacets::appraise($love, ['nature' => 1.0])['valence'], 1e-9);
+        $this->assertEqualsWithDelta(0.5, RelDynFacets::appraise($love, ['nature' => 0.5])['valence'], 1e-9);
+        $this->assertEqualsWithDelta(1.0, RelDynFacets::appraise($love, ['nature' => 0.5, 'wild' => 0.5])['valence'], 1e-9);
+    }
 }
