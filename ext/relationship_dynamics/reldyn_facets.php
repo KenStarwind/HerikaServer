@@ -423,6 +423,11 @@ class RelDynFacets
      *   felt_text              place: facet => sign => mild|strong; thing (items, topics,
      *                          creatures, activities): facet => sign. {NAME} = the NPC,
      *                          {THING} = the place or thing's name.
+     *
+     * Units: valence -1..+1 (appraise()); comfort 0..100 and mood (dimension 'valence')
+     * -100..100 dimension points, raw through applyDelta (rubber band, resistance);
+     * discomfort 0..100 points; weather pressure -1..+1; game hours / game days are the game
+     * calendar (raw gamets, GAMETS_PER_DAY); play minutes are the filtered play clock.
      */
     public static function appraisalDefaults(): array
     {
@@ -433,6 +438,67 @@ class RelDynFacets
             'felt_text' => [
                 'place' => self::PLACE_FELT_TEXT,
                 'thing' => self::THING_FELT_TEXT,
+            ],
+
+            // --- each turn in a place (placeTurn) ---
+            'nudge_deadband'   => 0.05,   // |valence| below this nudges nothing
+            'comfort_per_turn' => 1.0,    // raw comfort points per turn at valence +-1
+            'mood_per_turn'    => 3.0,    // raw mood (valence dimension) points per turn at valence +-1
+            // A place read older than this (game hours) no longer counts: not for passion, not for the felt read.
+            'place_appraisal_max_age_game_hours' => 2.0,
+
+            // --- sustained exposure to a hated place (game calendar) ---
+            'discomfort_valence_below'        => -0.15, // a place appraised below this valence is hated
+            'discomfort_per_game_hour'        => 8.0,   // discomfort points per game hour at valence -1 (x |valence|)
+            'discomfort_relief_per_game_hour' => 15.0,  // discomfort points shed per game hour anywhere not hated
+            'discomfort_max_gap_game_hours'   => 3.0,   // longest gap between two turns counted as continuous exposure
+            'discomfort_drain_at'             => 30.0,  // discomfort points from which comfort drains every turn
+            'discomfort_comfort_per_turn'     => 2.0,   // raw comfort points drained per turn at discomfort 100 (linear)
+            'discomfort_felt_at'              => 50.0,  // discomfort points from which the felt read says it is wearing on them
+            'discomfort_text' => "{NAME} has been in {THING} too long now; it is wearing on them and their patience is thinning.",
+
+            // --- shared-activity passion (MDD 1.2 interests 0.5x-2.0x, MDD 1.5 bad date) ---
+            // Interest multiplier = interestMultiplier(activity valence), tempered per love
+            // language: effective = 1 + (raw - 1) x weight. The activity is the gift for gifts
+            // when its facets are known, else the place being shared.
+            'll_interest_weight' => [
+                RelationshipDynamics::LL_TIME    => 1.0,
+                RelationshipDynamics::LL_GIFTS   => 0.8,
+                RelationshipDynamics::LL_SERVICE => 0.6,
+                RelationshipDynamics::LL_WORDS   => 0.4,
+                RelationshipDynamics::LL_TOUCH   => 0.15,
+                'default'                        => 0.5,   // a passion gain with no love-language tag
+            ],
+            'bad_date_valence' => -0.2,   // place valence at or below this is a bad date
+            'bad_date_mult'    => 0.7,    // MDD 1.5
+
+            // --- ambient presence (MDD 1.5 Points of Interest) ---
+            'poi_valence_min'          => 0.3,   // place valence from which the place is a Point of Interest
+            'poi_passion_floor'        => 15.0,  // passion points (0..100) held while there; in-contact decay halts
+            'poi_rise_per_play_minute' => 0.5,   // passion points per filtered play minute while below the floor
+
+            // --- internal weather (MDD 4.1; decisions §6: fed both ways) ---
+            'weather_feed_per_turn'                 => 0.08, // pressure per turn / experience at valence +-1
+            'weather_pressure_half_life_game_hours' => 12.0, // pressure relaxes toward 0 on the game calendar
+            'weather_loved_at'                      => 0.5,  // preference from which a facet can be deprived
+            'weather_fed_min_weight'                => 0.3,  // facet weight from which an experience feeds a loved facet
+            'deprivation_grace_game_days'           => 1.0,
+            'deprivation_full_game_days'            => 3.0,  // MDD 4.1: Aela 3 days without combat -> withdrawal
+            'deprivation_weight'                    => 0.6,  // score points at full deprivation
+            'weather_roll_amplitude'                => 0.2,  // the daily roll: +- this, fixed per NPC and game day
+            // score = pressure + roll - deprivation x weight; weather = first threshold the score reaches
+            'weather_thresholds' => ['sunny' => 0.3, 'clear' => -0.1, 'overcast' => -0.45],   // below: stormy
+            // Emotional gravity (MDD 4.1): raw dimension points per request x weather_modifier_scale
+            'weather_modifiers' => [
+                'sunny'    => ['comfort' => 3, 'warmth' => 2, 'valence' => 5],
+                'clear'    => [],
+                'overcast' => ['comfort' => -2, 'passion' => -1, 'valence' => -5],
+                'stormy'   => ['comfort' => -5, 'warmth' => -3, 'valence' => -10, 'arousal' => 5],
+            ],
+            'weather_modifier_scale' => 0.1,
+            // Activities RelDyn itself sees (combat events) when thingFacets('activity', ...) knows nothing
+            'event_facets' => [
+                'combat' => ['combat' => 1.0, 'danger' => 0.7, 'adventure' => 0.3],
             ],
         ];
     }
@@ -448,6 +514,304 @@ class RelDynFacets
             $cfg['felt_text'] = array_replace_recursive($defaults['felt_text'], $stored['felt_text']);
         }
         return $cfg;
+    }
+
+    // =====================================================================
+    // APPRAISAL EFFECTS (appraisal lane; decisions §6 "Effects", MDD 1.2, 1.5, 4.1)
+    // =====================================================================
+
+    private static function gameHours(float $gamets): float
+    {
+        return $gamets / (RelationshipDynamics::GAMETS_PER_DAY / 24.0);
+    }
+
+    /**
+     * One turn of the NPC in a place, after CHIM core has set its caches (context hook).
+     * Appraises the place, stores the read (_place_appraisal: numbers for Jev and for the
+     * passion multiplier, never for the LLM) and applies its effects:
+     *   - comfort and mood nudged by valence (dimension engine);
+     *   - discomfort built up on the game calendar while the place is hated, relieved elsewhere;
+     *   - internal weather pressure fed by valence, loved facets marked as fed (deprivation);
+     *   - the Point-of-Interest passion floor while the place is loved (ambient presence).
+     *
+     * @param array $facets place facet vector (placeFacets)
+     * @param array $prefs  the NPC's preferences (preferences())
+     * @param float $now    raw game timestamp (currentGamets()); <= 0 = clock unknown
+     * @return array ['appraisal' => appraise() result, 'comfort' => change, 'mood' => change,
+     *                'discomfort' => points, 'pressure' => weather pressure, 'poi_floor' => ?float]
+     */
+    public static function placeTurn(string $npcName, array &$dynamics, string $placeName, array $facets, array $prefs, float $now): array
+    {
+        $cfg = self::getAppraisalConfig();
+        $appraisal = self::appraise($prefs, $facets);
+        $v = $appraisal['valence'];
+        $out = ['appraisal' => $appraisal, 'comfort' => 0.0, 'mood' => 0.0, 'discomfort' => 0.0, 'pressure' => 0.0, 'poi_floor' => null];
+
+        $dynamics['_place_appraisal'] = [
+            'place' => $placeName, 'gamets' => $now,
+            'valence' => $v, 'intensity' => $appraisal['intensity'],
+            'dominant' => $appraisal['dominant'], 'dominant_sign' => $appraisal['dominant_sign'],
+            'contributions' => $appraisal['contributions'],
+        ];
+
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $dimensionsOn = (bool) RelationshipDynamics::configValue('dimension_engine_enabled');
+        if ($dimensionsOn && abs($v) >= floatval($cfg['nudge_deadband'])) {
+            $out['comfort'] += RelationshipDynamics::applyDelta('comfort', $dynamics, $v * floatval($cfg['comfort_per_turn']), $temperament);
+            $out['mood'] = RelationshipDynamics::applyDelta('valence', $dynamics, $v * floatval($cfg['mood_per_turn']), $temperament);
+        }
+
+        $out['discomfort'] = self::updateDiscomfort($dynamics, $placeName, $v, $now, $cfg);
+        if ($dimensionsOn && $out['discomfort'] >= floatval($cfg['discomfort_drain_at'])) {
+            $drain = -floatval($cfg['discomfort_comfort_per_turn']) * $out['discomfort'] / 100.0;
+            $out['comfort'] += RelationshipDynamics::applyDelta('comfort', $dynamics, $drain, $temperament);
+        }
+
+        if (RelationshipDynamics::configValue('internal_weather_enabled')) {
+            self::markFed($dynamics, $facets, $prefs, $now, $cfg);
+            $out['pressure'] = self::feedWeather($dynamics, $v, $now, $cfg);
+        }
+
+        if (RelationshipDynamics::configValue('ambient_enabled') && RelationshipDynamics::configValue('passion_enabled')) {
+            $out['poi_floor'] = self::holdPoiFloor($dynamics, $v, $cfg);
+        } else {
+            unset($dynamics['_poi_passion_floor'], $dynamics['_poi_updated_play_gamets']);
+        }
+        return $out;
+    }
+
+    /**
+     * Discomfort (0..100 points) from sustained exposure to a hated place, on the game
+     * calendar: each turn in a hated place adds |valence| x discomfort_per_game_hour per game
+     * hour since the last turn (at most discomfort_max_gap_game_hours of it); a turn anywhere
+     * not hated sheds discomfort_relief_per_game_hour per game hour. Turns without game time
+     * passing change nothing, so talking a lot does not count as staying longer.
+     */
+    private static function updateDiscomfort(array &$dynamics, string $placeName, float $valence, float $now, array $cfg): float
+    {
+        $state = is_array($dynamics['_place_discomfort'] ?? null) ? $dynamics['_place_discomfort'] : [];
+        $points = max(0.0, min(100.0, floatval($state['points'] ?? 0.0)));
+        $last = floatval($state['gamets'] ?? 0);
+        if ($now <= 0) {
+            return $points;   // game clock unknown: no time can be credited
+        }
+        $hours = ($last > 0 && $now > $last) ? self::gameHours($now - $last) : 0.0;
+        $hated = $valence < floatval($cfg['discomfort_valence_below']);
+        if ($hated && ($state['place'] ?? null) === $placeName) {
+            $hours = min($hours, floatval($cfg['discomfort_max_gap_game_hours']));
+            $points += abs($valence) * floatval($cfg['discomfort_per_game_hour']) * $hours;
+        } elseif (!$hated) {
+            $points -= floatval($cfg['discomfort_relief_per_game_hour']) * $hours;
+        }
+        // A hated place entered from elsewhere starts its exposure now (the time before was spent elsewhere).
+        $points = max(0.0, min(100.0, $points));
+        $dynamics['_place_discomfort'] = ['place' => $placeName, 'points' => $points, 'gamets' => $now];
+        return $points;
+    }
+
+    /** Stamp every loved facet an experience touches (weight >= weather_fed_min_weight) as fed now. */
+    private static function markFed(array &$dynamics, array $facets, array $prefs, float $now, array $cfg): void
+    {
+        if ($now <= 0) return;
+        $fed = is_array($dynamics['_facet_fed'] ?? null) ? $dynamics['_facet_fed'] : [];
+        foreach ($facets as $facet => $w) {
+            if (!in_array($facet, self::FACETS, true) || !is_numeric($w)) continue;
+            if (floatval($w) >= floatval($cfg['weather_fed_min_weight']) && floatval($prefs[$facet] ?? 0) >= floatval($cfg['weather_loved_at'])) {
+                $fed[$facet] = $now;
+            }
+        }
+        $dynamics['_facet_fed'] = $fed;
+    }
+
+    /** Weather pressure (-1..+1) as it stands at $now: the stored value relaxed on the game calendar. */
+    private static function pressureAt(array $dynamics, float $now, array $cfg): float
+    {
+        $state = is_array($dynamics['_weather_state'] ?? null) ? $dynamics['_weather_state'] : [];
+        $p = max(-1.0, min(1.0, floatval($state['pressure'] ?? 0.0)));
+        $last = floatval($state['gamets'] ?? 0);
+        $halfLife = floatval($cfg['weather_pressure_half_life_game_hours']);
+        if ($now > $last && $last > 0 && $halfLife > 0) {
+            $p *= pow(0.5, self::gameHours($now - $last) / $halfLife);
+        }
+        return $p;
+    }
+
+    /** Loved things feed the weather, hated things drain it (decisions §6). Returns the new pressure. */
+    private static function feedWeather(array &$dynamics, float $valence, float $now, array $cfg): float
+    {
+        if ($now <= 0) return floatval($dynamics['_weather_state']['pressure'] ?? 0.0);
+        $p = max(-1.0, min(1.0, self::pressureAt($dynamics, $now, $cfg) + $valence * floatval($cfg['weather_feed_per_turn'])));
+        $state = is_array($dynamics['_weather_state'] ?? null) ? $dynamics['_weather_state'] : [];
+        $dynamics['_weather_state'] = array_merge($state, ['pressure' => $p, 'gamets' => $now]);
+        return $p;
+    }
+
+    /**
+     * Something other than a place (an activity, an item) experienced now: appraised, its
+     * loved facets marked fed and the weather fed by its valence. $facets defaults to
+     * thingFacets($kind, $name), then config event_facets for activities RelDyn sees itself.
+     */
+    public static function experienceThing(string $npcName, array &$dynamics, string $kind, string $name, array $prefs, float $now, ?array $facets = null): array
+    {
+        $cfg = self::getAppraisalConfig();
+        $facets = $facets ?? self::thingFacets($kind, $name);
+        if (!$facets && $kind === 'activity') {
+            $facets = (array) (((array) ($cfg['event_facets'] ?? []))[strtolower($name)] ?? []);
+        }
+        $appraisal = self::appraise($prefs, $facets);
+        if ($facets && RelationshipDynamics::configValue('internal_weather_enabled')) {
+            self::markFed($dynamics, $facets, $prefs, $now, $cfg);
+            self::feedWeather($dynamics, $appraisal['valence'], $now, $cfg);
+        }
+        return $appraisal;
+    }
+
+    /**
+     * Internal weather (MDD 4.1), recomputed from state on every request:
+     *   score = pressure (fed both ways, relaxing on the game calendar)
+     *         + the daily roll (fixed per NPC and game day, +- weather_roll_amplitude)
+     *         - deprivation x deprivation_weight
+     * deprivation (0..1) = preference-weighted mean, over loved facets (preference >=
+     * weather_loved_at), of how long each went unfed: 0 within deprivation_grace_game_days,
+     * 1 from deprivation_full_game_days. A loved facet first seen now starts fed.
+     * Weather = first of weather_thresholds the score reaches, else 'stormy'. Numbers stay in
+     * _weather_state (for Jev and debugging); the LLM only ever gets the weather's feeling.
+     */
+    public static function updateWeather(string $npcName, array &$dynamics, array $prefs, float $now): string
+    {
+        $current = is_string($dynamics['_internal_weather'] ?? null) ? $dynamics['_internal_weather'] : 'clear';
+        if ($now <= 0) return $current;   // game clock unknown: keep the weather
+        $cfg = self::getAppraisalConfig();
+
+        $pressure = self::pressureAt($dynamics, $now, $cfg);
+
+        $fed = is_array($dynamics['_facet_fed'] ?? null) ? $dynamics['_facet_fed'] : [];
+        $grace = floatval($cfg['deprivation_grace_game_days']);
+        $full = max($grace + 0.001, floatval($cfg['deprivation_full_game_days']));
+        $wSum = 0.0;
+        $dSum = 0.0;
+        foreach (self::FACETS as $facet) {
+            $p = floatval($prefs[$facet] ?? 0);
+            if ($p < floatval($cfg['weather_loved_at'])) continue;
+            $stamp = floatval($fed[$facet] ?? 0);
+            if ($stamp <= 0 || $stamp > $now) {
+                $fed[$facet] = $stamp = $now;
+            }
+            $days = ($now - $stamp) / RelationshipDynamics::GAMETS_PER_DAY;
+            $dSum += $p * max(0.0, min(1.0, ($days - $grace) / ($full - $grace)));
+            $wSum += $p;
+        }
+        $dynamics['_facet_fed'] = $fed;
+        $deprivation = $wSum > 0 ? $dSum / $wSum : 0.0;
+
+        $day = (int) floor($now / RelationshipDynamics::GAMETS_PER_DAY);
+        $unit = crc32(strtolower(trim($npcName)) . '|' . $day) / 4294967295.0;   // 0..1, fixed per NPC and day
+        $roll = (2.0 * $unit - 1.0) * floatval($cfg['weather_roll_amplitude']);
+
+        $score = $pressure + $roll - $deprivation * floatval($cfg['deprivation_weight']);
+        $weather = 'stormy';
+        foreach ((array) $cfg['weather_thresholds'] as $name => $min) {
+            if ($score >= floatval($min)) { $weather = (string) $name; break; }
+        }
+
+        $dynamics['_weather_state'] = [
+            'pressure' => $pressure, 'gamets' => $now, 'day' => $day,
+            'roll' => round($roll, 4), 'deprivation' => round($deprivation, 4), 'score' => round($score, 4),
+        ];
+        $dynamics['_internal_weather'] = $weather;
+        if ($weather !== $current) {
+            RelationshipDynamics::log("[WEATHER] {$npcName}: {$current} -> {$weather} (pressure=" . round($pressure, 2)
+                . ' roll=' . round($roll, 2) . ' deprivation=' . round($deprivation, 2) . ')');
+        }
+        return $weather;
+    }
+
+    /**
+     * MDD 1.5 Point of Interest: in a place loved at poi_valence_min or more, passion is held
+     * at poi_passion_floor. Passion below it rises toward it on the filtered play clock (no
+     * jump, nothing from waiting); decayPassion() halts while the floor holds. Leaving clears it.
+     */
+    private static function holdPoiFloor(array &$dynamics, float $valence, array $cfg): ?float
+    {
+        if ($valence < floatval($cfg['poi_valence_min'])) {
+            unset($dynamics['_poi_passion_floor'], $dynamics['_poi_updated_play_gamets']);
+            return null;
+        }
+        $floor = max(0.0, floatval($cfg['poi_passion_floor']));
+        $dynamics['_poi_passion_floor'] = $floor;
+        $since = RelationshipDynamics::playGametsSince($dynamics, '_poi_updated_play_gamets');
+        $passion = RelationshipDynamics::getPassion($dynamics);
+        if ($since !== null && $passion < $floor) {
+            $minutes = $since / (RelationshipDynamics::GAMETS_PER_REAL_SECOND * 60.0);
+            RelationshipDynamics::setPassion($dynamics, min($floor, $passion + $minutes * floatval($cfg['poi_rise_per_play_minute'])));
+        }
+        RelationshipDynamics::markPlayCheckpoint($dynamics, '_poi_updated_play_gamets');
+        return $floor;
+    }
+
+    /** The place read if it is recent enough to count at $now (place_appraisal_max_age_game_hours), else null. */
+    public static function freshPlaceAppraisal(array $dynamics, float $now): ?array
+    {
+        $pa = $dynamics['_place_appraisal'] ?? null;
+        if (!is_array($pa) || $now <= 0) return null;
+        $at = floatval($pa['gamets'] ?? 0);
+        if ($at <= 0 || $at > $now) return null;
+        $maxAge = floatval(self::getAppraisalConfig()['place_appraisal_max_age_game_hours']);
+        return self::gameHours($now - $at) <= $maxAge ? $pa : null;
+    }
+
+    /** The Point-of-Interest passion floor in force at $now (the place read must be fresh), or null. */
+    public static function poiPassionFloor(array $dynamics, float $now): ?float
+    {
+        if (!isset($dynamics['_poi_passion_floor']) || self::freshPlaceAppraisal($dynamics, $now) === null) return null;
+        return floatval($dynamics['_poi_passion_floor']);
+    }
+
+    /**
+     * Passion multiplier for a shared activity (MDD 1.2 interests 0.5x-2.0x, MDD 1.5 bad date):
+     *   interest = interestMultiplier(activity valence), tempered by the love language:
+     *              1 + (interest - 1) x ll_interest_weight[LL]
+     *   x bad_date_mult when the fresh place read is at or below bad_date_valence.
+     * The activity is $activityAppraisal (a gift's appraisal) when given, else the place being
+     * shared. No fresh place read and no activity: 1.0.
+     */
+    public static function sharedActivityPassionMult(array $dynamics, ?string $loveLanguage, ?array $activityAppraisal = null, ?float $now = null): float
+    {
+        $cfg = self::getAppraisalConfig();
+        $place = self::freshPlaceAppraisal($dynamics, $now ?? RelationshipDynamics::currentGamets());
+        $activity = $activityAppraisal ?? $place;
+        $mult = 1.0;
+        if ($activity !== null) {
+            $weights = (array) $cfg['ll_interest_weight'];
+            $w = floatval($weights[$loveLanguage ?? ''] ?? $weights['default'] ?? 0.5);
+            $mult = 1.0 + (self::interestMultiplier(floatval($activity['valence'] ?? 0)) - 1.0) * $w;
+        }
+        if ($place !== null && floatval($place['valence'] ?? 0) <= floatval($cfg['bad_date_valence'])) {
+            $mult *= floatval($cfg['bad_date_mult']);
+        }
+        return $mult;
+    }
+
+    /**
+     * The felt read of the current place for the LLM (no numbers): the dominant facet's
+     * wording, plus the discomfort line once staying has worn on them. Null when the place
+     * read is stale or nothing stands out.
+     */
+    public static function placeFeltText(string $npcName, array $dynamics, float $now): ?string
+    {
+        $pa = self::freshPlaceAppraisal($dynamics, $now);
+        if ($pa === null) return null;
+        $place = (string) ($pa['place'] ?? '');
+        $lines = [];
+        $felt = self::feltText($npcName, $pa, 'place', $place);
+        if ($felt !== null) $lines[] = $felt;
+        $cfg = self::getAppraisalConfig();
+        $d = $dynamics['_place_discomfort'] ?? null;
+        if (is_array($d) && ($d['place'] ?? null) === $place && floatval($d['points'] ?? 0) >= floatval($cfg['discomfort_felt_at'])
+            && is_string($cfg['discomfort_text'] ?? null) && trim($cfg['discomfort_text']) !== '') {
+            $lines[] = str_replace(['{NAME}', '{THING}'], [$npcName, $place !== '' ? $place : 'this place'], $cfg['discomfort_text']);
+        }
+        return $lines ? implode(' ', $lines) : null;
     }
 
     /** Default place wording: facet => '+'|'-' => mild|strong. */

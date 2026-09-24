@@ -550,28 +550,8 @@ class RelationshipDynamics
     /** Tolerance band — X must be at least this far from baseline consistently. */
     const BASELINE_DRIFT_TOLERANCE = 5;
 
-    // ========== INTERNAL WEATHER / DEPRIVATION (PR 13) ==========
-
-    const WEATHER_MODIFIERS = [
-        'sunny'    => ['comfort' => 3, 'warmth' => 2, 'valence' => 5],
-        'clear'    => [],
-        'overcast' => ['comfort' => -2, 'passion' => -1, 'valence' => -5],
-        'stormy'   => ['comfort' => -5, 'warmth' => -3, 'valence' => -10, 'arousal' => 5],
-    ];
-
-    const WEATHER_DEPRIVATION_THRESHOLD = 10;
-
-    const FACTION_INTEREST_FLOORS = [
-        'Companions'      => ['combat' => 0.5, 'social' => 0.3],
-        'College'         => ['scholarly' => 0.5, 'enchanting' => 0.3],
-        'ThievesGuild'    => ['adventure' => 0.5, 'wealth' => 0.3],
-        'DarkBrotherhood' => ['combat' => 0.4, 'adventure' => 0.3],
-        'Bards'           => ['social' => 0.5, 'crafting' => 0.2],
-        'Temple'          => ['spiritual' => 0.5, 'domestic' => 0.3],
-        'Guard'           => ['combat' => 0.3, 'social' => 0.2],
-        'Merchant'        => ['wealth' => 0.5, 'social' => 0.3],
-        'Farmer'          => ['nature' => 0.5, 'domestic' => 0.4],
-    ];
+    // ========== INTERNAL WEATHER / DEPRIVATION ==========
+    // Weather, its modifiers and deprivation live in RelDynFacets (config facet_appraisal).
 
     const INTIMACY_DEPRIVATION_CONTEXT = [
         'high_m'       => "{NAME} is restless. The tension is physical and they are not the type to suffer in silence. They are considering their options.",
@@ -3069,6 +3049,13 @@ class RelationshipDynamics
         $hoursSince = ($now - $lastUpdate) / self::GAMETS_PER_REAL_HOUR;
         if ($hoursSince <= 0) return;
 
+        // MDD 1.5 Point of Interest: in a place the NPC loves, in-contact decay halts
+        // (the floor itself is held by RelDynFacets::placeTurn)
+        if (RelDynFacets::poiPassionFloor($dynamics, self::currentGamets()) !== null) {
+            $dynamics['passion_updated_at'] = $now;
+            return;
+        }
+
         // Cap decay hours — 0 means no between-session decay (passion frozen when offline)
         $cfg = self::getConfig();
         $maxDecayHours = floatval($cfg['decay_max_hours'] ?? 0);
@@ -4039,6 +4026,23 @@ class RelationshipDynamics
     }
 
     /**
+     * The item of a gift/item interaction: the LLM response's item field (connectors set
+     * LAST_LLM_RESPONSE), else the gameRequest action ExtCmdGiveItem@Name / ExtCmdTradeItem@Name.
+     */
+    public static function detectGiftItemName(): ?string
+    {
+        $llmResponse = $GLOBALS['LAST_LLM_RESPONSE'] ?? null;
+        if (is_array($llmResponse) && is_string($llmResponse['item'] ?? null) && trim($llmResponse['item']) !== '') {
+            return trim($llmResponse['item']);
+        }
+        $action = $GLOBALS['gameRequest'][3] ?? '';
+        if (is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item@([^:\r\n]+)/i', $action, $m)) {
+            return trim($m[1]);
+        }
+        return null;
+    }
+
+    /**
      * Detect interest category from a gift/item interaction.
      * Extracts item name from LLM response or gameRequest action, then classifies.
      */
@@ -4219,22 +4223,25 @@ class RelationshipDynamics
     }
 
     /**
-     * Get interest-weighted passion multiplier for the given love language.
-     * Detects context, looks up NPC interest, applies LL-appropriate weight.
+     * Shared-activity passion multiplier for the given love language (MDD 1.2 interests
+     * 0.5x-2.0x, MDD 1.5 bad date 0.7x; decisions §6): the facet appraisal of what is shared,
+     * see RelDynFacets::sharedActivityPassionMult(). For a gift the item's facets decide the
+     * interest when they are known (thingFacets), else the place being shared does.
      */
     public static function getInterestMultiplier($dynamics, $interactionLL = null)
     {
         if ($interactionLL === null) return 1.0;
 
-        $interest = self::detectInterestContext($interactionLL);
-        if ($interest === null) return 1.0;
-
-        $prefs = self::getInterests($dynamics);
-        $rawMult = floatval($prefs[$interest] ?? 1.0);
-
-        // Apply LL weight to temper the multiplier
-        $weight = self::LL_INTEREST_WEIGHT[$interactionLL] ?? 0.5;
-        return 1.0 + ($rawMult - 1.0) * $weight;
+        $activity = null;
+        if ($interactionLL === self::LL_GIFTS) {
+            $item = self::detectGiftItemName();
+            $facets = $item !== null ? RelDynFacets::thingFacets('item', $item) : [];
+            if ($facets) {
+                $npcName = (string) ($GLOBALS['RELDYN_NPC_NAME'] ?? $GLOBALS['HERIKA_NAME'] ?? '');
+                $activity = RelDynFacets::appraise(RelDynFacets::preferences($dynamics, $npcName), $facets);
+            }
+        }
+        return RelDynFacets::sharedActivityPassionMult($dynamics, $interactionLL, $activity);
     }
 
     /**
@@ -7434,6 +7441,21 @@ class RelationshipDynamics
         }
         if (abs($raw) < 0.0001) {
             return $result;
+        }
+        // Shared activity (decisions §6, MDD 1.2 / 1.5): a passion gain carries the place being
+        // shared, 0.5x-2.0x by its appraisal and 0.7x on a bad date. The love language comes
+        // from the first tag that maps to one.
+        if ($signal === 'passion' && $raw > 0) {
+            $ll = null;
+            $tagLL = (array) self::configValue('affinity_tag_love_language');
+            foreach ($tags as $t) {
+                if (isset($tagLL[strtolower((string) $t)])) { $ll = $tagLL[strtolower((string) $t)]; break; }
+            }
+            $pm = RelDynFacets::sharedActivityPassionMult($dynamics, $ll);
+            if (abs($pm - 1.0) > 0.001) {
+                $raw *= $pm;
+                $steps .= sprintf(' place x%.2f', $pm);
+            }
         }
 
         $R = self::getSignalResistance($temperament, $signal);
@@ -14110,245 +14132,30 @@ class RelationshipDynamics
     // ========== INTERNAL WEATHER ENGINE (PR 13) ==========
 
     /**
-     * Calculate interest satisfaction from all 4 NPC-centric sources.
+     * Update internal weather (MDD 4.1) from the facet state: pressure fed both ways by
+     * appraisals, the daily roll and deprivation of loved facets (RelDynFacets::updateWeather).
+     * Returns the weather; 'clear' while internal weather is switched off.
      */
-    public static function calculateInterestSatisfaction(string $npcName, array &$dynamics, ?string $currentInterest, array $eventContext = []): array
+    public static function updateInternalWeather(string $npcName, array &$dynamics, ?float $nowGamets = null): string
     {
-        $interests = $dynamics['interests'] ?? [];
-        if (empty($interests)) return [];
-
-        $interactionCount = intval($dynamics['interaction_count'] ?? 0);
-        $lastSatisfied = &$dynamics['_interest_last_satisfied'];
-        if (!is_array($lastSatisfied)) $lastSatisfied = [];
-        $satisfaction = &$dynamics['_interest_satisfaction'];
-        if (!is_array($satisfaction)) $satisfaction = [];
-
-        // Source 1: Direct interaction interest
-        if ($currentInterest && isset($interests[$currentInterest])) {
-            $lastSatisfied[$currentInterest] = $interactionCount;
-            $satisfaction[$currentInterest] = max($satisfaction[$currentInterest] ?? 0, 1.0);
-        }
-
-        // Source 2: Companion proximity events
-        $cachePeople = $GLOBALS['CACHE_PEOPLE'] ?? '';
-        $cacheParty = $GLOBALS['CACHE_PARTY'] ?? '';
-        $isInParty = (stripos($cachePeople, $npcName) !== false || stripos($cacheParty, $npcName) !== false);
-
-        if ($isInParty) {
-            $eventType = $eventContext['type'] ?? ($GLOBALS['gameRequest'][0] ?? '');
-            $eventInterestMap = [
-                'combatend' => 'combat', 'combatstart' => 'combat', 'death' => 'combat',
-                'quest_event' => 'adventure', 'snqe_' => 'adventure',
-            ];
-            foreach ($eventInterestMap as $prefix => $interest) {
-                if (stripos($eventType, $prefix) !== false && isset($interests[$interest])) {
-                    $lastSatisfied[$interest] = $interactionCount;
-                    $satisfaction[$interest] = max($satisfaction[$interest] ?? 0, 0.8);
-                }
-            }
-        }
-
-        // Source 3: Location inference
-        $locationKeywords = $GLOBALS['CACHE_LOCATION'] ?? '';
-
-        $locationInterestMap = [
-            'forge' => 'crafting', 'workshop' => 'crafting',
-            'tavern' => 'social', 'inn' => 'social',
-            'dungeon' => 'adventure', 'cave' => 'adventure', 'ruin' => 'adventure',
-            'temple' => 'spiritual', 'shrine' => 'spiritual',
-            'farm' => 'nature', 'garden' => 'nature', 'forest' => 'nature',
-            'library' => 'scholarly', 'college' => 'scholarly',
-            'market' => 'wealth', 'shop' => 'wealth',
-            'home' => 'domestic', 'house' => 'domestic',
-        ];
-        foreach ($locationInterestMap as $keyword => $interest) {
-            if (stripos($locationKeywords, $keyword) !== false && isset($interests[$interest])) {
-                $satisfaction[$interest] = max($satisfaction[$interest] ?? 0, 0.5);
-                // Reset decay timer — location IS satisfying the interest
-                $lastSatisfied[$interest] = $interactionCount;
-            }
-        }
-
-        // Source 4: Faction/occupation passive floor
-        $factionFloors = self::getFactionInterestFloors($npcName, $dynamics);
-        foreach ($factionFloors as $interest => $floor) {
-            if (isset($interests[$interest])) {
-                $satisfaction[$interest] = max($satisfaction[$interest] ?? 0, $floor);
-            }
-        }
-
-        // Intimacy (special handling)
-        $satisfaction['intimacy'] = self::checkIntimacySatisfaction($dynamics, $interactionCount, $eventContext);
-
-        // Decay satisfaction for stale interests
-        foreach ($interests as $category => $weight) {
-            if ($weight < 1.0) continue;
-            $lastSat = intval($lastSatisfied[$category] ?? 0);
-            $gap = $interactionCount - $lastSat;
-            if ($gap >= self::WEATHER_DEPRIVATION_THRESHOLD) {
-                $current = floatval($satisfaction[$category] ?? 0);
-                $floor = $factionFloors[$category] ?? 0.0;
-                $satisfaction[$category] = max($floor, $current * 0.9);
-            }
-        }
-
-        return $satisfaction;
+        if (!self::configValue('internal_weather_enabled')) return 'clear';
+        return RelDynFacets::updateWeather($npcName, $dynamics, RelDynFacets::preferences($dynamics, $npcName),
+            $nowGamets ?? self::currentGamets());
     }
 
     /**
-     * Get passive interest floors from NPC factions.
-     */
-    private static function getFactionInterestFloors(string $npcName, array $dynamics): array
-    {
-        $floors = [];
-
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if (!$db) return $floors;
-
-            $escaped = $db->escape($npcName);
-            $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
-            if ($row && !empty($row['extended_data'])) {
-                $ext = json_decode($row['extended_data'], true) ?: [];
-                $factions = $ext['factions'] ?? [];
-
-                foreach ($factions as $faction) {
-                    $name = $faction['name'] ?? '';
-                    foreach (self::FACTION_INTEREST_FLOORS as $factionKey => $interestFloors) {
-                        if (stripos($name, $factionKey) !== false) {
-                            foreach ($interestFloors as $interest => $floor) {
-                                $floors[$interest] = max($floors[$interest] ?? 0, $floor);
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (\Throwable $e) { self::logError('getFactionInterestFloors', $e); }
-
-        return $floors;
-    }
-
-    /**
-     * Check intimacy satisfaction. Uses OStim/touch events + attachment-rate modifiers.
-     */
-    private static function checkIntimacySatisfaction(array &$dynamics, int $interactionCount, array $eventContext = []): float
-    {
-        $lastIntimacy = intval($dynamics['_intimacy_last_satisfied'] ?? 0);
-        $gap = $interactionCount - $lastIntimacy;
-
-        // Check current event for intimacy signals
-        $eventType = $eventContext['type'] ?? ($GLOBALS['gameRequest'][0] ?? '');
-        $eventData = is_array($GLOBALS['gameRequest'] ?? null) ? ($GLOBALS['gameRequest'][3] ?? '') : '';
-
-        $fullSatisfy = ['ext_nsfw_physics', 'OStim', 'ostim'];
-        $partialSatisfy = ['ExtCmdHug', 'ExtCmdKiss'];
-
-        foreach ($fullSatisfy as $prefix) {
-            if (stripos($eventType, $prefix) !== false || stripos($eventData, $prefix) !== false) {
-                $dynamics['_intimacy_last_satisfied'] = $interactionCount;
-                return 1.0;
-            }
-        }
-        foreach ($partialSatisfy as $prefix) {
-            if (stripos($eventType, $prefix) !== false || stripos($eventData, $prefix) !== false) {
-                $dynamics['_intimacy_last_satisfied'] = $interactionCount;
-                return 0.5;
-            }
-        }
-
-        // Deprivation rate modified by attachment style
-        $attachStyle = self::getAttachmentStyle($dynamics);
-        $deprivationMult = [
-            'avoidant' => 0.5,
-            'anxious'  => 2.0,
-            'secure'   => 1.0,
-            'toxic'    => 1.5,
-        ];
-        $mult = $deprivationMult[$attachStyle] ?? 1.0;
-
-        $effectiveGap = $gap * $mult;
-        if ($effectiveGap < 5) return 0.8;
-        if ($effectiveGap < 10) return 0.5;
-        if ($effectiveGap < 20) return 0.2;
-        return 0.0;
-    }
-
-    /**
-     * Update internal weather based on NPC-centric satisfaction levels.
-     */
-    public static function updateInternalWeather(string $npcName, array &$dynamics, ?string $currentInterest, array $eventContext = []): string
-    {
-        $config = self::getConfig();
-        if (empty($config['internal_weather_enabled'])) return 'clear';
-
-        $interests = $dynamics['interests'] ?? [];
-        if (empty($interests)) return 'clear';
-
-        // Calculate satisfaction from all 4 sources
-        $satisfaction = self::calculateInterestSatisfaction($npcName, $dynamics, $currentInterest, $eventContext);
-
-        // Calculate FED ratio — is ANY high-weight interest being satisfied?
-        $fedWeight = 0;
-        $totalWeight = 0;
-        foreach ($interests as $category => $weight) {
-            if ($weight < 1.0) continue;
-            $adjustedWeight = $weight - 0.9;
-            $sat = floatval($satisfaction[$category] ?? 0);
-            if ($sat >= 0.3) {
-                $fedWeight += $adjustedWeight * $sat;
-            }
-            $totalWeight += $adjustedWeight;
-        }
-
-        // Add intimacy interest (inferred from passion if not explicit)
-        $intimacyWeight = floatval($interests['intimacy'] ?? 0);
-        if ($intimacyWeight < 1.0) {
-            $passion = floatval($dynamics['dimensions']['passion']['x'] ?? 0);
-            if ($passion >= 30) $intimacyWeight = 1.0 + ($passion / 100.0);
-        }
-        if ($intimacyWeight >= 1.0) {
-            $intimacySat = floatval($satisfaction['intimacy'] ?? 0);
-            $adjustedWeight = $intimacyWeight - 0.9;
-            if ($intimacySat >= 0.3) {
-                $fedWeight += $adjustedWeight * $intimacySat;
-            }
-            $totalWeight += $adjustedWeight;
-        }
-
-        // High fed ratio = good weather. "One satisfied = good day."
-        $ratio = ($totalWeight > 0) ? ($fedWeight / $totalWeight) : 0;
-        $oldWeather = $dynamics['_internal_weather'] ?? 'clear';
-
-        if ($ratio >= 0.4) {
-            $newWeather = 'sunny';
-        } elseif ($ratio >= 0.2) {
-            $newWeather = 'clear';
-        } elseif ($ratio >= 0.05) {
-            $newWeather = 'overcast';
-        } else {
-            $newWeather = 'stormy';
-        }
-
-        $dynamics['_internal_weather'] = $newWeather;
-
-        if ($newWeather !== $oldWeather) {
-            self::log("[WEATHER] {$npcName}: {$oldWeather} -> {$newWeather} (fed=" . round($ratio, 2) . ")");
-        }
-
-        return $newWeather;
-    }
-
-    /**
-     * Apply weather-based dimension modifiers (small per-interaction accumulation).
+     * Emotional gravity (MDD 4.1): the weather pulls dimensions every request, by config
+     * facet_appraisal.weather_modifiers (raw points) x weather_modifier_scale.
      */
     public static function applyWeatherModifiers(string $npcName, array &$dynamics, string $temperament): void
     {
+        $cfg = RelDynFacets::getAppraisalConfig();
         $weather = $dynamics['_internal_weather'] ?? 'clear';
-        $modifiers = self::WEATHER_MODIFIERS[$weather] ?? [];
+        $modifiers = (array) (((array) ($cfg['weather_modifiers'] ?? []))[$weather] ?? []);
+        $scale = floatval($cfg['weather_modifier_scale'] ?? 0.1);
 
         foreach ($modifiers as $dimId => $delta) {
-            $scaledDelta = $delta * 0.1;
-            self::applyDelta($dimId, $dynamics, $scaledDelta, $temperament);
+            self::applyDelta($dimId, $dynamics, floatval($delta) * $scale, $temperament);
         }
     }
 

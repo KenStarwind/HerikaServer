@@ -278,8 +278,10 @@ if (!empty($reldynCfg['duty_override_enabled'])) {
 
 // ========== INTERNAL WEATHER + CREATURE MODIFIERS (PR 13) ==========
 if (!empty($reldynCfg['internal_weather_enabled'])) {
-    $currentInterest = $GLOBALS['RELDYN_CURRENT_INTEREST'] ?? null;
-    RelationshipDynamics::updateInternalWeather($npcName, $dynamics, $currentInterest);
+    // Weather state only (pressure, daily roll, deprivation on the game calendar): no core
+    // caches needed. The place appraisal that feeds it runs in context.php, after core has
+    // set CACHE_LOCATION / CACHE_PEOPLE.
+    RelationshipDynamics::updateInternalWeather($npcName, $dynamics);
     $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
     RelationshipDynamics::applyWeatherModifiers($npcName, $dynamics, $temperament);
 }
