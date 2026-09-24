@@ -457,8 +457,10 @@ RelationshipDynamics::recordInteraction($dynamics);
 // -------------------------------------------------------------------------
 // 4. RPM → Speed: Apply passion-weighted affinity change
 // -------------------------------------------------------------------------
-// RelDyn owns aff. The relationship_system's LLM eval provides type/note
-// but does NOT write aff when RelDyn is active.
+// Core owns aff (relationships.Player.aff, CHIM 3.4.1 key "Player"); core's
+// relationship_system eval keeps writing it too. RelDyn adds its delta on top
+// under core's advisory lock (commitPlayerAffinity), so neither side clobbers
+// the other and affinity can move both ways.
 // Base delta: +1 per positive interaction, scaled by passion multiplier.
 // Formula: aff_delta = base × passion_multiplier
 //   passion 0   → ×0.3  (idling — affinity barely moves)
@@ -468,62 +470,39 @@ $affinityGainMult = RelationshipDynamics::getAffinityGainMultiplier($dynamics);
 $baseDelta = ($passionGain > 0) ? 1 : 0; // +1 per positive interaction
 
 try {
-    $db = $GLOBALS['db'] ?? null;
-    $playerName = $GLOBALS['RELDYN_PLAYER_NAME'] ?? trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+    if ($baseDelta != 0) {
+        $modifiedDelta = round($baseDelta * $affinityGainMult, 2);
 
-    if ($db && !empty($playerName) && $baseDelta != 0) {
-        $escaped = $db->escape($npcName);
-        $row = $db->fetchOne("SELECT id, extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+        // Accumulate fractional deltas — only whole points are applied to core
+        RelationshipDynamics::queueAffinityDelta($dynamics, $modifiedDelta);
+        $affResult = RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
+        $intDelta = $affResult['delta'] ?? 0;
 
-        if (is_array($row) && !empty($row['extended_data'])) {
-            $extData = json_decode($row['extended_data'], true) ?: [];
-            $relationships = $extData['relationships'] ?? [];
-            $playerRel = $relationships[$playerName] ?? null;
+        if ($affResult !== null) {
+            $currentAff = $affResult['old'];
+            $newAff = $affResult['new'];
+            $GLOBALS['RELDYN_AFFINITY_DELTA'] = $intDelta;
 
-            if ($playerRel !== null) {
-                $currentAff = intval($playerRel['aff'] ?? 0);
-                $modifiedDelta = round($baseDelta * $affinityGainMult, 2);
-
-                // Accumulate fractional deltas — only apply when they round to ≥1
-                $pendingAff = floatval($dynamics['_pending_aff_delta'] ?? 0);
-                $pendingAff += $modifiedDelta;
-                $intDelta = intval(floor($pendingAff));
-                $dynamics['_pending_aff_delta'] = $pendingAff - $intDelta;
-
-                if ($intDelta != 0) {
-                    $newAff = max(-100, min(100, $currentAff + $intDelta));
-                    $GLOBALS['RELDYN_AFFINITY_DELTA'] = $newAff - $currentAff;
-                    $playerRel['aff'] = $newAff;
-                    $relationships[$playerName] = $playerRel;
-                    $extData['relationships'] = $relationships;
-
-                    $extJson = json_encode($extData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    $extEscaped = $db->escape($extJson);
-                    $npcId = intval($row['id']);
-                    $db->execQuery("UPDATE core_npc_master SET extended_data = '{$extEscaped}'::jsonb WHERE id = {$npcId}");
-
-                    // ========== CASCADE AFFINITY (PR 12) ==========
-                    if (!empty($reldynCfg['cascade_network_enabled'])) {
-                        $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
-                        if (abs($affinityDelta) >= RelationshipDynamics::CASCADE_THRESHOLD) {
-                            $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
-                            $cascadeResults = RelationshipDynamics::propagateAffinityChange($npcName, $affinityDelta, $playerName);
-                            if (!empty($cascadeResults)) {
-                                RelationshipDynamics::log("[CASCADE] {$npcName}: " . count($cascadeResults) . " NPCs affected by delta=" . round($affinityDelta, 2));
-                            }
-                        }
+            // ========== CASCADE AFFINITY (PR 12) ==========
+            if (!empty($reldynCfg['cascade_network_enabled'])) {
+                $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
+                if (abs($affinityDelta) >= RelationshipDynamics::CASCADE_THRESHOLD) {
+                    $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
+                    $cascadeResults = RelationshipDynamics::propagateAffinityChange($npcName, $affinityDelta, $playerName);
+                    if (!empty($cascadeResults)) {
+                        RelationshipDynamics::log("[CASCADE] {$npcName}: " . count($cascadeResults) . " NPCs affected by delta=" . round($affinityDelta, 2));
                     }
-
-                    RelationshipDynamics::log("RPM→Speed: base={$baseDelta} × mult=" . round($affinityGainMult, 2) . " = +{$intDelta} aff (passion=" . intval($dynamics['passion']) . ", aff {$currentAff}→{$newAff})");
-                } else {
-                    RelationshipDynamics::log("RPM→Speed: base={$baseDelta} × mult=" . round($affinityGainMult, 2) . " = pending " . round($pendingAff + $intDelta, 2) . " (passion=" . intval($dynamics['passion']) . ", not enough for +1 yet)");
-                }
-
-                // Check for conflict from negative delta
-                if ($intDelta < 0) {
-                    RelationshipDynamics::checkAffinityDropConflict($dynamics, $intDelta);
                 }
             }
+
+            RelationshipDynamics::log("RPM→Speed: base={$baseDelta} × mult=" . round($affinityGainMult, 2) . " = +{$intDelta} aff (passion=" . intval($dynamics['passion']) . ", aff {$currentAff}→{$newAff})");
+        } else {
+            RelationshipDynamics::log("RPM→Speed: base={$baseDelta} × mult=" . round($affinityGainMult, 2) . " = pending " . round(floatval($dynamics['_pending_aff_delta'] ?? 0), 2) . " (passion=" . intval($dynamics['passion']) . ", not enough for +1 yet)");
+        }
+
+        // Check for conflict from negative delta
+        if ($intDelta < 0) {
+            RelationshipDynamics::checkAffinityDropConflict($dynamics, $intDelta);
         }
     }
 } catch (Throwable $e) {
@@ -569,12 +548,11 @@ if ($romanticInteraction) {
         try {
             $db2 = $GLOBALS['db'] ?? null;
             if ($db2) {
-                $playerName2 = $GLOBALS['RELDYN_PLAYER_NAME'] ?? trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
                 $nearbyEsc = $db2->escape($nearbyNpc);
                 $nRow = $db2->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$nearbyEsc}') LIMIT 1");
                 if (is_array($nRow) && !empty($nRow['extended_data'])) {
                     $nExt = json_decode($nRow['extended_data'], true) ?: [];
-                    $nRel = $nExt['relationships'][$playerName2] ?? null;
+                    $nRel = RelationshipDynamics::getPlayerRelationshipFromExtended($nExt); // CHIM 3.4.1 key "Player"
                     if ($nRel && isset($nRel['maras'])) {
                         $marasStatus = $nRel['maras']['status'] ?? null;
                         $marasAff = intval($nRel['maras']['affection'] ?? 0);
@@ -582,10 +560,11 @@ if ($romanticInteraction) {
                 }
             }
         } catch (Throwable $e) {
+            error_log("[RelDyn-POST] Jealousy relationship read failed for {$nearbyNpc}: " . $e->getMessage());
             continue;
         }
 
-        $jealousyGain = RelationshipDynamics::calculateJealousyGain(
+        $jealousyGain =RelationshipDynamics::calculateJealousyGain(
             $nearbyNpc, $npcName, $nearbyDynamics,
             $relPref, $marasStatus, $marasAff
         );
@@ -713,6 +692,8 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
     $evalResults = RelationshipDynamics::processPendingEvalDeltas($npcName, $dynamics);
     if (!empty($evalResults)) {
         error_log("[RelDyn-POST] XYZ eval deltas applied for {$npcName}: " . json_encode($evalResults));
+        // affinity_delta moved the mirror; push it to core as a locked delta
+        RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
 
         // ========== BETRAYAL DETECTION (PR 10) ==========
@@ -773,6 +754,8 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
     );
     if (!empty($itemResults['consumable']) || !empty($itemResults['gift']) || !empty($itemResults['equip'])) {
         error_log("[RelDyn-POST] Item events for {$npcName}: " . json_encode($itemResults));
+        // gifts move affinity; push it to core as a locked delta
+        RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
     }
 

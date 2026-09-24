@@ -100,8 +100,7 @@ try {
     $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
     if (is_array($row) && !empty($row['extended_data'])) {
         $ext = json_decode($row['extended_data'], true) ?: [];
-        $playerName = $GLOBALS['PLAYER_NAME'];
-        $rel = $ext['relationships'][$playerName] ?? null;
+        $rel = RelationshipDynamics::getPlayerRelationshipFromExtended($ext); // CHIM 3.4.1 key "Player"
         if ($rel) {
             echo "--- CHIM Relationship ---\n";
             echo "Affinity:                " . ($rel['aff'] ?? '?') . "\n";
