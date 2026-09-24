@@ -273,16 +273,16 @@ final class RelDynDimensionStateTest extends TestCase
         $this->seed([
             'jealousy_anger' => 10.0,
             'jealousy_updated_at' => 1,
-            '_accumulated_play_gamets' => 1 + 2.0 * RelationshipDynamics::GAMETS_PER_REAL_HOUR,
+            '_accumulated_play_gamets' => 1 + 0.1 * RelationshipDynamics::GAMETS_PER_REAL_HOUR,   // 6 play minutes, in contact
         ]);
         $dynamics = RelationshipDynamics::getDynamics(self::NPC);
 
         RelationshipDynamics::decayJealousy($dynamics);
-        // default jealousy_decay_per_hour 1.5 * 2h = 3.0
-        $this->assertEqualsWithDelta(7.0, $dynamics['jealousy_anger'], 0.0001);
+        // default jealousy_decay_per_hour 1.5 * 0.1 h = 0.15
+        $this->assertEqualsWithDelta(9.85, $dynamics['jealousy_anger'], 0.0001);
 
         $reloaded = $this->saveAndReload($dynamics);
-        $this->assertEqualsWithDelta(7.0, $reloaded['jealousy_anger'], 0.0001);
+        $this->assertEqualsWithDelta(9.85, $reloaded['jealousy_anger'], 0.0001);
     }
 
     // ------------------------------------------------------------------

@@ -59,11 +59,12 @@ final class RelDynPlayClockCheckpointTest extends TestCase
     {
         $d = $this->dyn(['_accumulated_play_gamets' => self::LONG_PLAY]);
         RelationshipDynamics::setJealousy($d, 30.0);
-        $d['jealousy_updated_at'] = self::LONG_PLAY - 2315 * 3600;   // one play hour
+        $d['jealousy_updated_at'] = self::LONG_PLAY - self::FIVE_MIN;   // five play minutes, in contact
 
         RelationshipDynamics::decayJealousy($d);
 
-        $this->assertEqualsWithDelta(28.5, (float) $d['jealousy_anger'], 0.01, 'jealousy_decay_per_hour 1.5');
+        $this->assertEqualsWithDelta(30.0 - 1.5 * 5 / 60, (float) $d['jealousy_anger'], 0.001,
+            'five play-minutes at jealousy_decay_per_hour 1.5 must apply at any play age');
     }
 
     public function testDiminishingReturnsClockKeepsItsCheckpointAfterLongPlay(): void
