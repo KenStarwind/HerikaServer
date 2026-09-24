@@ -652,7 +652,11 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         $this->assertTrue($courtier['pillars']['beauty']['known']);
         $this->assertLessThan(0.4, $courtier['pillars']['beauty']['score'], 'none of her words');
         $this->assertTrue(!$courtier['passes'] || $courtier['tolerated'], 'beauty (rigid for her) now weighs: ' . $courtier['reason']);
-        $this->assertNotNull($this->dynamics()['_attraction']['passion_cap'], 'passion is capped for a player she only tolerates');
+        // Rulings §11: a near miss on a required pillar costs passion continuously (a partly
+        // open gate and a lower modifier), not a step ceiling
+        $this->assertLessThan(1.0, $courtier['passion']['gates']['beauty'], json_encode($courtier['passion']));
+        $this->assertLessThan($rugged['passion_mult'], $courtier['passion_mult']);
+        $this->assertLessThan($rugged['passion']['modifier'], $courtier['passion']['modifier'], 'her words in his looks lift the modifier');
         $this->assertNoDbFailures();
     }
 }

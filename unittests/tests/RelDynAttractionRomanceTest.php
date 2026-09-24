@@ -446,8 +446,8 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->dayTogether(1, 6, 'flirty');
         $this->dayTogether(2, 6, 'flirty');
         $this->assertGreaterThan($passion0 + 5.0, $this->passion(), 'the warrior earns passion');
-        // rulings §9: passion by attraction x attachment (Aela: Independent -> avoidant 0.7,
-        // x lerp(passing_min_mult, 1, score)); a friendzoned player gets unattracted_mult
+        // rulings §11 / §9: passion x attraction modifier x required-pillar gates x attachment
+        // (Aela: Independent -> avoidant 0.7); a friendzoned player's gate is closed (x0)
         $this->assertGreaterThanOrEqual(0.5, $this->dynamics()['_attraction']['passion_mult']);
         $this->assertNotContains('crush', $this->dynamics()['_attraction']['blocked_types'], 'the crush is earned');
 
@@ -560,7 +560,7 @@ final class RelDynAttractionRomanceTest extends TestCase
         $maxPassion = max($maxPassion, $this->passion());
 
         $this->assertLessThanOrEqual(20.0, $maxPassion, 'passion never above 20');
-        $this->assertLessThanOrEqual(0.1, $this->dynamics()['_attraction']['passion_mult'], 'unattracted: passion barely moves');
+        $this->assertSame(0.0, floatval($this->dynamics()['_attraction']['passion_mult']), 'friendzoned: the gate is closed (rulings §11)');
         $this->assertGreaterThan($aff0 + 5, intval($this->core()['aff']), 'she still grows fond of him');
         $this->assertSame('platonic', $this->core()['type'], 'never promoted');
         $d = $this->dynamics();

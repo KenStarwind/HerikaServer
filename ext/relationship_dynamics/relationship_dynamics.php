@@ -6430,7 +6430,8 @@ class RelationshipDynamics
      * @param string|null $temperament Temperament name (null = use defaults)
      * @param array      $overrides    Optional overrides: Y_up, Y_down, Z, maturity,
      *                                 max_abs (clamp on |actual delta|, physics units),
-     *                                 skip_caps (applyCrossSignalCaps rules to skip)
+     *                                 skip_caps (applyCrossSignalCaps rules to skip),
+     *                                 attraction_applied (a passion gain already x the attraction)
      * @return float     The actual delta applied (after all physics)
      */
     public static function applyDelta($dimensionId, &$dynamics, $rawDelta, $temperament = null, $overrides = [])
@@ -6438,6 +6439,16 @@ class RelationshipDynamics
         $rawDelta = floatval($rawDelta);
         if (abs($rawDelta) < 0.0001) {
             return 0.0;
+        }
+        // Rulings §11: a passion GAIN is x the attraction (modifier x required-pillar gates x
+        // attachment; a closed gate leaves exactly 0), from this request's summary (none yet:
+        // not judged, x1). The eval signal applies it itself (attraction_applied).
+        if ($dimensionId === 'passion' && $rawDelta > 0 && empty($overrides['attraction_applied'])
+            && is_numeric($dynamics['_attraction']['passion_mult'] ?? null)) {
+            $rawDelta *= max(0.0, floatval($dynamics['_attraction']['passion_mult']));
+            if ($rawDelta < 0.0001) {
+                return 0.0;
+            }
         }
 
         // Apply cross-signal caps (other dimensions modify this delta)
@@ -7455,11 +7466,28 @@ class RelationshipDynamics
                 $raw *= $pm;
                 $steps .= sprintf(' place x%.2f', $pm);
             }
-            // Attraction x attachment (rulings §9): Aela warms to a warrior, not to a bard
+            // Attraction modifier x gates x attachment (rulings §11, §9): Aela warms to a
+            // warrior, not to a bard; a closed gate leaves exactly 0
             $am = self::attractionPassionMult((string) $npcName, $dynamics);
             if (abs($am - 1.0) > 0.001) {
                 $raw *= $am;
                 $steps .= sprintf(' attraction x%.2f', $am);
+            }
+            if ($raw <= 0.0) {
+                $result['line'] = sprintf('%s %+.2f%s%s -> 0 (attraction gate closed)', $signal, $rawIn, $clampNote, $steps);
+                return $result;
+            }
+        }
+        // Respect gains x respect_mult (plan §4: (competence + status) / 2 through this NPC's eyes)
+        if ($signal === 'respect' && $raw > 0) {
+            $rm = self::attractionRespectMult((string) $npcName, $dynamics);
+            if (abs($rm - 1.0) > 0.001) {
+                $raw *= $rm;
+                $steps .= sprintf(' respect_mult x%.2f', $rm);
+            }
+            if ($raw <= 0.0) {
+                $result['line'] = sprintf('%s %+.2f%s%s -> 0', $signal, $rawIn, $clampNote, $steps);
+                return $result;
             }
         }
 
@@ -7498,6 +7526,9 @@ class RelationshipDynamics
         $clampPoints = max(0.0, floatval(self::configValue('eval_significance_clamp')));  // points at significance 1
         $overrides['max_abs'] = $clampPoints * $significance;
 
+        if ($signal === 'passion') {
+            $overrides['attraction_applied'] = true;   // x attractionPassionMult above
+        }
         $actual = self::applyDelta($signal, $dynamics, $raw, $temperament, $overrides);
         $result['actual'] = $actual;
 
@@ -8143,8 +8174,7 @@ class RelationshipDynamics
             if (!empty($dynamics['in_conflict']) && self::configValue('conflict_enabled')) {
                 $burst = self::recordConflictPositive($dynamics);
                 if ($burst > 0) {
-                    self::addPassion($dynamics, $burst, 'repair');
-                    $out['repair_burst'] = $burst;
+                    $out['repair_burst'] = self::gainPassion($npcName, $dynamics, $burst, 'repair');
                 }
             }
             $out['romantic_exposure'] = count(array_intersect($tags,
@@ -12699,9 +12729,11 @@ class RelationshipDynamics
     }
 
     /**
-     * Passion gain multiplier from attraction x attachment (rulings §9), for the legacy passion
-     * path and the eval passion signal. Uses this request's summary; evaluates first when the
-     * NPC has none yet (eval worker on a bond never seen by prerequest).
+     * Passion gain multiplier (rulings §11: attraction modifier x required-pillar gates x
+     * attachment, rulings §9), for every passion gain: the legacy path, the eval passion
+     * signal, and gainPassion (reunion, combat, conflict repair, hoover, place floor). 0 when a
+     * gate is closed. Uses this request's summary; evaluates first when the NPC has none yet
+     * (eval worker / calendar scan on a bond never seen by prerequest).
      */
     public static function attractionPassionMult(string $npcName, array &$dynamics): float
     {
@@ -12709,6 +12741,43 @@ class RelationshipDynamics
             self::updateAttraction($npcName, $dynamics);
         }
         $m = $dynamics['_attraction']['passion_mult'] ?? 1.0;
+        return is_numeric($m) ? max(0.0, floatval($m)) : 1.0;
+    }
+
+    /**
+     * A passion GAIN of $raw passion points from $source, through the attraction (rulings §11:
+     * raw x attractionPassionMult; a closed gate adds exactly 0), then addPassion (stage
+     * ceiling, the attraction hard cap). Returns the gain asked of addPassion (points).
+     */
+    public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source): float
+    {
+        if ($raw <= 0.0) {
+            return 0.0;
+        }
+        $mult = self::attractionPassionMult($npcName, $dynamics);
+        $gain = $raw * $mult;
+        if ($gain <= 0.0) {
+            self::log("[ATTRACTION] {$npcName}: {$source} passion +" . round($raw, 2) . ' x0 (attraction gate closed): no gain');
+            return 0.0;
+        }
+        self::addPassion($dynamics, $gain, $source);
+        return $gain;
+    }
+
+    /**
+     * Respect gain multiplier (plan §4 respect_mult = (competence + status) / 2 as this NPC
+     * reads the player), for the eval respect signal's gains. 1.0 while config
+     * attraction.respect_mult_enabled is off or the Matrix does not judge.
+     */
+    public static function attractionRespectMult(string $npcName, array &$dynamics): float
+    {
+        if (empty(RelDynAttraction::config()['respect_mult_enabled'])) {
+            return 1.0;
+        }
+        if (!is_array($dynamics['_attraction'] ?? null)) {
+            self::updateAttraction($npcName, $dynamics);
+        }
+        $m = $dynamics['_attraction']['respect_mult'] ?? 1.0;
         return is_numeric($m) ? max(0.0, floatval($m)) : 1.0;
     }
 
@@ -15829,8 +15898,16 @@ class RelationshipDynamics
             $current = floatval($dynamics['dimensions'][$dim]['x'] ?? 50);
             $delta = $target - $current;
             if ($dim === 'passion') {
-                self::setPassion($dynamics, $target);
-                $results[$dim] = ['from' => $current, 'to' => $target];
+                // The snap up is a passion gain: x attraction (rulings §11), so a closed gate
+                // leaves passion where it was; never past the target or passion_max
+                $current = self::getPassion($dynamics);
+                $to = $target;
+                if ($target > $current) {
+                    $max = floatval(self::getConfig()['passion_max'] ?? 100.0);
+                    $to = min(floatval($target), $max, $current + ($target - $current) * self::attractionPassionMult((string) $npcName, $dynamics));
+                }
+                self::setPassion($dynamics, $to);
+                $results[$dim] = ['from' => $current, 'to' => self::getPassion($dynamics)];
             } else {
                 $dynamics['dimensions'][$dim]['x'] = floatval($target);
                 $results[$dim] = ['from' => $current, 'to' => $target];
