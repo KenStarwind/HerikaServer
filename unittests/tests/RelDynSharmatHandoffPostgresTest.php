@@ -257,6 +257,9 @@ final class RelDynSharmatHandoffPostgresTest extends TestCase
         $this->assertEqualsCanonicalizing(['conflict', 'friendzoned'], $state['block_reasons']);
     }
 
+    // Loads Sharmat's real NsfwNpcData class: in its own process, so the class does not leak
+    // into later tests of a combined run (RelDyn reads Sharmat's data whenever the class exists).
+    #[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
     public function testWithSharmatLoadedRelDynReadsItsArousalAndNeverWritesItsStore(): void
     {
         if (!is_file(self::SHARMAT_DATA)) {

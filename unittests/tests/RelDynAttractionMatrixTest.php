@@ -413,6 +413,38 @@ final class RelDynAttractionMatrixTest extends TestCase
         $this->assertSame(1.0, $b['passion_mult']);
     }
 
+    /**
+     * The relationship preference is the NPC's own: it filters romance whether or not the
+     * Matrix can judge the player (no player data yet, or the Matrix switched off).
+     */
+    public function testThePreferenceFilterHoldsWithoutPlayerData(): void
+    {
+        $unknown = ['known' => false];
+        $aro = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA, ['relationship_preference' => 'aromantic']), $unknown);
+        $this->assertSame(['crush', 'romantic'], $aro['blocked_types']);
+        $this->assertFalse($aro['intimacy_allowed']);
+        $this->assertSame(20.0, $aro['passion_cap'], 'no romance: capped like a friendzone');
+        $this->assertSame('aromantic', $aro['preference']);
+
+        $unc = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA, ['relationship_preference' => 'uncommitted']), $unknown);
+        $this->assertSame(['romantic'], $unc['blocked_types'], 'uncommitted: a crush, never commitment');
+        $this->assertNull($unc['passion_cap']);
+
+        $demi = fn(float $aff) => RelationshipDynamics::attractionFor(self::AELA,
+            $this->npc(self::AELA, ['relationship_preference' => 'demisexual'], $aff), $unknown)['blocked_types'];
+        $this->assertSame(['crush', 'romantic'], $demi(30.0), 'demisexual: nothing before the bond');
+        $this->assertSame([], $demi(65.0));
+
+        $this->storeConfig(['attraction_matrix_enabled' => false]);
+        $off = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA, ['relationship_preference' => 'aromantic']), self::player('warrior'));
+        $this->assertSame(['crush', 'romantic'], $off['blocked_types'], 'the Type Filter works with the Matrix off');
+        $this->assertSame(['crush', 'romantic'], RelationshipDynamics::getBlockedTypes(['_attraction' => $off]));
+
+        $this->storeConfig(['attraction_matrix_enabled' => false, 'type_filter_enabled' => false]);
+        $this->assertSame([], RelationshipDynamics::attractionFor(self::AELA,
+            $this->npc(self::AELA, ['relationship_preference' => 'aromantic']), $unknown)['blocked_types'], 'Type Filter off');
+    }
+
     public function testFeltTextHasFeelingsNotNumbers(): void
     {
         foreach (['warrior', 'bard', 'newbie', 'newwarrior'] as $kind) {
@@ -617,5 +649,29 @@ final class RelDynAttractionMatrixTest extends TestCase
         };
         $this->assertTrue(RelationshipDynamics::checkIckTrigger($mk('low'), 'Bold'), 'low openness: the Ick');
         $this->assertFalse(RelationshipDynamics::checkIckTrigger($mk('medium'), 'Bold'), 'medium: not yet');
+    }
+
+    /**
+     * Romantic pressure from someone she is drawn to, once her romance axis is open and
+     * earned (a crush or more), is not the Ick - whatever comfort / passion read today (their
+     * XYZ baselines sit below the Ick's receptivity floors). Not yet earned, friendzoned or
+     * unattracted: the Ick's own receptivity rules decide.
+     */
+    public function testAnEarnedCrushIsReceptiveToRomanticPressure(): void
+    {
+        $mk = function (string $player, int $earnedRomance) {
+            $d = $this->npc(self::AELA, [], 60.0);
+            $d['_attraction_state'] = ['depth' => 'close_friend', 'romance' => $earnedRomance, 'pending' => null, 'peak_core_aff' => 60.0];
+            RelationshipDynamics::updateAttraction(self::AELA, $d, self::player($player));
+            $d['dimensions']['maturity']['x'] = 50;
+            $d['dimensions']['comfort']['x'] = 30;                               // below the Ick's comfort floor
+            RelationshipDynamics::setPassion($d, 12.0);                          // below its passion floor
+            $d['_ick_tracker'] = ['total_count' => 10, 'romantic_count' => 9];
+            return $d;
+        };
+        $this->assertFalse(RelationshipDynamics::checkIckTrigger($mk('warrior', 1), 'Bold'), 'an earned crush: receptive');
+        $this->assertFalse(RelationshipDynamics::checkIckTrigger($mk('warrior', 2), 'Bold'));
+        $this->assertTrue(RelationshipDynamics::checkIckTrigger($mk('warrior', 0), 'Bold'), 'drawn but not yet earned: the Ick rules');
+        $this->assertTrue(RelationshipDynamics::checkIckTrigger($mk('bard', 1), 'Bold'), 'friendzoned: the Ick rules');
     }
 }

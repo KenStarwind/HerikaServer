@@ -485,6 +485,8 @@ final class RelDynRomancePromotionPostgresTest extends TestCase
             'walkaway' => [['_walkaway_state' => 'active'], [], 'state: walkaway'],
             'open conflict' => [['in_conflict' => true, 'conflict_positive_count' => 0], [], 'state: conflict'],
             'aromantic' => [['relationship_preference' => 'aromantic'], [], "preference 'aromantic' blocks crush"],
+            // Mature boundary (fulfillment lane): stated, the pattern on probation - no romance games meanwhile
+            'boundary on probation' => [['_fulfillment' => ['boundary' => ['state' => 'probation', 'decided_gamets' => 1, 'until_gamets' => 9e12]]], [], 'state: boundary'],
             'familial' => [[], ['relationships' => ['Player' => ['aff' => 60, 'type' => 'familial']]], "no romance step from core type 'familial'", 'familial'],
             'ex' => [[], ['relationships' => ['Player' => ['aff' => 60, 'type' => 'ex']]], "no romance step from core type 'ex'", 'ex'],
         ];

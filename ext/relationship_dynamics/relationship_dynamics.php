@@ -14608,6 +14608,15 @@ class RelationshipDynamics
             return false; // Not enough romantic pressure
         }
 
+        // Receptive by the Attraction Matrix (rulings §9): she is drawn to the player and her
+        // romance axis is open and earned (a crush or more). Romantic pressure from someone she
+        // wants is not the Ick, whatever her comfort / passion levels read today.
+        $att = $dynamics['_attraction'] ?? null;
+        if (is_array($att) && !empty($att['enabled']) && !empty($att['passes']) && empty($att['friendzoned'])
+            && intval($att['romance']['effective'] ?? 0) >= RelDynAttraction::ROMANCE_CRUSH) {
+            return false;
+        }
+
         // Check receptivity conditions
         $dims = $dynamics['dimensions'] ?? [];
         $comfort = floatval($dims['comfort']['x'] ?? 50);
