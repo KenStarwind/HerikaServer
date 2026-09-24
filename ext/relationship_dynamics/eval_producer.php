@@ -170,6 +170,25 @@ final class RelDynEval
         return array_merge(self::defaultConfig(), is_array($stored) ? $stored : []);
     }
 
+    /**
+     * Why RelDyn's eval must not run at all right now, or null: RelDyn off, the dimension
+     * engine off (the eval inbox's only consumer; with it off the inbox is dropped unread),
+     * or the eval producer off. Read fresh (config) on every call.
+     */
+    public static function switchedOffReason(): ?string
+    {
+        if (!RelationshipDynamics::isEnabled()) {
+            return 'RelDyn disabled';
+        }
+        if (empty(RelationshipDynamics::getConfig()['dimension_engine_enabled'])) {
+            return 'dimension engine disabled';
+        }
+        if (empty(self::config()['enabled'])) {
+            return 'disabled';
+        }
+        return null;
+    }
+
     public static function connectorId(array $cfg): int
     {
         $own = intval($cfg['connector_id'] ?? 0);
@@ -236,7 +255,7 @@ final class RelDynEval
             }
             $playerName = self::playerName();
 
-            $reason = self::skipReason($npcName, $gameRequest, $listener, $playerName, $cfg);
+            $reason = self::switchedOffReason() ?? self::skipReason($npcName, $gameRequest, $listener, $playerName, $cfg);
             if ($reason !== null) {
                 RelationshipDynamics::log("EVAL skip {$npcName}: {$reason}");
                 return null;
@@ -488,6 +507,16 @@ final class RelDynEval
                 if (self::switchPending()) {
                     error_log('[RelDyn-EVAL] worker stops: a Playthrough Save switch pending; the remaining jobs wait for the next worker');
                     $stats['paused'] = true;
+                    break;
+                }
+                $off = self::switchedOffReason();
+                if ($off !== null) {
+                    // Switched off after these were queued: no LLM call is paid for them, and
+                    // they are not kept to be scored late (as the inbox is dropped unread).
+                    $n = $db->fetchOne('WITH d AS (DELETE FROM ' . self::QUEUE_TABLE . " WHERE status = 'pending' RETURNING 1) SELECT count(*) AS n FROM d");
+                    $dropped = intval($n['n'] ?? 0);
+                    error_log("[RelDyn-EVAL] worker stops: eval switched off ({$off}); dropped {$dropped} queued job(s)");
+                    $stats['dropped'] += $dropped;
                     break;
                 }
                 $row = $db->fetchOne(

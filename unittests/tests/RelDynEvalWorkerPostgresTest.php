@@ -625,6 +625,48 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
         $this->assertStringContainsString('Playthrough Save switch pending', $this->log());
     }
 
+    private function setConfig(array $overrides): void
+    {
+        pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value', [
+            RelationshipDynamics::CONFIG_ROW_ID,
+            json_encode(['config_schema' => RelationshipDynamics::CONFIG_SCHEMA] + $overrides),
+        ]);
+        RelationshipDynamics::clearConfigCache();
+    }
+
+    /** Nothing is queued while the dimension engine (the inbox's only consumer) is off. */
+    public function testNoJobIsQueuedWithTheDimensionEngineOff(): void
+    {
+        $this->seedConversation();
+        $this->setConfig(['dimension_engine_enabled' => false, 'log_enabled' => true]);
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) self::T0, 'Kaida: pelt'], self::PLAYER);
+        $this->assertSame([], $this->jobs());
+        $this->assertStringContainsString('EVAL skip Aela the Huntress: dimension engine disabled', $this->log());
+    }
+
+    /** Switched off after jobs were queued: the worker makes no LLM call and drops them (logged). */
+    public function testTheWorkerNeverCallsTheLlmOnceTheEvalIsSwitchedOff(): void
+    {
+        $this->seedConversation();
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) self::T0, 'Kaida: pelt'], self::PLAYER);
+        $this->postrequest(self::NPC, ['inputtext', '1727000124', (string) (self::T0 + 10), 'Kaida: again'], self::PLAYER);
+        $this->assertCount(2, $this->jobs());
+
+        foreach ([['eval_producer' => ['enabled' => false]], ['enabled' => false], ['dimension_engine_enabled' => false]] as $off) {
+            $this->setConfig($off);
+            $calls = [];
+            $stats = RelDynEval::runWorker($this->llm(self::GOOD_REPLY, $calls));
+            $this->assertSame([], $calls, json_encode($off) . ': no LLM call');
+            $this->assertSame([], $this->inbox());
+            $this->assertSame([], $this->jobs(), json_encode($off) . ': queued jobs dropped');
+            $this->assertStringContainsString('dropped 2 queued job(s)', $this->log());
+            // queue two more for the next switch
+            $this->setConfig([]);
+            $this->postrequest(self::NPC, ['inputtext', '1727000125', (string) (self::T0 + 20), 'Kaida: x'], self::PLAYER);
+            $this->postrequest(self::NPC, ['inputtext', '1727000126', (string) (self::T0 + 30), 'Kaida: y'], self::PLAYER);
+        }
+    }
+
     public function testTheWorkerReadsFreshStateForEveryJob(): void
     {
         $this->seedConversation();
