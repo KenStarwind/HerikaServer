@@ -245,7 +245,7 @@ final class RelDynResentmentPostgresTest extends TestCase
         $this->assertEqualsWithDelta(5.0, (float) $mLog['raw'], 1e-9);
         $this->assertGreaterThan((float) $mjoll['dimensions']['resentment']['x'], (float) $lydia['dimensions']['resentment']['x']);
         $this->assertSame([], $this->inbox('Lydia'), 'the item was consumed');
-        $this->assertTrue(!empty($lydia['_eval_feelings_seen']));
+        $this->assertArrayNotHasKey('_eval_feelings_seen', $lydia, 'no permanent flag that would silence the local heuristics');
     }
 
     /**

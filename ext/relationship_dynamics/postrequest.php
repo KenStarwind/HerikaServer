@@ -277,7 +277,12 @@ $reldynCfg = RelationshipDynamics::getConfig();
 // itself: never the Narrator, radiant / NPC-to-NPC only when the player is addressed,
 // config chance and cooldown. The worker runs outside this request and fills the eval inbox.
 require_once __DIR__ . '/eval_producer.php';
-RelDynEval::onPostrequest($npcName, $GLOBALS['gameRequest']);
+$evalJobId = RelDynEval::onPostrequest($npcName, $GLOBALS['gameRequest']);
+// An exchange the eval scores is the eval's alone: its item (applied on this NPC's next
+// request) moves affinity, passion, resentment decay and conflict repair. The legacy local
+// classifier below stands down for it, so nothing is counted twice. An exchange the eval
+// does not score (eval off, no connector, chance, cooldown) keeps the local heuristics.
+$evalOwnsExchange = ($evalJobId !== null);
 
 // ── NPC-TO-NPC FILTER ──
 // Radiant dialogue is NPC-to-NPC — player isn't involved.
@@ -419,7 +424,9 @@ $GLOBALS['RELDYN_FLIRT_BONUS'] = $flirtBonus;
 // 2. Calculate and apply passion gain
 // -------------------------------------------------------------------------
 $passionGain = 0.0;
-if (($reldynCfg['passion_enabled'] ?? true) && $interactionLL !== null) {
+if ($evalOwnsExchange) {
+    RelationshipDynamics::log("POST legacy classifier stands down for {$npcName}: eval job {$evalJobId} scores this exchange (no local passion gain, affinity speed, repair or resentment decay)");
+} elseif (($reldynCfg['passion_enabled'] ?? true) && $interactionLL !== null) {
     $rawPassionGain = RelationshipDynamics::calculatePassionGain($dynamics, $interactionLL);
     // Apply topic and flirt bonuses on top of base passion gain
     $passionGain = $rawPassionGain * $topicBonus * $flirtBonus;
@@ -532,9 +539,9 @@ try {
 // 6. Conflict resolution check
 // -------------------------------------------------------------------------
 if (!($reldynCfg['conflict_enabled'] ?? true)) goto skip_conflict;
-// Once contract evals flow for this NPC, their positive_interaction drives repair
-// (applyEvalFeelings); the passion-gain heuristic stands down so nothing counts twice.
-if ($passionGain > 0 && !empty($dynamics['in_conflict']) && !RelationshipDynamics::evalFeelingsActive($dynamics)) {
+// For an exchange the eval scores, its positive_interaction drives repair
+// (applyEvalFeelings); $passionGain is 0 then, so this heuristic stands down.
+if ($passionGain > 0 && !empty($dynamics['in_conflict'])) {
     $repairBurst = RelationshipDynamics::recordConflictPositive($dynamics);
     if ($repairBurst > 0) {
         RelationshipDynamics::addPassion($dynamics, $repairBurst, 'repair');
@@ -698,9 +705,9 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
         }
     }
 
-    // Natural resentment decay on positive interactions
-    // (the contract eval's positive_interaction does this once evals flow: applyEvalFeelings)
-    $wasPositive = ($passionGain ?? 0) > 0 && !RelationshipDynamics::evalFeelingsActive($dynamics);
+    // Natural resentment decay on positive interactions (for an exchange the eval scores,
+    // its positive_interaction does this in applyEvalFeelings; $passionGain is 0 then)
+    $wasPositive = ($passionGain ?? 0) > 0;
     if ($wasPositive) {
         $dynamics['_npc_name'] = $npcName;
         $temperament = $dynamics['inferred_temperament'] ?? null;

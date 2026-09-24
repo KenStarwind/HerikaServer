@@ -255,7 +255,8 @@ final class RelDynResentmentAccumulatorTest extends TestCase
 
         $this->assertEqualsWithDelta(self::res($expected), self::res($d), 1e-9);
         $this->assertLessThan(40.0, self::res($d));
-        $this->assertTrue(RelationshipDynamics::evalFeelingsActive($d), 'the eval now owns decay and repair');
+        $this->assertArrayNotHasKey('_eval_feelings_seen', $d, 'no permanent flag: the eval owns decay per scored exchange (postrequest)');
+        $this->assertSame(2, (int) $d['total_positive_interactions'], 'each positive exchange counts for the passion stages');
     }
 
     public function testResentmentNeverDecaysFromTimeAlone(): void

@@ -7815,16 +7815,6 @@ class RelationshipDynamics
         ];
     }
 
-    /**
-     * True once this NPC's resentment decay and conflict repair come from contract evals
-     * (positive_interaction). The postrequest heuristics (passion gain > 0) then stand down,
-     * so one positive exchange is not counted twice.
-     */
-    public static function evalFeelingsActive(array $dynamics): bool
-    {
-        return !empty($dynamics['_eval_feelings_seen']);
-    }
-
     /** Low self-respect + low maturity (MDD autonomy design, PR 16 caps): suffers inward. */
     public static function isPeoplePleaser(array $dynamics): bool
     {
@@ -7974,7 +7964,7 @@ class RelationshipDynamics
             || ($item['source'] ?? null) !== self::EVAL_CONTRACT_SOURCE) {
             return [];
         }
-        $dynamics['_eval_feelings_seen'] = true;
+        unset($dynamics['_eval_feelings_seen']);   // retired flag (per exchange now: postrequest $evalOwnsExchange)
         $out = ['grievance' => null, 'jealousy' => 0.0, 'resentment_decay' => 0.0, 'repair_burst' => 0.0, 'romantic_exposure' => false];
         $tags = array_map(fn($t) => strtolower(trim((string) $t)), array_filter((array) ($item['tags'] ?? []), 'is_scalar'));
         $summary = is_string($item['summary'] ?? null) ? $item['summary'] : '';
@@ -8009,6 +7999,10 @@ class RelationshipDynamics
         }
 
         if (!empty($item['positive_interaction'])) {
+            // The positive-interaction count (passion stages) for an exchange the eval scored
+            // (postrequest counts it only when the local classifier scored the exchange)
+            $dynamics['total_positive_interactions'] = intval($dynamics['total_positive_interactions'] ?? 0) + 1;
+            self::checkStageAdvancement($dynamics);
             // MDD 15.5 natural decay: -1 raw per meaningful positive interaction (the eval judged it)
             if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) > 0) {
                 $out['resentment_decay'] = self::applyDelta('resentment', $dynamics,

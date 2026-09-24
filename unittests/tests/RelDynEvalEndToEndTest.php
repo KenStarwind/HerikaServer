@@ -163,13 +163,12 @@ final class RelDynEvalEndToEndTest extends TestCase
         $this->prevLog = ini_set('error_log', $this->logFile);
         Logger::setCustomLog(sys_get_temp_dir() . '/reldyn_eval_e2e_test.log');
 
-        // Debug log on, for the [EVAL-MATH] lines. Passion off: the legacy passion path in
-        // postrequest classifies each exchange locally (an insult reads as quality_time) and
-        // queues its own affinity "speed" (+0.39, +0.48 core here) into the same commit, which
-        // would blur the eval's share of the core write. Not the eval's doing; see the report.
+        // Default config (passion on), debug log on for the [EVAL-MATH] lines. The legacy
+        // local classifier stands down for an exchange the eval scores, so the numbers below
+        // are the eval's alone.
         pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2)', [
             RelationshipDynamics::CONFIG_ROW_ID,
-            json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true, 'passion_enabled' => false])),
+            json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true])),
         ]);
         RelationshipDynamics::clearConfigCache();
 
@@ -307,7 +306,8 @@ final class RelDynEvalEndToEndTest extends TestCase
 
     private function jobs(): array
     {
-        $res = pg_query($this->db->link, 'SELECT id, npc_id, status, job::text AS job FROM reldyn_eval_queue ORDER BY id');
+        $res = @pg_query($this->db->link, 'SELECT id, npc_id, status, job::text AS job FROM reldyn_eval_queue ORDER BY id');
+        if (!$res) return [];   // the queue table is created by the first enqueue
         $rows = [];
         while ($r = pg_fetch_assoc($res)) {
             $r['job'] = json_decode($r['job'], true);
@@ -341,6 +341,10 @@ final class RelDynEvalEndToEndTest extends TestCase
         $before = $this->reldyn()['dynamics'];
         $coreBefore = $this->coreAff();
         $this->assertSame(20, $coreBefore, 'request 1 has no eval to apply: core untouched');
+        // The legacy local classifier (an insult reads as quality_time there) stands down.
+        $this->assertEqualsWithDelta(0.0, (float) $before['passion'], 1e-9, 'no legacy passion gain for an insult');
+        $this->assertEqualsWithDelta(0.0, (float) ($before['_pending_aff_delta'] ?? 0), 1e-9, 'no legacy affinity speed queued');
+        $this->assertStringContainsString('legacy classifier stands down', $this->log());
 
         // --- the worker: eventlog window -> (stubbed) eval LLM -> contract item in the inbox ---
         $calls = [];
@@ -383,6 +387,7 @@ final class RelDynEvalEndToEndTest extends TestCase
             $log);
         $this->assertSame(-5, $this->coreAff(), 'core relationships.Player.aff 20 -> -5');
         $this->assertEqualsWithDelta(-0.35, (float) $after['_pending_aff_delta'], 1e-3, 'fraction carried for the next commit');
+        $this->assertEqualsWithDelta(0.0, (float) $after['passion'], 1e-9, 'passion moved only by the eval (0 here)');
         $this->assertStringContainsString('[AFF] Muiri -> Player: -25 (aff 20 -> -5)', $log);
 
         // Trust (0..100): -8 x R(Jealous trust) 0.4 x P(Adaptive down) 1.0, at baseline (decay 1) = -3.2
@@ -427,5 +432,32 @@ final class RelDynEvalEndToEndTest extends TestCase
         $this->assertSame(-5, $this->coreAff());
         $this->assertEqualsWithDelta((float) $after['dimensions']['resentment']['x'], (float) $again['dimensions']['resentment']['x'], 1e-9);
         $this->assertEqualsWithDelta((float) $after['jealousy_anger'], (float) $again['jealousy_anger'], 1e-9);
+    }
+
+    public function testWithTheEvalSwitchedOffTheLocalHeuristicsCarryResentmentDecayAgain(): void
+    {
+        // Muiri had contract evals before (an old blob may carry the retired flag), then the
+        // eval is switched off: nothing will ever arrive in her inbox again.
+        $dyn = $this->reldyn()['dynamics'];
+        $dyn['_eval_feelings_seen'] = true;
+        // Enough filtered play since the last decay for the legacy debounce (raw play gamets)
+        $dyn['_accumulated_play_gamets'] = 2 * RelationshipDynamics::GAMETS_RESENTMENT_COOLDOWN;
+        pg_query_params($this->db->link, "UPDATE core_npc_master SET plugin_extended_data = jsonb_set(plugin_extended_data, '{reldyn,dynamics}', $2::jsonb) WHERE id = $1",
+            [$this->npcId, json_encode($dyn)]);
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [
+            RelationshipDynamics::CONFIG_ROW_ID,
+            json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true, 'eval_producer' => ['enabled' => false]])),
+        ]);
+        RelationshipDynamics::clearConfigCache();
+        $this->event('inputtext', 'Kaida: I am sorry, Muiri. (Talking to Muiri)', self::T0);
+        $this->npcSays(self::NPC, 'Thank you for saying that.', self::PLAYER, self::T0);
+
+        $this->postrequest(['inputtext', '1727000400', (string) self::T0, 'Kaida: I am sorry, Muiri.']);
+
+        $this->assertSame([], $this->jobs(), 'eval off: nothing queued');
+        $after = $this->reldyn()['dynamics'];
+        $this->assertGreaterThan(0.0, (float) $after['passion'], 'the local classifier scored the exchange');
+        $this->assertLessThan(35.0, (float) $after['dimensions']['resentment']['x'],
+            'MDD 15.5 natural decay on a positive interaction still happens without the eval');
     }
 }
