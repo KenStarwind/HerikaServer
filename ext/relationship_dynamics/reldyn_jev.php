@@ -30,10 +30,10 @@
  *   attraction       ['enabled' => bool, 'outcome' => ?string, 'score' => 0..1,
  *                     rulings §11, attraction is a modifier AND a gate:
  *                     'modifier' => modifier(S) (continuous in the score),
- *                     'gate_product' => 0..1 (product of the required-pillar gates),
+ *                     'gate_product' => 0 or 1 (product of the required-pillar gates, each met or not),
  *                     'gate' => bool (the passion gate is open),
  *                     'passion_mult' => passion-gain multiplier = modifier x gates x attachment [x prebond],
- *                     'respect_mult' => respect-gain multiplier,
+ *                     'respect_mult' => respect-gain multiplier (0.5..2.0, 1 at the neutral pillar score),
  *                     'passion_cap' => ?float points, 'friendzoned' => bool]
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
  *   goal             null | ['text' => string, 'priority' => 0..1]
@@ -48,7 +48,7 @@ final class RelDynJev
         'passion' => 'points 0..100', 'jealousy' => 'points 0..100',
         'fulfillment.band' => '-1..1 (below fulfillment low_band = neglected)',
         'fulfillment.trend' => 'band change per game day',
-        'attraction.modifier' => 'modifier(S), multiplier', 'attraction.gate_product' => '0..1',
+        'attraction.modifier' => 'modifier(S), multiplier', 'attraction.gate_product' => '0 or 1',
         'attraction.passion_mult' => 'passion-gain multiplier', 'attraction.respect_mult' => 'respect-gain multiplier',
         'attraction.score' => '0..1',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',

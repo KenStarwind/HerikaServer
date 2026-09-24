@@ -300,9 +300,7 @@ RelDynFacetClassifier::maybeLaunchBuild($GLOBALS['db'] ?? null, RelationshipDyna
 // Radiant dialogue is NPC-to-NPC — player isn't involved.
 // Passion/affinity between those NPCs is handled by CHIM core's relationship_system.
 // Skip RelDyn player↔NPC passion math to prevent parasitism.
-$radiantTypes = ['radiant', 'radiantsearchingfriend', 'radiantsearchinghostile',
-    'radiantcombathostile', 'minai_force_rechat'];
-if (in_array($reqType, $radiantTypes)) {
+if (RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'] ?? null)) {
     return;
 }
 

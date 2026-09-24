@@ -1454,17 +1454,16 @@ class RelationshipDynamics
                     if ($base === null) {
                         error_log("[RelDyn] saveDynamics for {$npcName}: copy has no load snapshot (not from getDynamics() in this process); it overwrites the stored state");
                     }
-                    // A copy read before a save load is not saved after it (save-load-rollback):
-                    // its changes, clocks included, belong to the timeline the load discarded.
+                    // A copy read before a save load (or before its reconcile) is not saved after it
+                    // (save-load-rollback): its changes, clocks included, belong to the timeline
+                    // the load discarded, or to state core is still restoring.
                     $gen = ($token !== null) ? (self::$loadedGenerations[$token] ?? null) : null;
-                    if ($gen !== null) {
-                        $nowGen = RelDynTimeline::freshLoadGeneration();
-                        if ($nowGen !== null && $nowGen !== $gen) {
-                            error_log("[RelDyn] saveDynamics for {$npcName}: a save was loaded after this copy was read (init row {$gen} -> {$nowGen}); its changes belong to the discarded timeline and are dropped");
-                            return false;
-                        }
-                        $gen = $nowGen ?? $gen;
+                    $stale = self::staleCopy($token);
+                    if ($stale['reason'] !== null) {
+                        error_log("[RelDyn] saveDynamics for {$npcName}: {$stale['reason']}; its changes are dropped");
+                        return false;
                     }
+                    $gen = $stale['gen'] ?? $gen;
                     for ($attempt = 1; $attempt <= self::SAVE_MERGE_ATTEMPTS; $attempt++) {
                         $current = RelDynStorage::readKeyForUpdate($npcId, RelDynStorage::KEY_DYNAMICS);
                         if ($current === null) {
@@ -1496,6 +1495,29 @@ class RelationshipDynamics
         }
 
         return false;
+    }
+
+    /**
+     * Is a loaded copy (its LOAD_TOKEN_KEY token) stale against save loads? Read now
+     * (RelDynTimeline::saveGate). Stale: a load happened after the copy was read (its
+     * generation differs), or the newest load is not reconciled yet (core may still be
+     * restoring; the copy belongs to no timeline yet). A copy without a known generation is
+     * judged by the second rule only.
+     *
+     * @return array ['reason' => ?string (null = fresh), 'gen' => ?int the generation now]
+     */
+    private static function staleCopy(?string $token): array
+    {
+        $gen = ($token !== null) ? (self::$loadedGenerations[$token] ?? null) : null;
+        $gate = RelDynTimeline::saveGate();
+        $nowGen = $gate['gen'];
+        if ($gen !== null && $nowGen !== null && $nowGen !== $gen) {
+            return ['reason' => "a save was loaded after this copy was read (init row {$gen} -> {$nowGen}); it belongs to the discarded timeline", 'gen' => $nowGen];
+        }
+        if (!$gate['reconciled']) {
+            return ['reason' => "a save load (init row {$nowGen}) is not reconciled yet; core may still be restoring", 'gen' => $nowGen];
+        }
+        return ['reason' => null, 'gen' => $nowGen];
     }
 
     // ---- Lost-update protection for saveDynamics() -------------------------------------
@@ -2175,7 +2197,7 @@ class RelationshipDynamics
     const PROFILE_OVERRIDE_FIELDS = ['temperament', 'attachment_style', 'maturity_type', 'traits'];
 
     /** Dimensions whose x/baseline migrateDimensions() seeds from the temperament baseline. */
-    const TEMPERAMENT_SEEDED_DIMENSIONS = ['maturity', 'trust', 'comfort', 'respect', 'coord_m', 'coord_f', 'self_confidence'];
+    const TEMPERAMENT_SEEDED_DIMENSIONS = ['maturity', 'trust', 'comfort', 'respect', 'warmth', 'coord_m', 'coord_f', 'self_confidence'];
 
     /**
      * Default mapping tables for the profile auto-generation. They live in the RelDyn config
@@ -2689,7 +2711,9 @@ class RelationshipDynamics
             $stoicSeed = self::getTemperamentBaseline('Stoic', $dim);
             $untouchedFallbackSeed = $prevTemp === null && $x !== null && $base !== null
                 && abs(floatval($x) - $stoicSeed) < 1e-9 && abs(floatval($base) - $stoicSeed) < 1e-9;
-            if ($x === null || $untouchedFallbackSeed) {
+            // warmth's defaultDynamics() placeholder (x 0, baseline null) is unset, not a value
+            $placeholder = $dim === 'warmth' && $base === null && is_numeric($x) && abs(floatval($x)) < 1e-9;
+            if ($x === null || $untouchedFallbackSeed || $placeholder) {
                 $dynamics['dimensions'][$dim]['x'] = $new;
                 $dynamics['dimensions'][$dim]['baseline'] = $new;
             }
@@ -3058,11 +3082,29 @@ class RelationshipDynamics
         $decayRate = $params['passion_decay'];
 
         $decay = $decayRate * $hoursSince;
-        $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
-        $floor = self::STAGE_PARAMS[$stage]['floor'] ?? 0;
+        $floor = self::passionStageFloor($dynamics);
 
         self::setPassion($dynamics, max($floor, self::getPassion($dynamics) - $decay));
         $dynamics['passion_updated_at'] = $now;
+    }
+
+    /**
+     * The relationship stage's passion floor (STAGE_PARAMS, passion points), through the
+     * Attraction Matrix like every other passion writer (rulings §11): 0 while the attraction
+     * shuts passion (no gate open: friendzone / unattracted, a gate product of 0), so
+     * positive exchanges piling up stages never lift passion the NPC cannot feel. The hard cap
+     * (setPassion) still applies on top.
+     */
+    public static function passionStageFloor(array $dynamics): float
+    {
+        $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
+        $floor = floatval(self::STAGE_PARAMS[$stage]['floor'] ?? 0);
+        $a = $dynamics['_attraction'] ?? null;
+        if ($floor > 0.0 && is_array($a) && !empty($a['enabled'])
+            && (!(!empty($a['passes']) || !empty($a['prebond'])) || floatval($a['passion_mult'] ?? 1.0) <= 0.0)) {
+            return 0.0;
+        }
+        return $floor;
     }
 
     /**
@@ -3362,6 +3404,21 @@ class RelationshipDynamics
         return $spike;
     }
 
+    /**
+     * NPC-to-NPC request types (radiant dialogue): the player is not in the exchange, so no
+     * RelDyn hook reads or steers the player relationship for them (prerequest, context_pre,
+     * context, postrequest). Core's relationship_system handles NPC <-> NPC.
+     */
+    const RADIANT_REQUEST_TYPES = ['radiant', 'radiantsearchingfriend', 'radiantsearchinghostile',
+        'radiantcombathostile', 'minai_force_rechat'];
+
+    /** True for an NPC-to-NPC request ($gameRequest[0] in RADIANT_REQUEST_TYPES). */
+    public static function isRadiantRequest($gameRequest): bool
+    {
+        $type = is_array($gameRequest) ? strtolower(trim((string) ($gameRequest[0] ?? ''))) : '';
+        return in_array($type, self::RADIANT_REQUEST_TYPES, true);
+    }
+
     /** CHIM request types in which the player speaks to the NPC (core's inputtext family). */
     const PLAYER_INPUT_REQUEST_TYPES = ['inputtext', 'inputtext_s', 'ginputtext', 'ginputtext_s'];
 
@@ -3555,8 +3612,7 @@ class RelationshipDynamics
             $absentDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceGamets);
             if ($absentDays > 0) {
                 $mult = floatval((self::configValue('passion_absence_attachment_mult') ?? [])[$attachment] ?? 1.0);
-                $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
-                $floor = floatval(self::STAGE_PARAMS[$stage]['floor'] ?? 0);
+                $floor = self::passionStageFloor($dynamics);
                 $passion = self::getPassion($dynamics);
                 if ($passion > $floor) {
                     $fade = floatval(self::configValue('passion_absence_fade_per_game_day')) * $absentDays * $mult;
@@ -4747,8 +4803,26 @@ class RelationshipDynamics
         // — intentionally NOT synced here; affinity.x stays at its current value
         // and will be populated by the affinity bridge in a future PR.
 
-        // Warmth: stored as a curve preset string (slow_burn, etc.), not numeric.
-        // warmth.x will be derived by the warmth calculator in a future PR.
+        // ========== WARMTH (emotional openness, 0..100) ==========
+        // Starts at the temperament baseline (TEMPERAMENT_BASELINES warmth), like trust and
+        // comfort. defaultDynamics() holds x = 0 with baseline null as an "unset" placeholder:
+        // read as a real value it made every newly met NPC 'Walled'. A blob whose warmth
+        // baseline was never set and whose x is still that placeholder (0, no reason recorded)
+        // takes the baseline; a warmth something already moved keeps its x. Only with a known
+        // temperament: before the profile auto-generation, ensureTemperamentProfile seeds it
+        // (TEMPERAMENT_SEEDED_DIMENSIONS), so no fallback seed has to be recognised later.
+        $warmthTemperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null;
+        if (($dynamics['dimensions']['warmth']['baseline'] ?? null) === null && is_string($warmthTemperament) && $warmthTemperament !== '') {
+            $temperament = $warmthTemperament;
+            $base = RelationshipDynamics::getTemperamentBaseline($temperament, 'warmth');
+            $wx = $dynamics['dimensions']['warmth']['x'] ?? null;
+            $placeholder = $wx === null || (is_numeric($wx) && abs(floatval($wx)) < 0.0001
+                && empty($dynamics['dimensions']['warmth']['last_reason']) && empty($dynamics['dimensions']['warmth']['last_delta']));
+            $dynamics['dimensions']['warmth']['baseline'] = $base;
+            if ($placeholder) {
+                $dynamics['dimensions']['warmth']['x'] = $base;
+            }
+        }
 
         // ========== MATURITY DIMENSION (PR 3) ==========
         // Initialize maturity from temperament baseline if not yet set
@@ -6914,6 +6988,38 @@ class RelationshipDynamics
     /** Times one inbox item may fail to apply (throw) before it is dead-lettered (count). */
     const EVAL_ITEM_MAX_FAILURES = 3;
 
+    /** The _eval_applied fingerprint of a normalized contract item (normalizeEvalContractItem). */
+    private static function fingerprintOf(array $n): string
+    {
+        return sha1((string) json_encode([
+            strtolower($n['npc']), $n['npc_id'], $n['gamets'], $n['signals'], $n['tags'],
+            $n['grievance'], $n['jealousy'], $n['significance'], $n['summary'],
+        ]));
+    }
+
+    /** The _eval_applied fingerprint of a contract item, or null when it is not one. */
+    public static function evalContractFingerprint(array $item): ?string
+    {
+        $n = self::normalizeEvalContractItem($item);
+        return $n === null ? null : self::fingerprintOf($n);
+    }
+
+    /**
+     * Union of two _eval_applied_log lists ([{fp, item}], oldest first), one entry per
+     * fingerprint, the newest save_load.applied_log_keep kept.
+     */
+    private static function mergeAppliedLog(array $a, array $b): array
+    {
+        $out = [];
+        foreach (array_merge(array_values($a), array_values($b)) as $e) {
+            if (!is_array($e) || !is_string($e['fp'] ?? null) || !is_array($e['item'] ?? null)) continue;
+            unset($out[$e['fp']]);
+            $out[$e['fp']] = ['fp' => $e['fp'], 'item' => $e['item']];
+        }
+        $keep = max(0, intval(RelDynTimeline::config()['applied_log_keep']));
+        return array_slice(array_values($out), -$keep ?: count($out));
+    }
+
     /**
      * Apply the pending evals queued for this NPC, and SAVE $dynamics.
      *
@@ -6962,6 +7068,9 @@ class RelationshipDynamics
                 if (is_array($stored['_eval_applied'] ?? null)) {
                     $dynamics['_eval_applied'] = array_slice(array_values(array_unique(array_merge(
                         array_values($stored['_eval_applied']), array_values((array) ($dynamics['_eval_applied'] ?? []))))), -self::EVAL_APPLIED_KEEP);
+                }
+                if (is_array($stored['_eval_applied_log'] ?? null)) {
+                    $dynamics['_eval_applied_log'] = self::mergeAppliedLog((array) $stored['_eval_applied_log'], (array) ($dynamics['_eval_applied_log'] ?? []));
                 }
                 foreach (RelDynStorage::peekItems($npcId, RelDynStorage::KEY_EVAL_INBOX) as $item) {
                     $pendingList[] = ['eval' => $item, 'raw' => $item];
@@ -7026,7 +7135,15 @@ class RelationshipDynamics
                     continue;
                 }
                 $dynamics = $copy;
-                if ($fromInbox) $handled++;
+                if ($fromInbox) {
+                    $handled++;
+                    // save-load-rollback: the item itself, so a load that follows core's restore
+                    // to before its application can apply it again (RelDynTimeline::reconcileNpc)
+                    $fp = self::isEvalContractItem($pending) ? self::evalContractFingerprint($pending) : null;
+                    if ($fp !== null && in_array($fp, (array) ($dynamics['_eval_applied'] ?? []), true)) {
+                        $dynamics['_eval_applied_log'] = self::mergeAppliedLog((array) ($dynamics['_eval_applied_log'] ?? []), [['fp' => $fp, 'item' => $item]]);
+                    }
+                }
                 foreach ($applied as $dimId => $actual) {
                     $totals[$dimId] = ($totals[$dimId] ?? 0) + $actual;
                 }
@@ -7486,7 +7603,8 @@ class RelationshipDynamics
                 return $result;
             }
         }
-        // Respect gains x respect_mult (plan §4: (competence + status) / 2 through this NPC's eyes)
+        // Respect gains x respect_mult (plan §4 rate (competence + status) / 2 through this NPC's
+        // eyes, 1.0 at the neutral pillar score: RelDynAttraction::respectMult)
         if ($signal === 'respect' && $raw > 0) {
             $rm = self::attractionRespectMult((string) $npcName, $dynamics);
             if (abs($rm - 1.0) > 0.001) {
@@ -7686,10 +7804,7 @@ class RelationshipDynamics
             return [];
         }
 
-        $fingerprint = sha1((string) json_encode([
-            strtolower($n['npc']), $n['npc_id'], $n['gamets'], $n['signals'], $n['tags'],
-            $n['grievance'], $n['jealousy'], $n['significance'], $n['summary'],
-        ]));
+        $fingerprint = self::fingerprintOf($n);
         $applied = is_array($dynamics['_eval_applied'] ?? null) ? array_values($dynamics['_eval_applied']) : [];
         if (in_array($fingerprint, $applied, true)) {
             error_log("[RelDyn-EVAL] {$npcName}: eval item already applied (gamets {$n['gamets']}), skipped: {$n['summary']}");
@@ -11441,11 +11556,13 @@ class RelationshipDynamics
 
         // The strongest moments of this bond, then the last eval reasons (last_reason per
         // dimension); the reason and whether it still warms or stings, never the dimension, the
-        // delta or a timestamp (felt steering, decisions 2026-09-23 §3).
+        // delta or a timestamp (felt steering, decisions 2026-09-23 §3). Reasons are the eval
+        // LLM's free text: RelDynFelt::sanitizeReason keeps the event, drops scores and feelings.
         $items = [];
         $push = function (string $reason, float $delta) use (&$items, $t, $maxChars) {
-            $reason = trim(preg_replace('/\s+/', ' ', $reason));
-            if ($reason === '') return;
+            // The eval's free-text summary: what happened, never its scores or named feelings
+            $reason = RelDynFelt::sanitizeReason($reason);
+            if ($reason === null) return;
             if (strlen($reason) > $maxChars) {
                 $cut = substr($reason, 0, $maxChars);
                 $reason = rtrim(substr($cut, 0, (int) (strrpos($cut, ' ') ?: $maxChars)), ' ,;.') . '...';
@@ -12454,8 +12571,9 @@ class RelationshipDynamics
     }
 
     /**
-     * Respect gain multiplier (plan §4 respect_mult = (competence + status) / 2 as this NPC
-     * reads the player), for the eval respect signal's gains. 1.0 while config
+     * Respect gain multiplier for the eval respect signal's gains: the plan §4 rate
+     * (competence + status) / 2 as this NPC reads the player, against the Matrix's neutral
+     * pillar score, within MDD 1.2's 0.5x..2.0x (RelDynAttraction::respectMult). 1.0 while config
      * attraction.respect_mult_enabled is off or the Matrix does not judge.
      */
     public static function attractionRespectMult(string $npcName, array &$dynamics): float
@@ -14205,25 +14323,29 @@ class RelationshipDynamics
     ];
 
     /**
-     * Determine if an interaction constitutes a romantic attempt by the player.
+     * Does this exchange count as UNRECIPROCATED romantic pressure from the player (MDD 6.3,
+     * the Desperation Tracker: "flirt attempts vs. the NPC's current state")?
+     *
+     * $mood is the mood the NPC answered in (moods_issued: the NPC's own reply). An NPC that
+     * answers flirty, romantic, charmed ... is reciprocating: that exchange is mutual, never
+     * pressure, whatever the player said. Otherwise physical touch counts, and so does a high
+     * eval romantic_intent.
      *
      * @param string|null $interactionLL  Love language classification (LL_TOUCH, LL_WORDS, etc.)
-     * @param string|null $mood           NPC's last mood
+     * @param string|null $mood           The NPC's own last mood (its reply)
      * @param array       $evalResult     Eval result (may contain romantic_intent)
      * @return bool
      */
     public static function isRomanticAttempt($interactionLL, $mood, $evalResult = [])
     {
-        // Physical touch is always romantic
-        if ($interactionLL === self::LL_TOUCH) {
-            return true;
+        // She flirted back: reciprocated, not the Ick's business
+        if (!empty($mood) && in_array(strtolower((string) $mood), self::ROMANTIC_MOODS, true)) {
+            return false;
         }
 
-        // Words + romantic mood = romantic attempt
-        if ($interactionLL === self::LL_WORDS && !empty($mood)) {
-            if (in_array(strtolower($mood), self::ROMANTIC_MOODS, true)) {
-                return true;
-            }
+        // Physical touch the NPC did not answer in kind
+        if ($interactionLL === self::LL_TOUCH) {
+            return true;
         }
 
         // Eval detected high romantic intent from player
@@ -15780,6 +15902,14 @@ class RelationshipDynamics
         $pending = floatval($dynamics['_pending_aff_delta'] ?? 0);
         $whole = (int)$pending; // truncate toward zero; the fraction waits for the next change
         if ($whole === 0) {
+            return null;
+        }
+
+        // save-load-rollback: a copy read before a load (or before its reconcile) never writes
+        // its mirror drift or pending delta into core's restored Player.aff
+        $stale = self::staleCopy(is_string($dynamics[self::LOAD_TOKEN_KEY] ?? null) ? $dynamics[self::LOAD_TOKEN_KEY] : null);
+        if ($stale['reason'] !== null) {
+            error_log("[RelDyn-AFF] commitPlayerAffinity for {$npcName}: {$stale['reason']}; nothing is pushed into core");
             return null;
         }
 

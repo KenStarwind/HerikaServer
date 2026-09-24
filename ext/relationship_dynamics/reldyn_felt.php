@@ -106,6 +106,18 @@ final class RelDynFelt
             'memory_min_tier' => 2,
             'memory_items' => 3,
             'reason_max_chars' => 90,
+            // The attraction read (RelDynAttraction::feltText) against the bond it sits in:
+            // strained = open conflict, an active ick, resentment from strain_resentment_min
+            // (points; the 'Frustrated' band: "kind words from them no longer land") or jealousy
+            // from strain_jealousy_min (points; the 'hurt' band): the pull says nothing then.
+            // Flirtation is answered from context tier flirt_min_tier (2 = friend) or passion
+            // flirt_passion_min (points; the 'warm' band), or inside a romance; below that the
+            // pull shows only as looks (MDD 8.1: at Unknown / Acquaintance romantic gestures
+            // meet the Asymmetry Penalty).
+            'attraction' => [
+                'strain_resentment_min' => 51.0, 'strain_jealousy_min' => 60.0,
+                'flirt_min_tier' => 2, 'flirt_passion_min' => 40.0,
+            ],
             // Autonomy speaks from this evaluated state (resistant < refusing < walkaway); a
             // merely resistant disposition shows through the trust / respect / resentment bands.
             'autonomy_min_state' => 'refusing',
@@ -159,13 +171,16 @@ final class RelDynFelt
         // <subtext> header: {NAME} NPC, {PLAYER} the player ("them" in the keyword lines).
         'header_bond' => "{NAME} with {PLAYER} right now (\"them\" is {PLAYER}). Show it in what {NAME} does and how {NAME} speaks; never name or explain these feelings:",
         'header_self' => "{NAME} right now. Show it in what {NAME} does and how {NAME} speaks; never name or explain these feelings:",
-        'core_header' => "Underneath, right now (show it, never state it):",
+        'core_header' => "Underneath, right now (\"them\" is {PLAYER}; show it, never state it):",
         'player_ref_stranger' => 'this stranger',
         'player_ref_hostile' => 'this person',
         // What the NPC knows of the player, by context tier (prompt gating P3 consolidates here).
         'knowledge' => [
-            'hostile'      => "{NAME} knows this person only as trouble; whatever has passed between them earned no warmth, and {NAME} gives them nothing freely.",
+            'hostile'      => "{NAME} knows {PLAYER} only as trouble; whatever has passed between them earned no warmth, and {NAME} gives them nothing freely.",
             'stranger'     => "To {NAME} this is a stranger: only what can be seen, their bearing, gear and manner. {NAME} knows nothing of their name, past or deeds unless told, and does not act familiar.",
+            // core's relationship block names the player to every NPC (coreNamesPlayer): the
+            // name is known, nothing behind it
+            'stranger_named' => "{NAME} has barely met {PLAYER}: a name and what can be seen, their bearing, gear and manner; nothing of their past or deeds unless told, and {NAME} does not act familiar.",
             'acquaintance' => "{NAME} knows {PLAYER} by name and a few shared words, not by heart: polite familiarity, nothing personal assumed.",
             'friend'       => "{NAME} knows {PLAYER} well: their habits, their humour, what they have shared on the road.",
             'lapsed'       => "{NAME} knows {PLAYER} well, which is exactly why it cuts: the familiarity is all still there, the old warmth is not.",
@@ -458,8 +473,19 @@ final class RelDynFelt
         }
 
         // --- Attraction (the request's Attraction Matrix read): a first-sight read is fine
-        // at tier 0 ---
-        $attraction = RelDynAttraction::feltText($npc, (array) ($dynamics['_attraction'] ?? []));
+        // at tier 0; it follows the bond it sits in and the tier (attraction config) ---
+        $ac = (array) $cfg['attraction'];
+        $attraction = RelDynAttraction::feltText($npc, (array) ($dynamics['_attraction'] ?? []), [
+            'player' => $player,
+            'tier' => $tier,
+            'passion' => $passion,
+            'strained' => !empty($dynamics['in_conflict']) || !empty($env['ick']) || !empty($dynamics['_ick_tracker']['ick_active'])
+                || floatval($dims['resentment']['x'] ?? 0) >= floatval($ac['strain_resentment_min'] ?? 51.0)
+                || $jealousy >= floatval($ac['strain_jealousy_min'] ?? 60.0),
+            'romantic' => in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) $cfg['romantic_types'], true),
+            'flirt_min_tier' => intval($ac['flirt_min_tier'] ?? 2),
+            'flirt_passion_min' => floatval($ac['flirt_passion_min'] ?? 40.0),
+        ]);
         if (!empty($attraction)) {
             $lines[] = self::line('attraction', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['attraction']),
                 $attraction, ['tier0' => true]);
@@ -552,7 +578,9 @@ final class RelDynFelt
         }
 
         // --- Ick / charisma awareness ---
-        if (!empty($env['ick'])) {
+        // (postrequest sets RELDYN_ICK_ACTIVE after the context hooks: the stored tracker is what
+        // this request's context can read)
+        if (!empty($env['ick']) || !empty($dynamics['_ick_tracker']['ick_active'])) {
             $text = RelationshipDynamics::getIckContext($dynamics, $npc, $dynamics['inferred_temperament'] ?? null);
             if ($text) $lines[] = self::line('ick', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['ick']), $text);
         }
@@ -597,18 +625,38 @@ final class RelDynFelt
                     $vars + ['{GOAL}' => rtrim(trim((string) $goal['text']), '.')]));
         }
 
-        $lines = array_values(array_filter($lines, fn($l) => $l['text'] !== ''));
+        // One referent for the player: older text sources say "the player"; the LLM gets the same
+        // name (or stranger reference) the headers define
+        $lines = array_values(array_filter(array_map(function (array $l) use ($player): array {
+            $l['text'] = self::nameThePlayer($l['text'], $player);
+            return $l;
+        }, $lines), fn($l) => $l['text'] !== ''));
         return ['lines' => $lines, 'changed' => $changed, 'tier' => $tier, 'player_ref' => $player];
+    }
+
+    /** "the player" / "The player" in a felt line -> the player reference (name or 'this stranger'). */
+    public static function nameThePlayer(string $text, string $player): string
+    {
+        return preg_replace_callback('/\b([Tt])he player\b/', fn($m) => $m[1] === 'T' ? ucfirst($player) : $player, $text);
     }
 
     /**
      * How RelDyn's text names the player: their name from context tier 1 (acquaintance) up;
      * below that 'this stranger', or 'this person' for a hostile core affinity (the prompt
-     * gating design's #PLAYER_REF#, so the P3 port and this agree).
+     * gating design's #PLAYER_REF#, so the P3 port and this agree). While core's
+     * relationship_system is on it names the player to every NPC in the same <character>
+     * block (RelationshipManager::buildContext always lists the player), so RelDyn names them
+     * too: one referent, never "a stranger" beside core's "Kaida: Neutral".
      */
+    public static function coreNamesPlayer(): bool
+    {
+        return filter_var($GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /** RelDyn's name for the player at this tier (see coreNamesPlayer). */
     public static function playerRef(string $player, int $tier, array $dynamics, ?array $cfg = null): string
     {
-        if ($tier >= 1) return $player;
+        if ($tier >= 1 || self::coreNamesPlayer()) return $player;
         $t = (array) (($cfg ?? self::config())['text']);
         return RelationshipDynamics::getCurrentTier(RelationshipDynamics::getCoreAffinity($dynamics)) === 'hostile'
             ? (string) $t['player_ref_hostile'] : (string) $t['player_ref_stranger'];
@@ -616,7 +664,8 @@ final class RelDynFelt
 
     /**
      * Dimension band lines: the band's behavioral keywords when the value sits away from its
-     * baseline (or in an extreme band). M/F and arousal/valence combine into one line each.
+     * baseline (or was pushed into an extreme band). M/F and arousal/valence combine into one
+     * line each.
      */
     private static function bandLines(array $dynamics, int $tier, array $cfg): array
     {
@@ -669,10 +718,17 @@ final class RelDynFelt
             $all = RelationshipDynamics::DIMENSION_BANDS[$dim] ?? [];
             $extreme = $all !== [] && ($band['label'] === $all[0]['label'] || $band['label'] === $all[count($all) - 1]['label']);
             $dist = abs($val - $base);
+            // An extreme band the NPC merely rests in (its baseline sits in the same band) is its
+            // nature, which the bio carries; only a value pushed there is steering news
+            $resting = false;
+            if ($extreme && $dim !== 'affinity' && $dist <= $dead) {
+                $baseBand = RelationshipDynamics::getDimensionBand($dim, $base);
+                $resting = is_array($baseBand) && ($baseBand['label'] ?? null) === $band['label'];
+            }
             $salience = min(1.0, $dist / 100 * floatval($w[$dim] ?? 1.0)) + ($extreme ? $bonus : 0.0);
             if ($dim === 'maturity' && $tier >= 2) {
                 $salience = max($salience, floatval($cfg['maturity_floor_salience']));
-            } elseif ($dist <= $dead && !$extreme) {
+            } elseif ($dist <= $dead && (!$extreme || $resting)) {
                 continue;
             }
             $scope = in_array($dim, ['maturity', 'self_confidence', 'resentment_self'], true) ? self::SCOPE_SELF : self::SCOPE_BOND;
@@ -684,6 +740,49 @@ final class RelDynFelt
             ]);
         }
         return $out;
+    }
+
+    // =====================================================================
+    // REASONS FROM THE EVAL (memory line): felt, never numbers or stated feelings
+    // =====================================================================
+
+    const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+        'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+
+    /** A clause naming a dimension, a score or a feeling instead of what happened. */
+    const STATED_FEELING_PATTERN = '/\b(affinity|trust(s|ed|ing)?|distrust(s|ed)?|comfort(able)?|respect(s|ed)?|warmth|passion(ate)?|'
+        . 'resent(s|ed|ment)?|jealous(y)?|maturity|arousal|valence|attract(ed|ion)?|feel(s|ing|ings)?|felt|'
+        . 'signal|score[ds]?|points?|likes?|loves?)\b/i';
+
+    /**
+     * An eval summary as it may reach the <subtext> memory line (decisions §3: never numbers,
+     * never "she now trusts the player"). The eval LLM writes one free line; this keeps what
+     * HAPPENED and drops how it was scored:
+     *   - bracketed asides are dropped;
+     *   - small counts (0..20) are written out ("3 bandits" -> "three bandits");
+     *   - clauses (split on ';', ':', ' - ', ', and she ...' style joins are kept whole) that
+     *     still hold a digit, a sign-number, or name a dimension / feeling are dropped.
+     * Returns null when nothing of the event is left.
+     */
+    public static function sanitizeReason(string $reason): ?string
+    {
+        $r = trim(preg_replace('/\s+/', ' ', $reason));
+        if ($r === '') return null;
+        $r = preg_replace('/\s*[\(\[][^\)\]]*[\)\]]/', '', $r);
+        $r = preg_replace_callback('/(?<![\d.+\-])\b(\d{1,2})\b(?![\d.%])/', function ($m) {
+            $n = intval($m[1]);
+            return $n <= 20 ? self::NUMBER_WORDS[$n] : $m[0];
+        }, $r);
+        $clauses = preg_split('/\s*(?:;|:|\s[-\x{2013}\x{2014}]\s|,\s*(?=(?:and\s+|so\s+|now\s+)?(?:she|he|they)\b))\s*/u', $r);
+        $keep = [];
+        foreach ((array) $clauses as $c) {
+            $c = trim($c, " \t,.");
+            if ($c === '') continue;
+            if (preg_match('/\d|%/', $c) || preg_match(self::STATED_FEELING_PATTERN, $c)) continue;
+            $keep[] = $c;
+        }
+        if ($keep === []) return null;
+        return implode('; ', $keep);
     }
 
     // =====================================================================
@@ -772,7 +871,8 @@ final class RelDynFelt
 
     /**
      * What the NPC knows of the player, by context tier (feedback_context_engineering_v2 P0):
-     * a stranger knows only what can be seen (no name), an acquaintance a little, a friend
+     * a stranger knows only what can be seen (no name, unless core's relationship block names
+     * the player anyway: coreNamesPlayer), an acquaintance a little, a friend
      * well, a bonded NPC deeply; a tier-2 floor held by the high-water mark while affinity has
      * fallen reads "lapsed". One tension bridge (e.g. devoted but closed) from tier 1 up.
      */
@@ -780,12 +880,14 @@ final class RelDynFelt
     {
         $cfg = $cfg ?? self::config();
         $t = (array) $cfg['text'];
-        $vars = ['{NAME}' => $npc, '{PLAYER}' => $player];
         $tier = RelationshipDynamics::getContextTier($dynamics);
+        // the player's name only where RelDyn names them (playerRef: tier 1 up, or core names them)
+        $vars = ['{NAME}' => $npc, '{PLAYER}' => self::playerRef($player, $tier, $dynamics, $cfg)];
         $core = RelationshipDynamics::getCoreAffinity($dynamics);
         $current = RelationshipDynamics::getAffinityContextTier($dynamics);
         if ($tier <= 0) {
-            $key = RelationshipDynamics::getCurrentTier($core) === 'hostile' ? 'hostile' : 'stranger';
+            $key = RelationshipDynamics::getCurrentTier($core) === 'hostile' ? 'hostile'
+                : (self::coreNamesPlayer() ? 'stranger_named' : 'stranger');
         } elseif ($tier === 1) {
             $key = 'acquaintance';
         } elseif ($tier === 2) {

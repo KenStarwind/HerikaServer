@@ -181,10 +181,10 @@ final class RelDynAttractionMatrixTest extends TestCase
             'Uthgerd x newbie'                => ['Uthgerd the Unbroken', 'newbie', false, false, 'unattracted'],
             'Farengar x scholar: slow burn'   => ['Farengar Secret-Fire', 'scholar', false, false, 'prebond'],
             'Farengar x bard: friend'         => ['Farengar Secret-Fire', 'bard', false, true, 'friendzone'],
-            // Rulings §11: only an absent required pillar zeroes passion. A mage reads some
-            // strength in a strong warrior (the generic share of the pillar), so the
-            // bond-gated slow burn is open, faintly (testOnlyAnAbsentPillarZeroes)
-            'Farengar x warrior: faint slow burn' => ['Farengar Secret-Fire', 'warrior', false, false, 'prebond'],
+            // Rulings §11: a required pillar the player does not meet zeroes passion. A mage
+            // reads little strength in a warrior, short of his bar: his respect, no passion
+            // (testAFailedRequiredPillarZeroes)
+            'Farengar x warrior: friend'      => ['Farengar Secret-Fire', 'warrior', false, true, 'friendzone'],
             'Ysolda x bard'                   => ['Ysolda', 'bard', true, false, 'drawn'],
             'Jarl x newbie'                   => ['Jarl Hrothmund', 'newbie', false, false, 'unattracted'],
         ];
@@ -210,24 +210,26 @@ final class RelDynAttractionMatrixTest extends TestCase
     }
 
     /**
-     * Rulings §11: a required pillar closes the gate only where it is absent to the NPC. What a
-     * mage reads of a strong warrior's strength is little, not nothing: the slow burn is open,
-     * faintly, far below the scholar's; a bard's is absent to him (friendzone, above).
+     * Rulings §11: a required passion pillar the player does not meet (its bar, or the NPC's
+     * openness margin, MDD 1.4) is a gate at 0, whatever the rest scores; met, it is 1 and the
+     * modifier alone scales passion. The scholar opens Farengar's slow burn; a warrior's and a
+     * bard's strength fall short of his bar; Aela's lens sees no strength in a bard.
      */
-    public function testOnlyAnAbsentPillarZeroes(): void
+    public function testAFailedRequiredPillarZeroes(): void
     {
         $at = fn(string $kind) => RelationshipDynamics::attractionFor('Farengar Secret-Fire', $this->npc('Farengar Secret-Fire'), self::player($kind));
         $scholar = $at('scholar');
-        $w = $at('warrior');
-        $this->assertGreaterThan(0.0, $w['passion_mult']);
-        $this->assertLessThan(0.25 * $scholar['passion_mult'], $w['passion_mult'], 'faint next to the scholar');
-        $this->assertFalse($w['pillars']['strength']['pass'], 'still short of the tier bar');
-        $b = $at('bard');
-        $this->assertLessThanOrEqual(RelDynAttraction::config()['passion']['gate_absent_below'], $b['pillars']['strength']['score']);
-        $this->assertSame(0.0, $b['passion_mult']);
-        // Aela and the bard: her lens sees no strength in him at all
+        $this->assertSame(1.0, floatval($scholar['passion']['gate_product']));
+        $this->assertGreaterThan(0.0, $scholar['passion_mult']);
+        foreach (['warrior', 'bard'] as $kind) {
+            $r = $at($kind);
+            $this->assertFalse($r['pillars']['strength']['pass'], "{$kind}: short of his bar");
+            $this->assertFalse($r['pillars']['strength']['tolerated'], "{$kind}: not a near miss");
+            $this->assertSame(0.0, floatval($r['passion']['gates']['flexible']), $kind);
+            $this->assertSame(0.0, $r['passion_mult'], "{$kind}: 100 x 0 is still 0");
+            $this->assertGreaterThan(0.0, $r['passion']['modifier'], "{$kind}: the modifier alone is not zero: the gate is");
+        }
         $b = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA), self::player('bard'));
-        $this->assertLessThanOrEqual(RelDynAttraction::config()['passion']['gate_absent_below'], $b['pillars']['strength']['score']);
         $this->assertSame(0.0, $b['passion']['gates']['flexible']);
         $this->assertSame(0.0, $b['passion_mult']);
     }
@@ -300,10 +302,9 @@ final class RelDynAttractionMatrixTest extends TestCase
     }
 
     /**
-     * MDD 1.4 openness (tolerance of a failed pillar): on the tier axis low = hard block, medium
-     * / high tolerate a near miss (2x effort). On passion (rulings §11) it is how soon a
-     * required pillar's gate opens fully; no step ceiling cut, and only a pillar that is absent
-     * to the NPC closes the gate.
+     * MDD 1.4 openness (tolerance of a failed pillar): low = hard block, medium / high tolerate
+     * a near miss: the passion gate opens, with the passion ceiling cut 50% / 20%, and advancing
+     * takes 2x the effort. Far off the mark closes the gate at any openness.
      */
     public function testOpennessTolerance(): void
     {
@@ -329,15 +330,18 @@ final class RelDynAttractionMatrixTest extends TestCase
         $high = $at('high', $near);
         $this->assertTrue($high['pillars']['strength']['tolerated']);
 
-        // Passion: a near miss is not an absence; the demanding NPC's gate is only partly open
-        foreach (['low' => $low, 'medium' => $medium, 'high' => $high] as $band => $r) {
+        // Passion: low openness is a hard block (MDD 1.4), capped like the unattracted
+        $this->assertFalse($low['passes'], $low['reason']);
+        $this->assertSame(0.0, floatval($low['passion']['gates']['strength']));
+        $this->assertSame(20.0, floatval($low['passion_cap']));
+        // medium / high: open, the passion ceiling cut by the MDD 1.4 fraction
+        $max = floatval(RelationshipDynamics::getConfig()['passion_max'] ?? 100.0);
+        foreach (['medium' => [$medium, 0.5], 'high' => [$high, 0.2]] as $band => [$r, $cut]) {
             $this->assertTrue($r['passes'], "{$band}: {$r['reason']}");
-            $this->assertNull($r['passion_cap'], "{$band}: no step ceiling cut (rulings §11)");
+            $this->assertSame(1.0, floatval($r['passion']['gates']['strength']), $band);
+            $this->assertEqualsWithDelta($max * (1.0 - $cut), floatval($r['passion_cap']), 1e-6, "{$band}: MDD 1.4 ceiling cut");
         }
-        $this->assertGreaterThan(0.0, $low['passion']['gates']['strength']);
-        $this->assertLessThan($medium['passion']['gates']['strength'], $low['passion']['gates']['strength'], 'low openness opens slower');
-        $this->assertLessThanOrEqual($high['passion']['gates']['strength'], $medium['passion']['gates']['strength']);
-        $this->assertLessThan($medium['passion_mult'], $low['passion_mult']);
+        $this->assertGreaterThan(0.0, $medium['passion_mult']);
 
         $farHigh = $at('high', $far);
         $this->assertSame(0.0, $farHigh['passion']['gates']['strength'], 'far off the mark: absent to her, even at high openness');

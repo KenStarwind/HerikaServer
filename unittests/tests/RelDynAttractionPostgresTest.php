@@ -302,7 +302,7 @@ final class RelDynAttractionPostgresTest extends TestCase
         }
         $d = $this->dynamics();
         $this->assertGreaterThan($p0, RelationshipDynamics::getPassion($d), 'legacy passion path: a flirty answer stirs passion');
-        $this->assertStringContainsString('eyes keep finding the player', end($this->contexts));
+        $this->assertStringContainsString('eyes keep finding ' . self::PLAYER, end($this->contexts));
         $this->assertDoesNotMatchRegularExpression('/\d/', end($this->contexts), 'feelings, not numbers');
 
         // The eval scores defining moments (significance 0.8, positive): the lifted ceiling is reached
@@ -373,7 +373,7 @@ final class RelDynAttractionPostgresTest extends TestCase
         $this->assertGreaterThan($aff0, $this->coreAff(), 'affinity can still grow');
         $this->assertArrayHasKey('attraction', $this->rendered[count($this->contexts) - 1], 'the attraction line speaks');
         $this->assertStringContainsString($this->rendered[count($this->contexts) - 1]['attraction'], end($this->contexts));
-        $this->assertStringNotContainsString('eyes keep finding the player', end($this->contexts));
+        $this->assertStringNotContainsString('eyes keep finding ' . self::PLAYER, end($this->contexts));
 
         // Passion she had before (the Matrix was off, or an old save) drops to the cap on the next
         // request, and no eval can push it past (MDD 6.2 hard cap)

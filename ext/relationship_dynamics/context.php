@@ -20,6 +20,13 @@ if (empty($npcName) || $npcName === 'The Narrator') {
 }
 
 require_once __DIR__ . '/relationship_dynamics.php';
+
+// NPC-to-NPC radiant dialogue: nothing player-directed (see context_pre.php).
+if (RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'] ?? null)) {
+    unset($GLOBALS[RelDynFelt::HANDOFF_GLOBAL]);
+    return;
+}
+
 // Each hook is its own request scope: config/bond caches never outlive it (A3).
 RelationshipDynamics::beginRequest();
 

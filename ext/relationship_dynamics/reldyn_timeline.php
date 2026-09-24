@@ -53,8 +53,19 @@
  *       play clocks (real-time _accumulated_time, the play heartbeat, _accumulated_play_gamets
  *         and play-clock timers), static knowledge (facet classifier tables, config) and dead
  *         letters: KEPT.
- *   - Copies of dynamics read before a load are never saved after it (saveDynamics checks
- *     loadGeneration), and the worker / inbox consumer drop rolled-back items at use time too.
+ *   - Core writes its 'init' row BEFORE restoreNPC (a soundcache sweep in between), so the row
+ *     alone does not prove the restore is done. beforeCoreLoad takes a session advisory lock
+ *     (LOCK_KEY_LOADING) that the init request holds until its database session ends, after
+ *     core's restore; while another session holds it, reconcileIfLoaded() defers (the request
+ *     skips RelDyn, the worker pauses) and nothing is saved (saveGate): the reconcile runs on
+ *     the first entry after the restore.
+ *   - Copies of dynamics read before a load, or before its reconcile, are never saved after
+ *     it, and their affinity is never pushed into core (saveDynamics / commitPlayerAffinity
+ *     check saveGate), and the worker / inbox consumer drop rolled-back items at use time too.
+ *   - Exactly once across a load: an eval item applied after core's snapshot for an exchange the
+ *     load keeps (before the save) was rolled back with the state; following core's restore, it
+ *     is re-queued from the stash's applied log (dynamics _eval_applied_log) unless the
+ *     restored state already holds it (its fingerprint in _eval_applied).
  *
  * Units: gamets are raw game-calendar gamets (1 game day = RelationshipDynamics::GAMETS_PER_DAY);
  * rowids are eventlog rowids; localts / queued_at / taken_localts are unix seconds, used only to
@@ -72,6 +83,8 @@ final class RelDynTimeline
     /** Two-int4 advisory lock serialising the reconcile ('RDvL', key 1). */
     const LOCK_CLASS = 1380218444;
     const LOCK_KEY = 1;
+    /** Session advisory lock the init request holds while core prunes and restores (key 2). */
+    const LOCK_KEY_LOADING = 2;
     /** comm.php ignores an init with this gamets (level-1 prisoner glitch). */
     const CORE_IGNORED_INIT_GAMETS = 10000000;
 
@@ -110,6 +123,9 @@ final class RelDynTimeline
             'gold_ledger_checkpoints' => 200,
             // Compare-and-set attempts (count) per NPC when another writer changes the row mid-reconcile.
             'write_attempts' => 5,
+            // Applied eval items (count, per NPC) kept in dynamics _eval_applied_log so a load
+            // that follows core's restore can re-queue the ones its snapshot predates.
+            'applied_log_keep' => 8,
         ];
     }
 
@@ -204,6 +220,49 @@ final class RelDynTimeline
         }
     }
 
+    /**
+     * Is another session processing a load right now (between RelDyn's init prerequest and the
+     * end of that init request, core's restoreNPC included)? The init session holds
+     * LOCK_KEY_LOADING; a shared try-lock from here fails while it does. The holder itself
+     * (the same session) reads false.
+     */
+    public static function loadInProgress(): bool
+    {
+        $db = self::db();
+        $row = $db->fetchOne('SELECT pg_try_advisory_lock_shared($1::int, $2::int) AS got', [self::LOCK_CLASS, self::LOCK_KEY_LOADING]);
+        if (!array_key_exists('got', (array) $row)) {
+            throw new RuntimeException('RelDynTimeline::loadInProgress: advisory lock query failed');
+        }
+        if (in_array($row['got'], ['t', true], true)) {
+            $db->fetchOne('SELECT pg_advisory_unlock_shared($1::int, $2::int) AS released', [self::LOCK_CLASS, self::LOCK_KEY_LOADING]);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * What a save (or an affinity push into core) must check, read now:
+     *   gen        the newest load (init rowid, 0 = none; null = unreadable, the guard is off)
+     *   reconciled false while that load is not reconciled yet (a marker exists and is older):
+     *              core may still be restoring, and a copy read now belongs to no timeline yet.
+     * No marker yet (RelDyn never reconciled any load) reads reconciled.
+     *
+     * @return array ['gen' => ?int, 'reconciled' => bool]
+     */
+    public static function saveGate(): array
+    {
+        if (!self::enabled()) {
+            return ['gen' => null, 'reconciled' => true];
+        }
+        $gen = self::freshLoadGeneration();   // null: unreadable (logged there), the guard is off
+        if ($gen === null || $gen === 0) {
+            return ['gen' => $gen, 'reconciled' => true];
+        }
+        $marker = self::readMarker();
+        $reconciled = $marker === null || intval($marker['init_rowid'] ?? 0) >= $gen;
+        return ['gen' => $gen, 'reconciled' => $reconciled];
+    }
+
     /** Remember a generation read elsewhere in this request (the reconcile) for loadGeneration(). */
     private static function setRequestGeneration(int $gen): void
     {
@@ -270,6 +329,16 @@ final class RelDynTimeline
             return 0;
         }
         self::reconcileIfLoaded();
+        // Held by this (the init) request's session until it ends, i.e. past core's prune, its
+        // 'init' row and restoreNPC: other sessions defer their reconcile meanwhile. Never waited
+        // for: a load is never held up by RelDyn (another init still holding it covers this one).
+        $held = self::db()->fetchOne('SELECT pg_try_advisory_lock($1::int, $2::int) AS got', [self::LOCK_CLASS, self::LOCK_KEY_LOADING]);
+        if (!array_key_exists('got', (array) $held)) {
+            throw new RuntimeException('RelDynTimeline: the loading lock query failed');
+        }
+        if (!in_array($held['got'], ['t', true], true)) {
+            error_log('[RelDyn] save load: another session still holds the loading lock (an earlier load in progress); this load is covered by it');
+        }
         self::ensureStashTable();
         $prev = self::latestLoad();
         $after = $prev['rowid'] ?? 0;
@@ -320,7 +389,9 @@ final class RelDynTimeline
 
     /**
      * Reconcile RelDyn with the newest load core processed, once. Returns the summary when
-     * this call reconciled, null when there was nothing to do. The first time RelDyn sees any
+     * this call reconciled, null when there was nothing to do, ['deferred' => true, ...] while
+     * another session is still processing the load (loadInProgress: the caller skips RelDyn
+     * for this entry; nothing is marked, the next entry reconciles). The first time RelDyn sees any
      * load (no marker yet) it adopts the newest one without touching state: whatever came
      * after that load was written by a RelDyn without this reconcile and is the present.
      */
@@ -337,6 +408,11 @@ final class RelDynTimeline
         $marker = self::readMarker();
         if ($marker !== null && intval($marker['init_rowid'] ?? 0) >= $load['rowid']) {
             return null;
+        }
+        // Core may still be between its 'init' row and restoreNPC: wait for the next entry
+        if (self::loadInProgress()) {
+            error_log("[RelDyn] save load (init row {$load['rowid']}) is still being processed by core; reconcile deferred, RelDyn skips this entry");
+            return ['deferred' => true, 'init_rowid' => $load['rowid']];
         }
         $db = self::db();
         $got = $db->fetchOne('SELECT pg_advisory_lock($1::int, $2::int) IS NOT NULL AS got', [self::LOCK_CLASS, self::LOCK_KEY]);
@@ -431,6 +507,14 @@ final class RelDynTimeline
             } elseif ($stashed !== null) {
                 // pending before the restore, so never applied in the restored (older) state
                 $extra = self::listOf($stashed[RelDynStorage::KEY_EVAL_INBOX] ?? null);
+                // applied in the discarded timeline after core's snapshot: the restore took their
+                // effect back; the ones whose exchange the load keeps apply again (exactly once)
+                $restoredApplied = (array) ($current[RelDynStorage::KEY_DYNAMICS]['_eval_applied'] ?? []);
+                foreach (self::listOf($stashed[RelDynStorage::KEY_DYNAMICS]['_eval_applied_log'] ?? null) as $entry) {
+                    $fp = (string) ($entry['fp'] ?? '');
+                    if ($fp === '' || !is_array($entry['item'] ?? null) || in_array($fp, $restoredApplied, true)) continue;
+                    $extra[] = $entry['item'];
+                }
             }
             $seen = [];
             foreach ($inbox as $item) $seen[json_encode($item)] = true;

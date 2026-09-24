@@ -38,9 +38,8 @@ if ($reqType === 'init') {
 // CHIM core's relationship_system handles NPC↔NPC affinity.
 // Ambient trickle/decay would be wasted work since these NPCs
 // aren't interacting with the player.
-$radiantTypes = ['radiant', 'radiantsearchingfriend', 'radiantsearchinghostile',
-    'radiantcombathostile', 'minai_force_rechat'];
-if (in_array($reqType, $radiantTypes)) {
+require_once __DIR__ . '/relationship_dynamics.php';
+if (RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'])) {
     return;
 }
 
@@ -62,7 +61,13 @@ if (!RelationshipDynamics::isEnabled()) {
 // clocks, keep or follow core's restore, re-read core's affinity. Once per load, before
 // anything below reads or writes RelDyn state.
 try {
-    RelDynTimeline::reconcileIfLoaded();
+    $reldynReconcile = RelDynTimeline::reconcileIfLoaded();
+    if (!empty($reldynReconcile['deferred'])) {
+        // Core is still restoring the NPC rows for that load: this entry leaves RelDyn state
+        // alone (saves are refused until the reconcile, RelDynTimeline::saveGate)
+        RelationshipDynamics::endRequest();
+        return;
+    }
 } catch (Throwable $e) {
     RelationshipDynamics::logError('save-load reconcile', $e);
 }

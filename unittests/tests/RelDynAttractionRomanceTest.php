@@ -436,7 +436,7 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->assertSame('drawn', $a['outcome'], 'visceral and sociological pillars pass');
         $this->assertContains($a['valued'], ['warrior', 'hunter', 'druid'], 'what she values in him');
         $this->assertContains('crush', $a['blocked_types'], 'the ceiling lifted; a crush is not yet earned');
-        $this->assertStringContainsString('eyes keep finding the player', $ctx);
+        $this->assertStringContainsString('eyes keep finding ' . self::PLAYER, $ctx);
         $this->assertDoesNotMatchRegularExpression('/\d/', $ctx, 'feelings, never numbers');
         $passion0 = $this->passion();
         $aff0 = intval($this->core()['aff']);
@@ -448,7 +448,10 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->assertGreaterThan($passion0 + 5.0, $this->passion(), 'the warrior earns passion');
         // rulings §11 / §9: passion x attraction modifier x required-pillar gates x attachment
         // (Aela: Independent -> avoidant 0.7); a friendzoned player's gate is closed (x0)
-        $this->assertGreaterThanOrEqual(0.5, $this->dynamics()['_attraction']['passion_mult']);
+        $att = $this->dynamics()['_attraction'];
+        $this->assertGreaterThan(0.0, $att['passion_mult']);
+        $this->assertEqualsWithDelta($att['passion']['modifier'] * $att['passion']['gate_product'] * $att['passion']['attachment'],
+            $att['passion_mult'], 1e-3, 'modifier x gates x attachment');
         $this->assertNotContains('crush', $this->dynamics()['_attraction']['blocked_types'], 'the crush is earned');
 
         $this->gamets = self::T0 + 3 * self::DAY;

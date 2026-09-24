@@ -357,17 +357,18 @@ final class RelDynRomancePromotionPostgresTest extends TestCase
     public function testABardSheToleratesIsNeverPromoted(): void
     {
         // Sociological pillars pass (a Circle member who hunts), the visceral ones do not
-        // (no sword arm). Rulings §11: his sneaking hunter's side is not absent to her, so a
-        // faint passion gate is open (no friendzone), but the romance axis stays shut: the
-        // visceral bar is not met, so crush never opens and he is never promoted.
+        // (no sword arm). Rulings §11 / MDD 2.6: a required pillar he does not meet shuts her
+        // passion gate: the tolerated state, the friendzone (passion capped at 20); the romance
+        // axis stays shut, so crush never opens and he is never promoted.
         $this->playerStats(self::BARD);
         $id = $this->seedAela(90, 'platonic');
 
         $a = RelationshipDynamics::attractionFor(self::NPC, RelationshipDynamics::getDynamics(self::NPC));
         $this->assertFalse($a['pillars']['strength']['pass']);
         $this->assertTrue($a['pillars']['competence']['pass']);
-        $this->assertLessThan(0.25, $a['passion']['gate_product'], 'faint: ' . json_encode($a['passion']));
-        $this->assertLessThan(0.1, $a['passion_mult']);
+        $this->assertSame(0.0, floatval($a['passion']['gate_product']), json_encode($a['passion']));
+        $this->assertSame(0.0, $a['passion_mult']);
+        $this->assertTrue($a['friendzoned'], $a['reason']);
         $this->assertSame(0, $a['romance']['allowed'], 'no crush without the visceral pass');
         $this->assertContains('crush', $a['blocked_types']);
 
@@ -378,7 +379,7 @@ final class RelDynRomancePromotionPostgresTest extends TestCase
         $this->assertSame('platonic', $this->coreType(), 'four confessions at Bonded tier: still platonic');
         $rd = $this->reldyn($id);
         $this->assertSame(0.0, (float) $rd['dynamics']['_romance']['momentum'], 'no momentum banks while the gate is closed');
-        $this->assertStringStartsWith('attraction has not opened crush', $rd['dynamics']['_romance']['last_block']);
+        $this->assertStringStartsWith('friendzoned', $rd['dynamics']['_romance']['last_block']);
         $this->assertArrayNotHasKey('core_type_change', $rd);
     }
 

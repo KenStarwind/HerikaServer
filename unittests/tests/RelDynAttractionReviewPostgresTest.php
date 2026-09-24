@@ -470,14 +470,14 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
             $this->assertFalse($seen[$kind]['tolerated'], $why($kind));
             $this->assertNull($seen[$kind]['passion_cap'], $why($kind));
             $this->assertSame($valued, $seen[$kind]['valued'], $why($kind));
-            $this->assertStringContainsString('eyes keep finding the player', $seen[$kind]['ctx']);
+            $this->assertStringContainsString('eyes keep finding ' . self::PLAYER, $seen[$kind]['ctx']);
         }
         // "a bard or a scholar she could tolerate but probably wouldn't feel passion towards"
         foreach (['scholar', 'bard', 'prisoner'] as $kind) {
             $this->assertFalse($seen[$kind]['passes'], $why($kind));
             $this->assertSame(20.0, floatval($seen[$kind]['passion_cap']), $why($kind));
             $this->assertSame(0, $seen[$kind]['romance']['allowed'], $why($kind));
-            $this->assertStringNotContainsString('eyes keep finding the player', $seen[$kind]['ctx']);
+            $this->assertStringNotContainsString('eyes keep finding ' . self::PLAYER, $seen[$kind]['ctx']);
             $this->assertStringNotContainsString('exactly what', $seen[$kind]['ctx'], 'no "bond with the wild" for a scholar');
         }
         // A weak warrior is still weak: the lens reads magnitude, not what kind of fighter
@@ -652,9 +652,15 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         $this->assertTrue($courtier['pillars']['beauty']['known']);
         $this->assertLessThan(0.4, $courtier['pillars']['beauty']['score'], 'none of her words');
         $this->assertTrue(!$courtier['passes'] || $courtier['tolerated'], 'beauty (rigid for her) now weighs: ' . $courtier['reason']);
-        // Rulings §11: a near miss on a required pillar costs passion continuously (a partly
-        // open gate and a lower modifier), not a step ceiling
-        $this->assertLessThan(1.0, $courtier['passion']['gates']['beauty'], json_encode($courtier['passion']));
+        // Rulings §11 + MDD 1.4: a miss on a required pillar shuts its gate; a near miss her
+        // (medium) openness forgives keeps it open with the passion ceiling cut 50%; either way
+        // her words in his looks lift the modifier less
+        if ($courtier['pillars']['beauty']['tolerated']) {
+            $this->assertSame(1.0, floatval($courtier['passion']['gates']['beauty']), json_encode($courtier['passion']));
+            $this->assertEqualsWithDelta(50.0, floatval($courtier['passion_cap']), 1e-6);
+        } else {
+            $this->assertSame(0.0, floatval($courtier['passion']['gates']['beauty']), json_encode($courtier['passion']));
+        }
         $this->assertLessThan($rugged['passion_mult'], $courtier['passion_mult']);
         $this->assertLessThan($rugged['passion']['modifier'], $courtier['passion']['modifier'], 'her words in his looks lift the modifier');
         $this->assertNoDbFailures();

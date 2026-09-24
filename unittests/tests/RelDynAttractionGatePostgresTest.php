@@ -351,8 +351,15 @@ final class RelDynAttractionGatePostgresTest extends TestCase
             $steps[$k] = $a;
             $felt[$k] = (string) RelDynAttraction::feltText(self::AELA, $d['_attraction']);
             $this->assertTrue($a['passes'], "step {$k}: a warrior's passion gate is open for Aela: " . $a['reason']);
-            $this->assertGreaterThan(0.0, $a['passion']['gate_product'], "step {$k}");
-            $this->assertNull($a['passion_cap'], "step {$k}: no friendzone cap for a warrior");
+            $this->assertSame(1.0, floatval($a['passion']['gate_product']), "step {$k}");
+            if ($a['passion']['tolerated']) {
+                // the sellsword's strength is a near miss her (medium) openness forgives: open,
+                // the passion ceiling cut by MDD 1.4's 50%
+                $this->assertSame(0, $k, 'only the green sellsword is a near miss');
+                $this->assertEqualsWithDelta(50.0, floatval($a['passion_cap']), 1e-6, "step {$k}");
+            } else {
+                $this->assertNull($a['passion_cap'], "step {$k}: no friendzone cap for a warrior");
+            }
         }
         // Strictly increasing, step after step: the score, the modifier and the passion multiplier
         for ($k = 1; $k <= 5; $k++) {
@@ -363,7 +370,8 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         }
         // The level-10 sellsword: a small multiplier, a fraction of what the Companion becomes
         $this->assertLessThan(0.25, $steps[0]['passion_mult'], json_encode($steps[0]['passion']));
-        $this->assertGreaterThan(3.0 * $steps[0]['passion_mult'], $steps[5]['passion_mult']);
+        $this->assertGreaterThan(2.0 * $steps[0]['passion_mult'], $steps[5]['passion_mult']);
+        $this->assertLessThanOrEqual(1.0, $steps[5]['passion']['modifier'], 'attraction never speeds passion past its raw rate');
         // The modifier is the documented curve on the score (floor + span x S^curve)
         $pc = RelDynAttraction::config()['passion'];
         foreach ($steps as $k => $a) {
@@ -377,15 +385,22 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         // (as behavior, never a verdict: passing glances for the sellsword, lingering looks and
         // eager answers for the Companion; the felt lane's wording)
         $this->assertMatchesRegularExpression('/passing glance|flirts back lightly/', $felt[0]);
-        $this->assertMatchesRegularExpression('/linger there|flirts back boldly/', $felt[5]);
+        $this->assertDoesNotMatchRegularExpression('/passing glance|flirts back lightly/', $felt[5]);
+        $this->warriorAtStep(8);                  // a legend of the Companions (read on a copy)
+        $legend = $d;
+        $this->attractionNow($legend);
+        $legendFelt = (string) RelDynAttraction::feltText(self::AELA, $legend['_attraction']);
+        $this->assertMatchesRegularExpression('/linger there|flirts back boldly/', $legendFelt);
+        $this->warriorAtStep(5);
         foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\bis (only faintly |strongly )?drawn to\b/', $text, "step {$k}");
         foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\d/', $text, "step {$k}");
 
-        // No bar anywhere: one more sabre cat moves the multiplier a little, never a jump
-        $this->warriorAtStep(5, 1);
+        // No bar anywhere: a few more sabre cats move the multiplier a little, never a jump
+        // (one kill moves it by less than the stored 4-decimal rounding: the modifier is linear)
+        $this->warriorAtStep(5, 5);
         $plusOne = $this->attractionNow($d);
         $this->assertGreaterThan($steps[5]['passion_mult'], $plusOne['passion_mult'], 'every deed counts');
-        $this->assertLessThan(0.01, $plusOne['passion_mult'] - $steps[5]['passion_mult'], 'continuous: one kill is a small step');
+        $this->assertLessThan(0.01, $plusOne['passion_mult'] - $steps[5]['passion_mult'], 'continuous: a few kills are a small step');
 
         // What the hooks store is what the passion paths read
         $this->turn('Skjor says you did well at Dustman\'s Cairn.');
@@ -536,10 +551,15 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         $this->assertSame(0.0, $a['passion_mult'], '100 x 0 is still 0');
         $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 25.0, 'reunion'));
 
-        // One Companions quest later the same gate opens (continuously, from 0)
+        // One Companions quest is still short of her bar: the gate stays shut; her standing
+        // met (three), it opens
         $this->corePlayer('The Companions Quests Completed', '1');
+        $one = $this->attractionNow($d);
+        $this->assertSame(0.0, floatval($one['passion']['gates']['status']), json_encode($one['pillars']['status']));
+        $this->assertSame(0.0, $one['passion_mult']);
+        $this->corePlayer('The Companions Quests Completed', '3');
         $b = $this->attractionNow($d);
-        $this->assertGreaterThan(0.0, $b['passion']['gates']['status']);
+        $this->assertSame(1.0, floatval($b['passion']['gates']['status']), json_encode($b['pillars']['status']));
         $this->assertGreaterThan(0.0, $b['passion_mult']);
         $this->assertNoDbFailures();
     }
@@ -601,11 +621,14 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         $green = $this->dynamics();
         $ga = $this->attractionNow($green);
         $this->assertEqualsWithDelta(($ga['pillars']['competence']['score'] + $ga['pillars']['status']['score']) / 2.0,
-            $ga['respect_mult'], 1e-3, 'plan §4: (competence + status) / 2');
+            $ga['respect_rate'], 1e-3, 'plan §4: (competence + status) / 2');
+        $this->assertEqualsWithDelta(max(0.5, min(2.0, $ga['respect_rate'] / 0.5)), $ga['respect_mult'], 1e-3,
+            'the rate against the neutral pillar score, within MDD 1.2 0.5x..2.0x');
 
         $this->warriorAtStep(5);
         $vet = $this->dynamics();
         $va = $this->attractionNow($vet);
+        $this->assertGreaterThan($ga['respect_rate'], $va['respect_rate']);
         $this->assertGreaterThan($ga['respect_mult'], $va['respect_mult']);
 
         $rg = RelationshipDynamics::applyEvalSignal(self::AELA, $green, 'respect', 6.0, ['competence'], 0.9);

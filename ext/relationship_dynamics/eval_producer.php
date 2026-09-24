@@ -527,7 +527,13 @@ final class RelDynEval
         try {
             // A save loaded since the last RelDyn request: reconcile before any job lands
             try {
-                RelDynTimeline::reconcileIfLoaded();
+                $rc = RelDynTimeline::reconcileIfLoaded();
+                if (!empty($rc['deferred'])) {
+                    // core is still restoring for a load: no job lands on those rows yet
+                    error_log('[RelDyn-EVAL] worker pauses: a save load is still being processed; the jobs wait for the next worker');
+                    $stats['paused'] = true;
+                    return $stats;
+                }
             } catch (\Throwable $e) {
                 RelationshipDynamics::logError('eval worker save-load reconcile', $e);
             }
@@ -1056,6 +1062,7 @@ TAGS (what {$player} did; use only these, empty list if none apply):
 GRIEVANCE: flag true when {$npc} was hurt or wronged and it was not resolved in this exchange; kind = short word (e.g. insult, neglect, disrespect, being used); severity 1 mild .. 3 severe.
 JEALOUSY: flag true when {$npc} felt jealous of a rival because of this exchange; rival = the rival's name; intensity 1..3.
 SIGNIFICANCE: 0..1, how much this exchange matters to {$npc} (small talk 0.1, meaningful 0.5, life-changing 1).
+SUMMARY: one short line saying what happened in this exchange, as an event (who did what). No numbers, no scores, no signal names, no feelings named (not "she trusts {$player} more").
 
 Reply with exactly this JSON shape:
 {"signals": {{$signalText}}, "tags": [], "grievance": {"flag": false, "kind": null, "severity": 0}, "jealousy": {"flag": false, "rival": null, "intensity": 0}, "significance": 0.2, "summary": "one short line"}
