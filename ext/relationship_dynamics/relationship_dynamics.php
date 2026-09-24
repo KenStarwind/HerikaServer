@@ -1030,7 +1030,21 @@ class RelationshipDynamics
             'autonomous_diary_enabled' => true,
             'diary_interaction_gap' => 15,
             'mask_maturity_cost' => 0.15,
+            // ===== Time (decisions 2026-09-23 §2: time does not heal, contact does) =====
+            // Contacts (this NPC's requests) an NPC back from a resolved boundary test
+            // waits before walking away again while its resentment is still high.
+            'walkaway_return_grace_contacts' => 5,
         ];
+    }
+
+    /**
+     * One config value, falling back to the current default when the stored config
+     * predates the key (a stored config replaces the defaults wholesale).
+     */
+    public static function configValue(string $key)
+    {
+        $cfg = self::getConfig();
+        return array_key_exists($key, $cfg) ? $cfg[$key] : (self::defaultConfig()[$key] ?? null);
     }
 
     /** Drop cached config and close any open request scope, so nothing stays cached. */
@@ -12968,18 +12982,18 @@ class RelationshipDynamics
         ],
     ];
 
-    // Walkaway constants
-    const WALKAWAY_RESENTMENT_TICK = -0.5;            // Resentment decay per tick when player stays away
+    // Walkaway constants. No passive resentment decay while the NPC is away (decisions
+    // 2026-09-23 §2: time does not heal); leaving them alone resolves the boundary test.
     const WALKAWAY_FOLLOW_RESENTMENT_MULT = 2.0;      // Resentment multiplier when player follows
     const WALKAWAY_FOLLOW_TRUST_PENALTY = -5.0;       // Permanent trust hit when player follows during walkaway
-    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum real play hours for boundary test
-    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum real play hours for boundary test
-    const WALKAWAY_RECOVERY_RESENTMENT_MAX = 50;       // Resentment must be below this to recover
-    const WALKAWAY_RECOVERY_COMFORT_MIN = 30;          // Comfort must be above this to recover
+    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum boundary test, game-calendar hours
+    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum boundary test, game-calendar hours
+    const WALKAWAY_RECOVERY_RESENTMENT_MAX = 50;       // Early recovery: resentment (0..100) below this
+    const WALKAWAY_RECOVERY_COMFORT_MIN = 30;          // Early recovery: comfort (0..100) above this
 
     // Hoover constants (Toxic exclusive)
-    const HOOVER_MIN_HOURS = 72;                       // Minimum real play hours before hoover triggers (MDD 6.6)
-    const HOOVER_MAX_HOURS = 96;                       // Maximum real play hours for random hoover window
+    const HOOVER_MIN_HOURS = 72;                       // Minimum sleeper timer, game-calendar hours (MDD 6.6, decisions §2)
+    const HOOVER_MAX_HOURS = 96;                       // Maximum sleeper timer, game-calendar hours
     const HOOVER_MATURITY_CAP = 40;                    // Maturity must be below this for hoover
     const HOOVER_RESENTMENT_REBUILD_MULT = 1.5;        // Post-hoover resentment rebuilds faster
     const HOOVER_WALKAWAY_THRESHOLD_REDUCTION = 0.20;  // Next walkaway triggers 20% sooner
@@ -13240,13 +13254,22 @@ class RelationshipDynamics
             return;
         }
 
-        // Calculate boundary test duration (random within range)
+        // Back from a resolved boundary test with the resentment still there: the player
+        // gets a few contacts to start repairing it before the NPC leaves again.
+        $grace = intval($dynamics['_walkaway_return_grace'] ?? 0);
+        if ($grace > 0) {
+            $dynamics['_walkaway_return_grace'] = $grace - 1;
+            self::log("[WALKAWAY] {$npcName} holds off leaving again ({$reason}); return grace left: " . ($grace - 1));
+            return;
+        }
+
+        // Calculate boundary test duration (random within range, game-calendar hours)
         $testHours = self::BOUNDARY_TEST_MIN_HOURS
                    + (mt_rand(0, 100) / 100.0) * (self::BOUNDARY_TEST_MAX_HOURS - self::BOUNDARY_TEST_MIN_HOURS);
 
         $dynamics['_walkaway_state'] = 'pending';
         $dynamics['_walkaway_reason'] = $reason;
-        self::markPlayCheckpoint($dynamics, '_walkaway_started_gamets');
+        self::markGameClock($dynamics, '_walkaway_started_calendar_gamets');
         $dynamics['_walkaway_boundary_test_hours'] = round($testHours, 1);
         $dynamics['_walkaway_player_followed'] = false;
 
@@ -13263,7 +13286,7 @@ class RelationshipDynamics
     public static function activateWalkaway(&$dynamics, $npcName)
     {
         $dynamics['_walkaway_state'] = 'active';
-        self::markPlayCheckpoint($dynamics, '_walkaway_activated_gamets');
+        self::markGameClock($dynamics, '_walkaway_activated_calendar_gamets');
 
         // Pause affinity decay during walkaway (they chose to leave, not forgotten)
         $dynamics['_walkaway_affinity_decay_paused'] = true;
@@ -13291,9 +13314,16 @@ class RelationshipDynamics
             return ['state' => $state, 'changed' => false];
         }
 
-        // Timers started by an older build hold wall-clock or game-calendar values
-        foreach (['_walkaway_started_gamets', '_walkaway_activated_gamets', '_boundary_test_started_gamets'] as $timerKey) {
-            self::rearmPlayCheckpoint($dynamics, $timerKey);
+        // Walkaway timers are game-calendar stamps. A walkaway started by an older build
+        // holds only play-clock or wall-clock stamps (other keys), and an earlier save puts
+        // a stamp in the future: (re)start those clocks now instead of trusting them.
+        $calendarKeys = ['_walkaway_started_calendar_gamets'];
+        if ($state === 'active' || $state === 'boundary_test') $calendarKeys[] = '_walkaway_activated_calendar_gamets';
+        if ($state === 'boundary_test') $calendarKeys[] = '_boundary_test_started_calendar_gamets';
+        foreach ($calendarKeys as $timerKey) {
+            if (self::gameHoursSince($dynamics, $timerKey) === null) {
+                self::markGameClock($dynamics, $timerKey);
+            }
         }
 
         // Pending → Active on next interaction
@@ -13326,27 +13356,25 @@ class RelationshipDynamics
         // Move to boundary test phase after activation
         if ($state === 'active') {
             $dynamics['_walkaway_state'] = 'boundary_test';
-            self::markPlayCheckpoint($dynamics, '_boundary_test_started_gamets');
+            self::markGameClock($dynamics, '_boundary_test_started_calendar_gamets');
             $result['state'] = 'boundary_test';
             $result['changed'] = true;
         }
 
-        // During boundary test — passive resentment decay
+        // During boundary test: no passive resentment decay (time away does not heal)
         if ($state === 'boundary_test' || $dynamics['_walkaway_state'] === 'boundary_test') {
-            self::applyDelta('resentment', $dynamics, self::WALKAWAY_RESENTMENT_TICK, $temperament);
-
             // Check boundary test outcome
             $boundaryResult = self::checkBoundaryTest($dynamics);
             if ($boundaryResult === 'recovery') {
                 $dynamics['_walkaway_state'] = 'recovery';
-                self::markPlayCheckpoint($dynamics, '_walkaway_recovery_gamets');
+                self::markGameClock($dynamics, '_walkaway_recovery_calendar_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
-                self::log("[WALKAWAY] {$npcName} entering recovery — conditions met");
+                self::log("[WALKAWAY] {$npcName} entering recovery — boundary test resolved");
                 $result['state'] = 'recovery';
                 $result['changed'] = true;
             } elseif ($boundaryResult === 'permanent') {
                 $dynamics['_walkaway_state'] = 'permanent';
-                self::markPlayCheckpoint($dynamics, '_walkaway_permanent_gamets');
+                self::markGameClock($dynamics, '_walkaway_permanent_calendar_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
                 self::log("[WALKAWAY] {$npcName} permanent departure — boundary test failed");
                 $result['state'] = 'permanent';
@@ -13365,37 +13393,73 @@ class RelationshipDynamics
      */
     public static function checkBoundaryTest($dynamics)
     {
-        if (floatval($dynamics['_boundary_test_started_gamets'] ?? 0) <= 0) {
+        if (floatval($dynamics['_boundary_test_started_calendar_gamets'] ?? 0) <= 0) {
             return null;
         }
 
-        // MDD 6.4 "hidden real-time timer": real hours of filtered play (never the game
-        // calendar, which one long sleep or wait would push past the whole test).
+        // Game-calendar hours (decisions 2026-09-23 §2): time apart in the world, so a
+        // wait or a sleep counts. Leaving them alone is what the test asks for.
         $testHours = floatval($dynamics['_walkaway_boundary_test_hours'] ?? 36);
-        $elapsedHours = self::playHoursSince($dynamics, '_boundary_test_started_gamets') ?? 0.0;
+        $elapsedHours = self::gameHoursSince($dynamics, '_boundary_test_started_calendar_gamets') ?? 0.0;
 
-        // Test hasn't expired yet — check early recovery
         $dims = $dynamics['dimensions'] ?? [];
         $resentment = floatval($dims['resentment']['x'] ?? 0);
         $comfort = floatval($dims['comfort']['x'] ?? 50);
 
-        // Recovery: resentment dropped below threshold AND comfort above minimum
+        // Early recovery: resentment already below threshold AND comfort above minimum
         if ($resentment < self::WALKAWAY_RECOVERY_RESENTMENT_MAX
             && $comfort > self::WALKAWAY_RECOVERY_COMFORT_MIN) {
             return 'recovery';
         }
 
-        // Test window expired — if conditions not met, it's permanent
-        if ($elapsedHours >= $testHours) {
-            return 'permanent';
-        }
-
-        // Player followed → immediate fail
+        // Player followed → failed (MDD 6.4)
         if (!empty($dynamics['_walkaway_player_followed'])) {
             return 'permanent';
         }
 
+        // A Toxic sleeper does not come back through the boundary test: it vanishes until
+        // its hoover (MDD 6.6, 72-96 game-calendar hours).
+        if (self::isHooverSleeper($dynamics)) {
+            return null;
+        }
+
+        // Left alone for the whole test → resolved. This clears the walkaway only; the
+        // resentment behind it stays until positive contact brings it down.
+        if ($elapsedHours >= $testHours) {
+            return 'recovery';
+        }
+
         return null; // Still testing
+    }
+
+    /**
+     * Advance a walkaway by one tick and carry out a resolved boundary test: the NPC
+     * returns and the walkaway state is cleared (resentment is left as it is), with a
+     * return grace so they do not walk out again before the player can make amends.
+     *
+     * @return array ['state' => string after the tick, 'returned' => bool]
+     */
+    public static function resolveWalkawayTick(&$dynamics, $npcName, $temperament = 'Stoic', $isDialogue = false)
+    {
+        $tick = self::processWalkawayTick($dynamics, $npcName, $temperament, $isDialogue);
+        $returned = false;
+        if (($tick['state'] ?? '') === 'recovery') {
+            self::executeAutonomousReturn($npcName, $dynamics);
+            self::resetWalkawayState($dynamics);
+            $dynamics['_walkaway_return_grace'] = max(0, intval(self::configValue('walkaway_return_grace_contacts')));
+            $returned = true;
+        }
+        return ['state' => $dynamics['_walkaway_state'] ?? 'normal', 'returned' => $returned];
+    }
+
+    /** Toxic/Disorganized NPC below the hoover maturity cap, with the hoover enabled. */
+    public static function isHooverSleeper($dynamics): bool
+    {
+        if (!(self::getConfig()['hoover_enabled'] ?? true)) {
+            return false;
+        }
+        return ($dynamics['attachment_style'] ?? 'secure') === 'toxic'
+            && floatval($dynamics['dimensions']['maturity']['x'] ?? 50) < self::HOOVER_MATURITY_CAP;
     }
 
     /**
@@ -13530,6 +13594,11 @@ class RelationshipDynamics
             $dynamics['_boundary_test_started_gamets'],
             $dynamics['_walkaway_recovery_gamets'],
             $dynamics['_walkaway_permanent_gamets'],
+            $dynamics['_walkaway_started_calendar_gamets'],
+            $dynamics['_walkaway_activated_calendar_gamets'],
+            $dynamics['_boundary_test_started_calendar_gamets'],
+            $dynamics['_walkaway_recovery_calendar_gamets'],
+            $dynamics['_walkaway_permanent_calendar_gamets'],
             // legacy wall-clock stamps (pre-3.4.1 builds)
             $dynamics['_walkaway_started_at'],
             $dynamics['_walkaway_activated_at'],
@@ -13579,26 +13648,24 @@ class RelationshipDynamics
             return false;
         }
 
-        // Must be toxic attachment
+        // Must be toxic attachment with maturity below the cap
         $attachment = $dynamics['attachment_style'] ?? 'secure';
         if ($attachment !== 'toxic') {
             return false;
         }
-
-        // Maturity must be below cap
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
         if ($maturity >= self::HOOVER_MATURITY_CAP) {
             return false;
         }
 
-        // Walkaway must have been active long enough (MDD 6.6: 72-96 IRL hours = real play hours)
-        $walkKey = !empty($dynamics['_walkaway_activated_gamets']) ? '_walkaway_activated_gamets' : '_walkaway_started_gamets';
+        // Sleeper timer: 72-96 game-calendar hours since they left (decisions 2026-09-23 §2)
+        $walkKey = !empty($dynamics['_walkaway_activated_calendar_gamets']) ? '_walkaway_activated_calendar_gamets' : '_walkaway_started_calendar_gamets';
         $walkStart = intval($dynamics[$walkKey] ?? 0);
         if ($walkStart === 0) {
             return false;
         }
 
-        $elapsedHours = self::playHoursSince($dynamics, $walkKey);
+        $elapsedHours = self::gameHoursSince($dynamics, $walkKey);
         if ($elapsedHours === null) {
             return false;
         }
