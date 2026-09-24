@@ -46,6 +46,11 @@ if (!RelationshipDynamics::isEnabled()) {
 // play-clock credit in updatePlayTime() below.
 $globalPlayGamets = RelationshipDynamics::beatPlayClock();
 
+// ========== PLAYER GOLD LEDGER (player-stats-pipeline) ==========
+// Economic footprint = gold moved, not the wallet: fold core's latest inventory snapshot
+// into the ledger RelDynPlayer::profile() reads for the status pillar.
+RelDynPlayer::recordGoldSnapshot();
+
 // ========== GAME CALENDAR (decisions 2026-09-23 §2: time does not heal) ==========
 // Time moves for every bond, not only this one: each NPC whose calendar step is due gets
 // fester, neglect, passion fade and walkaway/hoover timers advanced. This NPC goes first,
