@@ -7634,7 +7634,20 @@ class RelationshipDynamics
             }
             $r = self::applyEvalSignal($npcName, $dynamics, $signal, $raw, $n['tags'], $n['significance']);
             $totals[$signal] = $r['actual'];
+            // What the legacy path fed downstream: the reason per moved dimension (context
+            // <recent_emotional_shifts>) and the dimensional memory (confrontation / diary fuel)
+            if (abs($r['actual']) >= 0.0001 && $n['summary'] !== '') {
+                $dynamics['dimensions'][$signal]['last_reason'] = $n['summary'];
+                $dynamics['dimensions'][$signal]['last_delta'] = $r['actual'];
+                $bondName = $GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player';
+                self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $n['summary'], $bondName);
+            }
         }
+        // Interaction significance for the diary's defining_moment trigger, on the legacy 1..3
+        // level scale: contract significance 0..1 x 3, rounded (0.33, "normal +-10 of 30" -> 1;
+        // 1.0 -> 3). The strongest item of this request counts.
+        $level = max(1, min(3, (int) round($n['significance'] * 3)));
+        $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] = max($level, intval($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? 0));
 
         // Grievance / jealousy / positive interaction (resentment, conflict): once per accepted
         // item, after its signals. A rejected, misaddressed or already-applied item never gets here.

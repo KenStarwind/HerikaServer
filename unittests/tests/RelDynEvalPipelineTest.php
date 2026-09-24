@@ -568,6 +568,40 @@ final class RelDynEvalPipelineTest extends TestCase
         $this->assertGreaterThan(0, (float) $npc['dimensions']['resentment']['x']);
     }
 
+    /**
+     * What the legacy eval path fed downstream, the contract path feeds too: last_reason /
+     * last_delta per moved dimension (context <recent_emotional_shifts>), the dimensional
+     * memory (confrontation / diary fuel) and the interaction significance level (1..3; the
+     * diary's defining_moment fires at 3).
+     */
+    public function testContractItemFeedsReasonsMemoryAndSignificance(): void
+    {
+        unset($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE']);
+        $npc = $this->npc(['temperament' => 'Stoic', 'core_aff' => 15]);
+        $item = $this->item([
+            'signals' => ['affinity' => -10, 'trust' => -6, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0],
+            'summary' => 'Kaida broke her promise to Mjoll',
+            'significance' => 1.0,
+        ]);
+        $totals = RelationshipDynamics::processEvalContractItem('Mjoll', $item, $npc);
+
+        foreach (['affinity', 'trust'] as $dim) {
+            $this->assertSame('Kaida broke her promise to Mjoll', $npc['dimensions'][$dim]['last_reason'] ?? null, $dim);
+            $this->assertEqualsWithDelta($totals[$dim], (float) ($npc['dimensions'][$dim]['last_delta'] ?? 0), 1e-9, $dim);
+        }
+        $this->assertArrayNotHasKey('last_reason', $npc['dimensions']['comfort'], 'unmoved dimensions keep theirs');
+        $mem = array_column($npc['dimensional_memory'] ?? [], 'reason', 'dim');
+        $this->assertSame('Kaida broke her promise to Mjoll', $mem['trust'] ?? null);
+        $this->assertSame('Kaida broke her promise to Mjoll', $mem['affinity'] ?? null);
+        $this->assertSame(3, $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? null, 'significance 1.0 -> level 3 (defining moment)');
+
+        unset($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE']);
+        $npc2 = $this->npc();
+        RelationshipDynamics::processEvalContractItem('Mjoll', $this->item(['significance' => 0.33, 'summary' => 'small talk']), $npc2);
+        $this->assertSame(1, $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? null, '0.33 (a normal exchange, MDD +-10 of 30) -> level 1');
+        unset($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE']);
+    }
+
     public function testContractItemForAnotherNpcIsRejected(): void
     {
         $npc = $this->npc();
