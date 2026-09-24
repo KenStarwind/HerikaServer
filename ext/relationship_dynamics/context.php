@@ -257,13 +257,14 @@ if (!empty($parts)) {
 // Gated behind dimension_context_enabled — zero change to existing context when off.
 // Placed AFTER <emotional_dynamics> to extend, not replace.
 //
-// Tier 0 (Stranger)     : 0-25 affinity — bare minimum ("stranger, no established history")
-// Tier 1 (Acquaintance) : 26-40 affinity — band keywords only (cap 5 lines)
-// Tier 2 (Friend+)      : 41-70 affinity — keywords + maturity guidance + recent shifts (cap 8 lines)
-// Tier 3 (Bonded+)      : 71-100 affinity — full dimensional state + reasons + maturity + shifts (cap 10 lines)
+// Affinity = CORE relationships.Player.aff (-100..+100), via RelationshipDynamics::getContextTier():
+// Tier 0 (Stranger)     : core <= 5 — bare minimum ("stranger, no established history")
+// Tier 1 (Acquaintance) : core 6..30 — band keywords only (cap 5 lines)
+// Tier 2 (Friend+)      : core 31..75 — keywords + maturity guidance + recent shifts (cap 8 lines)
+// Tier 3 (Bonded+)      : core 76+ — full dimensional state + reasons + maturity + shifts (cap 10 lines)
 //
 // High water mark: once tier 2 is reached, it becomes the permanent floor.
-// Tier 3 requires active high affinity (71+) — drops back to tier 2 if bond breaks.
+// Tier 3 requires active high affinity (core 76+) — drops back to tier 2 if bond breaks.
 // "You don't forget who someone is because you hate them."
 // ==================================================
 

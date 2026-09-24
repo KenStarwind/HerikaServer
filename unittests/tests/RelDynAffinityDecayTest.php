@@ -34,14 +34,14 @@ final class RelDynAffinityDecayTest extends TestCase
         RelationshipDynamics::clearConfigCache();
     }
 
-    /** Stoic NPC at mirror affinity $x (close_friend = 56-70) with the given gate values. */
-    private function npc(float $x, array $dims = []): array
+    /** Stoic NPC at CORE affinity $coreAff (close_friend = core 56-75) with the given gate values. */
+    private function npc(float $coreAff, array $dims = []): array
     {
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
             'inferred_temperament' => 'Stoic',
             'attachment_style' => 'secure',   // absence mult 1.0, no absence comfort drift
         ]));
-        $d['dimensions']['affinity']['x'] = $x;
+        RelationshipDynamics::refreshAffinityMirror($d, $coreAff);
         foreach ($dims as $dim => $value) {
             $d['dimensions'][$dim]['x'] = $value;
         }
@@ -51,36 +51,37 @@ final class RelDynAffinityDecayTest extends TestCase
     public function testHeldTierStopsTheNumberAtTheRetentionThreshold(): void
     {
         // Friend-type bond, comfort gate holds (70 >= 50), maturity 55 (floors active).
-        $d = $this->npc(60.0, ['comfort' => 70.0, 'maturity' => 55.0]);
+        $d = $this->npc(70.0, ['comfort' => 70.0, 'maturity' => 55.0]);
 
-        // Ten real hours of absence: Stoic -0.3/tick x 60 ticks = -18, then another -18.
-        RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 60);
-        $r = RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 60);
+        // Stoic -0.3 core/tick x 100 ticks = -30 (70 -> 40), then another -30.
+        RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 100);
+        $r = RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 100);
 
         $this->assertSame('close_friend', $r['new_tier'], 'comfort gate holds the tier');
-        // close_friend floor 56 + Stoic retention -25 = 31: the number cannot pass it while the floor holds
-        $this->assertEqualsWithDelta(31.0, (float) $d['dimensions']['affinity']['x'], 0.001);
+        // close_friend floor core 56 + Stoic retention -25 = core 31: the number cannot pass it while the floor holds
+        $this->assertEqualsWithDelta(31.0, RelationshipDynamics::getCoreAffinity($d), 0.001);
         $this->assertSame('close_friend', $d['_current_tier']);
     }
 
     public function testFailedGateDemotesAndDecayContinues(): void
     {
-        $d = $this->npc(60.0, ['comfort' => 30.0, 'maturity' => 55.0]);
+        $d = $this->npc(70.0, ['comfort' => 30.0, 'maturity' => 55.0]);
 
-        $r = RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 100);
+        $r = RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 150);
 
-        $this->assertEqualsWithDelta(30.0, (float) $d['dimensions']['affinity']['x'], 0.001, '60 - 0.3 x 100');
+        // past the retention threshold (56 - 25 = 31)
+        $this->assertEqualsWithDelta(25.0, RelationshipDynamics::getCoreAffinity($d), 0.001, '70 - 0.3 x 150');
         $this->assertTrue($r['tier_changed']);
-        $this->assertSame('acquaintance', $r['new_tier'], 'comfort 30 < 50: floor unlocked, demoted to the tier of 30');
+        $this->assertSame('acquaintance', $r['new_tier'], 'comfort 30 < 50: floor unlocked, demoted to the tier of core 25');
     }
 
     public function testWithinRetentionTheNumberDecaysAndTheLabelHolds(): void
     {
-        $d = $this->npc(60.0, ['comfort' => 70.0, 'maturity' => 55.0]);
+        $d = $this->npc(70.0, ['comfort' => 70.0, 'maturity' => 55.0]);
 
-        $r = RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 42);
+        $r = RelationshipDynamics::processAffinityDecay($d, 'Lydia', 'Stoic', 'friend', 60);
 
-        $this->assertEqualsWithDelta(47.4, (float) $d['dimensions']['affinity']['x'], 0.001);
+        $this->assertEqualsWithDelta(52.0, RelationshipDynamics::getCoreAffinity($d), 0.001, '70 - 0.3 x 60, below the close_friend floor 56');
         $this->assertSame('close_friend', $r['new_tier']);
         $this->assertSame('within_retention', $r['demotion_info']['reason'],
             'judged against the held tier close_friend, not the tier of the decayed number');

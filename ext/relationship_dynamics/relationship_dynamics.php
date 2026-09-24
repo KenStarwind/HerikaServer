@@ -5977,9 +5977,10 @@ class RelationshipDynamics
         }
 
         // 2. PR 12: Friendzone from Attraction Matrix
+        // (friend tier or above on core affinity; the old "affinity > 40" was the draft 0..100 scale)
         if (!empty($dynamics['_attraction_friendzoned'])) {
-            $affinity = floatval($dynamics['dimensions']['affinity']['x'] ?? 0);
-            if ($affinity > 40) {
+            $tier = self::getCurrentTier(self::getCoreAffinity($dynamics));
+            if (self::tierRank($tier) >= self::tierRank('friend')) {
                 return 'friendzone';
             }
         }
@@ -6106,8 +6107,9 @@ class RelationshipDynamics
     // ================================================================
 
     /**
-     * Temperament decay rates per tick (1 tick = 10 IRL minutes).
+     * Temperament decay rates per tick (1 tick = GAMETS_PER_DECAY_TICK).
      * Higher magnitude = faster erosion from absence.
+     * UNITS: core affinity points (-100..+100 scale) per tick, not mirror points.
      */
     const TEMPERAMENT_DECAY_RATES = [
         'Anxious'     => -2.0,  // "Haven't talked in 2 days, do you even care?"
@@ -6129,6 +6131,7 @@ class RelationshipDynamics
      * Temperament tier retention thresholds.
      * How far below the tier floor affinity can drop before demotion triggers.
      * More negative = more retention (holds the tier longer despite decay).
+     * UNITS: core affinity points, added to the core-unit tier floor (RELATIONSHIP_TIERS).
      */
     const TEMPERAMENT_TIER_RETENTION = [
         'Independent' => -30,  // Barely cares about labels
@@ -6174,15 +6177,38 @@ class RelationshipDynamics
     /**
      * Relationship tier definitions with affinity thresholds.
      * Ordered from lowest to highest. Used for tier lookup and demotion checks.
+     *
+     * UNITS: core affinity (relationships.Player.aff, -100..+100), never the 0..100 mirror
+     * dimensions.affinity.x. The bands are core's own (RelationshipManager::TIERS), so RelDyn
+     * and core name the same bond the same depth; a neutral stranger (core 0) is 'stranger'.
+     * The design draft's 0..100 bands (hostile 0-10 .. devoted 86-100) predate the core
+     * bridge; their seven steps map onto core's labels in order:
+     *   hostile = Wary and below, stranger = Neutral, acquaintance = Acquaintance,
+     *   friend = Friendly, close_friend = Fond, bonded = Devoted, devoted = Bonded.
      */
     const RELATIONSHIP_TIERS = [
-        'hostile'      => ['min' =>  0, 'max' => 10],
-        'stranger'     => ['min' => 11, 'max' => 25],
-        'acquaintance' => ['min' => 26, 'max' => 40],
-        'friend'       => ['min' => 41, 'max' => 55],
-        'close_friend' => ['min' => 56, 'max' => 70],
-        'bonded'       => ['min' => 71, 'max' => 85],
-        'devoted'      => ['min' => 86, 'max' => 100],
+        'hostile'      => ['min' => -100, 'max' => -6],
+        'stranger'     => ['min' =>   -5, 'max' =>  5],
+        'acquaintance' => ['min' =>    6, 'max' => 30],
+        'friend'       => ['min' =>   31, 'max' => 55],
+        'close_friend' => ['min' =>   56, 'max' => 75],
+        'bonded'       => ['min' =>   76, 'max' => 90],
+        'devoted'      => ['min' =>   91, 'max' => 100],
+    ];
+
+    /**
+     * Context tier (0-3, how much relational state reaches the prompt) per RelDyn tier.
+     * Tier 0 hostile/stranger: nothing; 1 acquaintance: band keywords; 2 friend and
+     * close_friend: keywords + summary; 3 bonded/devoted: full state (needs the live bond).
+     */
+    const CONTEXT_TIER_BY_RELATIONSHIP_TIER = [
+        'hostile'      => 0,
+        'stranger'     => 0,
+        'acquaintance' => 1,
+        'friend'       => 2,
+        'close_friend' => 2,
+        'bonded'       => 3,
+        'devoted'      => 3,
     ];
 
     /** Default gate threshold: floor holds if gate signal > this */
@@ -6192,14 +6218,53 @@ class RelationshipDynamics
     const MATURITY_FLOOR_THRESHOLD = 40;
 
     /**
-     * Get the current relationship tier from an affinity value.
+     * The NPC's affinity toward the player in CORE units (-100..+100).
      *
-     * @param float $affinity  Current affinity (0-100)
+     * This is core relationships.Player.aff as mirrored at the start of the request
+     * (refreshAffinityMirror) plus RelDyn's own change since then that commitPlayerAffinity()
+     * has not pushed yet. The mirror x is (aff + 100) / 2, so aff = 2x - 100. Every tier
+     * decision reads affinity through this helper and maps it with getCurrentTier().
+     * Without a mirror (core never read for this blob) x is not a mirror value, and core's
+     * default for a missing Player entry applies: 0, a neutral stranger.
+     */
+    public static function getCoreAffinity(array $dynamics): float
+    {
+        $mark = $dynamics['_aff_mirror_x'] ?? null;
+        if (!is_numeric($mark)) {
+            return 0.0;
+        }
+        $x = $dynamics['dimensions']['affinity']['x'] ?? $mark;
+        $x = is_numeric($x) ? floatval($x) : floatval($mark);
+        $core = $x * 2.0 - 100.0;
+        return (float) max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, round($core, 4)));
+    }
+
+    /**
+     * Set the NPC's affinity to a CORE value (-100..+100) by moving the mirror x.
+     * commitPlayerAffinity() pushes the difference to core as a locked delta.
+     */
+    private static function setCoreAffinity(array &$dynamics, float $coreAff): void
+    {
+        $coreAff = max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, $coreAff));
+        $dynamics['dimensions']['affinity']['x'] = round(($coreAff + 100.0) / 2.0, 4);
+    }
+
+    /** Context tier (0-3) the NPC's current core affinity supports, before the high-water mark. */
+    public static function getAffinityContextTier(array $dynamics): int
+    {
+        $tier = self::getCurrentTier(self::getCoreAffinity($dynamics));
+        return self::CONTEXT_TIER_BY_RELATIONSHIP_TIER[$tier] ?? 0;
+    }
+
+    /**
+     * Get the current relationship tier from a CORE affinity value.
+     *
+     * @param float $affinity  Core affinity, -100..+100 (use getCoreAffinity(), not affinity.x)
      * @return string  Tier name (hostile, stranger, acquaintance, friend, close_friend, bonded, devoted)
      */
     public static function getCurrentTier($affinity)
     {
-        $affinity = max(0, min(100, floatval($affinity)));
+        $affinity = max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, floatval($affinity)));
 
         // Walk tiers from highest to lowest -- first match wins
         $tiersReversed = array_reverse(self::RELATIONSHIP_TIERS, true);
@@ -6216,7 +6281,7 @@ class RelationshipDynamics
      * Get the floor (minimum affinity) for a given tier.
      *
      * @param string $tierName  Tier name
-     * @return int  The min affinity for this tier, or 0 if unknown
+     * @return int  The min core affinity (-100..+100) for this tier, or 0 if unknown
      */
     public static function getTierFloor($tierName)
     {
@@ -6251,7 +6316,7 @@ class RelationshipDynamics
     public static function checkTierDemotion($dynamics, $temperament, $relationshipType, $heldTier = null)
     {
         $dims = $dynamics['dimensions'] ?? [];
-        $affinity = floatval($dims['affinity']['x'] ?? 0);
+        $affinity = self::getCoreAffinity($dynamics); // core units, like the tier floors and retention
         $currentTier = self::getCurrentTier($affinity);
         // The label being defended is the tier held so far, which is above the tier the
         // decayed number maps to in exactly the cases this check exists for.
@@ -6377,13 +6442,15 @@ class RelationshipDynamics
     // the LLM context. Higher tiers = richer context. A high water mark
     // ensures NPCs aren't "forgotten" when affinity drops.
     //
-    // Tier 0 (Stranger)     : 0-25 affinity  — bare minimum
-    // Tier 1 (Acquaintance) : 26-40 affinity  — band keywords only
-    // Tier 2 (Friend+)      : 41-70 affinity  — keywords + maturity + shifts
-    // Tier 3 (Bonded+)      : 71-100 affinity — full dimensional state
+    // Affinity here is CORE affinity (-100..+100), through getCoreAffinity() and the
+    // RelDyn tier (getCurrentTier, CONTEXT_TIER_BY_RELATIONSHIP_TIER):
+    // Tier 0 (Stranger)     : hostile/stranger, core <= 5    — bare minimum
+    // Tier 1 (Acquaintance) : acquaintance, core 6..30       — band keywords only
+    // Tier 2 (Friend+)      : friend/close_friend, core 31..75 — keywords + maturity + shifts
+    // Tier 3 (Bonded+)      : bonded/devoted, core 76+       — full dimensional state
     //
     // HWM rule: once tier 2 is reached, it becomes the permanent floor.
-    // Tier 3 requires active high affinity (71+).
+    // Tier 3 requires active high affinity (core 76+).
     // ===============================================
 
     /**
@@ -6393,25 +6460,15 @@ class RelationshipDynamics
      * context never drops below tier 2 even if affinity tanks to 0.
      * "You don't forget who someone is because you hate them."
      *
-     * Tier 3 is NOT preserved by HWM — it requires active high affinity (71+).
+     * Tier 3 is NOT preserved by HWM — it requires active high affinity (core 76+).
      *
      * @param array $dynamics  Full NPC dynamics blob
      * @return int  Effective context tier (0-3)
      */
     public static function getContextTier($dynamics)
     {
-        $affinity = floatval($dynamics['dimensions']['affinity']['x'] ?? 0);
-
-        // Calculate current tier from affinity
-        if ($affinity >= 71) {
-            $currentTier = 3;
-        } elseif ($affinity >= 41) {
-            $currentTier = 2;
-        } elseif ($affinity >= 26) {
-            $currentTier = 1;
-        } else {
-            $currentTier = 0;
-        }
+        // Current tier from core affinity (not the 0..100 mirror x)
+        $currentTier = self::getAffinityContextTier(is_array($dynamics) ? $dynamics : []);
 
         // High water mark — tier 2 is permanent once reached
         $hwm = intval($dynamics['context_tier_hwm'] ?? 0);
@@ -6436,17 +6493,8 @@ class RelationshipDynamics
      */
     public static function updateContextTierHWM(&$dynamics)
     {
-        $affinity = floatval($dynamics['dimensions']['affinity']['x'] ?? 0);
-
-        if ($affinity >= 71) {
-            $tier = 3;
-        } elseif ($affinity >= 41) {
-            $tier = 2;
-        } elseif ($affinity >= 26) {
-            $tier = 1;
-        } else {
-            $tier = 0;
-        }
+        // Same core-affinity tier as getContextTier(): the mirror x must never raise the HWM
+        $tier = self::getAffinityContextTier(is_array($dynamics) ? $dynamics : []);
 
         $oldHwm = intval($dynamics['context_tier_hwm'] ?? 0);
         $dynamics['context_tier_hwm'] = max($oldHwm, $tier);
@@ -6463,7 +6511,7 @@ class RelationshipDynamics
      *
      * This method:
      * 1. Calculates decay amount from temperament and elapsed ticks
-     * 2. Applies decay to affinity (clamped to 0-100)
+     * 2. Applies decay to CORE affinity (-100..+100, via getCoreAffinity/setCoreAffinity)
      * 3. Checks tier demotion if affinity crossed a tier floor
      * 4. Returns detailed result for logging/debugging
      *
@@ -6491,7 +6539,7 @@ class RelationshipDynamics
             $dynamics['dimensions']['affinity'] = ['x' => 0, 'baseline' => null];
         }
 
-        $oldAffinity = floatval($dynamics['dimensions']['affinity']['x'] ?? 0);
+        $oldAffinity = self::getCoreAffinity($dynamics); // core units: tiers, rates and retention are too
         $oldTier = self::getCurrentTier($oldAffinity);
         // A label held by an earlier decay run outranks the tier of the (already decayed) number
         $heldTier = $dynamics['_current_tier'] ?? null;
@@ -6544,7 +6592,7 @@ class RelationshipDynamics
         }
 
         // --- Apply decay to affinity ---
-        $newAffinity = max(0.0, min(100.0, $oldAffinity + $totalDecay));
+        $newAffinity = max((float) self::CORE_AFFINITY_MIN, min((float) self::CORE_AFFINITY_MAX, $oldAffinity + $totalDecay));
         $actualDecay = $newAffinity - $oldAffinity;
 
         // Attachment-driven comfort change during absence
@@ -6554,8 +6602,8 @@ class RelationshipDynamics
             self::applyDelta('comfort', $dynamics, $comfortChange, $temperament);
         }
 
-        // Store updated affinity
-        $dynamics['dimensions']['affinity']['x'] = $newAffinity;
+        // Store updated affinity (mirror x; commitPlayerAffinity pushes the change to core)
+        self::setCoreAffinity($dynamics, $newAffinity);
 
         $result['decay_amount'] = $actualDecay;
         $result['new_affinity'] = $newAffinity;
@@ -6582,7 +6630,7 @@ class RelationshipDynamics
                 if ($newAffinity < $bound) {
                     $newAffinity = $bound;
                     $actualDecay = $newAffinity - $oldAffinity;
-                    $dynamics['dimensions']['affinity']['x'] = $newAffinity;
+                    self::setCoreAffinity($dynamics, $newAffinity);
                     $result['decay_amount'] = $actualDecay;
                     $result['new_affinity'] = $newAffinity;
                 }
