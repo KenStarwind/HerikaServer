@@ -342,62 +342,26 @@ if ($currentInterest) {
 }
 
 // -------------------------------------------------------------------------
-// 1b. Topic Talk Bonus — conversation topic matches NPC interests
+// 1b. Topic Talk Bonus -- decisions 2026-09-23 section 6: the Oghma topics core's retrieval
+// grounded THIS turn (processor/oghma.php ran earlier in this request) -> facets
+// (RelDynFacets::thingFacets) -> this NPC's appraisal. Dwemer lore lands warmly with Ashe
+// (scholarly) and tiresomely with Aela (scholarly and confined are what she dislikes). The
+// valence scales passion in MDD 1.2's 0.5x..2.0x; the felt read (never numbers) reaches the
+// next context as <topic_resonance>.
 // -------------------------------------------------------------------------
 $topicBonus = 1.0;
 $topicMatch = null;
+$topicFelt = null;
 if ($reldynCfg['topic_bonus_enabled'] ?? true) {
-try {
-    $db_topic = $GLOBALS['db'] ?? null;
-    if ($db_topic) {
-        // Read the current Oghma topic from this conversation
-        $oghmaTopicRow = $db_topic->fetchOne("SELECT value FROM conf_opts WHERE id = 'current_oghma_topic' LIMIT 1");
-        $oghmaTopic = ($oghmaTopicRow && !empty($oghmaTopicRow['value'])) ? trim($oghmaTopicRow['value']) : null;
-
-        if ($oghmaTopic) {
-            // Look up the Oghma article to get its knowledge_class and vector
-            $topicEscaped = $db_topic->escape(strtolower($oghmaTopic));
-            $articleRow = $db_topic->fetchOne(
-                "SELECT knowledge_class, vector384 FROM oghma "
-                . "WHERE lower(topic) = '{$topicEscaped}' LIMIT 1"
-            );
-
-            if ($articleRow) {
-                // Method 1: Vector similarity (preferred — uses the NPC's interest vector)
-                $npcVector = $dynamics['_interest_vector'] ?? null;
-                if (!empty($npcVector) && is_array($npcVector) && !empty($articleRow['vector384'])) {
-                    $articleVecStr = trim($articleRow['vector384'], '[]');
-                    $articleVec = array_map('floatval', explode(',', $articleVecStr));
-                    $topicSimilarity = RelationshipDynamics::cosineSimilarity($npcVector, $articleVec);
-
-                    if ($topicSimilarity >= 0.35) {
-                        $topicBonus = 1.0 + min(0.5, ($topicSimilarity - 0.35) * 1.67); // 0.35→1.0x, 0.65→1.5x
-                        $topicMatch = $oghmaTopic;
-                        RelationshipDynamics::log("TopicBonus: {$npcName} topic='{$oghmaTopic}' sim=" . round($topicSimilarity, 3) . " bonus={$topicBonus}x");
-                    }
-                }
-                // Method 2: Knowledge class keyword fallback
-                elseif (!empty($articleRow['knowledge_class'])) {
-                    $klasses = array_map('trim', explode(',', strtolower($articleRow['knowledge_class'])));
-                    $interests = RelationshipDynamics::getInterests($dynamics);
-                    $klassMap = RelationshipDynamics::KNOWLEDGE_CLASS_TO_INTEREST ?? [];
-                    foreach ($klasses as $klass) {
-                        $mappedInterest = $klassMap[$klass] ?? null;
-                        if ($mappedInterest && isset($interests[$mappedInterest]) && $interests[$mappedInterest] >= 1.3) {
-                            $topicBonus = 1.3;
-                            $topicMatch = $oghmaTopic;
-                            RelationshipDynamics::log("TopicBonus(keyword): {$npcName} topic='{$oghmaTopic}' class={$klass} => {$mappedInterest} bonus=1.3x");
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+    $topicTurn = RelDynFacetClassifier::topicTurn($dynamics, $npcName, RelDynFacetClassifier::turnTopics());
+    $topicBonus = $topicTurn['bonus'];
+    $topicMatch = $topicTurn['match'];
+    $topicFelt = $topicTurn['felt'];
+    if ($topicTurn['appraisal'] !== null) {
+        $ta = $topicTurn['appraisal'];
+        RelationshipDynamics::log("TopicBonus: {$npcName} topic='{$ta['name']}' valence=" . round((float) $ta['valence'], 3)
+            . " dominant=" . ($ta['dominant'] ?? 'none') . " bonus=" . round($topicBonus, 3) . "x match=" . ($topicMatch ? 'yes' : 'no'));
     }
-} catch (\Throwable $e) {
-    RelationshipDynamics::logError('postrequest topic bonus', $e);
-    // Topic bonus is optional — don't crash on failure
-}
 } // end topic_bonus_enabled
 $GLOBALS['RELDYN_TOPIC_BONUS'] = $topicBonus;
 $GLOBALS['RELDYN_TOPIC_MATCH'] = $topicMatch;
@@ -411,7 +375,7 @@ $flirtyMoods = ['flirty', 'romantic', 'playful', 'teasing', 'amused', 'charmed',
                 'smitten', 'coy', 'seductive', 'affectionate', 'bashful', 'flustered'];
 if (!empty($lastMood) && in_array(strtolower($lastMood), $flirtyMoods)) {
     $hasLocationMatch = floatval($GLOBALS['RELDYN_AMBIENT_RESONANCE'] ?? 0) >= 0.3;
-    $hasTopicMatch = ($topicBonus > 1.0);
+    $hasTopicMatch = ($topicMatch !== null);   // a topic this NPC warms to (topic_match_min_valence)
     if ($hasLocationMatch || $hasTopicMatch) {
         $flirtBonus = 1.2;
         RelationshipDynamics::log("FlirtBonus: {$npcName} mood={$lastMood} location=" . ($hasLocationMatch ? 'yes' : 'no') . " topic=" . ($hasTopicMatch ? 'yes' : 'no') . " bonus=1.2x");
@@ -461,13 +425,20 @@ if ($evalOwnsExchange) {
     }
 }
 
-// Store topic match for next context.php cycle (topic resonance hint)
+// Store the topic read for the next context.php cycle (<topic_resonance>): the felt text
+// (a match, or a topic the NPC dislikes) lives one turn, then clears.
 if ($topicMatch) {
     $dynamics['_last_topic_match'] = $topicMatch;
 } else {
-    // Clear stale topic match after one conversation without a match
     unset($dynamics['_last_topic_match']);
 }
+if ($topicFelt !== null) {
+    $dynamics['_last_topic_felt'] = $topicFelt;
+} else {
+    unset($dynamics['_last_topic_felt']);
+}
+// A gift's felt read (processGift, below) also lives one turn.
+unset($dynamics['_last_gift_felt']);
 
 // -------------------------------------------------------------------------
 // 3. Diminishing returns — record interaction

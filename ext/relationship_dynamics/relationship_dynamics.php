@@ -18,6 +18,7 @@
  */
 
 require_once __DIR__ . '/reldyn_storage.php';
+require_once __DIR__ . '/reldyn_facets.php';
 
 class RelationshipDynamics
 {
@@ -190,49 +191,6 @@ class RelationshipDynamics
         'library'      => 'scholarly',
         'college'      => 'scholarly',
         'temple'       => 'spiritual',
-    ];
-
-    // Item name keyword → interest category (for gift classification)
-    const ITEM_INTEREST_MAP = [
-        // Combat (weapons + armor)
-        'sword' => 'combat', 'axe' => 'combat', 'mace' => 'combat', 'bow' => 'combat',
-        'arrow' => 'combat', 'dagger' => 'combat', 'greatsword' => 'combat',
-        'battleaxe' => 'combat', 'warhammer' => 'combat', 'shield' => 'combat',
-        'armor' => 'combat', 'helmet' => 'combat', 'gauntlet' => 'combat',
-        'boots' => 'combat', 'cuirass' => 'combat', 'war ' => 'combat',
-        // Crafting
-        'ore' => 'crafting', 'ingot' => 'crafting', 'leather' => 'crafting',
-        'hide' => 'crafting', 'strip' => 'crafting', 'firewood' => 'crafting',
-        // Alchemy
-        'potion' => 'alchemy', 'elixir' => 'alchemy', 'poison' => 'alchemy',
-        'ingredient' => 'alchemy', 'flower' => 'alchemy', 'root' => 'alchemy',
-        'wing' => 'alchemy', 'dust' => 'alchemy', 'salt' => 'alchemy',
-        'herb' => 'alchemy', 'mushroom' => 'alchemy', 'petal' => 'alchemy',
-        'extract' => 'alchemy', 'eye of' => 'alchemy',
-        // Enchanting
-        'soul gem' => 'enchanting', 'soul_gem' => 'enchanting',
-        'staff' => 'enchanting', 'scroll' => 'enchanting',
-        // Scholarly
-        'book' => 'scholarly', 'tome' => 'scholarly', 'journal' => 'scholarly',
-        'note' => 'scholarly', 'letter' => 'scholarly', 'map' => 'scholarly',
-        'spell tome' => 'scholarly',
-        // Nature
-        'pelt' => 'nature', 'antler' => 'nature', 'claw' => 'nature',
-        'feather' => 'nature', 'tusk' => 'nature', 'bone' => 'nature',
-        'scale' => 'nature',
-        // Wealth
-        'gem' => 'wealth', 'jewel' => 'wealth', 'ruby' => 'wealth',
-        'sapphire' => 'wealth', 'emerald' => 'wealth', 'diamond' => 'wealth',
-        'necklace' => 'wealth', 'ring' => 'wealth', 'circlet' => 'wealth',
-        'gold' => 'wealth', 'silver' => 'wealth',
-        // Domestic
-        'food' => 'domestic', 'bread' => 'domestic', 'cheese' => 'domestic',
-        'meat' => 'domestic', 'stew' => 'domestic', 'pie' => 'domestic',
-        'soup' => 'domestic', 'ale' => 'domestic', 'wine' => 'domestic',
-        'mead' => 'domestic', 'sweet roll' => 'domestic',
-        // Spiritual
-        'amulet of' => 'spiritual', 'blessing' => 'spiritual',
-        'divine' => 'spiritual', 'holy' => 'spiritual', 'talos' => 'spiritual',
     ];
 
     // How strongly interest multiplier affects each love language
@@ -1307,6 +1265,12 @@ class RelationshipDynamics
             // game-calendar gap longer than this; a drop of conflict_threshold_affinity_drop core
             // affinity points below the session's high opens a conflict.
             'conflict_session_gap_game_hours' => 6,
+            // ===== Preference matching (decisions 2026-09-23 §6) =====
+            // Facet classifier tables: anchors, embedding parameters, knowledge_class / category
+            // / tag priors, item / creature / activity keywords (reldyn_facet_classifier.php).
+            'facet_classifier' => RelDynFacetClassifier::configDefaults(),
+            // What a topic / gift appraisal does: MDD 1.2 interest multiplier range, match threshold.
+            'thing_appraisal' => RelDynFacetClassifier::appraisalDefaults(),
         ];
     }
 
@@ -3909,97 +3873,17 @@ class RelationshipDynamics
     // INTEREST-WEIGHTED PASSION — Detection, Classification & Preferences
     // =========================================================================
 
-    // minai_items.category → interest mapping (100% coverage for giveable items)
-    const ITEM_CATEGORY_TO_INTEREST = [
-        'Weapon'     => 'combat',
-        'Armor'      => 'combat',
-        'Ammo'       => 'combat',
-        'Potion'     => 'alchemy',
-        'Ingredient' => 'alchemy',
-        'Book'       => 'scholarly',
-        'Scroll'     => 'enchanting',
-        'SoulGem'    => 'enchanting',
-        'Key'        => 'adventure',
-        'Currency'   => 'wealth',
-        'Light'      => 'domestic',
-        'Misc'       => null, // falls through to keyword matching
-    ];
-
-    // Oghma knowledge_class → interest mapping (for items with lore entries)
-    const KNOWLEDGE_CLASS_TO_INTEREST = [
-        'blacksmith' => 'crafting',
-        'alchemist'  => 'alchemy',
-        'mage'       => 'enchanting',
-        'scholar'    => 'scholarly',
-        'priest'     => 'spiritual',
-        'noble'      => 'wealth',
-        'hunter'     => 'nature',
-        'thief'      => 'adventure',
-    ];
-
     /**
-     * Classify an item name into an interest category.
-     * 3-tier lookup: minai_items.category → oghma.knowledge_class → keyword fallback
+     * The interest category (one of the 11 MDD 1.2 interests) an item speaks to most, for the
+     * interest-string callers (detectGiftInterest -> getInterestMultiplier): the strongest
+     * interest facet of RelDynFacets::thingFacets('item', name) -- Oghma first (precomputed
+     * facets or the live knowledge_class/category/tags prior), then the item keyword table.
+     * Null when the item has no interest facet.
      */
     public static function classifyItemInterest($itemName)
     {
-        if (empty($itemName)) return null;
-
-        $db = $GLOBALS['db'] ?? null;
-
-        // Tier 1: minai_items.category (100% coverage for registered items)
-        if ($db) {
-            try {
-                $row = $db->fetchOne(
-                    "SELECT category FROM minai_items WHERE lower(name) = lower("
-                    . $db->escapeLiteral(trim($itemName)) . ") LIMIT 1"
-                );
-                if ($row && !empty($row['category'])) {
-                    $interest = self::ITEM_CATEGORY_TO_INTEREST[$row['category']] ?? null;
-                    if ($interest) return $interest;
-                    // category=Misc falls through to Tier 2
-                }
-            } catch (\Throwable $e) { self::logError('classifyItemInterest minai_items', $e); }
-        }
-
-        // Tier 2: oghma.knowledge_class (8% coverage, finer classification)
-        if ($db) {
-            try {
-                $topic = strtolower(str_replace(' ', '_', trim($itemName)));
-                $row = $db->fetchOne(
-                    "SELECT knowledge_class, category FROM oghma WHERE lower(topic) = "
-                    . $db->escapeLiteral($topic) . " LIMIT 1"
-                );
-                if ($row && !empty($row['knowledge_class'])) {
-                    // knowledge_class can be CSV: "blacksmith, alchemist"
-                    $classes = array_map('trim', explode(',', strtolower($row['knowledge_class'])));
-                    foreach ($classes as $kc) {
-                        if (isset(self::KNOWLEDGE_CLASS_TO_INTEREST[$kc])) {
-                            return self::KNOWLEDGE_CLASS_TO_INTEREST[$kc];
-                        }
-                    }
-                }
-                // Oghma category fallback
-                if ($row && !empty($row['category'])) {
-                    $catMap = ['artifacts' => 'adventure', 'equipment' => 'crafting', 'items' => 'domestic', 'spells' => 'enchanting'];
-                    if (isset($catMap[$row['category']])) {
-                        return $catMap[$row['category']];
-                    }
-                }
-            } catch (\Throwable $e) { self::logError('classifyItemInterest oghma', $e); }
-        }
-
-        // Tier 3: keyword fallback (for items not in any DB)
-        $lower = strtolower(trim($itemName));
-        $map = self::ITEM_INTEREST_MAP;
-        uksort($map, function($a, $b) { return strlen($b) - strlen($a); });
-        foreach ($map as $keyword => $interest) {
-            if (strpos($lower, strtolower($keyword)) !== false) {
-                return $interest;
-            }
-        }
-
-        return null;
+        if (!is_string($itemName) || trim($itemName) === '') return null;
+        return RelDynFacetClassifier::dominantInterest(RelDynFacets::thingFacets('item', $itemName));
     }
 
     /**
@@ -4534,53 +4418,6 @@ class RelationshipDynamics
         }
         $denom = sqrt($normA) * sqrt($normB);
         return ($denom > 0) ? ($dot / $denom) : 0.0;
-    }
-
-    public static function embedInterestVector($interests)
-    {
-        if (empty($interests)) return null;
-        try {
-            $parts = [];
-            foreach ($interests as $key => $weight) {
-                if (is_numeric($weight) && floatval($weight) > 0.5) {
-                    $parts[] = "{$key}(" . number_format(floatval($weight), 1) . ")";
-                }
-            }
-            if (empty($parts)) return null;
-            $text = implode(' ', $parts);
-
-            $url = 'http://localhost:8082/api/embedtext';
-            $payload = json_encode(['text' => $text]);
-            $ctx = stream_context_create([
-                'http' => [
-                    'method' => 'POST',
-                    'header' => "Content-Type: application/json\r\n",
-                    'content' => $payload,
-                    'timeout' => 5,
-                ],
-            ]);
-            $result = @file_get_contents($url, false, $ctx);
-            if ($result === false) return null;
-            $data = json_decode($result, true);
-            return $data['vector'] ?? $data['embedding'] ?? $data ?? null;
-        } catch (\Throwable $e) {
-            self::logError('embedInterestVector', $e);
-            return null;
-        }
-    }
-
-    public static function getInterestVector(&$dynamics)
-    {
-        if (!empty($dynamics['_interest_vector'])) {
-            return $dynamics['_interest_vector'];
-        }
-        $interests = self::getInterests($dynamics);
-        if (empty($interests)) return null;
-        $vec = self::embedInterestVector($interests);
-        if ($vec) {
-            $dynamics['_interest_vector'] = $vec;
-        }
-        return $vec;
     }
 
     // =========================================================================
@@ -11450,8 +11287,9 @@ class RelationshipDynamics
      *
      * Base value is 5 (one gift = ~5 affinity/comfort delta before multipliers).
      * Love language match (gifts primary) = 2.0x.
-     * Interest match = 2.0x.
-     * Generic gift without match = 0.5x (feels transactional).
+     * Interest match = the NPC's appraisal of the item's facets, 0.5x (hates it) .. 2.0x
+     * (loves it) (MDD 1.2; RelDynFacetClassifier::giftAppraisal).
+     * Item with no facets at all = 0.5x (feels transactional).
      * Gift during active resentment = 0.3x.
      *
      * Gated behind dimension_engine_enabled config toggle.
@@ -11480,19 +11318,13 @@ class RelationshipDynamics
             $llMult = 2.0;
         }
 
-        // --- Interest match ---
-        $interestMult = 0.5; // default: generic gift feels transactional
-        $itemInterest = self::classifyItemInterest($itemName);
-        if ($itemInterest) {
-            $interests = self::getInterests($dynamics);
-            $interestValue = floatval($interests[$itemInterest] ?? 1.0);
-            if ($interestValue > 1.0) {
-                $interestMult = 2.0; // NPC is interested in this category
-            } elseif ($interestValue >= 0.9) {
-                $interestMult = 1.0; // neutral match
-            }
-            // else stays at 0.5 (NPC dislikes this category)
-        }
+        // --- Interest match (decisions §6): the item's facets appraised by this NPC's signed
+        // preferences, mapped into MDD 1.2's 0.5x..2.0x; an item with no facets at all stays
+        // thing_appraisal.gift_unclassified_mult (a generic gift feels transactional) ---
+        $gift = RelDynFacetClassifier::giftAppraisal($dynamics, (string) ($npcName ?? ''), (string) $itemName);
+        $interestMult = $gift['mult'];
+        $itemInterest = $gift['appraisal']['dominant'] ?? null;
+        $dynamics['_last_gift_felt'] = $gift['felt'];
 
         // --- Context multiplier ---
         $contextMult = 1.0;
