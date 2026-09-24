@@ -352,6 +352,39 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
         $this->assertNoSqlFailures();
     }
 
+    /**
+     * Decisions §10 / review 2026-09-24: a spell reads by its subject, not its school. A
+     * conjurer / necromancer and a scholar are not druids; a caster with a nature spell in hand
+     * and herb lore is.
+     */
+    public function testMagicSchoolsAloneAreNotNatureMagic(): void
+    {
+        $this->skills(['conjuration' => 85, 'alteration' => 60, 'destruction' => 40]);
+        $this->stats(35);
+        $this->equipment(['right_hand' => ['name' => 'Raise Zombie', 'baseid' => '0007E8DF', 'keywords' => []]]);
+        $this->trackedStat('Souls Trapped', 50);
+        $necro = $this->profile();
+        $this->assertEqualsWithDelta(1.0, $necro['archetypes']['mage'], 1e-9);
+        $this->assertLessThan(0.1, $necro['archetypes']['druid'], 'a necromancer is not a druid');
+
+        pg_query($this->db->link, 'DELETE FROM core_player; DELETE FROM conf_opts');
+        $this->skills(['enchanting' => 80, 'alteration' => 70, 'illusion' => 50]);
+        $this->stats(30);
+        $this->trackedStat('Books Read', 200);
+        $scholar = $this->profile();
+        $this->assertLessThan(0.1, $scholar['archetypes']['druid'], 'a scholar is not a druid');
+
+        pg_query($this->db->link, 'DELETE FROM core_player; DELETE FROM conf_opts');
+        $this->skills(['conjuration' => 60, 'alchemy' => 55]);
+        $this->stats(30);
+        $this->equipment(['left_hand' => ['name' => 'Conjure Familiar', 'baseid' => '000640B6', 'keywords' => []]]);
+        $this->trackedStat('Ingredients Harvested', 150);
+        $nature = $this->profile();
+        $this->assertGreaterThan(0.8, $nature['archetypes']['druid'], 'a wolf spirit at her side and herbs in her pack');
+        $this->assertSame(['Conjure Familiar'], $nature['facts']['held_names']['value']);
+        $this->assertNoSqlFailures();
+    }
+
     /** An undeveloped character (fresh level 1, starting skills) is weak everywhere, not "1.0 of something". */
     public function testUndevelopedCharacterHasNoInflatedIdentity(): void
     {
@@ -417,8 +450,9 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
     }
 
     /**
-     * Ken / attraction memory: wealth = economic footprint (gold moved), not the wallet. A player
-     * who moved a lot of gold but carries little outranks one sitting on a pile they never used.
+     * Ken / attraction memory: wealth = economic footprint (lifetime gold earned + spent), not the
+     * wallet. A player who moved a lot of gold but carries little outranks one sitting on a pile:
+     * the pile counts once, as gold earned before RelDyn watched (a lower bound), never again.
      */
     public function testStatusIsEconomicFootprintNotWallet(): void
     {
@@ -443,12 +477,43 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
 
         $this->assertSame(200, $trader['facts']['gold_carried']['value']);
         $this->assertSame(87300, $trader['facts']['gold_moved']['value']);   // 8500+7800+13800+14200+21200+21800
+        $this->assertSame(87800, $trader['facts']['gold_footprint']['value'], 'the 500 first seen + 87 300 moved');
         $this->assertStringContainsString('not used', $trader['facts']['gold_carried']['note']);
         $this->assertSame(40000, $hoarder['facts']['gold_carried']['value']);
         $this->assertSame(0, $hoarder['facts']['gold_moved']['value']);
+        $this->assertSame(40000, $hoarder['facts']['gold_footprint']['value'], 'earned before RelDyn watched');
         $this->assertGreaterThan(0.5, $trader['pillars']['status']);
         $this->assertEqualsWithDelta(1.0, $trader['archetypes']['noble'], 1e-9, 'houses + gold moved: a person of means');
-        $this->assertLessThan(0.05, $hoarder['pillars']['status'], 'a full wallet alone is not status');
+        $this->assertLessThan($trader['pillars']['status'], $hoarder['pillars']['status'], 'the trader outranks the hoarder');
+        $this->assertNoSqlFailures();
+    }
+
+    /**
+     * Review 2026-09-24: starting to watch the wallet is not evidence about the player. An
+     * accomplished warrior with no tracked stat has an unknown status; the first inventory
+     * snapshot leaves it unknown when the wallet is empty, and reads a full one as the gold
+     * earned before RelDyn watched, never as a known zero.
+     */
+    public function testFirstGoldSnapshotNeverTurnsUnknownStatusIntoKnownZero(): void
+    {
+        $this->skills(['onehanded' => 90, 'twohanded' => 85, 'heavyarmor' => 80]);
+        $this->stats(45);
+        $this->assertNull($this->profile()['pillars']['status'], 'no standing evidence at all: unknown');
+
+        $this->inventory(0);
+        $GLOBALS['gameRequest'][2] = (string) self::NOW;
+        RelDynPlayer::recordGoldSnapshot();
+        $p = $this->profile();
+        $this->assertSame(0, $p['facts']['gold_moved']['value']);
+        $this->assertNull($p['facts']['gold_footprint']['value'], 'an empty first wallet says nothing about a lifetime');
+        $this->assertNull($p['pillars']['status'], 'still unknown');
+
+        pg_query($this->db->link, "DELETE FROM core_player WHERE id = '" . RelDynPlayer::LEDGER_KEY . "'");
+        $this->inventory(50000);
+        RelDynPlayer::recordGoldSnapshot();
+        $p = $this->profile();
+        $this->assertSame(50000, $p['facts']['gold_footprint']['value']);
+        $this->assertGreaterThan(0.6, $p['pillars']['status'], 'fifty thousand gold was earned somewhere');
         $this->assertNoSqlFailures();
     }
 
@@ -571,6 +636,25 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
     private function eventPlayerInfo(): void
     {
         $this->event('infoplayer', 'level:12,name:"Kaida",race:"Nord",gender:"Male"');
+    }
+
+    /**
+     * Review 2026-09-24: only the plugin's 'infoplayer' line carries gender; the 'playerinfo'
+     * line every game load sends has none (live: 9 playerinfo rows, 0 infoplayer). A load must
+     * not make the player's gender unknown; Player Management's core_player.gender wins.
+     */
+    public function testPlayerGenderSurvivesAGameLoad(): void
+    {
+        $this->event('infoplayer', 'level:12,name:"Kaida",race:"Nord",gender:"male"', self::NOW - 5000);
+        $this->event('playerinfo', 'level:13,name:"Kaida",race:"Nord"', self::NOW - 1000);
+        $p = $this->profile();
+        $this->assertSame('male', $p['facts']['gender']['value']);
+        $this->assertSame(13, $p['facts']['level']['value'], 'level from the newest line');
+        (new Player())->set('gender', 'Female');
+        $p = $this->profile();
+        $this->assertSame('Female', $p['facts']['gender']['value']);
+        $this->assertStringContainsString('core_player.gender', $p['facts']['gender']['source']);
+        $this->assertNoSqlFailures();
     }
 
     /** The prerequest hook folds each request's wallet into the ledger (real hook, real tables). */

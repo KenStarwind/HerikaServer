@@ -115,21 +115,28 @@ final class RelDynAttractionMatrixTest extends TestCase
         ];
     }
 
-    /** Player profiles in the RelDynPlayer::profile() contract shape (archetypes / pillars 0..1). */
+    /**
+     * Player profiles in the RelDynPlayer::profile() contract shape (archetypes = identity,
+     * archetype_raw = magnitude as that archetype, pillars 0..1).
+     */
     private static function player(string $kind, array $facts = []): array
     {
         $p = [
-            'warrior'    => [['warrior' => 0.9, 'hunter' => 0.3], ['strength' => 0.85, 'status' => 0.5, 'competence' => 0.7]],
-            'druid'      => [['druid' => 0.85, 'healer' => 0.5, 'mage' => 0.3], ['strength' => 0.6, 'status' => 0.4, 'competence' => 0.6]],
+            'warrior'    => [['warrior' => 0.9, 'hunter' => 0.3], ['strength' => 0.85, 'status' => 0.5, 'competence' => 0.7], ['warrior' => 0.85, 'hunter' => 0.3]],
+            'druid'      => [['druid' => 0.85, 'healer' => 0.5, 'mage' => 0.3], ['strength' => 0.6, 'status' => 0.4, 'competence' => 0.6], ['druid' => 0.75, 'healer' => 0.45, 'mage' => 0.25]],
             // accomplished, but a bard / a scholar: Aela tolerates them
-            'bard'       => [['bard' => 0.9, 'noble' => 0.3], ['strength' => 0.2, 'status' => 0.6, 'competence' => 0.7]],
-            'scholar'    => [['scholar' => 0.9, 'mage' => 0.7], ['strength' => 0.35, 'status' => 0.6, 'competence' => 0.7]],
-            'newbie'     => [['warrior' => 0.1], ['strength' => 0.1, 'status' => 0.0, 'competence' => 0.05]],
+            'bard'       => [['bard' => 0.9, 'noble' => 0.3], ['strength' => 0.2, 'status' => 0.6, 'competence' => 0.7], ['bard' => 0.8, 'noble' => 0.25]],
+            'scholar'    => [['scholar' => 0.9, 'mage' => 0.7], ['strength' => 0.35, 'status' => 0.6, 'competence' => 0.7], ['scholar' => 0.8, 'mage' => 0.6]],
+            'newbie'     => [['warrior' => 0.1], ['strength' => 0.1, 'status' => 0.0, 'competence' => 0.05], ['warrior' => 0.05]],
             // strong, but a nobody yet: hookup material for Aela (MDD 8.2 B)
-            'newwarrior' => [['warrior' => 0.8], ['strength' => 0.8, 'status' => 0.0, 'competence' => 0.2]],
+            'newwarrior' => [['warrior' => 0.8], ['strength' => 0.8, 'status' => 0.0, 'competence' => 0.2], ['warrior' => 0.75]],
         ][$kind];
+        // Companions standing (Aela's status marker, MDD 2.3): evidence as RelDynPlayer keys it
+        $companions = ['warrior' => 3, 'druid' => 2, 'newbie' => 0, 'newwarrior' => 0][$kind] ?? null;
         return [
             'archetypes' => array_replace(array_fill_keys(RelDynAttraction::PLAYER_ARCHETYPES, 0.0), $p[0]),
+            'archetype_raw' => array_replace(array_fill_keys(RelDynAttraction::PLAYER_ARCHETYPES, 0.0), $p[2]),
+            'evidence' => $companions === null ? [] : ['stat:the companions quests completed' => $companions],
             'pillars' => $p[1] + ['beauty' => null],
             'facts' => $facts,
             'known' => true,
@@ -591,10 +598,16 @@ final class RelDynAttractionMatrixTest extends TestCase
         $this->assertSame(1, $b['romance']['effective']);
         $this->assertNull($b['pending']);
 
-        // A ceiling that falls applies at once (she lost interest: no significance needed)
+        // A ceiling that falls applies at once (she lost interest: no significance needed),
+        // down to what the bond already was when the Matrix first saw it (a friendship at core
+        // affinity 40: grandfathered while core holds it); the crush she earned goes
         $c = RelationshipDynamics::updateAttraction(self::AELA, $d, self::player('newbie'));
-        $this->assertSame('acquaintance', $c['ceiling_tier']);
+        $this->assertSame('friend', $c['ceiling_tier']);
         $this->assertSame(['crush', 'romantic'], $c['blocked_types']);
+        self::setCoreAff($d, 10.0);   // core lets the friendship fall: the protection goes with it
+        $this->assertSame('acquaintance', RelationshipDynamics::updateAttraction(self::AELA, $d, self::player('newbie'))['ceiling_tier']);
+        self::setCoreAff($d, 40.0);   // and does not come back by itself
+        $this->assertSame('acquaintance', RelationshipDynamics::updateAttraction(self::AELA, $d, self::player('newbie'))['ceiling_tier']);
     }
 
     public function testACautiousNobleTakesTenToFifteen(): void
@@ -620,14 +633,21 @@ final class RelDynAttractionMatrixTest extends TestCase
 
     public function testTierModifiersAboveTheCeilingAreBlocked(): void
     {
-        // Core says romantic, but Aela is not drawn to this player: no romance modifiers
-        $d = $this->npc(self::AELA, ['_core_rel_type' => 'romantic'], 60.0);
+        // Core writes romantic after the Matrix first saw the bond, but Aela is not drawn to this
+        // player: no romance modifiers (a romance that already existed is grandfathered: see
+        // RelDynAttractionReviewPostgresTest)
+        $d = $this->npc(self::AELA, ['_core_rel_type' => 'platonic'], 20.0);
+        RelationshipDynamics::updateAttraction(self::AELA, $d, self::player('newbie'));
+        $d['_core_rel_type'] = 'romantic';
         RelationshipDynamics::updateAttraction(self::AELA, $d, self::player('newbie'));
         $this->assertContains('romantic', $d['_attraction']['blocked_types']);
         $this->assertSame('acquaintance', RelationshipDynamics::getRelationshipType(self::AELA, $d));
-        // A flavourless core type: depth from affinity, capped at the ceiling
+        // A flavourless core type: depth from affinity, capped at the ceiling (a depth she had
+        // earned through the Matrix, not one it found and grandfathered)
         $e = $this->npc(self::AELA, ['_core_rel_type' => 'neutral'], 80.0);
         $this->assertSame('bonded', RelationshipDynamics::getRelationshipType(self::AELA, $e), 'no attraction read yet');
+        $e['_attraction_state'] = ['depth' => 'devoted', 'romance' => 0, 'pending' => null, 'peak_core_aff' => 80.0,
+            'grandfathered' => ['depth' => '', 'romance' => 0]];
         RelationshipDynamics::updateAttraction(self::AELA, $e, self::player('newwarrior'));
         $this->assertSame('friend', RelationshipDynamics::getRelationshipType(self::AELA, $e), 'close_friend ceiling: friend modifiers');
         $this->assertSame(80.0, RelationshipDynamics::getCoreAffinity($e), 'affinity itself is never capped');

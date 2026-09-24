@@ -339,6 +339,69 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures, 'SQL failures: ' . implode(' | ', $this->db->failures));
     }
 
+    /** core_player 'equipment' as gamedata.php writes it (slot, slot_baseid, slot_keywords). */
+    private function equipmentRow(array $slots): void
+    {
+        $out = [];
+        foreach (['amulet', 'armor', 'boots', 'gloves', 'helmet', 'left_hand', 'right_hand', 'ring', 'shirt'] as $slot) {
+            $item = $slots[$slot] ?? null;
+            $out[$slot] = $item['name'] ?? '';
+            $out[$slot . '_baseid'] = $item['baseid'] ?? '';
+            $out[$slot . '_keywords'] = $item['keywords'] ?? [];
+        }
+        $this->corePlayerRow('equipment', $out);
+    }
+
+    /** core_player 'inventory' with $gold septims (baseid 0000000F), as gamedata.php writes it. */
+    private function wallet(int $gold): void
+    {
+        $this->corePlayerRow('inventory', $gold > 0
+            ? [['name' => 'Gold', 'baseid' => '0000000F', 'count' => $gold, 'keywords' => [], 'goldvalue' => 1]] : []);
+    }
+
+    /** Forget the player and Aela's state (a different character meets her for the first time). */
+    private function freshMeeting(array $playerRel = ['aff' => 10, 'type' => 'platonic'], string $npc = self::AELA): void
+    {
+        pg_query($this->db->link, "DELETE FROM core_player; DELETE FROM eventlog; DELETE FROM quests;
+            DELETE FROM conf_opts WHERE id <> '" . RelationshipDynamics::CONFIG_ROW_ID . "'");
+        pg_query_params($this->db->link, "UPDATE core_npc_master SET plugin_extended_data = '{}'::jsonb WHERE npc_name = $1", [$npc]);
+        $this->setCorePlayerRel($playerRel, $npc);
+    }
+
+    /** The builds of the review probes, as the plugin reports them. */
+    private function build(string $kind): void
+    {
+        switch ($kind) {
+            case 'warrior':    // accomplished: one-handed / two-handed / heavy armor, level 45
+                $this->playerBuild(['onehanded' => 90, 'twohanded' => 85, 'heavyarmor' => 80, 'block' => 60], 45);
+                break;
+            case 'druid':      // formidable: herb lore, nature magic in hand, Forsworn hide, harvesting
+                $this->playerBuild(['alchemy' => 85, 'restoration' => 70, 'alteration' => 65, 'conjuration' => 70], 40);
+                $this->equipmentRow([
+                    'armor' => ['name' => 'Forsworn Armor', 'baseid' => '000D8D50', 'keywords' => ['ArmorLight', 'ArmorMaterialForsworn']],
+                    'left_hand' => ['name' => 'Conjure Familiar', 'baseid' => '000640B6', 'keywords' => []],
+                ]);
+                $this->trackedStat('Ingredients Harvested', 400);
+                $this->trackedStat('Nirnroots Found', 12);
+                break;
+            case 'scholar':
+                $this->playerBuild(['enchanting' => 80, 'alteration' => 70, 'illusion' => 50], 30);
+                $this->trackedStat('Books Read', 200);
+                break;
+            case 'bard':
+                $this->playerBuild(['speechcraft' => 95, 'illusion' => 60, 'onehanded' => 30], 30);
+                break;
+            case 'prisoner':   // level 1 Nord, vanilla starting skills
+                $this->playerBuild(['twohanded' => 25, 'onehanded' => 20], 1);
+                break;
+            case 'young_warrior':
+                $this->playerBuild(['onehanded' => 40, 'block' => 30], 10);
+                break;
+            default:
+                $this->fail("unknown build {$kind}");
+        }
+    }
+
     /** Toxic, immature, walked away $hours game hours ago: the hoover is due. */
     private function walkedAwayToxic(float $hours): void
     {
@@ -383,6 +446,195 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         $this->assertLessThanOrEqual(floatval($d['_attraction']['passion_cap']), RelationshipDynamics::getPassion($d));
         $romance = $this->pluginData()['romance'] ?? [];
         $this->assertNotSame('burning', $romance['passion_band'] ?? null, 'the Sharmat handoff never shows burning passion without attraction');
+        $this->assertNoDbFailures();
+    }
+
+    // ------------------------------------------------------------------ attraction-matrix on real player data (rulings §9)
+
+    public function testAelaReadsRealBuildsTheWayKenDescribesHer(): void
+    {
+        $seen = [];
+        foreach (['warrior', 'druid', 'scholar', 'bard', 'prisoner', 'young_warrior'] as $kind) {
+            $this->freshMeeting();
+            $this->build($kind);
+            $ctx = $this->turn('Good hunting today.');
+            $a = $this->dynamics()['_attraction'];
+            $seen[$kind] = $a + ['strength' => RelationshipDynamics::attractionFor(self::AELA, $this->dynamics())['pillars']['strength']['score'], 'ctx' => $ctx];
+        }
+        $why = fn(string $k) => "{$k}: " . json_encode(array_diff_key($seen[$k], ['ctx' => 1]));
+        foreach (['warrior' => 'warrior', 'druid' => 'druid'] as $kind => $valued) {
+            $this->assertTrue($seen[$kind]['passes'], $why($kind));
+            $this->assertFalse($seen[$kind]['tolerated'], $why($kind));
+            $this->assertNull($seen[$kind]['passion_cap'], $why($kind));
+            $this->assertSame($valued, $seen[$kind]['valued'], $why($kind));
+            $this->assertStringContainsString('drawn to the player', $seen[$kind]['ctx']);
+        }
+        // "a bard or a scholar she could tolerate but probably wouldn't feel passion towards"
+        foreach (['scholar', 'bard', 'prisoner'] as $kind) {
+            $this->assertFalse($seen[$kind]['passes'], $why($kind));
+            $this->assertSame(20.0, floatval($seen[$kind]['passion_cap']), $why($kind));
+            $this->assertSame(0, $seen[$kind]['romance']['allowed'], $why($kind));
+            $this->assertStringNotContainsString('drawn to the player', $seen[$kind]['ctx']);
+            $this->assertStringNotContainsString('exactly what', $seen[$kind]['ctx'], 'no "bond with the wild" for a scholar');
+        }
+        // A weak warrior is still weak: the lens reads magnitude, not what kind of fighter
+        $this->assertLessThan(0.3, $seen['young_warrior']['strength'], $why('young_warrior'));
+        $this->assertGreaterThan(0.7, $seen['warrior']['strength'], $why('warrior'));
+        // ... at most noticed at her (flexible) strength bar: never drawn with commitment on the table
+        $this->assertNotSame('drawn', $seen['young_warrior']['outcome'], $why('young_warrior'));
+        $this->assertLessThanOrEqual(1, $seen['young_warrior']['romance']['allowed'], $why('young_warrior'));
+        $this->assertNoDbFailures();
+    }
+
+    /** MDD 2.3 "Aela: only Companions rank": her status is the Companions, not the wallet RelDyn just started watching. */
+    public function testAVeteranCompanionHasStandingInAelasEyes(): void
+    {
+        $this->build('warrior');
+        $this->wallet(0);                 // the ledger's first snapshot: nothing moved yet
+        $this->trackedStat('The Companions Quests Completed', 8);
+        $this->trackedStat('Dragon Souls Collected', 8);
+        $this->trackedStat('Quests Completed', 60);
+        $this->turn('The Circle has spoken.');
+        $a = RelationshipDynamics::attractionFor(self::AELA, $this->dynamics());
+        $this->assertTrue($a['pillars']['status']['known']);
+        $this->assertTrue($a['pillars']['status']['pass'], json_encode($a['pillars']['status']));
+        $this->assertSame('drawn', $a['outcome'], $a['reason']);
+        $this->assertSame(2, $a['romance']['allowed'], 'commitment is on the table');
+
+        // The same veteran without the Circle behind him: she does not know his standing, and the
+        // gold RelDyn has seen move is not what she measures
+        $this->freshMeeting();
+        $this->build('warrior');
+        $this->wallet(0);
+        $this->turn('Good hunting today.');
+        $a = RelationshipDynamics::attractionFor(self::AELA, $this->dynamics());
+        $this->assertFalse($a['pillars']['status']['known'], 'no Companions evidence: unknown, never a known zero');
+        $this->assertSame('drawn', $a['outcome'], $a['reason']);
+        $this->assertNoDbFailures();
+    }
+
+    // ------------------------------------------------------------------ attraction-tier-ceiling
+
+    /** An NPC the Matrix does not judge (all pillars soft) grows with affinity: no lift to earn, no freeze. */
+    public function testNoBouncerNoFreeze(): void
+    {
+        $this->addNpc('Hulda', 'Citizen', 'female', [], [], ['aff' => 0, 'type' => 'neutral']);
+        $this->build('warrior');
+        $this->turn('A room for the night.', 'Hulda', 'default');
+        $d = $this->dynamics('Hulda');
+        $this->assertTrue($d['_attraction']['enabled']);
+        $this->assertFalse($d['_attraction']['gating'], 'no rigid / flexible pillar: no bouncer');
+        $tiers = [];
+        foreach ([35 => 2, 60 => 2, 80 => 3, 95 => 3] as $aff => $contextTier) {
+            $this->setCorePlayerRel(['aff' => $aff, 'type' => 'neutral'], 'Hulda');
+            $this->turn('Good to see you again.', 'Hulda', 'default');
+            $d = $this->dynamics('Hulda');
+            $tiers[$aff] = RelationshipDynamics::getAffinityContextTier($d);
+            $this->assertSame($contextTier, $tiers[$aff], "core affinity {$aff}: " . json_encode($d['_attraction_state']));
+            $this->assertNull($d['_attraction']['ceiling_tier']);
+            $this->assertFalse($d['_attraction']['pending']);
+        }
+        // Married after the first evaluation (core type romantic at 80): not blocked, and her
+        // neglect / fulfillment still see the bond
+        $this->setCorePlayerRel(['aff' => 80, 'type' => 'romantic'], 'Hulda');
+        $this->turn('I missed you.', 'Hulda', 'default');
+        $d = $this->dynamics('Hulda');
+        $this->assertSame([], $d['_attraction']['blocked_types']);
+        $this->assertSame('romantic', $this->corePlayerRel('Hulda')['type'], 'the ownership guard keeps what attraction allows');
+        $this->assertNotSame('acquaintance', RelationshipDynamics::getRelationshipType('Hulda', $d));
+        $this->assertNotNull(RelationshipDynamics::neglectBond($d));
+        $this->assertNoDbFailures();
+    }
+
+    /** What the relationship was when the Matrix first saw it is not taken away by one sparse stat. */
+    public function testAnExistingRomanceIsGrandfathered(): void
+    {
+        $this->addNpc('Belethor', 'Merchant', 'male', [], ['speech' => '60'], ['aff' => 80, 'type' => 'romantic']);
+        $this->setCorePlayerRel(['aff' => 80, 'type' => 'romantic']);
+        $this->build('warrior');
+        foreach ([self::AELA, 'Belethor'] as $npc) {
+            $this->turn('I am home.', $npc, 'default');
+        }
+        $before = [];
+        foreach ([self::AELA, 'Belethor'] as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertSame([], $d['_attraction']['blocked_types'], "{$npc}: " . json_encode($d['_attraction']));
+            $before[$npc] = RelationshipDynamics::getRelationshipType($npc, $d);
+        }
+        // The game reports one trade stat: Belethor's (generic) status becomes known and low
+        $this->trackedStat('Barters', 5);
+        foreach ([self::AELA, 'Belethor'] as $npc) {
+            $this->turn('I am home.', $npc, 'default');
+            $d = $this->dynamics($npc);
+            $a = RelationshipDynamics::attractionFor($npc, $d);
+            $this->assertSame([], $d['_attraction']['blocked_types'], "{$npc}: " . json_encode($d['_attraction_state']));
+            $this->assertSame(2, $d['_attraction']['romance']['effective']);
+            $this->assertSame($before[$npc], RelationshipDynamics::getRelationshipType($npc, $d), "{$npc}: modifiers, neglect bond and context tier unchanged");
+            $this->assertSame('romantic', $this->corePlayerRel($npc)['type']);
+        }
+        $this->assertFalse(RelationshipDynamics::attractionFor('Belethor', $this->dynamics('Belethor'))['pillars']['status']['pass'],
+            'the status pillar did fail for him: the grandfathering held, not the pillar');
+
+        // The romance ends in core (a step-back): the protection ends with it, and a romance core
+        // writes again later is the Matrix's to judge
+        $this->setCorePlayerRel(['aff' => 80, 'type' => 'platonic'], 'Belethor');
+        $this->turn('We should talk.', 'Belethor', 'default');
+        $this->setCorePlayerRel(['aff' => 80, 'type' => 'romantic'], 'Belethor');
+        $this->turn('Please.', 'Belethor', 'default');
+        $this->assertSame('platonic', $this->corePlayerRel('Belethor')['type'], 'core wrote romance again; attraction says no');
+        $this->assertNoDbFailures();
+    }
+
+    // ------------------------------------------------------------------ romance-promotion (ownership)
+
+    /** Core's MODE 2 #TYPE write of a romance for an NPC who feels no pull is stepped back; locked edits are not. */
+    public function testCoreWrittenRomanceWithoutAttractionIsSteppedBack(): void
+    {
+        $this->setCorePlayerRel(['aff' => 60, 'type' => 'platonic']);
+        $this->build('bard');
+        $this->turn('Another verse, then.');
+        $this->assertFalse($this->dynamics()['_attraction']['passes']);
+
+        // core's relationship_system postrequest (MODE 2) parses "#TYPE:Player=Romantic#"
+        $this->setCorePlayerRel(['aff' => 60, 'type' => 'romantic']);
+        $this->turn('You liked that one, admit it.');
+        $this->assertSame('platonic', $this->corePlayerRel()['type'], 'RelDyn owns romance promotion');
+        $this->assertStringContainsString('RelDyn owns romance', (string) file_get_contents($this->errorLog));
+        $romance = $this->pluginData()['romance'] ?? [];
+        $this->assertFalse($romance['romantic'] ?? true, 'Sharmat never sees her as romantic');
+
+        // An editor-locked manual choice stands
+        pg_query_params($this->db->link, "UPDATE core_npc_master SET extended_data = jsonb_set(extended_data, '{relationships_locked}', 'true'::jsonb) WHERE npc_name = $1", [self::AELA]);
+        $this->setCorePlayerRel(['aff' => 60, 'type' => 'romantic']);
+        $this->turn('For you.');
+        $this->assertSame('romantic', $this->corePlayerRel()['type'], 'relationships_locked: manual edits protected');
+        $this->assertNoDbFailures();
+    }
+
+    // ------------------------------------------------------------------ attraction-gated-passion: beauty (MDD 2.1)
+
+    public function testBeautyIsTheAppearanceTextThroughHerEyes(): void
+    {
+        $this->build('warrior');
+        $this->turn('Good hunting today.');
+        $a = RelationshipDynamics::attractionFor(self::AELA, $this->dynamics());
+        $this->assertFalse($a['pillars']['beauty']['known'], 'no appearance text: unknown, never gates');
+
+        $this->corePlayerRow('appearance', 'A ruggedly handsome Nord with a muscular, broad-shouldered build, a scar over one eye and war paint.');
+        $this->turn('Good hunting today.');
+        $rugged = RelationshipDynamics::attractionFor(self::AELA, $this->dynamics());
+        $this->assertTrue($rugged['pillars']['beauty']['known']);
+        $this->assertGreaterThanOrEqual(0.9, $rugged['pillars']['beauty']['score']);
+        $this->assertTrue($rugged['passes']);
+        $this->assertFalse($rugged['tolerated']);
+
+        $this->corePlayerRow('appearance', 'A delicate, perfumed courtier with soft hands and powdered cheeks.');
+        $this->turn('Good hunting today.');
+        $courtier = RelationshipDynamics::attractionFor(self::AELA, $this->dynamics());
+        $this->assertTrue($courtier['pillars']['beauty']['known']);
+        $this->assertLessThan(0.4, $courtier['pillars']['beauty']['score'], 'none of her words');
+        $this->assertTrue(!$courtier['passes'] || $courtier['tolerated'], 'beauty (rigid for her) now weighs: ' . $courtier['reason']);
+        $this->assertNotNull($this->dynamics()['_attraction']['passion_cap'], 'passion is capped for a player she only tolerates');
         $this->assertNoDbFailures();
     }
 }

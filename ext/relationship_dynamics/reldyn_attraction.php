@@ -6,11 +6,21 @@
  * The Matrix is a sociological pre-filter on the player, read through THIS NPC's eyes. It adds
  * no affinity track, no decay and no rubber band. It answers four questions per NPC:
  *   1. How does the player score on the four pillars (beauty, strength, status, competence)
- *      as this NPC defines them? Pillars are NPC-subjective: strength and competence are seen
- *      through a "lens" of player archetypes the NPC values, auto-derived from the NPC's signed
- *      facet preferences (class, skills, temperament, traits; RelDynFacets::preferences). Aela
- *      (nature/combat lover, scholarly-averse) values warrior/hunter/druid strength; a bard's or
- *      scholar's is invisible to her. Speech lifts every pillar up to ~15% (MDD 2.5).
+ *      as this NPC defines them? Pillars are NPC-subjective (MDD 2.1-2.4):
+ *        - strength and competence are read through a "lens" of the player archetypes the NPC
+ *          values, auto-derived from its signed facet preferences (MDD 2.2: NPC-weighted
+ *          skills): score = (1 - share) x the generic pillar + share x fit, fit = the best
+ *          (lens weight x the player's MAGNITUDE as that archetype: RelDynPlayer's raw archetype
+ *          score, not the identity that reads 1.0 for whatever the player mostly is). Aela
+ *          values warrior / hunter / druid strength; a bard's or scholar's barely counts, and a
+ *          weak warrior is still weak ("she compromises on WHERE points are, not on WHETHER you
+ *          have them"); Farengar reads a scholar's magic as strength;
+ *        - status is the NPC's own markers (MDD 2.3 "Aela: only Companions rank"): the standing
+ *          of the factions the NPC belongs to (core_npc_master factions -> questline evidence),
+ *          blended with the generic economic footprint / property / standing by status_share;
+ *        - beauty is keyword overlap of the player's appearance text with the NPC's beauty
+ *          keywords (MDD 2.1, auto-generated from class); no appearance text = unknown.
+ *      Speech lifts every pillar up to ~15% (MDD 2.5).
  *   2. Does the player pass? Each pillar has a rigidity (rigid / flexible / soft / irrelevant).
  *      Openness (MDD 1.4) tolerates near misses: low = hard block, medium / high = a tolerated
  *      fail with a lower passion ceiling and twice the effort to advance.
@@ -21,7 +31,11 @@
  *      aromantic, ...) filters the romance axis.
  *   4. How high can it go now? The tier ceiling (MDD 8, plan §5): a newly met threshold LIFTS
  *      the ceiling, but advancing to it takes significant interactions (eval significance);
- *      openness, attachment and maturity set how many.
+ *      openness, attachment and maturity set how many. Only a bouncer can hold a lift: an NPC
+ *      none of whose pillars gates (all soft / irrelevant / unknown) lets the relationship
+ *      grow with affinity. What the relationship already was when the Matrix first saw it
+ *      (core affinity tier, core romance type) is grandfathered: the Matrix never takes it
+ *      away, for as long as core still holds it.
  *
  * Units: pillar scores, lens weights, archetype scores, openness are 0..1; passion caps are
  * passion points (0..passion_max); affinity is CORE affinity (-100..+100); significance is the
@@ -78,8 +92,47 @@ class RelDynAttraction
             // Same for strength / status / competence when the profile has no data for them
             // (RelDynPlayer::profile() returns null, not 0, for an unread pillar)
             'unknown_pillar_score' => 0.5,
-            // Share of a pillar seen through the NPC's archetype lens (rest: the generic pillar)
+            // Share of a pillar read through the NPC's lens: score = (1 - share) x generic +
+            // share x fit, fit = max over archetypes of lens weight x the player's magnitude as
+            // that archetype (profile archetype_raw; a profile without it: identity x generic).
             'lens_share' => ['beauty' => 0.0, 'strength' => 0.8, 'status' => 0.0, 'competence' => 0.5],
+            // MDD 2.3 status markers: an NPC in a faction (core_npc_master extended_data.factions
+            // name, case-insensitive substring) measures standing by that faction's deeds, as
+            // RelDynPlayer evidence tables (key => [half, weight]).
+            'status_markers' => [
+                'companions'          => ['stat:The Companions Quests Completed' => [3, 1.0], 'questline:companions' => [3, 0.8]],
+                'collegeofwinterhold' => ['stat:College of Winterhold Quests Completed' => [3, 1.0], 'questline:college' => [3, 0.8]],
+                'thievesguild'        => ["stat:Thieves' Guild Quests Completed" => [3, 1.0], 'questline:thieves_guild' => [3, 0.8]],
+                'darkbrotherhood'     => ['stat:The Dark Brotherhood Quests Completed' => [3, 1.0], 'questline:dark_brotherhood' => [3, 0.8]],
+                'dawnguard'           => ['questline:dawnguard' => [3, 1.0]],
+                'cwimperial'          => ['stat:Civil War Quests Completed' => [4, 1.0], 'questline:civil_war' => [4, 0.8]],
+                'cwsons'              => ['stat:Civil War Quests Completed' => [4, 1.0], 'questline:civil_war' => [4, 0.8]],
+                'jobjarl'             => ['stat:Questlines Completed' => [2, 1.0], 'stat:Houses Owned' => [1, 0.6], 'ledger:moved' => [20000, 0.5]],
+            ],
+            // Share of the status pillar read from the NPC's own markers when it has any (rest:
+            // the generic footprint / property / standing); npc_overrides may set 1.0
+            'status_share' => 0.7,
+            // MDD 2.1 beauty: NPC keywords per archetype profile (auto-gen from class). Score =
+            // min(1, base + per_hit x keywords found in the appearance text); base = a described
+            // player with none of this NPC's words; no appearance text = unknown (never gates).
+            'beauty' => [
+                'base' => 0.3,
+                'per_hit' => 0.25,
+                'keywords' => [
+                    'Warrior'   => ['muscular', 'rugged', 'warrior', 'strong', 'scarred', 'scar', 'battle-worn', 'broad-shouldered', 'powerful', 'athletic', 'war paint'],
+                    'Guard'     => ['strong', 'rugged', 'tall', 'broad-shouldered', 'disciplined', 'scarred', 'steady'],
+                    'Barbarian' => ['muscular', 'rugged', 'wild', 'strong', 'scarred', 'scar', 'war paint', 'powerful', 'fierce', 'weathered'],
+                    'Ranger'    => ['rugged', 'athletic', 'lean', 'strong', 'scarred', 'scar', 'weathered', 'war paint', 'wild', 'fierce', 'muscular'],
+                    'Mage'      => ['intense eyes', 'piercing', 'mysterious', 'sharp features', 'ethereal', 'scholarly', 'thoughtful', 'striking'],
+                    'Thief'     => ['lithe', 'lean', 'sly', 'sharp', 'nimble', 'dark', 'mysterious', 'clever'],
+                    'Assassin'  => ['lithe', 'lean', 'dark', 'mysterious', 'sharp', 'cold', 'pale', 'striking'],
+                    'Healer'    => ['kind', 'gentle', 'warm', 'soft-spoken', 'calm', 'clean', 'bright eyes'],
+                    'Noble'     => ['refined', 'elegant', 'well-dressed', 'clean', 'tall', 'commanding', 'noble', 'graceful', 'poised'],
+                    'Merchant'  => ['well-dressed', 'clean', 'handsome', 'beautiful', 'confident', 'refined', 'fine clothes'],
+                    'Bard'      => ['charming', 'beautiful', 'handsome', 'graceful', 'expressive', 'bright eyes', 'striking', 'elegant'],
+                    'default'   => ['handsome', 'beautiful', 'pretty', 'attractive', 'striking', 'fair', 'comely', 'kind'],
+                ],
+            ],
             // sum(facet preference x facet_archetypes) at which the NPC fully values an archetype
             'lens_full_at' => 0.6,
             // Facet (RelDynFacets::FACETS) -> player archetypes it speaks for (0..1)
@@ -133,10 +186,11 @@ class RelDynAttraction
             ],
             // MDD 1.4 openness values (0..1) per band; a numeric openness maps to the nearest band
             'openness_levels' => ['low' => 0.3, 'medium' => 0.6, 'high' => 0.9],
-            // How far below a pillar's bar (pillar score units) a fail is still tolerated.
-            // Low = hard block (MDD 1.4); medium / high tolerate near misses only, so a player
-            // far off the mark stays unattractive (rulings §9: Aela tolerates a bard, no passion)
-            'openness_margin' => ['low' => 0.0, 'medium' => 0.1, 'high' => 0.2],
+            // How far below a pillar's bar a fail is still tolerated, as a FRACTION of that bar
+            // (near is relative: a flexible bar is lower than a rigid one). Low = hard block
+            // (MDD 1.4); medium / high tolerate near misses only, so a player far off the mark
+            // stays unattractive (rulings §9: Aela tolerates a bard, no passion)
+            'openness_margin' => ['low' => 0.0, 'medium' => 0.25, 'high' => 0.5],
             // MDD 1.4: a tolerated fail cuts the passion ceiling by this fraction
             'openness_passion_ceiling_cut' => ['low' => 1.0, 'medium' => 0.5, 'high' => 0.2],
             // MDD 1.4: low openness triggers the Ick faster when the player pushes past a failed
@@ -209,10 +263,12 @@ class RelDynAttraction
                 'max_needed' => 30,
             ],
             // Named NPCs (lower-case npc_name): presets for that NPC only. Keys: openness,
-            // rigidity, gate, weights, lens, lens_share, gender_pref.
+            // rigidity, gate, weights, lens, lens_share, gender_pref, status_markers,
+            // status_share, beauty_keywords.
             'npc_overrides' => [
                 // Memory (attraction design): "Aela is not high openness ... medium to medium-low"
-                'aela the huntress' => ['openness' => 'medium'],
+                // MDD 2.3: "Aela: only Companions rank"
+                'aela the huntress' => ['openness' => 'medium', 'status_share' => 1.0],
             ],
         ];
     }
@@ -235,10 +291,12 @@ class RelDynAttraction
      *   traits -> pillar weights
      *   signed facet preferences -> the strength / competence lens over player archetypes
      *   temperament -> openness band (MDD 1.3)
+     *   the NPC's core factions -> status markers (status_markers), archetype -> beauty keywords
      * Overrides, lowest to highest: named preset (config npc_overrides), the NPC editor's PR 11
-     * attraction_profile (pillar_rigidity, intimacy_gate, gender_pref), then
+     * attraction_profile (pillar_rigidity, intimacy_gate, gender_pref, beauty_keywords), then
      * $dynamics['attraction_overrides'] (rigidity, gate, weights, lens, lens_share, openness,
-     * gender_pref). $dynamics['openness'] (editor dropdown) beats the temperament default.
+     * gender_pref, status_markers, status_share, beauty_keywords). $dynamics['openness']
+     * (editor dropdown) beats the temperament default.
      */
     public static function definition(string $npcName, array $dynamics, ?array $prefs = null): array
     {
@@ -325,6 +383,33 @@ class RelDynAttraction
             if (in_array($g, ['heterosexual', 'homosexual', 'bisexual'], true)) $genderPref = $g;
         }
 
+        // Status markers (MDD 2.3): the standing of the factions this NPC belongs to
+        $markers = [];
+        foreach (self::npcFactions($npcName) as $faction) {
+            foreach ((array) $cfg['status_markers'] as $pattern => $table) {
+                if ($pattern !== '' && str_contains($faction, strtolower((string) $pattern))) {
+                    foreach ((array) $table as $key => $spec) $markers[$key] = $spec;
+                }
+            }
+        }
+        $sources['status_markers'] = $markers ? 'factions' : 'none';
+        foreach ([['preset', $preset['status_markers'] ?? null], ['override', $over['status_markers'] ?? null]] as [$src, $table]) {
+            if (is_array($table)) { $markers = $table; $sources['status_markers'] = $src; }
+        }
+        $statusShare = max(0.0, min(1.0, floatval($cfg['status_share'])));
+        foreach ([$preset['status_share'] ?? null, $over['status_share'] ?? null] as $s) {
+            if (is_numeric($s)) $statusShare = max(0.0, min(1.0, floatval($s)));
+        }
+
+        // Beauty keywords (MDD 2.1), from the archetype profile
+        $kwTable = (array) (((array) $cfg['beauty'])['keywords'] ?? []);
+        $beautyKeywords = (array) ($kwTable[$arch] ?? $kwTable['default'] ?? []);
+        foreach ([['preset', $preset['beauty_keywords'] ?? null], ['editor', $editor['beauty_keywords'] ?? null],
+                     ['override', $over['beauty_keywords'] ?? null]] as [$src, $kw]) {
+            if (is_array($kw)) { $beautyKeywords = $kw; $sources['beauty_keywords'] = $src; }
+        }
+        $beautyKeywords = array_values(array_filter(array_map(fn($k) => strtolower(trim((string) $k)), $beautyKeywords), fn($k) => $k !== ''));
+
         $pref = self::preferenceOf($dynamics);
         return [
             'archetype'  => $arch,
@@ -336,8 +421,48 @@ class RelDynAttraction
             'openness'   => $band,
             'gender_pref'=> $genderPref,
             'preference' => $pref,
+            'status_markers' => $markers,
+            'status_share'   => $statusShare,
+            'beauty_keywords'=> $beautyKeywords,
             'sources'    => $sources,
         ];
+    }
+
+    /** The NPC's faction names (core_npc_master extended_data.factions[].name), lower-case. */
+    private static function npcFactions(string $npcName): array
+    {
+        try {
+            $row = RelationshipDynamics::fetchCoreProfileRow($npcName);
+        } catch (Throwable $e) {
+            error_log("[RelDyn] attraction: core_npc_master read failed for {$npcName}, no status markers: " . $e->getMessage());
+            return [];
+        }
+        $ext = is_string($row['extended_data'] ?? null) ? json_decode($row['extended_data'], true) : ($row['extended_data'] ?? null);
+        $out = [];
+        foreach ((array) (is_array($ext) ? ($ext['factions'] ?? []) : []) as $f) {
+            $name = is_array($f) ? (string) ($f['name'] ?? '') : (string) $f;
+            if (trim($name) !== '') $out[] = strtolower(trim($name));
+        }
+        return $out;
+    }
+
+    /**
+     * MDD 2.1 beauty through this NPC's eyes: min(1, base + per_hit x keywords found in the
+     * appearance text), whole-word prefix match, hyphens read as spaces. null = no text.
+     */
+    public static function beautyScore(?string $appearance, array $keywords, ?array $cfg = null): ?float
+    {
+        $text = strtolower(trim((string) $appearance));
+        if ($text === '') return null;
+        $cfg = $cfg ?? self::config();
+        $b = (array) $cfg['beauty'];
+        $text = ' ' . preg_replace('/[^a-z0-9]+/', ' ', str_replace('-', ' ', $text)) . ' ';
+        $hits = 0;
+        foreach ($keywords as $kw) {
+            $kw = trim(preg_replace('/[^a-z0-9]+/', ' ', str_replace('-', ' ', strtolower((string) $kw))));
+            if ($kw !== '' && preg_match('/ ' . preg_quote($kw, '/') . '/', $text)) $hits++;
+        }
+        return max(0.0, min(1.0, floatval($b['base'] ?? 0.3) + floatval($b['per_hit'] ?? 0.25) * $hits));
     }
 
     /**
@@ -508,25 +633,31 @@ class RelDynAttraction
         $valued = null;
         foreach (self::PILLARS as $p) {
             $rig = $def['rigidity'][$p];
-            // A pillar the profile cannot read (null: RelDynPlayer leaves unknown inputs out)
-            // is neutral and never gates; beauty is always NPC-subjective (MDD 2.1).
-            $known = is_numeric($generic[$p] ?? null);
+            // The pillar as THIS NPC reads it; null = unknown (neutral, never gates)
+            $raw = match ($p) {
+                'beauty' => is_numeric($generic['beauty'] ?? null) ? floatval($generic['beauty'])
+                    : self::beautyScore(self::appearanceOf($profile), (array) ($def['beauty_keywords'] ?? []), $cfg),
+                'status' => self::npcStatus($profile, $def),
+                default  => is_numeric($generic[$p] ?? null) ? floatval($generic[$p]) : null,
+            };
+            $known = $raw !== null;
             if (!$known) {
                 $score = max(0.0, min(1.0, floatval($p === 'beauty' ? $cfg['beauty_unknown_score'] : $cfg['unknown_pillar_score'])));
             } else {
-                $score = max(0.0, min(1.0, floatval($generic[$p] ?? 0.0)));
+                $score = max(0.0, min(1.0, $raw));
                 $lens = $def['lens'][$p] ?? null;
                 if (is_array($lens) && max(array_values($lens) ?: [0.0]) > 0) {
-                    $lensed = 0.0;
+                    // How much of the player's magnitude is in a form this NPC values
+                    $fit = 0.0;
                     foreach ($lens as $a => $w) {
-                        $v = $w * max(0.0, min(1.0, floatval($archetypes[$a] ?? 0.0)));
-                        if ($v > $lensed) {
-                            $lensed = $v;
+                        $v = $w * self::archetypeMagnitude($profile, $a, $score);
+                        if ($v > $fit) {
+                            $fit = $v;
                             if ($p === 'strength') $valued = $a;
                         }
                     }
                     $share = $def['lens_share'][$p];
-                    $score = (1.0 - $share) * $score + $share * $lensed;
+                    $score = (1.0 - $share) * $score + $share * $fit;
                 }
                 $score = min(1.0, $score * $boost);
             }
@@ -534,7 +665,7 @@ class RelDynAttraction
             $pass = true;
             $tolerated = false;
             if ($known && ($rig === 'rigid' || $rig === 'flexible') && $score < $pillarBar) {
-                if ($margin > 0 && $score >= $pillarBar - $margin) {
+                if ($margin > 0 && $score >= $pillarBar * (1.0 - min(1.0, $margin))) {
                     $tolerated = true;
                 } else {
                     $pass = false;
@@ -586,10 +717,21 @@ class RelDynAttraction
             $cap = (string) $cfg['depth_cap_neither'];
         }
         $depthAllowed = ($cap !== null && self::depthRank($cap) < self::depthRank($walk)) ? $cap : $walk;
+        // Grandfathered: what the relationship was when the Matrix first saw it, while core still holds it
+        [$floorDepth, $floorRomance] = self::grandfatherFloor($dynamics, $state);
+        if (self::depthRank($floorDepth) > self::depthRank($depthAllowed)) $depthAllowed = $floorDepth;
+        // Only a bouncer holds a lift: an NPC none of whose pillars gates has no lift to earn
+        $gating = false;
+        foreach ($pillars as $row) {
+            $gating = $gating || ($row['known'] && in_array($row['rigidity'], ['rigid', 'flexible'], true));
+        }
         // Earned (tier advancement state): a lifted ceiling is reached only through significant interactions
         [$earnedDepth, $earnedRomance] = $state !== null
             ? [self::validDepth($state['depth'] ?? null) ?? 'acquaintance', max(0, min(2, intval($state['romance'] ?? 0)))]
             : self::initialEarned($dynamics);
+        if (self::depthRank($floorDepth) > self::depthRank($earnedDepth)) $earnedDepth = $floorDepth;
+        $earnedRomance = max($earnedRomance, $floorRomance);
+        if (!$gating) $earnedDepth = 'devoted';   // follows the allowed ceiling (effective = allowed)
         $depthEff = self::depthRank($earnedDepth) < self::depthRank($depthAllowed) ? $earnedDepth : $depthAllowed;
 
         // ---- Gate and bond (plan §7). The bond is the tier on core affinity within the
@@ -648,7 +790,8 @@ class RelDynAttraction
         if (($passes || $prebond) && $visceral && self::meetsRequirements((array) $cfg['romance_requirements'], $pillars)) {
             $romanceAllowed = $sociological ? self::ROMANCE_FULL : self::ROMANCE_CRUSH;
         }
-        $romanceAllowed = min($romanceAllowed, $romanceMax);
+        $romanceAllowed = min(max($romanceAllowed, $floorRomance), $romanceMax);
+        if (!$gating) $earnedRomance = max($earnedRomance, $romanceAllowed);
         $romanceEff = min($earnedRomance, $romanceAllowed);
         $blocked = [];
         foreach ((array) $cfg['romance_types'] as $type => $level) {
@@ -656,7 +799,7 @@ class RelDynAttraction
         }
 
         $pending = null;
-        if (self::depthRank($depthAllowed) > self::depthRank($earnedDepth) || $romanceAllowed > $earnedRomance) {
+        if ($gating && (self::depthRank($depthAllowed) > self::depthRank($earnedDepth) || $romanceAllowed > $earnedRomance)) {
             $pending = [
                 'depth_to' => self::depthRank($depthAllowed) > self::depthRank($earnedDepth) ? $depthAllowed : $earnedDepth,
                 'romance_to' => max($romanceAllowed, $earnedRomance),
@@ -711,7 +854,73 @@ class RelDynAttraction
             'pending'           => $pending,
             'intimacy_allowed'  => $intimacy,
             'valued'            => $pillars['strength']['known'] && $valued !== null ? $valued : null,
+            'gating'            => $gating,
+            'grandfathered'     => ['depth' => $floorDepth, 'romance' => $floorRomance],
         ];
+    }
+
+    /**
+     * The player's magnitude as archetype $a (0..1): RelDynPlayer's raw archetype score
+     * (profile archetype_raw: skills / deeds / gear, before the identity normalisation), else
+     * identity x the generic pillar for a profile that carries no raw scores.
+     */
+    private static function archetypeMagnitude(array $profile, string $a, float $generic): float
+    {
+        $raw = $profile['archetype_raw'][$a] ?? null;
+        if (is_numeric($raw)) return max(0.0, min(1.0, floatval($raw)));
+        return max(0.0, min(1.0, floatval($profile['archetypes'][$a] ?? 0.0))) * $generic;
+    }
+
+    /** The player's appearance text from the profile facts (RelDynPlayer: facts.appearance.value). */
+    private static function appearanceOf(array $profile): ?string
+    {
+        $a = $profile['facts']['appearance'] ?? null;
+        if (is_array($a)) $a = $a['value'] ?? null;
+        return is_string($a) && trim($a) !== '' ? $a : null;
+    }
+
+    /**
+     * MDD 2.3 status through this NPC's eyes: the weighted known mean of the generic status
+     * pillar (1 - status_share) and the NPC's own markers (status_share). null when neither
+     * is known (a share of 1.0 with no marker evidence: unknown, whatever the wallet says).
+     */
+    private static function npcStatus(array $profile, array $def): ?float
+    {
+        $generic = $profile['pillars']['status'] ?? null;
+        $generic = is_numeric($generic) ? max(0.0, min(1.0, floatval($generic))) : null;
+        $markers = (array) ($def['status_markers'] ?? []);
+        if ($markers === []) return $generic;
+        $own = class_exists('RelDynPlayer') ? RelDynPlayer::evidenceScore($profile, $markers) : null;
+        $share = floatval($def['status_share'] ?? 0.0);
+        $sum = 0.0;
+        $w = 0.0;
+        foreach ([[$generic, 1.0 - $share], [$own, $share]] as [$v, $weight]) {
+            if ($v === null || $weight <= 0) continue;
+            $sum += $weight * $v;
+            $w += $weight;
+        }
+        return $w > 0 ? max(0.0, min(1.0, $sum / $w)) : null;
+    }
+
+    /**
+     * Grandfathered depth / romance (see the file comment): the state recorded when the Matrix
+     * first tracked this bond (initialEarned, before the first evaluation), bounded by what
+     * core holds now (core affinity tier, core Player.type's romance level), so a relationship
+     * that core steps back or lets fall loses its protection.
+     *
+     * @return array [depth tier ('' = none), romance level]
+     */
+    private static function grandfatherFloor(array $dynamics, ?array $state): array
+    {
+        [$nowDepth, $nowRomance] = self::initialEarned($dynamics);
+        $g = $state === null ? ['depth' => $nowDepth, 'romance' => $nowRomance]
+            : (is_array($state['grandfathered'] ?? null) ? $state['grandfathered'] : null);
+        if ($g === null) return ['', 0];
+        $depth = self::validDepth($g['depth'] ?? null);
+        if ($depth !== null && self::depthRank($depth) > self::depthRank($nowDepth)) $depth = $nowDepth;
+        $romance = min(max(0, min(2, intval($g['romance'] ?? 0))), $nowRomance);
+        // A stranger / acquaintance start protects nothing (it is the floor anyway)
+        return [self::depthRank($depth) > 0 ? $depth : '', $romance];
     }
 
     /** Every requirement is met by a pillar that does not gate (soft / irrelevant / unknown) or scores enough. */
@@ -812,6 +1021,15 @@ class RelDynAttraction
             [$d, $rom] = self::initialEarned($dynamics);
             $state = ['depth' => $d, 'romance' => $rom, 'pending' => null, 'peak_core_aff' => -100.0];
         }
+        // Grandfathered state only ever shrinks with core (a step-back or a fall is not undone
+        // by core later writing a romance type again)
+        [$gd, $gr] = self::grandfatherFloor($dynamics, $prev);
+        $state['grandfathered'] = ['depth' => $gd, 'romance' => $gr];
+        if (empty($r['gating'])) {
+            // No bouncer: the earned state follows the allowed ceiling
+            $state['depth'] = $r['allowed_tier'];
+            $state['romance'] = $r['romance']['allowed'];
+        }
         $state['peak_core_aff'] = max(floatval($state['peak_core_aff'] ?? -100), RelationshipDynamics::getCoreAffinity($dynamics));
         // Falls apply at once
         if (self::depthRank($r['allowed_tier']) < self::depthRank($state['depth'])) {
@@ -851,6 +1069,7 @@ class RelDynAttraction
             'ceiling_tier' => $r['ceiling_tier'], 'allowed_tier' => $r['allowed_tier'],
             'romance' => $r['romance'], 'blocked_types' => $r['blocked_types'],
             'pending' => $r['pending'] !== null, 'intimacy_allowed' => $r['intimacy_allowed'], 'valued' => $r['valued'],
+            'gating' => $r['gating'] ?? false,
         ];
         $dynamics['_attraction_friendzoned'] = (bool) $r['friendzoned'];
         $dynamics['_attraction_tier_ceiling'] = $r['ceiling_tier'] ?? 'devoted';

@@ -46,6 +46,13 @@
  *      core's advisory lock, only if the core type is still the one checked.
  *   Demotion out of romance is the fulfillment lane's step-back, not here.
  *
+ * OWNERSHIP GUARD (guardCorePromotion, prerequest): core's MODE 2 (no RELLLM connector) writes
+ * #TYPE tags from the dialogue model straight into core Player.type, with no earned-romance
+ * gate. A romance rung core wrote since this NPC's last request, that RelDyn did not write
+ * (STORAGE_KEY_TYPE_CHANGE) and that this request's attraction does not allow (friendzoned,
+ * or its effective romance level below the rung), is stepped back to the previous type under
+ * core's lock; relationships_locked (the editor's manual edits) is respected.
+ *
  * SHARMAT HANDOFF (domain split: RelDyn emotional layer, Sharmat sexual layer):
  *   - Sharmat's consent gate (common.php aiagentNsfwRelTypeSexEligible) reads core
  *     Player.type through RelationshipManager::getPlayerRelationship() against its
@@ -108,6 +115,8 @@ final class RelDynRomance
             'stepback_momentum_mult' => 3.0,
             // 'boundary': a mature boundary is pending or on probation (fulfillment lane)
             'block_states' => ['walkaway', 'conflict', 'ick', 'withdrawn', 'boundary'],
+            // Step back a romance type core wrote without RelDyn that attraction does not allow
+            'guard_core_promotions' => true,
         ];
     }
 
@@ -180,6 +189,55 @@ final class RelDynRomance
         $pending = is_array($dynamics['_romance']['pending'] ?? null) ? array_values($dynamics['_romance']['pending']) : [];
         $pending[] = $record;
         $dynamics['_romance']['pending'] = array_slice($pending, -self::PENDING_MAX);
+    }
+
+    // =========================================================================
+    // OWNERSHIP GUARD (prerequest, after the attraction update)
+    // =========================================================================
+
+    /**
+     * See the file comment. $previousType is core's Player.type as of this NPC's last request
+     * (the _core_rel_type snapshot before this request refreshed it).
+     *
+     * @return string|null the type written back, or null when nothing was stepped back
+     */
+    public static function guardCorePromotion(string $npcName, array &$dynamics, ?string $previousType): ?string
+    {
+        $cfg = self::config();
+        if (empty($cfg['enabled']) || empty($cfg['guard_core_promotions'])) {
+            return null;
+        }
+        $prev = strtolower(trim((string) $previousType));
+        $now = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
+        if ($prev === '' || $now === '' || $prev === $now) {
+            return null;
+        }
+        $rung = self::rung($now, $cfg);
+        if ($rung <= self::rung($prev, $cfg)) {
+            return null;   // not a promotion into romance
+        }
+        $sum = $dynamics['_attraction'] ?? null;
+        if (!is_array($sum) || empty($sum['enabled'])) {
+            return null;   // the Matrix is off: it judges nothing
+        }
+        $npcId = RelDynStorage::resolveNpcId($npcName);
+        $last = $npcId !== null ? (RelDynStorage::getAll($npcId)[self::STORAGE_KEY_TYPE_CHANGE] ?? null) : null;
+        if (is_array($last) && strtolower((string) ($last['to'] ?? '')) === $now) {
+            return null;   // RelDyn's own promotion
+        }
+        $allowed = empty($sum['friendzoned']) && intval($sum['romance']['effective'] ?? 0) >= $rung;
+        if ($allowed) {
+            RelationshipDynamics::log("[ROMANCE] {$npcName}: core wrote {$prev} -> {$now}; attraction allows it, kept");
+            return null;
+        }
+        $why = !empty($sum['friendzoned']) ? 'friendzoned' : 'romance not earned (' . ($sum['outcome'] ?? 'unattracted') . ')';
+        $reason = "RelDyn owns romance: core wrote {$prev} -> {$now} without RelDyn's gate; attraction: {$why}";
+        if (!RelationshipDynamics::changeCoreRelationshipType($npcName, $prev, $reason, $now)) {
+            error_log("[RelDyn-ROMANCE] {$npcName}: core's {$prev} -> {$now} not allowed by attraction ({$why}), but it was not stepped back");
+            return null;
+        }
+        $dynamics['_core_rel_type'] = $prev;
+        return $prev;
     }
 
     // =========================================================================

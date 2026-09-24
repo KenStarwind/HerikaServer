@@ -12,13 +12,18 @@
  *   core_player.equipment   gamedata.php 'equipment' (per slot: name, baseid, keywords)
  *   core_player.inventory   gamedata.php 'inventory' (gold = baseid 0000000F)
  *   tracked stats           Skyrim's misc stats ("Quests Completed", "People Killed", ...):
- *                           core_player.<stat> (gamedata.php 'skyrim_stats', playthrough-scoped)
+ *                           core_player.<stat> (gamedata.php 'skyrim_stats')
  *                           else conf_opts.<stat> (AIAgentPapyrusFunctions OnTrackedStatsEvent
- *                           -> 'setconf', comm.php; GLOBAL across playthroughs). A stat the game
- *                           has not reported since install is unknown, never 0.
+ *                           -> 'setconf', comm.php). Both are playthrough state in CHIM 3.4.1:
+ *                           core_player is a playthrough table and an unknown conf_opts key is a
+ *                           gameplay row (lib/playthrough_selection.sql is_global_setting), so a
+ *                           fresh playthrough empties them and a save carries them. A stat the
+ *                           game has not reported in this playthrough is unknown, never 0.
  *   eventlog 'death'        "(Context location: X)<Player> has defeated <victim>[(powerful enemy)]
  *                           [(powerful DRAGON)] with <weapon>" (Plugin.cpp TESDeathEvent)
- *   eventlog infoplayer / playerinfo   level, race, gender
+ *   eventlog infoplayer / playerinfo   level, race (newest line); gender: core_player.gender
+ *                           (Player Management), else the newest line that carries one (only
+ *                           'infoplayer' does; the 'playerinfo' line every game load sends has none)
  *   quests (journal)        comm.php '_quest' from the plugin's ProcedureSendActiveQuests: active
  *                           quests with an objective DISPLAYED in the journal; id_quest = quest
  *                           editor id (C00, MG01, TG02...). questlog is not used: it also records
@@ -26,8 +31,10 @@
  *                           Companions radiant quests at stage 0/1 for a level-1 prisoner).
  *   core_player.appearance  Player Management text (beauty input; beauty itself is per NPC)
  *   core_player.reldyn_gold_ledger     RelDyn's own ledger (recordGoldSnapshot): gold moved
- *                           = sum of |wallet change| between inventory snapshots, the economic
- *                           footprint (attraction design: "gold moved, not the wallet").
+ *                           = sum of |wallet change| between inventory snapshots, plus the wallet
+ *                           at the first snapshot (gold earned before RelDyn watched). Economic
+ *                           footprint = lifetime earned + spent >= opening + moved (attraction
+ *                           design: "gold moved, not the wallet"); a footprint of 0 is unknown.
  * No core source in 3.4.1: thane titles, faction ranks (factions.player_rank is the vendor
  * faction's REACTION to the player, not membership), gold spent at merchants.
  *
@@ -36,6 +43,8 @@
  *                    => 0..1 | null]   identity: which kinds of person the player is. The
  *                    dominant one reads 1.0 once the character is formed (raw >= identity
  *                    floor); an unformed character reads low everywhere. null = no input known.
+ *   'archetype_raw' => same keys, the raw score before normalisation: magnitude as that archetype.
+ *   'evidence'   => evidence key => count|null (NPC-subjective status markers, evidenceScore).
  *   'pillars'    => ['strength' => 0..1|null, 'status' => 0..1|null, 'competence' => 0..1|null,
  *                    'beauty' => null]   magnitude, NPC-independent (the NPC weights them).
  *   'facts'      => [key => ['value' => ..., 'source' => string|null, 'note'? => string]]
@@ -87,8 +96,11 @@ class RelDynPlayer
      *   'kills:total'                sum of the tracked kill stats, else eventlog player kills
      *   'dragons'                    'Dragon Souls Collected', else eventlog dragon kills
      *   'eventlog:powerful_kills'    player kills the plugin marked "(powerful enemy)"
-     *   'ledger:moved'               gold moved (RelDyn gold ledger)
-     * Gear tables map an equipment keyword (core_player.equipment *_keywords) to a weight.
+     *   'ledger:moved'               economic footprint: opening wallet + gold moved (RelDyn
+     *                                gold ledger); unknown while it is 0 (a lower bound of 0 says nothing)
+     * Gear tables map an equipment keyword (core_player.equipment *_keywords) to a weight;
+     * 'hand_names' maps a word in the name of what is held in either hand (a spell, a staff)
+     * to a weight (decisions §10: a spell reads by its subject, not by its school).
      * An archetype's 'requires' lists components that must be known, else the archetype is null.
      */
     public static function configDefaults(): array
@@ -132,12 +144,19 @@ class RelDynPlayer
                     'gear' => ['WeapTypeStaff' => 1.0, 'MagicDamageFire' => 0.8, 'MagicDamageFrost' => 0.8, 'MagicDamageShock' => 0.8],
                 ],
                 'druid' => [
-                    'skills' => ['alchemy' => 1.0, 'restoration' => 0.8, 'alteration' => 0.7, 'conjuration' => 0.6], 'top' => 2,
+                    // Decisions §10: nature magic reads by subject (animals, plants, weather,
+                    // shapeshifting), never by school, so no magic school counts here: herb
+                    // lore (alchemy), harvesting and beast blood, and a nature spell in hand.
+                    'components' => ['skills' => 0.4, 'deeds' => 0.4, 'gear' => 0.2],
+                    'skills' => ['alchemy' => 1.0], 'top' => 1,
                     'deeds' => [
                         'stat:Ingredients Harvested' => [100, 0.8], 'stat:Nirnroots Found' => [5, 0.6],
-                        'stat:Standing Stones Found' => [6, 0.5], 'stat:Wings Plucked' => [20, 0.4],
+                        'stat:Wings Plucked' => [20, 0.4], 'stat:Werewolf Transformations' => [5, 0.5],
                     ],
                     'gear' => ['ArmorMaterialForsworn' => 0.8, 'ArmorMaterialHide' => 0.3],
+                    'hand_names' => ['familiar' => 0.8, 'wolf' => 0.7, 'bear' => 0.7, 'spriggan' => 0.9, 'animal' => 0.8,
+                        'beast' => 0.7, 'nature' => 0.9, 'thorn' => 0.7, 'vine' => 0.7, 'root' => 0.5, 'storm' => 0.6,
+                        'lightning storm' => 0.6, 'weather' => 0.8, 'wild' => 0.6, 'kyne' => 0.9, 'hircine' => 0.7],
                 ],
                 'thief' => [
                     'skills' => ['sneak' => 1.0, 'lockpicking' => 1.0, 'pickpocket' => 1.0, 'lightarmor' => 0.5], 'top' => 2,
@@ -252,7 +271,7 @@ class RelDynPlayer
             $parts = [
                 'skills' => self::skillComponent($facts, (array) ($spec['skills'] ?? []), intval($spec['top'] ?? 1), $cfg),
                 'deeds'  => self::evidenceOr($ev, (array) ($spec['deeds'] ?? [])),
-                'gear'   => self::gearComponent($facts, (array) ($spec['gear'] ?? [])),
+                'gear'   => self::gearComponent($facts, (array) ($spec['gear'] ?? []), (array) ($spec['hand_names'] ?? [])),
             ];
             $weights = (array) ($spec['components'] ?? $cfg['archetype_components']);
             $missing = array_filter((array) ($spec['requires'] ?? []), fn($c) => ($parts[$c] ?? null) === null);
@@ -284,16 +303,21 @@ class RelDynPlayer
 
         return [
             'archetypes' => $archetypes,
+            // Magnitude as each archetype (raw, before the identity normalisation): how much of
+            // it the player has, for NPC-weighted pillars (MDD 2.2); null = unknown
+            'archetype_raw' => array_map(fn($v) => $v === null ? null : round($v, 4), $raw),
             'pillars'    => $pillars,
             'facts'      => $facts,
             'derivation' => ['archetypes' => $archDerivation, 'pillars' => $pillarDerivation],
+            // Evidence key => count (null = unknown), for NPC-subjective markers (evidenceScore)
+            'evidence'   => $ev,
             'known'      => self::anyKnown($facts),
         ];
     }
 
     private static function anyKnown(array $facts): bool
     {
-        foreach (['skills', 'level', 'equipment_keywords', 'gold_carried', 'gold_moved'] as $k) {
+        foreach (['skills', 'level', 'equipment_keywords', 'gold_carried', 'gold_footprint'] as $k) {
             if (($facts[$k]['value'] ?? null) !== null) return true;
         }
         foreach ($facts as $k => $f) {
@@ -337,7 +361,7 @@ class RelDynPlayer
     {
         $db = $GLOBALS['db'] ?? null;
         $facts = [];
-        $player = self::coreRows($db, ['skills', 'stats', 'equipment', 'inventory', 'appearance', 'transformation_state', self::LEDGER_KEY]);
+        $player = self::coreRows($db, ['skills', 'stats', 'equipment', 'inventory', 'appearance', 'transformation_state', 'gender', self::LEDGER_KEY]);
 
         // skills (raw actor values)
         $skills = self::decodeRow($player, 'skills');
@@ -364,6 +388,16 @@ class RelDynPlayer
             $keywords = array_keys($keywords);
         }
         $facts['equipment_keywords'] = self::fact($keywords, 'core_player.equipment');
+        $held = null;
+        if (is_array($equipment)) {
+            $held = [];
+            foreach (['left_hand', 'right_hand'] as $slot) {
+                $name = trim((string) ($equipment[$slot] ?? ''));
+                if ($name !== '') $held[] = $name;
+            }
+        }
+        $facts['held_names'] = self::fact($held, 'core_player.equipment (left_hand / right_hand)',
+            'what is held: a spell or a staff reads by its subject (decisions §10)');
 
         // wallet (a fact, not status) and the gold ledger (footprint)
         $inventory = self::decodeRow($player, 'inventory');
@@ -374,8 +408,15 @@ class RelDynPlayer
             ? ['value' => intval($ledger['moved']), 'source' => 'core_player.' . self::LEDGER_KEY,
                'gained' => intval($ledger['gained'] ?? 0), 'spent' => intval($ledger['spent'] ?? 0),
                'snapshots' => intval($ledger['snapshots'] ?? 0), 'since_gamets' => $ledger['since_gamets'] ?? null,
+               'opening' => isset($ledger['opening']) ? intval($ledger['opening']) : null,
                'note' => 'sum of |wallet change| between inventory snapshots since RelDyn started watching; save reloads re-baseline']
             : self::fact(null, null, 'no inventory snapshot recorded yet');
+        // Lifetime earned + spent is at least the opening wallet (earned before RelDyn watched)
+        // plus what moved since. A lower bound of 0 says nothing: unknown, not "no standing".
+        $footprint = $facts['gold_moved']['value'] === null ? null
+            : intval($facts['gold_moved']['opening'] ?? 0) + intval($facts['gold_moved']['value']);
+        $facts['gold_footprint'] = self::fact(($footprint ?? 0) > 0 ? $footprint : null, 'core_player.' . self::LEDGER_KEY,
+            'economic footprint lower bound: opening wallet + gold moved; 0 = not known yet');
 
         // latest infoplayer / playerinfo line: level, race, gender
         $info = self::latestPlayerInfo($db);
@@ -398,7 +439,13 @@ class RelDynPlayer
         } else {
             $facts['race'] = self::fact($info['race'] ?? null, 'eventlog ' . ($info['type'] ?? 'infoplayer') . ' (latest)');
         }
-        $facts['gender'] = self::fact($info['gender'] ?? null, 'eventlog infoplayer (latest)');
+        $coreGender = isset($player['gender']) ? trim((string) $player['gender']) : '';
+        if ($coreGender !== '') {
+            $facts['gender'] = self::fact($coreGender, 'core_player.gender (Player Management)');
+        } else {
+            $gender = self::latestPlayerGender($db);
+            $facts['gender'] = self::fact($gender, 'eventlog infoplayer (latest line with a gender)');
+        }
         $appearance = isset($player['appearance']) ? trim((string) $player['appearance']) : '';
         $facts['appearance'] = self::fact($appearance !== '' ? $appearance : null, 'core_player.appearance',
             'beauty input: scored per NPC against their keywords (MDD 2.1)');
@@ -477,7 +524,7 @@ class RelDynPlayer
         $limit = count($namesByLower) * 4;
         $out = [];
         foreach ([
-            'conf_opts'   => 'conf_opts (tracked stat via setconf; global across playthroughs)',
+            'conf_opts'   => 'conf_opts (tracked stat via setconf; gameplay row of this playthrough)',
             'core_player' => 'core_player (tracked stat via gamedata skyrim_stats)',
         ] as $table => $source) {
             try {
@@ -512,6 +559,25 @@ class RelDynPlayer
         if (preg_match('/race:"([^"]*)"/', $data, $m) && $m[1] !== '') $out['race'] = $m[1];
         if (preg_match('/gender:"([^"]*)"/', $data, $m) && $m[1] !== '') $out['gender'] = $m[1];
         return $out;
+    }
+
+    /**
+     * The player's gender from the newest infoplayer / playerinfo line that carries one. Only
+     * the plugin's 'infoplayer' line has gender:"..."; the 'playerinfo' line every game load
+     * sends has none, so the newest line overall would lose it after any load.
+     */
+    private static function latestPlayerGender($db): ?string
+    {
+        if (!$db) return null;
+        try {
+            $rows = $db->fetchAll("SELECT data FROM eventlog WHERE type IN ('infoplayer', 'playerinfo') "
+                . "AND data LIKE '%gender:\"_%' ORDER BY gamets DESC, rowid DESC LIMIT 1");
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('RelDynPlayer infoplayer gender', $e);
+            return null;
+        }
+        if (!$rows || !preg_match('/gender:"([^"]+)"/', (string) $rows[0]['data'], $m)) return null;
+        return $m[1];
     }
 
     /** The player's kills from core death lines; [] (unknown) when there is no player name or no death line at all. */
@@ -585,10 +651,20 @@ class RelDynPlayer
         $ev['kills:total'] = $killStats ? array_sum($killStats) : $facts['eventlog_player_kills']['value'];
         $ev['dragons'] = $facts['stat:Dragon Souls Collected']['value'] ?? $facts['eventlog_dragon_kills']['value'];
         $ev['eventlog:powerful_kills'] = $facts['eventlog_powerful_kills']['value'];
-        $ev['ledger:moved'] = $facts['gold_moved']['value'];
+        $ev['ledger:moved'] = $facts['gold_footprint']['value'];
         $ev['journal:quests'] = $facts['questlines']['journal_quests'];
         foreach ((array) ($facts['questlines']['value'] ?? []) as $line => $n) $ev['questline:' . strtolower((string) $line)] = $n;
         return $ev;
+    }
+
+    /**
+     * NPC-subjective markers (attraction lane): the soft-or of an evidence table (evidence
+     * key => [half, weight], the config tables' format) over a profile's evidence. null when
+     * none of it is known.
+     */
+    public static function evidenceScore(array $profile, array $table): ?float
+    {
+        return self::evidenceOr((array) ($profile['evidence'] ?? []), $table);
     }
 
     /** Soft-or of the known evidence: 1 - prod(1 - w * n/(n+half)). null when none of it is known. */
@@ -628,15 +704,25 @@ class RelDynPlayer
         return array_sum($vals) / count($vals);
     }
 
-    /** Soft-or of the worn keywords' weights. null when equipment is unknown. */
-    private static function gearComponent(array $facts, array $table): ?float
+    /**
+     * Soft-or of the worn keywords' weights and of the words found in what is held in either
+     * hand (whole-word, case-insensitive). null when equipment is unknown.
+     */
+    private static function gearComponent(array $facts, array $table, array $handNames = []): ?float
     {
         $keywords = $facts['equipment_keywords']['value'];
-        if ($keywords === null || !$table) return null;
+        if ($keywords === null || (!$table && !$handNames)) return null;
         $worn = array_flip(array_map('strtolower', $keywords));
         $none = 1.0;
         foreach ($table as $kw => $w) {
             if (isset($worn[strtolower((string) $kw)])) $none *= 1.0 - max(0.0, min(1.0, floatval($w)));
+        }
+        $held = strtolower(implode(' | ', (array) ($facts['held_names']['value'] ?? [])));
+        foreach ($handNames as $word => $w) {
+            $word = strtolower(trim((string) $word));
+            if ($word !== '' && $held !== '' && preg_match('/\b' . preg_quote($word, '/') . '/u', $held)) {
+                $none *= 1.0 - max(0.0, min(1.0, floatval($w)));
+            }
         }
         return 1.0 - $none;
     }
@@ -704,8 +790,9 @@ class RelDynPlayer
         $old = "core_player.value::jsonb";
         $delta = "({$gold} - ({$old}->>'last_gold')::numeric)";
         $rewound = "({$t} < ({$old}->>'last_gamets')::numeric)";
+        // 'opening': the wallet RelDyn first saw, gold earned before it watched (footprint lower bound)
         $init = $db->escapeLiteral(json_encode(['last_gold' => $gold, 'last_gamets' => $t, 'moved' => 0, 'gained' => 0,
-            'spent' => 0, 'snapshots' => 1, 'rebaselines' => 0, 'since_gamets' => $t]));
+            'spent' => 0, 'snapshots' => 1, 'rebaselines' => 0, 'since_gamets' => $t, 'opening' => $gold]));
         $key = $db->escapeLiteral(self::LEDGER_KEY);
         try {
             $db->fetchAll("INSERT INTO core_player (id, value) VALUES ({$key}, {$init}) "
@@ -716,7 +803,7 @@ class RelDynPlayer
                 . "'spent', ({$old}->>'spent')::numeric + CASE WHEN {$rewound} THEN 0 ELSE greatest(-{$delta}, 0) END, "
                 . "'snapshots', ({$old}->>'snapshots')::int + 1, "
                 . "'rebaselines', ({$old}->>'rebaselines')::int + CASE WHEN {$rewound} THEN 1 ELSE 0 END, "
-                . "'since_gamets', {$old}->'since_gamets')::text "
+                . "'since_gamets', {$old}->'since_gamets', 'opening', {$old}->'opening')::text "
                 . "WHERE ({$old}->>'last_gold')::numeric IS DISTINCT FROM {$gold} OR {$rewound} "
                 . "RETURNING value");
         } catch (\Throwable $e) {

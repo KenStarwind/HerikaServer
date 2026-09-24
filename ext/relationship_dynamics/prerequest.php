@@ -124,6 +124,8 @@ try {
 
 // Snapshot current CHIM affinity for RPM→Speed delta in postrequest
 $GLOBALS['RELDYN_PRE_AFF'] = null;
+// Core's Player.type as of this NPC's last request (the romance ownership guard below compares)
+$reldynPrevCoreType = $dynamics['_core_rel_type'] ?? null;
 try {
     $db2 = $GLOBALS['db'] ?? null;
     if ($db2) {
@@ -209,6 +211,13 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
 // $dynamics['_attraction'] for postrequest, context, the eval consumer and getRelationshipType;
 // passion above its hard cap drops to it here. Off: nothing is gated.
 RelationshipDynamics::updateAttraction($npcName, $dynamics);
+
+// ========== ROMANCE OWNERSHIP (rulings §9: RelDyn owns romance promotion) ==========
+// A romance type core wrote since this NPC's last request without RelDyn (core's MODE 2 #TYPE
+// tags have no earned-romance gate) that this request's Attraction Matrix does not allow is
+// stepped back to the type before it, so Sharmat never sees a friendzoned / unattracted NPC
+// as romantic. relationships_locked (the editor's manual edits) is respected.
+RelDynRomance::guardCorePromotion($npcName, $dynamics, $reldynPrevCoreType);
 
 // ========== DUTY OVERRIDE (PR 12) ==========
 if (!empty($reldynCfg['duty_override_enabled'])) {
