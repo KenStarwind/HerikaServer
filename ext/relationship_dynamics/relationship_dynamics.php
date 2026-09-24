@@ -1695,11 +1695,39 @@ class RelationshipDynamics
         return fmod($gamets / self::GAMETS_PER_DAY, 1.0) * 24.0;
     }
 
-    // Timer helpers. Decay and cooldowns run on filtered play time
-    // (_accumulated_play_gamets); absence runs on the game calendar (raw gamets).
-    // Never the wall clock. A checkpoint that is unset, or ahead of its clock
-    // (a wall-clock value from an older build, or an earlier save loaded), reads
-    // as null so callers can re-arm it instead of trusting it.
+    // ===================== CLOCK MODEL (decisions 2026-09-23 §2) =====================
+    // Never the IRL wall clock for anything that changes how an NPC feels.
+    //
+    // 1. GAME CALENDAR: raw gamets from the game ($gameRequest[2]); 1 game day =
+    //    GAMETS_PER_DAY, 1 game hour = GAMETS_PER_DAY/24. Waiting and sleeping count,
+    //    because they are time passing in the world. Used for everything that is about
+    //    time APART or time in the WORLD:
+    //      - contact stamp _last_contact_gamets (markContact) and the reunion spike
+    //        (checkReunion: game hours apart, see its wait-scum guard below);
+    //      - the calendar step (advanceCalendar via runCalendarScan, checkpoint in
+    //        plugin_extended_data.reldyn.calendar): fester, global neglect, passion
+    //        absence fade;
+    //      - walkaway boundary test (24-48 h) and hoover sleeper (72-96 h);
+    //      - consumable expiry, plasticity override (30 game days), night/moon.
+    //    Rule: negative states never go DOWN on this clock (time does not heal); they
+    //    only go down through positive contact. Positive states fade on it.
+    // 2. FILTERED PLAY CLOCK: _accumulated_play_gamets, per NPC, advanced by
+    //    updatePlayTime() on that NPC's requests and capped at real seconds x
+    //    GAMETS_PER_REAL_SECOND, so waits and sleeps add nothing. Unit: play gamets;
+    //    GAMETS_PER_REAL_HOUR = one real hour of play. Used for what happens WHILE the
+    //    player is playing: in-contact passion and jealousy decay, the diminishing-
+    //    returns session multiplier, cooldowns (resentment -1 debounce, ick, divine
+    //    intervention, ambient trickle), the hoover's 48 h after-glow context, and
+    //    reunion's check that the time apart held real play (no reunion from a wait).
+    //    A wait or sleep must never be able to trigger or clear these.
+    // 3. ACCUMULATED REAL SECONDS: _accumulated_time, capped at 300 s per gap. Only for
+    //    positive cooldowns that must not be farmable (diary reflection). Legacy users
+    //    still on it: attachment drift (18000 s) and grief bond duration, and the
+    //    resentment-decay debounce fallback before the play clock has a value.
+    //
+    // A checkpoint that is unset, or ahead of its clock (a value from another clock or
+    // an older build, or an earlier save loaded), reads as null so callers can re-arm
+    // it instead of trusting it.
 
     /** Record the current filtered play clock under $key. */
     public static function markPlayCheckpoint(array &$dynamics, string $key): void
@@ -1996,7 +2024,8 @@ class RelationshipDynamics
     // =========================================================================
 
     /**
-     * Apply time-based passion decay. Call at prerequest time.
+     * Apply in-contact passion decay on the play clock. Call at prerequest time.
+     * Fade across absences is advanceCalendar()'s (game calendar, attachment-scaled).
      */
     public static function decayPassion(&$dynamics)
     {
@@ -2472,7 +2501,8 @@ class RelationshipDynamics
      * calendar_scan_interval_game_hours old), so time moves for every bond on any request,
      * not only for the NPC being talked to. $priorityNpc (the NPC of this request) goes
      * first when due, so its absence is felt before contact is marked; then at most
-     * calendar_scan_max_npcs others, oldest step first. Cost when nothing is due: one SELECT.
+     * calendar_scan_max_npcs others, oldest step first. Cost when nothing is due: one SELECT
+     * (plus two small reads for $priorityNpc).
      *
      * @return array npcName => ['calendar' => advanceCalendar() result|null, 'walkaway' => state|null, 'hoover' => bool]
      */
