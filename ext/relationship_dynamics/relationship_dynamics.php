@@ -5252,6 +5252,18 @@ class RelationshipDynamics
         $rangeMin = floatval($def['range_min']);
         $rangeMax = floatval($def['range_max']);
 
+        // Affinity: x is only a mirror of core relationships.Player.aff (x = (aff + 100) / 2),
+        // while the deltas (eval affinity_delta, gifts, cascade), the temperament baselines
+        // and Z are on CHIM's -100..+100 affinity scale (MDD 6.5, 15.1). Run the physics in
+        // those units; reading the baselines as mirror units put every NPC's rest point at
+        // core -100..-20 and dragged all deltas toward hostility.
+        $mirrorScale = ($dimensionId === 'affinity');
+        if ($mirrorScale) {
+            $x = $x * 2.0 - 100.0;
+            $rangeMin = -100.0;
+            $rangeMax = 100.0;
+        }
+
         // --- Core physics application ---
         // Determine if the delta would cross the baseline (overshoot handling)
         $xAfterRaw = $x + $rawDelta; // hypothetical end position without physics
@@ -5286,6 +5298,13 @@ class RelationshipDynamics
         $newX = max($rangeMin, min($rangeMax, $x + $actualDelta));
         $actualDelta = $newX - $x;
 
+        // Back to mirror units: callers get the change of dimensions.affinity.x as before
+        if ($mirrorScale) {
+            $x = ($x + 100.0) / 2.0;
+            $newX = ($newX + 100.0) / 2.0;
+            $actualDelta = $newX - $x;
+        }
+
         // --- Write back ---
         if ($dimensionId === 'passion') {
             self::setPassion($dynamics, round($newX, 4));
@@ -5297,7 +5316,8 @@ class RelationshipDynamics
         error_log("[RelDyn-XYZ] applyDelta: dim={$dimensionId} X={$x}=>{$newX} "
             . "raw={$rawDelta} actual=" . round($actualDelta, 4)
             . " baseline={$baseline} Z={$z} Y_up={$yUp} Y_down={$yDown}"
-            . ($invertRubberBand ? ' [INVERT_RB]' : ''));
+            . ($invertRubberBand ? ' [INVERT_RB]' : '')
+            . ($mirrorScale ? ' [X=mirror, physics/baseline in core aff units]' : ''));
 
         return round($actualDelta, 4);
     }
