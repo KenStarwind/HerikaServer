@@ -1206,11 +1206,12 @@ class RelationshipDynamics
             // Contacts (this NPC's requests) an NPC back from a resolved boundary test
             // waits before walking away again while its resentment is still high.
             'walkaway_return_grace_contacts' => 5,
-            // Pursuit (MDD 6.4 "follow them", rulings §8): the player's lines in the first
+            // Pursuit (MDD 6.4 "follow them", rulings §8): for a NEGLECT walkaway (one that
+            // starts on the player's return, walkawayReason), the player's lines in the first
             // walkaway_parting_game_minutes game-calendar minutes after the NPC left are the
-            // parting conversation they walked out of (the return greeting that set off a
-            // neglect walkaway, a plea as they go), not following them. Talking to them after
-            // that, while the walkaway lasts, is seeking them out: the boundary test fails.
+            // parting conversation (the return greeting that set it off, a plea as they go),
+            // not following them. Talking to them after that, while the walkaway lasts, is
+            // seeking them out: the boundary test fails. Other walkaways get no window.
             // 60 game minutes = 3 real minutes at the default timescale 20.
             'walkaway_parting_game_minutes' => 60,
             // Reunion: reunion_min_hours is GAME-CALENDAR hours since the last contact; the
@@ -1347,6 +1348,19 @@ class RelationshipDynamics
      * resentment per game day = resentment_per_game_day x rate_mult. Warmth fade: grace =
      * warmth_absence_grace_game_hours x grace_mult, fade per game day =
      * warmth_absence_fade_per_game_day x rate_mult.
+     *
+     * Rate alone only moves the day an absence maxes an NPC out (resentment never decays), so
+     * neglect also has a per-NPC ceiling: the resentment (0..100 points) an absence ALONE can
+     * carry this NPC to. It plateaus there; time does not heal it either.
+     *
+     *   ceiling = clamp( ceiling_base + P_c x (2c - 1) + P_m x maturity term + P_p x p, 0, 100 )
+     *       P = ceiling_points (resentment points at the end of each term's range).
+     *
+     * Defaults: the typical NPC plateaus at 50 (hurt, not withdrawn); independent/avoidant
+     * (c = 0) never reaches withdrawal (70) at any maturity or pride; only codependent
+     * (c >= 0.7), immature (maturity < 50) NPCs reach the walkaway (90), pride widening the
+     * maturity range (Anxious/anxious walks at maturity <= 12.5, <= 42.5 if also Proud and
+     * egocentric). Fester (open conflict) and jealousy are not neglect: no ceiling.
      */
     public static function neglectSeverityDefaults(): array
     {
@@ -1363,6 +1377,9 @@ class RelationshipDynamics
             'rate_log2' => ['codependence' => 1.0, 'maturity' => -1.0, 'pride' => 1.0],
             'mult_min' => 0.125,
             'mult_max' => 8.0,
+            // Neglect ceiling (resentment points, 0..100): base + points x [codependence, maturity, pride] terms
+            'ceiling_base' => 50.0,
+            'ceiling_points' => ['codependence' => 25.0, 'maturity' => -20.0, 'pride' => 12.0],
         ];
     }
 
@@ -3443,6 +3460,11 @@ class RelationshipDynamics
      */
     public static function markContact(array &$dynamics): void
     {
+        // The contact before this one (raw gamets): walkawayReason() tells the return from an
+        // absence (this contact ends it) from a later line of the same conversation.
+        if (isset($dynamics['_last_contact_gamets'])) {
+            $dynamics['_previous_contact_gamets'] = $dynamics['_last_contact_gamets'];
+        }
         self::markGameClock($dynamics, '_last_contact_gamets');
         self::markPlayCheckpoint($dynamics, '_last_contact_play_gamets');
     }
@@ -3470,7 +3492,7 @@ class RelationshipDynamics
      * (0..1), pride (0..1), maturity (0..100) and the grace / rate multipliers they give.
      * Formula and units: neglectSeverityDefaults(). Pure: reads only $dynamics and config.
      *
-     * @return array ['codependence', 'pride', 'maturity', 'grace_mult', 'rate_mult']
+     * @return array ['codependence', 'pride', 'maturity', 'grace_mult', 'rate_mult', 'ceiling' (resentment points)]
      */
     public static function getNeglectProfile(array $dynamics): array
     {
@@ -3501,6 +3523,11 @@ class RelationshipDynamics
             }
             return max(floatval($cfg['mult_min']), min(floatval($cfg['mult_max']), 2.0 ** $exp));
         };
+        $ceiling = floatval($cfg['ceiling_base']);   // resentment points
+        foreach ($terms as $k => $v) {
+            $ceiling += floatval(((array) $cfg['ceiling_points'])[$k] ?? 0.0) * $v;
+        }
+        $rangeMax = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
 
         return [
             'codependence' => $c,
@@ -3508,6 +3535,7 @@ class RelationshipDynamics
             'maturity' => $maturity,
             'grace_mult' => $mult((array) $cfg['grace_log2']),
             'rate_mult' => $mult((array) $cfg['rate_log2']),
+            'ceiling' => max(0.0, min($rangeMax, $ceiling)),
         ];
     }
 
@@ -3517,7 +3545,7 @@ class RelationshipDynamics
      *  - jealousy: jealousy above jealousy_resentment_above -> raw resentment per day (§5);
      *  - neglect: bonded NPC past its grace since _last_contact_gamets -> raw resentment per
      *    day, logged as one 'neglect' grievance per absence; grace and rate scaled per NPC
-     *    (getNeglectProfile);
+     *    and resentment from neglect stops at the NPC's ceiling (getNeglectProfile);
      *  - passion fade: past the absence grace, passion fades per day x attachment multiplier
      *    down to the stage floor;
      *  - warmth fade: warmth above its baseline, at its own rate, grace and rate scaled per
@@ -3525,12 +3553,12 @@ class RelationshipDynamics
      * Nothing negative is ever reduced here. Neglect and fade are skipped while the NPC is
      * the one who left (walkaway). Pure: no database, no clock reads.
      *
-     * @return array ['game_days', 'resentment_raw', 'resentment', 'jealousy_resentment_raw', 'neglect_days', 'passion_fade', 'warmth_fade', 'bond_type']
+     * @return array ['game_days', 'resentment_raw', 'resentment', 'jealousy_resentment_raw', 'neglect_days', 'neglect_ceiling', 'passion_fade', 'warmth_fade', 'bond_type']
      */
     public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
     {
         $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0, 'jealousy_resentment_raw' => 0.0,
-                'neglect_days' => 0.0, 'passion_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
+                'neglect_days' => 0.0, 'neglect_ceiling' => null, 'passion_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
         if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
             return $out;
         }
@@ -3542,7 +3570,8 @@ class RelationshipDynamics
         $attachment = self::getAttachmentStyle($dynamics);
         $away = ($dynamics['_walkaway_state'] ?? 'normal') !== 'normal';
         $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);       // raw gamets
-        $raw = 0.0;                                                            // raw resentment points
+        $raw = 0.0;                                                            // raw resentment points (fester)
+        $neglectRaw = 0.0;                                                     // raw resentment points (neglect)
 
         // Fester: an open conflict in an immature NPC grows every game day.
         if (!empty($dynamics['in_conflict']) && $maturity < floatval(self::configValue('fester_maturity_below'))) {
@@ -3586,7 +3615,6 @@ class RelationshipDynamics
                 if ($neglectDays > 0) {
                     // raw resentment points per game day x game days
                     $neglectRaw = floatval($bond['resentment_per_game_day'] ?? 0) * $severity['rate_mult'] * $neglectDays;
-                    $raw += $neglectRaw;
                     $out['neglect_days'] = $neglectDays;
                     self::recordNeglectGrievance($dynamics, $lastContact, $toGamets, $neglectRaw);
                 }
@@ -3628,21 +3656,46 @@ class RelationshipDynamics
             }
         }
 
-        // Feed the resentment accumulator in fixed quanta (see CALENDAR_RESENTMENT_QUANTUM).
-        $out['resentment_raw'] = $raw;
-        $buffer = floatval($dynamics['_calendar_resentment_raw'] ?? 0) + $raw;
+        // Feed resentment in fixed quanta (see CALENDAR_RESENTMENT_QUANTUM). Fester has the
+        // whole range; neglect has its own buffer and stops at this NPC's neglect ceiling
+        // (rulings §8, getNeglectProfile): an absence alone takes them only that far.
+        $out['resentment_raw'] = $raw + $neglectRaw;
+        $out['neglect_ceiling'] = $severity['ceiling'];
         $max = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
-        while ($buffer >= self::CALENDAR_RESENTMENT_QUANTUM - 1e-9) {
-            if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) >= $max) {
-                $buffer = 0.0;   // already at the ceiling: nothing left to feel
-                break;
-            }
-            $out['resentment'] += self::applyDelta('resentment', $dynamics, self::CALENDAR_RESENTMENT_QUANTUM, $temperament);
-            $buffer -= self::CALENDAR_RESENTMENT_QUANTUM;
+        $out['resentment'] += self::drainCalendarResentment($dynamics, '_calendar_resentment_raw', $raw, $max, $temperament);
+        $felt = self::drainCalendarResentment($dynamics, '_calendar_neglect_raw', $neglectRaw, min($max, $severity['ceiling']), $temperament);
+        $out['resentment'] += $felt;
+        if ($felt > 0.0) {
+            // This absence (counted from that contact) grew their resentment: a walkaway that
+            // starts on the player's return from it is a neglect walkaway (walkawayReason).
+            $dynamics['_neglect_resentment_since_gamets'] = $lastContact;   // raw gamets
         }
-        $dynamics['_calendar_resentment_raw'] = round(max(0.0, $buffer), 9);
 
         return $out;
+    }
+
+    /**
+     * Add $raw resentment points to the buffer $bufferKey and apply it to resentment in
+     * CALENDAR_RESENTMENT_QUANTUM steps through applyDelta, never past $cap (resentment
+     * points). At the cap the buffer is dropped: nothing left to feel from this source.
+     *
+     * @return float resentment points actually applied
+     */
+    private static function drainCalendarResentment(array &$dynamics, string $bufferKey, float $raw, float $cap, ?string $temperament): float
+    {
+        $applied = 0.0;
+        $buffer = floatval($dynamics[$bufferKey] ?? 0) + $raw;
+        while ($buffer >= self::CALENDAR_RESENTMENT_QUANTUM - 1e-9) {
+            $room = $cap - floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
+            if ($room <= 1e-9) {
+                $buffer = 0.0;
+                break;
+            }
+            $applied += self::applyDelta('resentment', $dynamics, self::CALENDAR_RESENTMENT_QUANTUM, $temperament, ['max_abs' => $room]);
+            $buffer -= self::CALENDAR_RESENTMENT_QUANTUM;
+        }
+        $dynamics[$bufferKey] = round(max(0.0, $buffer), 9);
+        return $applied;
     }
 
     /** One 'neglect' grievance per absence (keyed by the contact it counts from), kept current. */
@@ -15999,11 +16052,39 @@ class RelationshipDynamics
     // ==========================================================
 
     /**
+     * Why an NPC the autonomy evaluation sends away is leaving (prerequest's walkaway
+     * initiation): 'ick_comfort' (ick with comfort below 20), 'resentment' (above 70),
+     * 'jealousy' (MDD 6.5), else 'autonomy'. A resentment walkaway that starts on the player's
+     * return from an absence whose neglect grew that resentment is 'neglect' (rulings
+     * 2026-09-24 §8): its parting conversation is not pursuit (processWalkawayTick). Pure.
+     */
+    public static function walkawayReason(array $dynamics): string
+    {
+        $comfort = floatval($dynamics['dimensions']['comfort']['x'] ?? 50);         // 0..100
+        $resentment = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);    // 0..100
+        if (!empty($dynamics['_ick_tracker']['ick_active']) && $comfort < 20) {
+            return 'ick_comfort';
+        }
+        if ($resentment > 70) {
+            // The absence that grew it (counted from the contact before it) ended with this
+            // request's contact: markContact moved that contact to _previous_contact_gamets.
+            $since = $dynamics['_neglect_resentment_since_gamets'] ?? null;      // raw gamets
+            $previous = $dynamics['_previous_contact_gamets'] ?? null;            // raw gamets
+            $onReturn = is_numeric($since) && is_numeric($previous) && abs(floatval($since) - floatval($previous)) < 0.5;
+            return $onReturn ? 'neglect' : 'resentment';
+        }
+        if (floatval($dynamics['jealousy_anger'] ?? 0) >= floatval(self::configValue('jealousy_walkaway_at'))) {
+            return 'jealousy';   // MDD 6.5
+        }
+        return 'autonomy';
+    }
+
+    /**
      * Initiate walkaway sequence. Sets state to 'pending' (1 interaction grace).
      *
      * @param array  &$dynamics NPC dynamics (modified in place)
      * @param string $npcName   NPC name
-     * @param string $reason    Why walkaway triggered ('ick_comfort', 'resentment', 'autonomy')
+     * @param string $reason    Why walkaway triggered (walkawayReason(): 'ick_comfort', 'resentment', 'neglect', 'jealousy', 'autonomy')
      */
     public static function initiateWalkaway(&$dynamics, $npcName, $reason = 'autonomy')
     {
@@ -16094,15 +16175,16 @@ class RelationshipDynamics
 
         $result = ['state' => $state, 'changed' => false];
 
-        // Pursuit (MDD 6.4 "follow them", rulings 2026-09-24 §8) is seeking them out after they
-        // left. The player's lines within walkaway_parting_game_minutes game-calendar minutes of
-        // the departure are the conversation they walked out of (for a neglect walkaway, the
-        // return greeting and what follows it): contact, not pursuit. Those ticks carry on
-        // like any other below.
+        // Pursuit (MDD 6.4 "follow them") is talking to them after they left. Rulings
+        // 2026-09-24 §8 exempts the neglect walkaway only: the player's lines within
+        // walkaway_parting_game_minutes game-calendar minutes of that departure are the return
+        // greeting and the conversation it set off, not following them; those ticks carry on
+        // like any other below. An NPC walking out of a fight (resentment, jealousy, the ick,
+        // autonomy) is followed by the next line, as before.
         $partingMinutes = floatval(self::configValue('walkaway_parting_game_minutes'));
         $sinceLeftMinutes = (self::gameHoursSince($dynamics, '_walkaway_activated_calendar_gamets') ?? 0.0) * 60.0;
-        $isPursuit = $isDialogue && ($state === 'active' || $state === 'boundary_test')
-            && $sinceLeftMinutes >= $partingMinutes;
+        $parting = ($dynamics['_walkaway_reason'] ?? null) === 'neglect' && $sinceLeftMinutes < $partingMinutes;
+        $isPursuit = $isDialogue && ($state === 'active' || $state === 'boundary_test') && !$parting;
         if ($isDialogue && !$isPursuit && ($state === 'active' || $state === 'boundary_test')) {
             self::log("[WALKAWAY] {$npcName}: player spoke " . round($sinceLeftMinutes, 1)
                 . " game minutes after they left (parting window {$partingMinutes}): not pursuit");

@@ -339,20 +339,8 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
     // Initiate walkaway if state demands it and not already walking away
     $currentWalkState = $dynamics['_walkaway_state'] ?? 'normal';
     if ($autonomyEval['state'] === 'walkaway' && $currentWalkState === 'normal') {
-        // Determine reason
-        $ickActive = !empty($dynamics['_ick_tracker']['ick_active']);
-        $comfort = floatval($dynamics['dimensions']['comfort']['x'] ?? 50);
-        $resentment = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
-        if ($ickActive && $comfort < 20) {
-            $reason = 'ick_comfort';
-        } elseif ($resentment > 70) {
-            $reason = 'resentment';
-        } elseif (floatval($dynamics['jealousy_anger'] ?? 0) >= floatval(RelationshipDynamics::configValue('jealousy_walkaway_at'))) {
-            $reason = 'jealousy';   // MDD 6.5
-        } else {
-            $reason = 'autonomy';
-        }
-        RelationshipDynamics::initiateWalkaway($dynamics, $npcName, $reason);
+        // Why they leave; 'neglect' when it starts on the return from an absence (rulings §8)
+        RelationshipDynamics::initiateWalkaway($dynamics, $npcName, RelationshipDynamics::walkawayReason($dynamics));
     }
 
     // Process walkaway tick if in walkaway state

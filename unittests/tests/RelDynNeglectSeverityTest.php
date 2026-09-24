@@ -220,6 +220,203 @@ final class RelDynNeglectSeverityTest extends TestCase
         $this->assertLessThan($felt($this->furious()), $felt($this->typical()));
     }
 
+    // ------------------------------------------------------------ the neglect ceiling
+
+    /**
+     * Rulings §8: neglect alone takes each NPC only as far as who it is. The ceiling is in
+     * resentment points (0..100): ceiling_base + codependence x (2c - 1) + maturity x
+     * (m - 50) / 50 + pride x p, clamped to 0..100; its points live in config.
+     */
+    public function testTheNeglectCeilingFormulaIsExactAndLivesInConfig(): void
+    {
+        $cfg = RelationshipDynamics::defaultConfig()['neglect_severity'];
+        $d = $this->spouse('Proud', 'anxious', ['egocentric'], 30.0);
+        $c = 0.6 * 1.0 + 0.4 * 0.5;                 // anxious attachment, Proud temperament (default T)
+        $terms = ['codependence' => 2 * $c - 1, 'maturity' => (30.0 - 50.0) / 50.0, 'pride' => 1.0];
+        $expected = $cfg['ceiling_base'];
+        foreach ($terms as $k => $v) {
+            $expected += $cfg['ceiling_points'][$k] * $v;
+        }
+        $this->assertEqualsWithDelta(max(0.0, min(100.0, $expected)),
+            RelationshipDynamics::getNeglectProfile($d)['ceiling'], 1e-9);
+        $this->assertEqualsWithDelta($cfg['ceiling_base'], RelationshipDynamics::getNeglectProfile($this->typical())['ceiling'], 1e-9,
+            'the typical NPC sits at the base');
+
+        $GLOBALS['db'] = new RelDynNeglectConfigDb(array_merge(RelationshipDynamics::defaultConfig(), [
+            'neglect_severity' => ['ceiling_base' => 30.0],
+        ]));
+        RelationshipDynamics::clearConfigCache();
+        $this->assertEqualsWithDelta(30.0, RelationshipDynamics::getNeglectProfile($this->typical())['ceiling'], 1e-9);
+    }
+
+    /** Every temperament x attachment x maturity x trait set, left alone for 120 game days. */
+    private static ?array $grid = null;
+
+    private function grid(): array
+    {
+        if (self::$grid !== null) return self::$grid;
+        $rows = [];
+        foreach (['Independent', 'Romantic', 'Guarded', 'Stoic', 'Anxious', 'Jealous', 'Proud'] as $t) {
+            foreach (['avoidant', 'secure', 'anxious', 'toxic'] as $a) {
+                foreach ([0.0, 10.0, 20.0, 35.0, 50.0, 65.0, 80.0, 95.0] as $m) {
+                    foreach ([[], ['insecure'], ['egocentric'], ['egocentric', 'insecure']] as $traits) {
+                        $d = $this->spouse($t, $a, $traits, $m);
+                        $prof = RelationshipDynamics::getNeglectProfile($d);
+                        $peak = 0.0;
+                        $walkDay = null;
+                        for ($day = 2; $day <= 120; $day += 2) {   // game days, stepped like a sparse scan
+                            RelationshipDynamics::advanceCalendar($d, self::T0 + ($day - 2) * self::DAY, self::T0 + $day * self::DAY);
+                            $peak = max($peak, self::resentment($d));
+                            if ($walkDay === null && self::resentment($d) >= RelationshipDynamics::RESENTMENT_WALKAWAY_AT) $walkDay = $day;
+                        }
+                        $rows[] = ['who' => sprintf('%s/%s/m%d/%s', $t, $a, $m, implode('+', $traits) ?: '-'),
+                                   'prof' => $prof, 'peak' => $peak, 'walk_day' => $walkDay];
+                    }
+                }
+            }
+        }
+        return self::$grid = $rows;
+    }
+
+    /**
+     * The review's finding: scaling the rate only moved the day an NPC maxed out (430 of 560
+     * NPCs walked out within 45 game days on neglect alone, the most independent one
+     * included). Neglect now plateaus at the NPC's ceiling, and stays there: time never heals.
+     */
+    public function testNeglectAloneNeverCarriesResentmentPastTheNpcsCeiling(): void
+    {
+        foreach ($this->grid() as $row) {
+            $this->assertLessThanOrEqual($row['prof']['ceiling'] + 1e-4, $row['peak'], $row['who']);   // stored to 4 decimals
+            $this->assertSame($row['prof']['ceiling'] >= RelationshipDynamics::RESENTMENT_WALKAWAY_AT, $row['walk_day'] !== null,
+                $row['who'] . ' walks iff its ceiling reaches the walkaway (ceiling ' . $row['prof']['ceiling'] . ', peak ' . $row['peak'] . ')');
+        }
+    }
+
+    public function testOnlyImmatureCodependentNpcsWalkOutOverNeglectAlone(): void
+    {
+        $walkers = array_filter($this->grid(), fn($r) => $r['walk_day'] !== null);
+        $this->assertNotEmpty($walkers, 'the furious ones still go');
+        $this->assertLessThan(count($this->grid()) / 4, count($walkers), count($walkers) . ' walk');
+        foreach ($walkers as $row) {
+            $this->assertGreaterThanOrEqual(0.7, $row['prof']['codependence'], $row['who'] . ': codependent');
+            $this->assertLessThan(50.0, $row['prof']['maturity'], $row['who'] . ': immature');
+        }
+        foreach ($this->grid() as $row) {
+            if ($row['prof']['codependence'] <= 0.0) {
+                $this->assertLessThan(RelationshipDynamics::RESENTMENT_WITHDRAWAL_AT, $row['peak'],
+                    $row['who'] . ': independent and avoidant barely mind, at any maturity or pride');
+            }
+            if ($row['prof']['maturity'] >= 50.0 || $row['prof']['codependence'] <= 0.5) {
+                $this->assertNull($row['walk_day'], $row['who'] . ': mature or not codependent: stays');
+            }
+        }
+    }
+
+    /** The profiles the review named, 45 game days away. */
+    public function testTheNamedProfilesStayAfterFortyFiveDays(): void
+    {
+        $cases = [
+            // who => [temperament, attachment, traits, maturity 0..100, withdrawn?]
+            'independent, avoidant, immature' => ['Independent', 'avoidant', [], 20.0, false],
+            'the typical NPC'                 => ['Romantic', 'secure', [], 50.0, false],
+            'anxious and anxious, average'    => ['Anxious', 'anxious', [], 50.0, true],
+            'anxious and anxious, mature'     => ['Anxious', 'anxious', [], 95.0, false],
+            'guarded, avoidant, egocentric'   => ['Guarded', 'avoidant', ['egocentric'], 50.0, false],
+        ];
+        foreach ($cases as $who => [$t, $a, $traits, $m, $withdrawn]) {
+            $d = $this->spouse($t, $a, $traits, $m);
+            RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 45 * self::DAY);
+            $fx = RelationshipDynamics::getResentmentEffects($d);
+            $this->assertFalse($fx['walkaway'], "{$who}: resentment " . self::resentment($d));
+            $this->assertSame($withdrawn, $fx['withdrawn'], "{$who}: resentment " . self::resentment($d));
+            $this->assertGreaterThan(0.0, self::resentment($d), "{$who}: the absence is still felt");
+        }
+    }
+
+    /** Above its ceiling (from a fight), an absence adds nothing, and takes nothing away. */
+    public function testAboveItsCeilingAnAbsenceNeitherAddsNorHeals(): void
+    {
+        $d = $this->spouse('Independent', 'avoidant', [], 80.0, ['resentment' => 60.0]);
+        $this->assertLessThan(60.0, RelationshipDynamics::getNeglectProfile($d)['ceiling']);
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 60 * self::DAY);
+        $this->assertGreaterThan(0.0, $r['neglect_days'], 'the absence is counted');
+        $this->assertEqualsWithDelta(60.0, self::resentment($d), 1e-9, 'time does not heal, neglect adds nothing');
+    }
+
+    /** The ceiling is neglect's alone: an open conflict still festers past it (decisions §2). */
+    public function testFesterIsNotCappedByTheNeglectCeiling(): void
+    {
+        $d = $this->spouse('Independent', 'avoidant', [], 20.0);
+        $d['in_conflict'] = true;
+        $ceiling = RelationshipDynamics::getNeglectProfile($d)['ceiling'];
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 60 * self::DAY);
+        $this->assertGreaterThan($ceiling + 5.0, self::resentment($d));
+    }
+
+    // ------------------------------------------------------------ the neglect walkaway
+
+    /** The player speaks to the NPC $gameDays after T0 (the request's contact stamp). */
+    private static function contactAt(array &$d, float $gameDays): void
+    {
+        $GLOBALS['gameRequest'][2] = (string) (self::T0 + $gameDays * self::DAY);
+        RelationshipDynamics::markContact($d);
+    }
+
+    /**
+     * Rulings §8 scopes the parting exemption to the neglect walkaway: the one that starts on
+     * the player's return from an absence that grew the NPC's resentment.
+     */
+    public function testAWalkawayOnTheReturnFromNeglectIsANeglectWalkaway(): void
+    {
+        $d = $this->furious();
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 45 * self::DAY);
+        $this->assertTrue(RelationshipDynamics::getResentmentEffects($d)['walkaway']);
+
+        self::contactAt($d, 45.0);                                   // the return greeting
+        $this->assertSame('neglect', RelationshipDynamics::walkawayReason($d));
+
+        self::contactAt($d, 45.0 + 10.0 / 1440.0);                   // ten game minutes into the conversation
+        $this->assertSame('resentment', RelationshipDynamics::walkawayReason($d),
+            'a walkaway later in the conversation is about the conversation');
+    }
+
+    public function testAWalkawayFromAFightIsNotANeglectWalkaway(): void
+    {
+        $d = $this->typical();
+        self::contactAt($d, 0.5);
+        RelationshipDynamics::applyDelta('resentment', $d, 95.0, 'Romantic');   // an in-person fight
+        $this->assertTrue(RelationshipDynamics::getResentmentEffects($d)['walkaway']);
+        self::contactAt($d, 0.51);
+        $this->assertSame('resentment', RelationshipDynamics::walkawayReason($d));
+    }
+
+    /** Angry from a fight, left alone past a ceiling below that: the absence added nothing. */
+    public function testAnAbsenceThatAddedNothingDoesNotMakeItANeglectWalkaway(): void
+    {
+        $d = $this->spouse('Independent', 'avoidant', [], 80.0, ['resentment' => 95.0]);
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 60 * self::DAY);
+        self::contactAt($d, 60.0);
+        $this->assertSame('resentment', RelationshipDynamics::walkawayReason($d));
+    }
+
+    /** The other reasons keep their order (prerequest's walkaway initiation). */
+    public function testTheOtherWalkawayReasonsAreUnchanged(): void
+    {
+        $d = $this->furious();
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 45 * self::DAY);
+        self::contactAt($d, 45.0);
+        $ick = $d;
+        $ick['_ick_tracker']['ick_active'] = true;
+        $ick['dimensions']['comfort']['x'] = 10.0;
+        $this->assertSame('ick_comfort', RelationshipDynamics::walkawayReason($ick));
+
+        $calm = $this->typical();
+        $calm['jealousy_anger'] = 100.0;
+        $this->assertSame('jealousy', RelationshipDynamics::walkawayReason($calm));
+        $calm['jealousy_anger'] = 0.0;
+        $this->assertSame('autonomy', RelationshipDynamics::walkawayReason($calm));
+    }
+
     // ------------------------------------------------------------ warmth fade uses it too
 
     public function testWarmthFadeIsScaledLikeNeglect(): void

@@ -11,8 +11,9 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.p
  *  - leaving the NPC alone resolves the boundary test: the walkaway clears, the resentment
  *    behind it does not (time does not heal; no passive resentment decay while away);
  *  - following them during the test is still a permanent departure; talking to them as they
- *    leave (the parting conversation, walkaway_parting_game_minutes) is not following
- *    (rulings 2026-09-24 §8), and the test counts from when they left;
+ *    leave a NEGLECT walkaway (the parting conversation on the player's return,
+ *    walkaway_parting_game_minutes) is not following (rulings 2026-09-24 §8), while a plea
+ *    as they walk out of a fight still is; the test counts from when they left;
  *  - hoover sleeper = 72-96 game-calendar hours; a Toxic sleeper waits for its hoover
  *    instead of resolving through the boundary test.
  * No database ($GLOBALS['db'] unset): return/dismiss commands are no-ops.
@@ -150,14 +151,15 @@ final class RelDynWalkawayTimersTest extends TestCase
     }
 
     /**
-     * Rulings §8: talking to them as they leave is not pursuit. The greeting that set the
-     * walkaway off and the lines right after it (a plea, a goodbye) are the conversation they
-     * walked out of; left alone after that, the boundary test resolves and they come back.
+     * Rulings §8: talking to an NPC on your return is not following a neglect walkaway. The
+     * greeting that set the walkaway off and the lines right after it (a plea, a goodbye) are
+     * the conversation they walked out of; left alone after that, the boundary test resolves
+     * and they come back.
      */
-    public function testThePartingConversationIsNotPursuit(): void
+    public function testThePartingConversationOfANeglectWalkawayIsNotPursuit(): void
     {
         $d = $this->npc();
-        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'resentment');
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'neglect');
         $d['_walkaway_boundary_test_hours'] = 24.0;
         RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // the greeting: pending -> active
         $this->assertSame('active', $d['_walkaway_state']);
@@ -176,11 +178,36 @@ final class RelDynWalkawayTimersTest extends TestCase
         $this->assertSame('normal', $d['_walkaway_state']);
     }
 
+    public static function inPersonReasons(): array
+    {
+        return ['a fight' => ['resentment'], 'jealousy' => ['jealousy'], 'the ick' => ['ick_comfort'], 'autonomy' => ['autonomy']];
+    }
+
+    /**
+     * The exemption is the neglect walkaway's alone (rulings §8). An NPC walking out of an
+     * argument (or over jealousy, the ick, autonomy) is followed by the first plea after they
+     * left, parting window or not: MDD 6.4.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('inPersonReasons')]
+    public function testAPleaAsTheyWalkOutInPersonIsPursuit(string $reason): void
+    {
+        $d = $this->npc();
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', $reason);
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // pending -> active: they leave
+        $this->assertSame('active', $d['_walkaway_state']);
+
+        $this->calendarAdvance(self::partingHours() / 4);
+        $t = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // "wait, please"
+        $this->assertTrue($d['_walkaway_player_followed'], "{$reason}: following them");
+        $this->assertArrayNotHasKey('parting', $t);
+        $this->assertEqualsWithDelta(100.0, (float) $d['dimensions']['resentment']['x'], 1e-9, 'penalty doubles (70 -> 100 cap)');
+    }
+
     /** Pursuit = still seeking them after they left: the parting window has passed. */
     public function testSeekingThemAfterThePartingWindowIsPursuit(): void
     {
         $d = $this->npc();
-        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'resentment');
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'neglect');
         RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // pending -> active
         $this->calendarAdvance(self::partingHours() + 0.1);
         RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);

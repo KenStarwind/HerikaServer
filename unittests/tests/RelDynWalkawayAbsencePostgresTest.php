@@ -302,7 +302,7 @@ final class RelDynWalkawayAbsencePostgresTest extends TestCase
         $this->assertGreaterThanOrEqual(RelationshipDynamics::RESENTMENT_WALKAWAY_AT,
             (float) $serana['dimensions']['resentment']['x'], 'furious');
         $this->assertSame('active', $serana['_walkaway_state'] ?? null, 'she walks out on the greeting');
-        $this->assertSame('resentment', $serana['_walkaway_reason']);
+        $this->assertSame('neglect', $serana['_walkaway_reason'], 'a neglect walkaway: it started on the return');
 
         $this->talkTo('Serana', $back + 5 * self::MINUTE, 'wait, please');     // the parting conversation
         $this->talkTo('Serana', $back + 20 * self::MINUTE, 'I am sorry');
@@ -336,5 +336,26 @@ final class RelDynWalkawayAbsencePostgresTest extends TestCase
         $this->assertTrue($serana['_walkaway_player_followed']);
         $this->talkTo('Lydia', $back + 2 * self::DAY);
         $this->assertSame('permanent', $this->dynamics('Serana')['_walkaway_state']);
+    }
+
+    /**
+     * The parting exemption is the neglect walkaway's alone (rulings §8): a spouse walking out
+     * of an argument, with no absence behind it, is followed by the plea that comes after her.
+     */
+    public function testAPleaAfterASpouseWhoWalksOutOfAFightIsPursuit(): void
+    {
+        $this->config([]);
+        $this->seed('Uthgerd', 85, 'romantic',
+            ['trust' => 60.0, 'comfort' => 60.0, 'respect' => 60.0, 'self_confidence' => 60.0, 'maturity' => 50.0, 'resentment' => 95.0],
+            ['_core_rel_type' => 'romantic']);
+        $now = self::T0 + self::HOUR;                                          // an hour after the last line
+
+        $this->talkTo('Uthgerd', $now, 'you are being unreasonable');
+        $u = $this->dynamics('Uthgerd');
+        $this->assertSame('active', $u['_walkaway_state'] ?? null, 'she walks out of the argument');
+        $this->assertSame('resentment', $u['_walkaway_reason']);
+
+        $this->talkTo('Uthgerd', $now + 5 * self::MINUTE, 'wait, please');
+        $this->assertTrue($this->dynamics('Uthgerd')['_walkaway_player_followed'], 'following her out');
     }
 }
