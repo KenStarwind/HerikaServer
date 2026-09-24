@@ -65,21 +65,21 @@ class RelationshipDynamics
         'deep'        => ['floor' => 15, 'ceiling' => 50,  'gain_mult' => 0.8, 'dr_mult' => 1.0],
     ];
 
-    // Temperament → passion gain multiplier (used when MARAS or inferred temperament available)
+    // Temperament → passion gain multiplier: MDD 1.3 Passion column (relationship-dynamics-mdd.md)
     const TEMPERAMENT_PASSION_MULT = [
         'Romantic'    => 1.3,
         'Anxious'     => 1.2,
-        'Playful'     => 1.15,
+        'Bold'        => 1.1,
+        'Playful'     => 1.4,
         'Humble'      => 1.1,
-        'Nurturing'   => 1.05,
-        'Gentle'      => 1.0,
+        'Nurturing'   => 1.0,
+        'Gentle'      => 0.9,
         'Jealous'     => 1.0,
-        'Stoic'       => 0.85,
         'Proud'       => 0.8,
-        'Bold'        => 0.75,
-        'Independent' => 0.7,
-        'Defiant'     => 0.7,
+        'Defiant'     => 1.2,
         'Guarded'     => 0.6,
+        'Independent' => 0.7,
+        'Stoic'       => 0.5,
     ];
 
     // Temperament -> bleedout passion drain (negative: how much passion is lost when NPC falls)
@@ -102,38 +102,38 @@ class RelationshipDynamics
     ];
 
 
-    // Temperament → reunion multiplier
+    // Temperament → reunion multiplier: MDD 1.3 Reunion column
     const TEMPERAMENT_REUNION_MULT = [
         'Romantic'    => 1.5,
-        'Anxious'     => 1.4,
-        'Jealous'     => 1.2,
-        'Playful'     => 1.1,
+        'Anxious'     => 1.8,
+        'Bold'        => 1.0,
+        'Playful'     => 0.8,
         'Humble'      => 1.0,
-        'Nurturing'   => 1.0,
-        'Gentle'      => 0.9,
+        'Nurturing'   => 1.2,
+        'Gentle'      => 1.3,
+        'Jealous'     => 1.2,
         'Proud'       => 0.8,
-        'Stoic'       => 0.7,
-        'Bold'        => 0.6,
-        'Guarded'     => 0.6,
+        'Defiant'     => 0.6,
+        'Guarded'     => 0.7,
         'Independent' => 0.5,
-        'Defiant'     => 0.5,
+        'Stoic'       => 0.3,
     ];
 
-    // Temperament → jealousy multiplier
+    // Temperament → jealousy multiplier: MDD 1.3 Jealousy column
     const TEMPERAMENT_JEALOUSY_MULT = [
-        'Anxious'     => 2.5,
+        'Romantic'    => 1.3,
+        'Anxious'     => 1.5,
+        'Bold'        => 0.8,
+        'Playful'     => 0.4,
+        'Humble'      => 0.5,
+        'Nurturing'   => 0.6,
+        'Gentle'      => 0.4,
         'Jealous'     => 2.0,
         'Proud'       => 1.5,
-        'Romantic'    => 1.3,
-        'Nurturing'   => 1.0,
-        'Playful'     => 0.8,
-        'Gentle'      => 0.7,
-        'Guarded'     => 0.6,
-        'Humble'      => 0.5,
-        'Stoic'       => 0.5,
-        'Bold'        => 0.4,
+        'Defiant'     => 1.0,
+        'Guarded'     => 0.5,
         'Independent' => 0.3,
-        'Defiant'     => 0.3,
+        'Stoic'       => 0.2,
     ];
 
     // =========================================================================
