@@ -9,9 +9,11 @@
  *      as this NPC defines them? Pillars are NPC-subjective (MDD 2.1-2.4):
  *        - strength and competence are read through a "lens" of the player archetypes the NPC
  *          values, auto-derived from its signed facet preferences (MDD 2.2: NPC-weighted
- *          skills): score = (1 - share) x the generic pillar + share x fit, fit = the best
- *          (lens weight x the player's MAGNITUDE as that archetype: RelDynPlayer's raw archetype
- *          score, not the identity that reads 1.0 for whatever the player mostly is). Aela
+ *          skills): score = (1 - share) x the generic pillar + share x fit, fit = the player's
+ *          archetype MIX through the lens (lens weight x the player's MAGNITUDE as each archetype:
+ *          RelDynPlayer's raw archetype score, not the identity that reads 1.0 for whatever the
+ *          player mostly is), from the best one toward their soft-or (lens_blend; decisions §10:
+ *          archetypes blend, a bard with nature-heavy deeds and spells carries a druid share). Aela
  *          values warrior / hunter / druid strength; a bard's or scholar's barely counts, and a
  *          weak warrior is still weak ("she compromises on WHERE points are, not on WHETHER you
  *          have them"); Farengar reads a scholar's magic as strength;
@@ -93,9 +95,18 @@ class RelDynAttraction
             // (RelDynPlayer::profile() returns null, not 0, for an unread pillar)
             'unknown_pillar_score' => 0.5,
             // Share of a pillar read through the NPC's lens: score = (1 - share) x generic +
-            // share x fit, fit = max over archetypes of lens weight x the player's magnitude as
-            // that archetype (profile archetype_raw; a profile without it: identity x generic).
+            // share x fit, fit over the archetypes of lens weight x the player's magnitude as
+            // that archetype (profile archetype_raw; a profile without it: identity x generic),
+            // blended by lens_blend (lensFit).
             'lens_share' => ['beauty' => 0.0, 'strength' => 0.8, 'status' => 0.0, 'competence' => 0.5],
+            // Decisions §10 (archetypes blend): how far the fit reads the player's whole archetype
+            // mix. 0 = the best single archetype; 1 = the soft-or of every valued archetype
+            // (lensFit). Between: a secondary valued archetype (a bard's druid side) adds to it.
+            'lens_blend' => 0.5,
+            // Contribution (lens weight x magnitude, 0..1) a secondary archetype needs to add to the
+            // blend: a formed side of the player, not the trace every build has (a bard's few
+            // points of alchemy and archery must not add up to a hunter-druid)
+            'lens_blend_min_contribution' => 0.15,
             // MDD 2.3 status markers: an NPC in a faction (core_npc_master extended_data.factions
             // name, case-insensitive substring) measures standing by that faction's deeds, as
             // RelDynPlayer evidence tables (key => [half, weight]).
@@ -641,20 +652,20 @@ class RelDynAttraction
                 default  => is_numeric($generic[$p] ?? null) ? floatval($generic[$p]) : null,
             };
             $known = $raw !== null;
+            $mix = null;
             if (!$known) {
                 $score = max(0.0, min(1.0, floatval($p === 'beauty' ? $cfg['beauty_unknown_score'] : $cfg['unknown_pillar_score'])));
             } else {
                 $score = max(0.0, min(1.0, $raw));
                 $lens = $def['lens'][$p] ?? null;
                 if (is_array($lens) && max(array_values($lens) ?: [0.0]) > 0) {
-                    // How much of the player's magnitude is in a form this NPC values
-                    $fit = 0.0;
-                    foreach ($lens as $a => $w) {
-                        $v = $w * self::archetypeMagnitude($profile, $a, $score);
-                        if ($v > $fit) {
-                            $fit = $v;
-                            if ($p === 'strength') $valued = $a;
-                        }
+                    // How much of the player's magnitude is in forms this NPC values, read over
+                    // the player's whole archetype mix (decisions §10: archetypes blend)
+                    [$fit, $top, $mix] = self::lensFit($lens, $profile, $score, $cfg);
+                    // What she values in the player: a formed side (lens_blend_min_contribution),
+                    // not the trace of herb lore every bard has
+                    if ($p === 'strength' && $top !== null && $mix[$top] >= floatval($cfg['lens_blend_min_contribution'] ?? 0.0)) {
+                        $valued = $top;
                     }
                     $share = $def['lens_share'][$p];
                     $score = (1.0 - $share) * $score + $share * $fit;
@@ -675,6 +686,7 @@ class RelDynAttraction
                 'score' => round($score, 4), 'weight' => round($def['weights'][$p], 4), 'rigidity' => $rig,
                 'pass' => $pass, 'known' => $known, 'tolerated' => $tolerated, 'bar' => round($pillarBar, 4),
             ];
+            if ($mix !== null) $pillars[$p]['mix'] = $mix;   // archetype => lens x magnitude (Jev / logs)
         }
 
         $wSum = 0.0;
@@ -857,6 +869,42 @@ class RelDynAttraction
             'gating'            => $gating,
             'grandfathered'     => ['depth' => $floorDepth, 'romance' => $floorRomance],
         ];
+    }
+
+    /**
+     * The lens fit over the player's archetype MIX (decisions §10: archetypes blend). Each
+     * archetype contributes c_a = lens weight x the player's magnitude as it; the fit runs from
+     * the best single contribution toward their soft-or by lens_blend:
+     *   fit = best + lens_blend x (1 - prod(1 - c_a) - best)
+     * over the contributions of at least lens_blend_min_contribution (the best one always
+     * counts), so a player with two formed sides the NPC values (a hunter who is also a druid)
+     * reads as more than either, one strong archetype still reads as itself, and a handful of
+     * traces does not add up to a side the player does not have.
+     *
+     * @return array [fit 0..1, archetype with the largest contribution (null when none), contributions > 0]
+     */
+    private static function lensFit(array $lens, array $profile, float $generic, array $cfg): array
+    {
+        $blend = max(0.0, min(1.0, floatval($cfg['lens_blend'] ?? 0.0)));
+        $min = max(0.0, floatval($cfg['lens_blend_min_contribution'] ?? 0.0));
+        $best = 0.0;
+        $top = null;
+        $contrib = [];
+        foreach ($lens as $a => $w) {
+            $c = max(0.0, min(1.0, floatval($w) * self::archetypeMagnitude($profile, (string) $a, $generic)));
+            if ($c <= 0.0) continue;
+            $contrib[(string) $a] = $c;
+            if ($c > $best) {
+                $best = $c;
+                $top = (string) $a;
+            }
+        }
+        $none = 1.0 - $best;
+        foreach ($contrib as $a => $c) {
+            if ($a !== $top && $c >= $min) $none *= 1.0 - $c;
+        }
+        arsort($contrib);
+        return [$best + $blend * ((1.0 - $none) - $best), $top, array_map(fn($c) => round($c, 4), $contrib)];
     }
 
     /**

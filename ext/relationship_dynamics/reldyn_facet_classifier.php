@@ -8,7 +8,11 @@
  *
  *  1. The deterministic PRIOR: an Oghma entry's knowledge_class tokens, its category and its
  *     topic / aliases / tags words through editable mapping tables (config facet_classifier:
- *     knowledge_class_prior, category_prior, tag_keywords). Always available.
+ *     knowledge_class_prior, category_prior, tag_keywords). Always available. A magic entry
+ *     (a spell, a shout, a school's lore) reads by its school and SUBJECT instead of "magic, so
+ *     scholarly" (decisions §10, config facet_classifier.spell_subjects, spellReading()): nature
+ *     magic is nature / wild, healing is spiritual, destruction is combat, daedra are dangerous
+ *     learning. The same reading classifies spell tomes, staves and the player's own spells.
  *  2. The EMBEDDING: every facet has a short anchor description (config facet_classifier.anchors,
  *     e.g. "scholarly: books, research, ancient lore, study"). The anchors are embedded once,
  *     every Oghma entry's text is embedded once (or its oghma.vector384 is reused when core
@@ -580,6 +584,178 @@ final class RelDynFacetClassifier
                 'resting'   => ['domestic' => 0.5, 'quiet' => 0.6],
                 'looting'   => ['wealth' => 0.7, 'adventure' => 0.7],
             ],
+            'spell_subjects' => self::spellSubjectDefaults(),
+        ];
+    }
+
+    /**
+     * Default config facet_classifier.spell_subjects (decisions §10: a spell's facets follow its
+     * SUBJECT, not "it's magic, so scholar"). Read by spellReading() for Oghma spell rows, item
+     * and topic names, and the player's held / cast spells (RelDynPlayer).
+     *
+     *   categories       Oghma categories whose rows are magic ('spells' also holds diseases
+     *                    and dragon shouts)
+     *   magic_markers    keywords that make a NAME magic (a spell tome, a staff; school words
+     *                    also do). Tags never do: a history book tagged 'Magic' is a book.
+     *   replaced_keywords  tag_keywords / item_keywords entries the spell reading replaces on a
+     *                    magic entry (the generic "magic = enchanting + scholarly" words)
+     *   ignore_knowledge_classes  audiences that say nothing about a magic entry (every spell
+     *                    lists 'mage', the lore of a school is 'scholar'-only; its school and
+     *                    subject say what it is)
+     *   school_weight_with_subject  x the school's reading when a subject speaks (a familiar
+     *                    is conjuration, but it is a wolf first)
+     *   tag_subject_weight  x a subject matched only in an Oghma row's tags
+     *   default          a magic entry with neither school nor subject (the old spells prior)
+     *   schools          school => keywords (found in the name first, then the tags; the
+     *                    earliest wins), facets, archetypes (RelDynPlayer::ARCHETYPES, 0..1:
+     *                    the player signal of casting it)
+     *   subjects         keyword => facets, archetypes; 'exclusive' => true: when any exclusive
+     *                    subject matches, only exclusive subjects count (a disease's tags name
+     *                    its carriers: wolves, bears); 'ignore' => true: matches nothing, only
+     *                    shadows the shorter keywords inside it (ingredients: Bear Claws,
+     *                    Spriggan Sap, Fire Salts in potion-effect tags)
+     * Keywords match whole words (a trailing s/es plural too); a keyword inside a longer matched
+     * keyword yields to it ('fire' to 'resist fire').
+     */
+    public static function spellSubjectDefaults(): array
+    {
+        $nature = ['nature' => 0.9, 'wild' => 0.6];
+        $beast = ['nature' => 0.8, 'wild' => 0.7];
+        $shape = ['wild' => 0.9, 'nature' => 0.6, 'danger' => 0.4, 'combat' => 0.4];
+        $weather = ['nature' => 0.8, 'wild' => 0.6, 'danger' => 0.2];
+        $elemental = ['combat' => 0.7, 'danger' => 0.5];
+        $heal = ['spiritual' => 0.6, 'sacred' => 0.3, 'alchemy' => 0.2];
+        $holy = ['spiritual' => 0.6, 'sacred' => 0.7, 'combat' => 0.3];
+        $daedra = ['scholarly' => 0.5, 'danger' => 0.6, 'dark' => 0.3, 'enchanting' => 0.3];
+        $necro = ['dark' => 0.9, 'danger' => 0.5, 'scholarly' => 0.3];
+        $calm = ['social' => 0.6, 'quiet' => 0.5];
+        $fear = ['danger' => 0.5, 'social' => 0.4, 'dark' => 0.3];
+        $frenzy = ['danger' => 0.6, 'combat' => 0.4];
+        $rally = ['social' => 0.5, 'combat' => 0.4];
+        $stealth = ['adventure' => 0.5, 'dark' => 0.4];
+        $flesh = ['combat' => 0.5, 'enchanting' => 0.3];
+        $explore = ['adventure' => 0.5];
+        $disease = ['danger' => 0.5, 'alchemy' => 0.4, 'spiritual' => 0.2];
+        $vampire = ['dark' => 0.9, 'danger' => 0.6];
+        $druid = ['druid' => 0.9];
+        $s = fn(array $facets, array $archetypes, array $extra = []) => ['facets' => $facets, 'archetypes' => $archetypes] + $extra;
+        $ignore = ['ignore' => true];
+        return [
+            'categories' => ['spells'],
+            'magic_markers' => ['spell', 'spells', 'spell tome', 'scroll', 'staff', 'magic', 'arcane', 'shout', "thu'um"],
+            'replaced_keywords' => ['spell', 'spell tome', 'scroll', 'staff', 'magic', 'arcane', 'conjuration', 'destruction',
+                'illusion', 'alteration', 'restoration'],
+            'ignore_knowledge_classes' => ['mage', 'scholar'],
+            'school_weight_with_subject' => 0.35,
+            // x a subject found only in the tags (tags also name targets and carriers: a holy
+            // weapon's tags say 'vampires'); a subject in the name counts in full
+            'tag_subject_weight' => 0.6,
+            'default' => $s(['enchanting' => 0.6, 'scholarly' => 0.3], ['mage' => 0.5, 'scholar' => 0.3]),
+            'schools' => [
+                'destruction' => ['keywords' => ['destruction'],
+                    'facets' => ['combat' => 0.7, 'danger' => 0.5, 'enchanting' => 0.3], 'archetypes' => ['mage' => 0.9]],
+                'conjuration' => ['keywords' => ['conjuration', 'conjure', 'summon', 'summoning'],
+                    'facets' => ['enchanting' => 0.5, 'scholarly' => 0.5, 'danger' => 0.4], 'archetypes' => ['mage' => 0.9, 'scholar' => 0.3]],
+                'alteration'  => ['keywords' => ['alteration'],
+                    'facets' => ['enchanting' => 0.5, 'scholarly' => 0.5], 'archetypes' => ['mage' => 0.7, 'scholar' => 0.5]],
+                'illusion'    => ['keywords' => ['illusion'],
+                    'facets' => ['enchanting' => 0.4, 'social' => 0.4, 'scholarly' => 0.2], 'archetypes' => ['mage' => 0.6, 'bard' => 0.4]],
+                'restoration' => ['keywords' => ['restoration'],
+                    'facets' => ['spiritual' => 0.6, 'sacred' => 0.3, 'enchanting' => 0.2], 'archetypes' => ['healer' => 0.9]],
+                // Dragon shouts (the Voice): Thu'um is a warrior's and a pilgrim's art, not a book's
+                'voice'       => ['keywords' => ["thu'um", 'dragon shout', 'shout', 'words of power', 'word of power'],
+                    'facets' => ['spiritual' => 0.4, 'combat' => 0.4, 'danger' => 0.3], 'archetypes' => ['warrior' => 0.4]],
+            ],
+            'subjects' => [
+                // --- nature magic: animals, plants, weather, shapeshifting, beast calls (druid)
+                'animal' => $s($nature, $druid), 'beast' => $s($beast, ['druid' => 0.8]),
+                'wolf' => $s($beast, ['druid' => 0.7]), 'wolves' => $s($beast, ['druid' => 0.7]),
+                'bear' => $s($beast, ['druid' => 0.7]), 'sabre cat' => $s($beast, ['druid' => 0.7]),
+                'spriggan' => $s(['nature' => 1.0, 'wild' => 0.6, 'spiritual' => 0.3], ['druid' => 1.0]),
+                'familiar' => $s(['nature' => 0.8, 'wild' => 0.5], ['druid' => 0.6]),
+                'pet' => $s(['nature' => 0.6, 'domestic' => 0.3], ['druid' => 0.4]),
+                'nature' => $s(['nature' => 1.0, 'wild' => 0.6], ['druid' => 1.0]),
+                'kyne' => $s(['nature' => 0.9, 'spiritual' => 0.5, 'wild' => 0.5], $druid),
+                'hircine' => $s(['wild' => 0.8, 'nature' => 0.6, 'danger' => 0.4], ['druid' => 0.6, 'hunter' => 0.5]),
+                'plant' => $s($nature, $druid), 'vine' => $s($nature, $druid), 'thorn' => $s($nature + ['danger' => 0.3], $druid),
+                'bramble' => $s($nature + ['danger' => 0.3], $druid), 'entangle' => $s($nature, $druid), 'grove' => $s($nature, $druid),
+                'weather' => $s($weather, ['druid' => 0.8]), 'storm call' => $s($weather, ['druid' => 0.8]),
+                'call storm' => $s($weather, ['druid' => 0.8]), 'call lightning' => $s($weather, ['druid' => 0.8]),
+                'clear skies' => $s($weather, ['druid' => 0.8]),
+                'shapeshift' => $s($shape, ['druid' => 0.7]), 'shapeshifting' => $s($shape, ['druid' => 0.7]),
+                'beast form' => $s($shape, ['druid' => 0.7]), 'werebeast' => $s($shape, ['druid' => 0.7], ['exclusive' => true]),
+                'werewolf' => $s($shape, ['druid' => 0.7], ['exclusive' => true]), 'werebear' => $s($shape, ['druid' => 0.7], ['exclusive' => true]),
+                'lycanthropy' => $s($shape, ['druid' => 0.7], ['exclusive' => true]),
+                'hunter' => $s(['nature' => 0.6, 'combat' => 0.4, 'wild' => 0.4], ['hunter' => 0.8]),
+                'huntsman' => $s(['nature' => 0.6, 'combat' => 0.4, 'wild' => 0.4], ['hunter' => 0.8]),
+                // --- destruction: elemental harm reads as combat and danger
+                'fire' => $s($elemental, ['mage' => 0.8]), 'flame' => $s($elemental, ['mage' => 0.8]),
+                'firebolt' => $s($elemental, ['mage' => 0.8]), 'fireball' => $s($elemental, ['mage' => 0.8]),
+                'incinerate' => $s($elemental, ['mage' => 0.8]), 'ignite' => $s($elemental, ['mage' => 0.8]),
+                'frost' => $s($elemental, ['mage' => 0.8]), 'frostbite' => $s($elemental, ['mage' => 0.8]),
+                'ice' => $s($elemental, ['mage' => 0.8]), 'icy' => $s($elemental, ['mage' => 0.8]), 'blizzard' => $s($elemental, ['mage' => 0.8]),
+                'shock' => $s($elemental, ['mage' => 0.8]), 'spark' => $s($elemental, ['mage' => 0.8]),
+                'lightning' => $s($elemental, ['mage' => 0.8]), 'thunderbolt' => $s($elemental, ['mage' => 0.8]),
+                'rune' => $s(['combat' => 0.5, 'danger' => 0.5], ['mage' => 0.6]),
+                // --- restoration: the healer's and the priest's craft
+                'heal' => $s($heal, ['healer' => 1.0]), 'healing' => $s($heal, ['healer' => 1.0]),
+                'cure' => $s($heal, ['healer' => 0.8]), 'cure disease' => $s($heal, ['healer' => 0.8]),
+                'ward' => $s(['spiritual' => 0.5, 'sacred' => 0.3, 'combat' => 0.2], ['healer' => 0.6, 'mage' => 0.3]),
+                'turn undead' => $s($holy, ['healer' => 0.6]), 'turn lesser undead' => $s($holy, ['healer' => 0.6]),
+                'turn greater undead' => $s($holy, ['healer' => 0.6]), 'repel undead' => $s($holy, ['healer' => 0.6]),
+                'repel lesser undead' => $s($holy, ['healer' => 0.6]), 'bane of the undead' => $s($holy, ['healer' => 0.6]),
+                "vampire's bane" => $s($holy, ['healer' => 0.6]), 'stendarr' => $s($holy, ['healer' => 0.6]),
+                'sun fire' => $s($holy, ['healer' => 0.6]), 'sun damage' => $s($holy, ['healer' => 0.6]),
+                'light damage' => $s($holy, ['healer' => 0.6]),
+                'circle of protection' => $s($holy, ['healer' => 0.6]), 'guardian circle' => $s($holy, ['healer' => 0.6]),
+                // --- conjuration: daedra are dangerous learning; the dead are dark; bound arms are combat
+                'daedra' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]), 'daedric' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]),
+                'dremora' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]), 'atronach' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]),
+                'oblivion' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]), 'seeker' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]),
+                'banish' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]), 'expel' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]),
+                'flame thrall' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]), 'frost thrall' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]),
+                'storm thrall' => $s($daedra, ['mage' => 0.9, 'scholar' => 0.3]),
+                'bound' => $s(['combat' => 0.6, 'enchanting' => 0.4], ['mage' => 0.6, 'warrior' => 0.2]),
+                'reanimate' => $s($necro, ['mage' => 0.7]), 'raise zombie' => $s($necro, ['mage' => 0.7]),
+                'zombie' => $s($necro, ['mage' => 0.7]), 'thrall' => $s($necro, ['mage' => 0.7]), 'revenant' => $s($necro, ['mage' => 0.7]),
+                'necromancy' => $s($necro, ['mage' => 0.7]), 'necromantic' => $s($necro, ['mage' => 0.7]),
+                'corpse' => $s($necro, ['mage' => 0.7]), 'mistman' => $s($necro, ['mage' => 0.7]),
+                'soul trap' => $s(['enchanting' => 1.0, 'dark' => 0.3], ['mage' => 0.5, 'scholar' => 0.3]),
+                // --- illusion: minds, not books
+                'calm' => $s($calm, ['bard' => 0.6, 'mage' => 0.3]), 'pacify' => $s($calm, ['bard' => 0.6, 'mage' => 0.3]),
+                'harmony' => $s($calm, ['bard' => 0.6, 'mage' => 0.3]), 'peace' => $s($calm, ['bard' => 0.6, 'mage' => 0.3]),
+                'fear' => $s($fear, ['mage' => 0.4, 'bard' => 0.3]), 'rout' => $s($fear, ['mage' => 0.4, 'bard' => 0.3]),
+                'hysteria' => $s($fear, ['mage' => 0.4, 'bard' => 0.3]), 'dismay' => $s($fear, ['mage' => 0.4, 'bard' => 0.3]),
+                'fury' => $s($frenzy, ['mage' => 0.4]), 'frenzy' => $s($frenzy, ['mage' => 0.4]), 'mayhem' => $s($frenzy, ['mage' => 0.4]),
+                'courage' => $s($rally, ['bard' => 0.5, 'warrior' => 0.2]), 'rally' => $s($rally, ['bard' => 0.5, 'warrior' => 0.2]),
+                'call to arms' => $s($rally, ['bard' => 0.5, 'warrior' => 0.2]),
+                'invisibility' => $s($stealth, ['thief' => 0.7]), 'muffle' => $s($stealth, ['thief' => 0.7]),
+                'clairvoyance' => $s($explore, ['mage' => 0.3]),
+                // --- alteration: armour of the flesh, light, sight, hands at a distance
+                'oakflesh' => $s($flesh, ['mage' => 0.5, 'warrior' => 0.2]), 'stoneflesh' => $s($flesh, ['mage' => 0.5, 'warrior' => 0.2]),
+                'ironflesh' => $s($flesh, ['mage' => 0.5, 'warrior' => 0.2]), 'ebonyflesh' => $s($flesh, ['mage' => 0.5, 'warrior' => 0.2]),
+                'dragonhide' => $s($flesh, ['mage' => 0.5, 'warrior' => 0.2]),
+                'light' => $s($explore, ['mage' => 0.4]), 'candlelight' => $s($explore, ['mage' => 0.4]), 'magelight' => $s($explore, ['mage' => 0.4]),
+                'detect' => $s($explore + ['wild' => 0.2], ['mage' => 0.3, 'hunter' => 0.2]),
+                'waterbreathing' => $s($explore + ['nature' => 0.3], ['mage' => 0.3]), 'waterwalking' => $s($explore + ['nature' => 0.3], ['mage' => 0.3]),
+                'paralyze' => $s(['danger' => 0.5, 'combat' => 0.4], ['mage' => 0.5]), 'paralysis' => $s(['danger' => 0.5, 'combat' => 0.4], ['mage' => 0.5]),
+                'armor' => $s($flesh, ['mage' => 0.5, 'warrior' => 0.2]),
+                'telekinesis' => $s(['scholarly' => 0.5, 'enchanting' => 0.4], ['mage' => 0.5, 'scholar' => 0.4]),
+                'transmute' => $s(['crafting' => 0.6, 'wealth' => 0.5], ['smith' => 0.3, 'mage' => 0.3]),
+                // --- potion and enchantment effects (fortify skill X): the effect, not the school
+                'fortify' => $s(['alchemy' => 0.5, 'enchanting' => 0.5], ['healer' => 0.3]),
+                // --- diseases and vampirism (category spells): what they are, not what carries them
+                'disease' => $s($disease, ['healer' => 0.3], ['exclusive' => true]),
+                'vampirism' => $s($vampire, []), 'vampire' => $s($vampire, []), 'sanguinare' => $s($vampire, []),
+                'vampiric' => $s($vampire, ['mage' => 0.4]),
+                // --- shadows: ingredient and effect names that contain a subject word
+                'bear claws' => $ignore, 'sabre cat tooth' => $ignore, 'sabre cat eye' => $ignore, 'eye of sabre cat' => $ignore,
+                'spriggan sap' => $ignore, 'burnt spriggan wood' => $ignore, 'fire salts' => $ignore, 'frost salts' => $ignore,
+                'frost mirriam' => $ignore, 'daedra heart' => $ignore, 'ice wraith teeth' => $ignore, 'wolf pelt' => $ignore, 'light armor' => $ignore,
+                'resist fire' => $s(['spiritual' => 0.4, 'alchemy' => 0.3], ['healer' => 0.5]),
+                'resist frost' => $s(['spiritual' => 0.4, 'alchemy' => 0.3], ['healer' => 0.5]),
+                'resist shock' => $s(['spiritual' => 0.4, 'alchemy' => 0.3], ['healer' => 0.5]),
+            ],
         ];
     }
 
@@ -712,21 +888,33 @@ final class RelDynFacetClassifier
      * trailing s/es plural also matches), per-facet maximum over the matches; a keyword that is
      * part of a longer matched keyword yields to it.
      */
-    public static function keywordFacets(string $text, array $table): array
+    public static function keywordFacets(string $text, array $table, array $exclude = []): array
+    {
+        $matched = self::keywordMatches($text, $table);
+        foreach ($exclude as $kw) {
+            unset($matched[self::nameKey((string) $kw)]);   // after shadowing: 'spell tome' still hides 'tome'
+        }
+        return self::maxMerge(array_values($matched));
+    }
+
+    /**
+     * The entries of a keyword table (keyword => array) found in $text, keyed by their name key:
+     * whole words, a trailing s/es plural too; a keyword inside a longer matched keyword yields to it.
+     */
+    public static function keywordMatches(string $text, array $table): array
     {
         $text = self::nameKey($text);
         if ($text === '') {
             return [];
         }
         $matched = [];
-        foreach ($table as $kw => $facets) {
+        foreach ($table as $kw => $value) {
             $k = self::nameKey((string) $kw);
-            if ($k === '' || !is_array($facets)) {
+            if ($k === '' || !is_array($value)) {
                 continue;
             }
-            $re = '/(?<![\p{L}\p{N}])' . preg_quote($k, '/') . '(?:s|es)?(?![\p{L}\p{N}])/u';
-            if (preg_match($re, $text) === 1) {
-                $matched[$k] = $facets;
+            if (self::wordOffset($text, $k) !== null) {
+                $matched[$k] = $value;
             }
         }
         foreach (array_keys($matched) as $k) {
@@ -737,7 +925,142 @@ final class RelDynFacetClassifier
                 }
             }
         }
-        return self::maxMerge(array_values($matched));
+        return $matched;
+    }
+
+    /** Offset of the first whole-word match of name key $k (plural s/es too) in $text, or null. */
+    private static function wordOffset(string $text, string $k): ?int
+    {
+        $re = '/(?<![\p{L}\p{N}])' . preg_quote($k, '/') . '(?:s|es)?(?![\p{L}\p{N}])/u';
+        return preg_match($re, $text, $m, PREG_OFFSET_CAPTURE) === 1 ? (int) $m[0][1] : null;
+    }
+
+    // =========================================================================
+    // Spells by subject (decisions §10: nature magic is not bookish)
+    // =========================================================================
+
+    /**
+     * What a spell (or a magic entry) is about: its school and subjects through config
+     * facet_classifier.spell_subjects (see spellSubjectDefaults()). Null when it is not magic, or
+     * when it is only assumed to be magic ($assumeMagic: a held or cast spell) and nothing in its
+     * name is known.
+     *
+     * An entry is magic when its Oghma category is a magic category, when $assumeMagic, or when
+     * its NAME carries a magic marker or a school keyword (tags never make an entry magic).
+     *   school    the school whose keyword comes first in the name, else first in the tags
+     *   subjects  subject keywords in the name (x 1) and in the tags only (x tag_subject_weight);
+     *             ignore rows only shadow; an exclusive row (a disease, lycanthropy) silences the
+     *             other subjects found only in the tags (the carriers a disease's tags name)
+     *   facets    subjects' facets, plus the school's x school_weight_with_subject; no subject:
+     *             the school's facets; neither: the default reading (per-facet maximum throughout)
+     *   archetypes  the same composition over each row's player archetypes (0..1)
+     *
+     * @return array|null ['school' => ?string, 'subjects' => string[], 'facets' => facet => 0..1,
+     *                     'archetypes' => archetype => 0..1]
+     */
+    public static function spellReading(string $name, string $tags = '', ?string $category = null, bool $assumeMagic = false, ?array $cfg = null): ?array
+    {
+        $cfg = $cfg ?? self::config();
+        $sc = (array) ($cfg['spell_subjects'] ?? []);
+        $nameText = self::nameKey(str_replace(',', ' | ', $name));
+        $tagText = self::nameKey(str_replace(',', ' | ', $tags));
+        if ($nameText === '' && $tagText === '') {
+            return null;
+        }
+        $schools = (array) ($sc['schools'] ?? []);
+        $schoolInName = self::firstSchool($nameText, $schools);
+        $school = $schoolInName ?? self::firstSchool($tagText, $schools);
+        $categories = array_map(fn($c) => strtolower(trim((string) $c)), (array) ($sc['categories'] ?? []));
+        $categoryMagic = $category !== null && in_array(strtolower(trim($category)), $categories, true);
+        $marked = self::keywordMatches($nameText, array_fill_keys((array) ($sc['magic_markers'] ?? []), [])) !== [];
+        if (!$categoryMagic && !$assumeMagic && !$marked && $schoolInName === null) {
+            return null;
+        }
+
+        $table = (array) ($sc['subjects'] ?? []);
+        $weighted = [];   // keyword => [row, weight]
+        foreach (self::keywordMatches($nameText, $table) as $k => $row) {
+            $weighted[$k] = [$row, 1.0];
+        }
+        $tagWeight = max(0.0, min(1.0, (float) ($sc['tag_subject_weight'] ?? 1.0)));
+        foreach (self::keywordMatches($tagText, $table) as $k => $row) {
+            $weighted[$k] = $weighted[$k] ?? [$row, $tagWeight];
+        }
+        $weighted = array_filter($weighted, fn($m) => empty($m[0]['ignore']));
+        $exclusive = array_filter($weighted, fn($m) => !empty($m[0]['exclusive']));
+        if ($exclusive !== []) {
+            // the carriers a disease's tags name are silenced; what its NAME says still counts
+            $inName = array_filter($weighted, fn($m) => $m[1] >= 1.0);
+            $weighted = $exclusive + $inName;
+        }
+
+        $facets = [];
+        $archetypes = [];
+        foreach ($weighted as [$row, $w]) {
+            $facets[] = self::scaled((array) ($row['facets'] ?? []), $w);
+            $archetypes[] = self::scaled((array) ($row['archetypes'] ?? []), $w);
+        }
+        $schoolRow = $school !== null ? (array) $schools[$school] : null;
+        if ($weighted !== [] && $schoolRow !== null) {
+            $k = max(0.0, min(1.0, (float) ($sc['school_weight_with_subject'] ?? 0.0)));
+            $facets[] = self::scaled((array) ($schoolRow['facets'] ?? []), $k);
+            $archetypes[] = self::scaled((array) ($schoolRow['archetypes'] ?? []), $k);
+        } elseif ($weighted === [] && $schoolRow !== null) {
+            $facets[] = (array) ($schoolRow['facets'] ?? []);
+            $archetypes[] = (array) ($schoolRow['archetypes'] ?? []);
+        } elseif ($weighted === []) {
+            if (!$categoryMagic && !$marked) {
+                return null;   // assumed magic, nothing known about it
+            }
+            $facets[] = (array) ($sc['default']['facets'] ?? []);
+            $archetypes[] = (array) ($sc['default']['archetypes'] ?? []);
+        }
+        return [
+            'school' => $school,
+            'subjects' => array_keys($weighted),
+            'facets' => self::maxMerge($facets),
+            'archetypes' => self::mergeWeights($archetypes),
+        ];
+    }
+
+    /** The school whose keyword comes first in $text (ties: table order), or null. */
+    private static function firstSchool(string $text, array $schools): ?string
+    {
+        if ($text === '') {
+            return null;
+        }
+        $best = null;
+        $bestAt = PHP_INT_MAX;
+        foreach ($schools as $school => $row) {
+            foreach ((array) ($row['keywords'] ?? []) as $kw) {
+                $k = self::nameKey((string) $kw);
+                $at = $k === '' ? null : self::wordOffset($text, $k);
+                if ($at !== null && $at < $bestAt) {
+                    $bestAt = $at;
+                    $best = (string) $school;
+                }
+            }
+        }
+        return $best;
+    }
+
+    /** Per-key maximum of several key => 0..1 maps (archetype weights), clamped, zeros dropped. */
+    private static function mergeWeights(array $maps): array
+    {
+        $out = [];
+        foreach ($maps as $map) {
+            foreach ((array) $map as $key => $w) {
+                if (!is_numeric($w)) {
+                    continue;
+                }
+                $w = round(max(0.0, min(1.0, (float) $w)), 3);
+                if ($w > 0.0) {
+                    $out[(string) $key] = max($out[(string) $key] ?? 0.0, $w);
+                }
+            }
+        }
+        arsort($out);
+        return $out;
     }
 
     /**
@@ -745,36 +1068,47 @@ final class RelDynFacetClassifier
      * table, then each class row diluted by the number of such classes, see
      * knowledge_class_prior), category, the words of its name (topic, aliases) and of its tags
      * through the tables, each source x its prior_weights entry; per-facet maximum over the sources.
+     * A magic entry (spellReading) takes its spell reading (x the name weight) in place of the
+     * category row, drops spell_subjects.ignore_knowledge_classes and the replaced_keywords.
      */
     public static function priorFacets(array $row, ?array $cfg = null): array
     {
         $cfg = $cfg ?? self::config();
         $w = array_replace(['knowledge_class' => 1.0, 'category' => 1.0, 'name' => 1.0, 'tags' => 1.0], (array) ($cfg['prior_weights'] ?? []));
+        $name = str_replace('_', ' ', (string) ($row['topic'] ?? '')) . ' | ' . str_replace(',', ' | ', (string) ($row['aliases'] ?? ''));
+        $tags = str_replace(',', ' | ', (string) ($row['tags'] ?? ''));
+        $cat = strtolower(trim((string) ($row['category'] ?? '')));
+        // Decisions §10: a magic entry reads by its school and subject; that reading replaces
+        // the generic "magic" category prior, the mage audience and the generic magic keywords.
+        $spell = self::spellReading($name, $tags, $cat, false, $cfg);
+        $sc = (array) ($cfg['spell_subjects'] ?? []);
+        $replaced = $spell !== null ? (array) ($sc['replaced_keywords'] ?? []) : [];
+        $ignoredClasses = $spell !== null ? array_map('strtolower', (array) ($sc['ignore_knowledge_classes'] ?? [])) : [];
+
         $parts = [];
         $classes = array_values(array_unique(array_filter(
             array_map(fn($t) => strtolower(trim($t)), explode(',', (string) ($row['knowledge_class'] ?? ''))),
             fn($t) => $t !== ''
         )));
         $sole = (array) ($cfg['knowledge_class_sole_prior'] ?? []);
-        if (count($classes) === 1 && isset($sole[$classes[0]])) {
+        if (count($classes) === 1 && isset($sole[$classes[0]]) && !in_array($classes[0], $ignoredClasses, true)) {
             $parts[] = self::scaled((array) $sole[$classes[0]], (float) $w['knowledge_class']);
         }
         $table = (array) ($cfg['knowledge_class_prior'] ?? []);
-        $mapped = array_values(array_filter($classes, fn($t) => isset($table[$t])));
+        $mapped = array_values(array_filter($classes, fn($t) => isset($table[$t]) && !in_array($t, $ignoredClasses, true)));
         if ($mapped !== []) {
             $k = (float) $w['knowledge_class'] / pow(count($mapped), max(0.0, (float) ($cfg['knowledge_class_dilution'] ?? 0.0)));
             foreach ($mapped as $t) {
                 $parts[] = self::scaled((array) $table[$t], $k);
             }
         }
-        $cat = strtolower(trim((string) ($row['category'] ?? '')));
-        if ($cat !== '' && isset($cfg['category_prior'][$cat])) {
+        if ($spell !== null) {
+            $parts[] = self::scaled($spell['facets'], (float) $w['name']);
+        } elseif ($cat !== '' && isset($cfg['category_prior'][$cat])) {
             $parts[] = self::scaled((array) $cfg['category_prior'][$cat], (float) $w['category']);
         }
-        $name = str_replace('_', ' ', (string) ($row['topic'] ?? '')) . ' | ' . str_replace(',', ' | ', (string) ($row['aliases'] ?? ''));
-        $parts[] = self::scaled(self::keywordFacets($name, (array) $cfg['tag_keywords']), (float) $w['name']);
-        $tags = str_replace(',', ' | ', (string) ($row['tags'] ?? ''));
-        $parts[] = self::scaled(self::keywordFacets($tags, (array) $cfg['tag_keywords']), (float) $w['tags']);
+        $parts[] = self::scaled(self::keywordFacets($name, (array) $cfg['tag_keywords'], $replaced), (float) $w['name']);
+        $parts[] = self::scaled(self::keywordFacets($tags, (array) $cfg['tag_keywords'], $replaced), (float) $w['tags']);
         return self::maxMerge($parts);
     }
 
@@ -1393,7 +1727,17 @@ final class RelDynFacetClassifier
         if ($oghma !== null && $oghma['facets'] !== []) {
             return $oghma['facets'];
         }
-        return $kind === 'activity' ? [] : self::keywordFacets($name, (array) $cfg[$table]);
+        if ($kind === 'activity') {
+            return [];
+        }
+        // Decisions §10: a spell tome, a scroll, a staff or a spell named as a topic reads by
+        // its subject; the generic magic words it replaces drop out of the keyword reading.
+        $spell = in_array($kind, ['item', 'topic'], true) ? self::spellReading($name, '', null, false, $cfg) : null;
+        if ($spell === null) {
+            return self::keywordFacets($name, (array) $cfg[$table]);
+        }
+        $replaced = (array) ($cfg['spell_subjects']['replaced_keywords'] ?? []);
+        return self::maxMerge([self::keywordFacets($name, (array) $cfg[$table], $replaced), $spell['facets']]);
     }
 
     // =========================================================================
