@@ -1740,8 +1740,10 @@ class RelationshipDynamics
             return;
         }
 
-        // Migration: re-initialize Unix timestamps to gamets
-        if ($lastUpdate > 1000000000) {
+        // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
+        // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
+        // itself passes 1e9 after ~120 real hours with an NPC.
+        if ($lastUpdate > $now) {
             $lastUpdate = $now;
             $dynamics['passion_updated_at'] = $now;
         }
@@ -1811,8 +1813,10 @@ class RelationshipDynamics
         $lastUpdate = floatval($dynamics['jealousy_updated_at'] ?? 0);
         if ($lastUpdate <= 0 || floatval($dynamics['jealousy_anger'] ?? 0) <= 0) return;
 
-        // Migration: re-initialize Unix timestamps to gamets
-        if ($lastUpdate > 1000000000) {
+        // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
+        // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
+        // itself passes 1e9 after ~120 real hours with an NPC.
+        if ($lastUpdate > $now) {
             $lastUpdate = $now;
             $dynamics['jealousy_updated_at'] = $now;
         }
@@ -1918,8 +1922,10 @@ class RelationshipDynamics
             return 1.0;
         }
 
-        // Migration: re-initialize Unix timestamps to gamets
-        if ($lastInteraction > 1000000000) {
+        // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
+        // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
+        // itself passes 1e9 after ~120 real hours with an NPC.
+        if ($lastInteraction > $now) {
             $lastInteraction = $now;
             // Note: read-only function, caller must persist if needed
         }
@@ -1952,8 +1958,10 @@ class RelationshipDynamics
         $lastInteraction = floatval($dynamics['last_interaction_at'] ?? 0);
         $rawCount = intval($dynamics['interaction_count'] ?? 0);
 
-        // Migration: re-initialize Unix timestamps to gamets
-        if ($lastInteraction > 1000000000) {
+        // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
+        // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
+        // itself passes 1e9 after ~120 real hours with an NPC.
+        if ($lastInteraction > $now) {
             $lastInteraction = $now;
             $dynamics['last_interaction_at'] = $now;
         }
@@ -2012,8 +2020,10 @@ class RelationshipDynamics
             return 0.0;
         }
 
-        // Migration: re-initialize Unix timestamps to gamets
-        if ($lastSeen > 1000000000) {
+        // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
+        // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
+        // itself passes 1e9 after ~120 real hours with an NPC.
+        if ($lastSeen > $now) {
             $lastSeen = $now;
             $dynamics['last_seen_at'] = $now;
         }
