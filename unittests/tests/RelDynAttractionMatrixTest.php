@@ -599,6 +599,9 @@ final class RelDynAttractionMatrixTest extends TestCase
         RelationshipDynamics::updateAttraction(self::AELA, $e, self::player('newwarrior'));
         $this->assertSame('friend', RelationshipDynamics::getRelationshipType(self::AELA, $e), 'close_friend ceiling: friend modifiers');
         $this->assertSame(80.0, RelationshipDynamics::getCoreAffinity($e), 'affinity itself is never capped');
+        // Context depth too (plan §5): bonded affinity would be tier 3, the ceiling holds it at 2
+        $this->assertSame(2, RelationshipDynamics::getAffinityContextTier($e));
+        $this->assertSame(3, RelationshipDynamics::getAffinityContextTier($this->npc(self::AELA, [], 80.0)), 'no attraction read: uncapped');
     }
 
     public function testLowOpennessReachesTheIckSoonerPastAFailedCheck(): void

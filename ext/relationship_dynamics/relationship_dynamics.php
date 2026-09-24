@@ -8441,10 +8441,13 @@ class RelationshipDynamics
         return null;
     }
 
-    /** Context tier (0-3) the NPC's current core affinity supports, before the high-water mark. */
+    /**
+     * Context tier (0-3) the NPC's current core affinity supports, before the high-water mark,
+     * no deeper than the attraction ceiling (plan §5: context depth above it is blocked).
+     */
     public static function getAffinityContextTier(array $dynamics): int
     {
-        $tier = self::getCurrentTier(self::getCoreAffinity($dynamics));
+        $tier = self::attractionCappedTier($dynamics);
         return self::CONTEXT_TIER_BY_RELATIONSHIP_TIER[$tier] ?? 0;
     }
 
