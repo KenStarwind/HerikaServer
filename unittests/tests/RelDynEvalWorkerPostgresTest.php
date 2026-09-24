@@ -393,6 +393,63 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
         $this->assertSame($w, RelDynEval::conversationWindow(self::NPC, self::PLAYER, $anchor, 12, 200));
     }
 
+    /** THIS EXCHANGE block of an eval prompt, one line per entry. */
+    private static function scoredLines(array $call): array
+    {
+        $user = $call['messages'][1]['content'];
+        $block = explode('THIS EXCHANGE (score only this):', $user, 2)[1];
+        $block = preg_split('/\R(?:Observed events|TASK:)/', $block, 2)[0];
+        return array_values(array_filter(array_map('trim', preg_split('/\R/', $block))));
+    }
+
+    public function testAnNpcFollowUpIsScoredAloneNotWithTheExchangeBeforeIt(): void
+    {
+        $t = self::T0;
+        $this->event('inputtext', 'Kaida: You are a coward, Aela. (Talking to Aela the Huntress)', $t);
+        $this->npcSays(self::NPC, 'How dare you say that to me.', self::PLAYER, $t);
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) $t, 'Kaida: You are a coward, Aela.'], self::PLAYER);
+
+        // She speaks again to the player without a new player line (rechat addressed to Kaida).
+        $t2 = $t + 5000;
+        $this->npcSays(self::NPC, 'And another thing: I am still waiting for an apology.', self::PLAYER, $t2);
+        $this->postrequest(self::NPC, ['rechat', '1727000180', (string) $t2, ''], self::PLAYER);
+        $this->assertCount(2, $this->jobs());
+
+        $calls = [];
+        $stats = RelDynEval::runWorker($this->llm(self::GOOD_REPLY, $calls));
+        $this->assertSame(2, $stats['queued'], json_encode($stats));
+        $this->assertSame([
+            '[Kaida] (to Aela the Huntress): You are a coward, Aela.',
+            '[Aela the Huntress] (to Kaida): How dare you say that to me.',
+        ], self::scoredLines($calls[0]));
+        $this->assertSame(['[Aela the Huntress] (to Kaida): And another thing: I am still waiting for an apology.'],
+            self::scoredLines($calls[1]), 'the insult was scored by the first job, never again');
+        $this->assertStringContainsString('You are a coward', explode('THIS EXCHANGE', $calls[1]['messages'][1]['content'])[0],
+            'it stays visible as earlier context');
+    }
+
+    public function testTwoExchangesLoggedBeforeEitherHookRunsAreEachScoredOnce(): void
+    {
+        // A and B are both in eventlog before postrequest A runs (overlapping requests).
+        $tA = self::T0;
+        $tB = self::T0 + 3000;
+        $this->event('inputtext', 'Kaida: A: I brought you flowers. (Talking to Aela the Huntress)', $tA);
+        $this->npcSays(self::NPC, 'RA: How thoughtful.', self::PLAYER, $tA);
+        $this->event('inputtext', 'Kaida: B: You smell like a goat. (Talking to Aela the Huntress)', $tB);
+        $this->npcSays(self::NPC, 'RB: Excuse me?!', self::PLAYER, $tB);
+
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) $tA, 'Kaida: A: I brought you flowers.'], self::PLAYER);
+        $this->postrequest(self::NPC, ['inputtext', '1727000124', (string) $tB, 'Kaida: B: You smell like a goat.'], self::PLAYER);
+
+        $calls = [];
+        RelDynEval::runWorker($this->llm(self::GOOD_REPLY, $calls));
+        $this->assertCount(2, $calls);
+        $this->assertSame(['[Kaida] (to Aela the Huntress): A: I brought you flowers.', '[Aela the Huntress] (to Kaida): RA: How thoughtful.'],
+            self::scoredLines($calls[0]), 'job A scores exchange A');
+        $this->assertSame(['[Kaida] (to Aela the Huntress): B: You smell like a goat.', '[Aela the Huntress] (to Kaida): RB: Excuse me?!'],
+            self::scoredLines($calls[1]), 'job B scores exchange B');
+    }
+
     public function testMalformedOutputIsLoggedAndDroppedNotApplied(): void
     {
         $this->seedConversation();

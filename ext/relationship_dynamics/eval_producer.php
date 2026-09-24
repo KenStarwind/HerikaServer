@@ -255,6 +255,14 @@ final class RelDynEval
                 return null;
             }
 
+            $producer = RelDynStorage::getAll($npcId)[self::KEY_PRODUCER] ?? [];
+            // The exchange = this request's eventlog rows: nothing logged after its game time
+            // (another request of the same NPC may already be logged when this hook runs).
+            $anchor = self::exchangeAnchorRowid($gamets);
+            // Rows up to the previous job's anchor were scored by that job (a follow-up line
+            // without a new player line must not score the player line before it again).
+            $prevAnchor = $producer['last_anchor_rowid'] ?? null;
+            $scoredThrough = (is_numeric($prevAnchor) && $anchor !== null && intval($prevAnchor) < $anchor) ? intval($prevAnchor) : null;
             $job = [
                 'v'            => self::CONTRACT_VERSION,
                 'npc'          => $npcName,
@@ -263,12 +271,15 @@ final class RelDynEval
                 'gamets'       => $gamets,
                 'request_type' => (string) ($gameRequest[0] ?? ''),
                 'listener'     => $listener,
-                // The exchange = eventlog rows up to here; the worker reads nothing newer.
-                'anchor_rowid' => self::maxEventlogRowid(),
+                'anchor_rowid' => $anchor,
+                'scored_through_rowid' => $scoredThrough,
                 'event_tags'   => self::eventTagsForRequest($gameRequest),
             ];
             $jobId = self::enqueue($npcId, $npcName, $job);
-            RelDynStorage::setKey($npcId, self::KEY_PRODUCER, ['last_enqueued_gamets' => $gamets]);
+            RelDynStorage::setKey($npcId, self::KEY_PRODUCER, [
+                'last_enqueued_gamets' => $gamets,
+                'last_anchor_rowid'    => max(intval($anchor ?? 0), is_numeric($prevAnchor) ? intval($prevAnchor) : 0),
+            ]);
             RelationshipDynamics::log("EVAL queued job {$jobId} for {$npcName} (type={$job['request_type']}, anchor={$job['anchor_rowid']})");
 
             if (!empty($cfg['autostart_worker'])) {
@@ -315,9 +326,27 @@ final class RelDynEval
         return $db;
     }
 
-    private static function maxEventlogRowid(): ?int
+    /**
+     * Raw gamets after a request's own gamets that its logged rows can carry: returnLines()
+     * logs each NPC line as prechat at gamets+1 and chat at gamets+2 (chat_helper_functions).
+     * 100 raw gamets is under one game second (1 game day = 1e7), so another exchange is
+     * never inside it.
+     */
+    const EXCHANGE_GAMETS_SLACK = 100;
+
+    /**
+     * The newest eventlog row of the exchange at raw game time $gamets: the last row logged
+     * no later than $gamets + EXCHANGE_GAMETS_SLACK. Rows of a later request of the same NPC
+     * (already logged when this hook runs) are after it. Game clock unknown (0): newest row.
+     */
+    public static function exchangeAnchorRowid(float $gamets): ?int
     {
-        $row = self::db()->fetchOne('SELECT max(rowid) AS r FROM eventlog');
+        if ($gamets > 0) {
+            $row = self::db()->fetchOne('SELECT max(rowid) AS r FROM eventlog WHERE gamets <= $1',
+                [(string) intval(floor($gamets + self::EXCHANGE_GAMETS_SLACK))]);
+        } else {
+            $row = self::db()->fetchOne('SELECT max(rowid) AS r FROM eventlog');
+        }
         return (isset($row['r']) && is_numeric($row['r'])) ? intval($row['r']) : null;
     }
 
@@ -554,7 +583,8 @@ final class RelDynEval
             return ['drop' => 'rolled_back'];
         }
 
-        $window = self::conversationWindow($npc, $player, $anchor, intval($cfg['window_lines']), intval($cfg['scan_rows']));
+        $scoredThrough = isset($job['scored_through_rowid']) && is_numeric($job['scored_through_rowid']) ? intval($job['scored_through_rowid']) : null;
+        $window = self::conversationWindow($npc, $player, $anchor, intval($cfg['window_lines']), intval($cfg['scan_rows']), $scoredThrough);
         if (empty($window['current'])) {
             error_log("[RelDyn-EVAL] job for {$npc} dropped: no reply from {$npc} in the conversation window");
             return ['drop' => 'no_reply'];
@@ -664,11 +694,13 @@ final class RelDynEval
      * The conversation between this NPC and the player up to $anchorRowid: chat + player input
      * rows only (prechat duplicates never read), speakers parsed, consecutive duplicates
      * removed, last $windowLines lines. 'current' is the exchange being scored (the NPC's
-     * trailing reply and the player line right before it), 'earlier' is context.
+     * trailing reply and the player line right before it), 'earlier' is context. Lines at or
+     * before $scoredThroughRowid (the previous job's anchor) were scored already and are
+     * never 'current': an NPC follow-up without a new player line is scored on its own.
      *
-     * @return array{earlier: list<array>, current: list<array>}
+     * @return array{earlier: list<array>, current: list<array>} lines carry their eventlog rowid
      */
-    public static function conversationWindow(string $npcName, string $playerName, int $anchorRowid, int $windowLines, int $scanRows): array
+    public static function conversationWindow(string $npcName, string $playerName, int $anchorRowid, int $windowLines, int $scanRows, ?int $scoredThroughRowid = null): array
     {
         $types = '{' . implode(',', self::WINDOW_ROW_TYPES) . '}';
         $states = '{' . implode(',', self::VISIBLE_CHAT_STATES) . '}';
@@ -697,6 +729,7 @@ final class RelDynEval
                 && self::normText($prev['text']) === self::normText($line['text'])) {
                 continue;   // the same line logged twice
             }
+            $line['rowid'] = intval($r['rowid']);
             $lines[] = $line;
         }
         $lines = array_slice($lines, -max(2, $windowLines));
@@ -709,6 +742,11 @@ final class RelDynEval
             return ['earlier' => $lines, 'current' => []];   // the NPC has not replied yet
         }
         $start = ($i >= 0 && $lines[$i]['role'] === 'player') ? $i : $i + 1;
+        if ($scoredThroughRowid !== null) {
+            while ($start < count($lines) && $lines[$start]['rowid'] <= $scoredThroughRowid) {
+                $start++;   // scored by the previous job
+            }
+        }
         return ['earlier' => array_slice($lines, 0, $start), 'current' => array_slice($lines, $start)];
     }
 
