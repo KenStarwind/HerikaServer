@@ -9,19 +9,14 @@ if (empty($editItem['npc_name'])) return;
 
 $rdNpcName = $editItem['npc_name'];
 
-// Load relationship dynamics from core_npc_master (CHIM-native)
+// Load stored relationship dynamics (plugin_extended_data.reldyn, raw — no defaults merged)
 $rdDynamics = [];
 try {
-    $rdRow = $GLOBALS['db']->fetchOne(
-        "SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower("
-        . $GLOBALS['db']->escapeLiteral($rdNpcName) . ") LIMIT 1"
-    );
-    if ($rdRow) {
-        $rdExt = json_decode($rdRow['extended_data'] ?? '{}', true) ?: [];
-        $rdDynamics = $rdExt['relationship_dynamics'] ?? [];
-    }
+    require_once __DIR__ . '/relationship_dynamics.php';
+    $rdDynamics = RelationshipDynamics::loadStoredDynamics($rdNpcName) ?? [];
 } catch (Throwable $e) {
-    // Silently fail — section will show defaults
+    // Section still renders with defaults, but the failure is logged
+    error_log("[RelDyn] npc_editor_section: failed to load dynamics for {$rdNpcName}: " . $e->getMessage());
 }
 
 // Current values (with defaults)

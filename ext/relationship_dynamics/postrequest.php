@@ -34,6 +34,7 @@ $isCombatEvent = in_array($reqType, $combatNarratorTypes);
 if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
     if ($isCombatEvent) {
         require_once __DIR__ . '/relationship_dynamics.php';
+        RelationshipDynamics::beginRequest();
         if (!RelationshipDynamics::isEnabled()) { return; }
 
         $reldynCfg = RelationshipDynamics::getConfig();
@@ -260,6 +261,8 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
 }
 
 require_once __DIR__ . '/relationship_dynamics.php';
+// Each hook is its own request scope: config/bond caches never outlive it (A3).
+RelationshipDynamics::beginRequest();
 
 if (!RelationshipDynamics::isEnabled()) {
     return;
@@ -644,6 +647,8 @@ if (!empty($reldynCfg['parasite_detection_enabled'])) {
 $rdPendingEval = RelationshipDynamics::pendingEvalForRequest($dynamics);
 
 // ========== ICK TRACKER + CHARISMA DETECTION (PR 15) ==========
+// Latest queued eval (read-only peek; the inbox is consumed by processPendingEvalDeltas below)
+$rdPendingEval = RelationshipDynamics::peekPendingEval($npcName, $dynamics);
 if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
     $evalPending = $rdPendingEval;
