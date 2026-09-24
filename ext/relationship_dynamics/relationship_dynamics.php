@@ -1202,6 +1202,8 @@ class RelationshipDynamics
             'director_goals_enabled' => true,
             // Temperament / attachment / maturity-type / trait auto-generation tables
             'temperament_autogen' => self::temperamentAutogenDefaults(),
+            // Signed facet preferences (-1..+1) auto-derivation tables (decisions §6, reldyn_facets.php)
+            'facet_preferences' => RelDynFacets::preferenceDefaults(),
             // ===== Time (decisions 2026-09-23 §2: time does not heal, contact does) =====
             // Contacts (this NPC's requests) an NPC back from a resolved boundary test
             // waits before walking away again while its resentment is still high.
@@ -2392,7 +2394,7 @@ class RelationshipDynamics
     }
 
     /** A jsonb column as PostgreSQL returns it (JSON text) or already decoded. */
-    private static function decodeProfileJson($value): array
+    public static function decodeProfileJson($value): array
     {
         if (is_array($value)) return $value;
         if (is_string($value) && $value !== '') {
@@ -2402,7 +2404,7 @@ class RelationshipDynamics
         return [];
     }
 
-    private static function validTemperament($t): ?string
+    public static function validTemperament($t): ?string
     {
         if (!is_string($t)) return null;
         foreach (self::TEMPERAMENT_TYPES as $name) {
@@ -2444,7 +2446,7 @@ class RelationshipDynamics
      * Archetype (MDD 1.3 class preset) from class, then faction, then skills.
      * Returns [classArchetype, factionArchetypes[], skillArchetype].
      */
-    private static function profileArchetypes(array $ext, array $meta, array $cfg): array
+    public static function profileArchetypes(array $ext, array $meta, array $cfg): array
     {
         $class = $ext['class'] ?? null;
         $classKey = self::profileMatchKey(is_array($class) ? ($class['name'] ?? '') : $class);
@@ -2632,7 +2634,7 @@ class RelationshipDynamics
     }
 
     /** The core_npc_master columns the derivation reads; [] when the NPC has no row. Throws on DB errors. */
-    private static function fetchCoreProfileRow(string $npcName): array
+    public static function fetchCoreProfileRow(string $npcName): array
     {
         $db = $GLOBALS['db'] ?? null;
         if (!$db) return [];
@@ -16663,3 +16665,6 @@ class RelationshipDynamics
     // ========== END CORE AFFINITY BRIDGE (CHIM 3.4.1) ==========
 
 }
+
+// Facets -> appraisal -> feeling (decisions 2026-09-23 §6); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_facets.php';
