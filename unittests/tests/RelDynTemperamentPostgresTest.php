@@ -89,6 +89,8 @@ final class RelDynTemperamentPostgresTest extends TestCase
             gamets_last_updated numeric,
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'))");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
+        // core_player: the player profile the Attraction Matrix reads each request (RelDynPlayer::profile)
+        pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
         // Core 3.4.1 eventlog / locations (empty): RelDyn reads the current place from them.
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigint NOT NULL, people text, location text, party text)");

@@ -965,7 +965,7 @@ class RelationshipDynamics
             'conflict_enabled'   => true,
             'topic_bonus_enabled' => true,
             'flirt_bonus_enabled' => true,
-            'type_filter_enabled' => true,           // not read by the engine yet (relationship-preference-type-filter)
+            'type_filter_enabled' => true,           // relationship preference filter in the Attraction Matrix (reldyn_attraction.php)
             // XYZ Dimension Engine — on by default: the MDD section 15 eval signals,
             // modifier pipeline and resentment accumulator all run through it.
             'dimension_engine_enabled' => true,
@@ -987,6 +987,11 @@ class RelationshipDynamics
             'attraction_strength_weight' => 1.0,
             'attraction_status_weight' => 1.0,
             'attraction_competence_weight' => 1.0,
+            // Attraction Matrix tables (MDD §2 / §1.4 / §6.2, decisions §9; reldyn_attraction.php)
+            'attraction' => RelDynAttraction::defaults(),
+            // Relationship preference -> jealousy multiplier (pipeline doc: monogamous 2x,
+            // polyamorous 0.1x; not interested: no jealousy)
+            'preference_jealousy_mult' => ['monogamous' => 2.0, 'polyamorous' => 0.1, 'not_interested' => 0.0],
             // PR 12: Affinity Network + Relationship Types
             'cascade_network_enabled' => true,
             'cascade_threshold' => 15,               // core affinity points (|delta| that ripples)
@@ -3146,6 +3151,11 @@ class RelationshipDynamics
         $ceiling = self::STAGE_PARAMS[$stage]['ceiling'] ?? 100;
         $cfg = self::getConfig();
         $max = min(floatval($cfg['passion_max'] ?? 100.0), $ceiling);
+        // Attraction hard cap (friendzone / unattracted 20, MDD 6.2; tolerated fail, MDD 1.4)
+        $attractionCap = $dynamics['_attraction']['passion_cap'] ?? null;
+        if (is_numeric($attractionCap)) {
+            $max = min($max, floatval($attractionCap));
+        }
 
         self::setPassion($dynamics, min($max, self::getPassion($dynamics) + $amount));
         $dynamics['passion_updated_at'] = self::getPlayGamets($dynamics);
@@ -4758,35 +4768,14 @@ class RelationshipDynamics
     // TYPE CONSTRAINT FUNCTIONS
     // =========================================================================
 
+    /**
+     * Core relationship types this bond cannot hold now. One source: the Attraction Matrix
+     * summary (relationship preference filter + pillars + earned tier ceiling), refreshed by
+     * updateAttraction() each request. $chimAffinity is unused (kept for old callers).
+     */
     public static function getBlockedTypes($dynamics, $chimAffinity = null)
     {
-        $pref = strtolower(trim($dynamics['relationship_preference'] ?? ''));
-        if (empty($pref) || $pref === 'default') return [];
-
-        $blocked = [];
-        // Use CHIM affinity if provided (from relationship_system), fall back to dynamics blob
-        $aff = ($chimAffinity !== null) ? floatval($chimAffinity) : floatval($dynamics['affinity'] ?? 0);
-
-        switch ($pref) {
-            case 'demisexual':
-                if ($aff < 60) $blocked[] = 'romantic';
-                if ($aff < 80) $blocked[] = 'committed';
-                $blocked[] = 'sworn'; // always requires deep bond
-                break;
-            case 'asexual':
-                $blocked[] = 'romantic';
-                $blocked[] = 'committed';
-                $blocked[] = 'sworn';
-                break;
-            case 'aromantic':
-                $blocked[] = 'romantic';
-                $blocked[] = 'committed';
-                $blocked[] = 'sworn';
-                $blocked[] = 'crush';
-                break;
-        }
-
-        return $blocked;
+        return array_values(array_map('strval', (array) ($dynamics['_attraction']['blocked_types'] ?? [])));
     }
 
     public static function getTypeConstraintPrompt($dynamics, $npcName, $chimAffinity = null)
@@ -6271,6 +6260,10 @@ class RelationshipDynamics
 
         // --- Clamp to range ---
         $newX = max($rangeMin, min($rangeMax, $x + $actualDelta));
+        // Attraction hard cap on passion (MDD 6.2): a gain never lifts passion past it
+        if ($dimensionId === 'passion' && $actualDelta > 0 && is_numeric($dynamics['_attraction']['passion_cap'] ?? null)) {
+            $newX = min($newX, max($x, floatval($dynamics['_attraction']['passion_cap'])));
+        }
         $actualDelta = $newX - $x;
 
         // Back to mirror units: callers get the change of dimensions.affinity.x as before
@@ -7117,6 +7110,12 @@ class RelationshipDynamics
                 $raw *= $pm;
                 $steps .= sprintf(' place x%.2f', $pm);
             }
+            // Attraction x attachment (rulings §9): Aela warms to a warrior, not to a bard
+            $am = self::attractionPassionMult((string) $npcName, $dynamics);
+            if (abs($am - 1.0) > 0.001) {
+                $raw *= $am;
+                $steps .= sprintf(' attraction x%.2f', $am);
+            }
         }
 
         $R = self::getSignalResistance($temperament, $signal);
@@ -7335,6 +7334,9 @@ class RelationshipDynamics
         // 1.0 -> 3). The strongest item of this request counts.
         $level = max(1, min(3, (int) round($n['significance'] * 3)));
         $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] = max($level, intval($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? 0));
+        // A lifted attraction ceiling advances only through significant interactions
+        // (attraction design memory); a completed lift refreshes the summary at once.
+        RelDynAttraction::recordSignificance((string) $npcName, $dynamics, $n['significance'], $n['positive_interaction']);
 
         // Grievance / jealousy / positive interaction (resentment, conflict): once per accepted
         // item, after its signals. A rejected, misaddressed or already-applied item never gets here.
@@ -7800,20 +7802,22 @@ class RelationshipDynamics
     /**
      * Jealousy points (0..100 scale) one eval jealousy event adds to this NPC:
      *   jealousy_eval_gain x jealousy_intensity_mult[intensity] x TEMPERAMENT_JEALOUSY_MULT (MDD 1.3)
-     *   x attachment jealousy_mult x relationship preference (polyamorous 0.2, not_interested 0)
+     *   x attachment jealousy_mult x relationship preference (config preference_jealousy_mult:
+     *   monogamous 2.0, polyamorous 0.1, not_interested 0)
      */
     public static function jealousyEventGain(array $dynamics, int $intensity, float $commitment = 1.0): float
     {
         $intensity = max(0, min(3, $intensity));
-        $pref = $dynamics['relationship_preference'] ?? null;
-        if ($pref === 'not_interested') {
+        $pref = strtolower(trim((string) ($dynamics['relationship_preference'] ?? '')));
+        $prefMult = floatval(((array) self::configValue('preference_jealousy_mult'))[$pref] ?? 1.0);
+        if ($prefMult <= 0) {
             return 0.0;
         }
         $gain = floatval(self::configValue('jealousy_eval_gain'))
             * floatval(((array) self::configValue('jealousy_intensity_mult'))[$intensity] ?? 1.0)
             * floatval(self::TEMPERAMENT_JEALOUSY_MULT[$dynamics['inferred_temperament'] ?? ''] ?? 1.0)
             * floatval(self::getAttachmentModifier($dynamics, 'jealousy_mult') ?? 1.0)
-            * ($pref === 'polyamorous' ? 0.2 : 1.0)
+            * $prefMult
             * $commitment;
         return max(0.0, $gain);
     }
@@ -8103,13 +8107,22 @@ class RelationshipDynamics
             }
         }
 
+        // 3b. Attraction ceiling (MDD 8 / plan §5): a core romance type the attraction blocks, or
+        // has not yet earned through significant interactions, gets no romance modifiers; the
+        // bond reads as its depth, capped at the ceiling.
+        $attraction = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : null;
+        if ($coreMapped !== null && $attraction !== null && in_array($coreType, (array) ($attraction['blocked_types'] ?? []), true)) {
+            return self::DEPTH_TYPE_BY_TIER[self::attractionCappedTier($dynamics)] ?? 'stranger';
+        }
+
         // 4. Core type is the source of truth
         if ($coreMapped !== null) {
             return $coreMapped;
         }
-        // 5. Core type without a RelDyn flavour: depth from core affinity
+        // 5. Core type without a RelDyn flavour: depth from core affinity, capped at the
+        // attraction ceiling (tier-specific modifiers above it are blocked)
         if (is_string($coreType) && $coreType !== '') {
-            return self::DEPTH_TYPE_BY_TIER[self::getCurrentTier(self::getCoreAffinity($dynamics))] ?? 'stranger';
+            return self::DEPTH_TYPE_BY_TIER[self::attractionCappedTier($dynamics)] ?? 'stranger';
         }
 
         // 6. Fallback without core data: explicit RelDyn type, then stage
@@ -8126,6 +8139,20 @@ class RelationshipDynamics
         }
 
         return 'stranger';
+    }
+
+    /**
+     * RelDyn tier on core affinity, no higher than the attraction ceiling (_attraction.ceiling_tier,
+     * null = none). Affinity itself is never capped: only what the tier unlocks.
+     */
+    public static function attractionCappedTier(array $dynamics): string
+    {
+        $tier = self::getCurrentTier(self::getCoreAffinity($dynamics));
+        $ceiling = $dynamics['_attraction']['ceiling_tier'] ?? null;
+        if (is_string($ceiling) && self::tierRank($ceiling) >= 0 && self::tierRank($tier) > self::tierRank($ceiling)) {
+            return $ceiling;
+        }
+        return $tier;
     }
 
     /**
@@ -12285,6 +12312,56 @@ class RelationshipDynamics
 
     // ========== END DIRECTOR-ASSIGNED GOALS (PR 39) ==========
 
+    // ========== ATTRACTION MATRIX (decisions §9 contract, reldyn_attraction.php) ==========
+
+    /**
+     * Shared contract (attraction lane): the MDD §2 Attraction Matrix for $npcName on the
+     * player profile (RelDynPlayer::profile() unless one is given). Pure.
+     * @return array ['score' => 0..1, 'passes' => bool, 'friendzoned' => bool,
+     *   'pillars' => [name => ['score','weight','rigidity','pass', ...]], 'ceiling_tier' => string|null,
+     *   'reason' => string, ...extras (RelDynAttraction::evaluate)]
+     */
+    public static function attractionFor(string $npcName, array $dynamics, ?array $playerProfile = null): array
+    {
+        return RelDynAttraction::evaluate($npcName, $dynamics, $playerProfile ?? RelDynPlayer::profile());
+    }
+
+    /**
+     * Evaluate and record the attraction for this request (tier-lift state, the _attraction
+     * summary every consumer reads, the passion hard cap). prerequest runs it once per request.
+     */
+    public static function updateAttraction(string $npcName, array &$dynamics, ?array $playerProfile = null): array
+    {
+        return RelDynAttraction::update($npcName, $dynamics, $playerProfile ?? RelDynPlayer::profile());
+    }
+
+    /**
+     * Passion gain multiplier from attraction x attachment (rulings §9), for the legacy passion
+     * path and the eval passion signal. Uses this request's summary; evaluates first when the
+     * NPC has none yet (eval worker on a bond never seen by prerequest).
+     */
+    public static function attractionPassionMult(string $npcName, array &$dynamics): float
+    {
+        if (!is_array($dynamics['_attraction'] ?? null)) {
+            self::updateAttraction($npcName, $dynamics);
+        }
+        $m = $dynamics['_attraction']['passion_mult'] ?? 1.0;
+        return is_numeric($m) ? max(0.0, floatval($m)) : 1.0;
+    }
+
+    /**
+     * Can this bond hold core relationship type $coreType now (romance lane: promotion into
+     * romantic types)? False for a romance type the attraction blocks or has not yet earned
+     * through significant interactions. Non-romance types are not the Matrix's to block.
+     */
+    public static function attractionAllowsType(string $npcName, array &$dynamics, string $coreType): bool
+    {
+        if (!is_array($dynamics['_attraction'] ?? null)) {
+            self::updateAttraction($npcName, $dynamics);
+        }
+        return !in_array(strtolower(trim($coreType)), (array) ($dynamics['_attraction']['blocked_types'] ?? []), true);
+    }
+
     // ========== ATTRACTION MATRIX — PLAYER DATA (PR 11) ==========
 
     /**
@@ -14242,6 +14319,13 @@ class RelationshipDynamics
         $baseThreshold = floatval($cfg['ick_base_threshold'] ?? self::ICK_BASE_THRESHOLD);
         $threshold = $baseThreshold * (1 + $maturity / 100.0);
 
+        // MDD 1.4: the player pushing past a failed attraction check reaches the Ick sooner
+        // with a low-openness NPC, later with a high-openness one
+        if (!empty($dynamics['_attraction']['failed'])) {
+            $band = (string) ($dynamics['_attraction']['openness'] ?? 'medium');
+            $threshold *= floatval(((array) RelDynAttraction::config()['openness_ick_mult'])[$band] ?? 1.0);
+        }
+
         // Catalyst archetype lowers threshold by 30% for mature NPCs
         $charismaStyle = $dynamics['_charisma_tracker']['detected_style'] ?? null;
         if ($charismaStyle === 'catalyst' && $maturity > 60) {
@@ -15801,3 +15885,5 @@ class RelationshipDynamics
 
 // Facets -> appraisal -> feeling (decisions 2026-09-23 §6); its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_facets.php';
+// Attraction Matrix (MDD §2, decisions §9); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_attraction.php';

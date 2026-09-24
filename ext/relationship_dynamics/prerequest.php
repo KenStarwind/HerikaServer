@@ -192,26 +192,12 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
     RelationshipDynamics::applyEnvironmentalModifiers($dynamics, $npcName, $physPlayerName, $physTemperament);
 }
 
-// ========== ATTRACTION MATRIX EVALUATION (PR 11) ==========
-if (!empty($reldynCfg['attraction_matrix_enabled'])) {
-    $interactionCount = intval($dynamics['interaction_count'] ?? 0);
-    $lastMatrixEval = intval($dynamics['_attraction_matrix_last_eval'] ?? 0);
-    $evalInterval = intval($reldynCfg['attraction_eval_interval'] ?? 10);
-
-    // Re-evaluate if: first time, or interval elapsed, or cache is empty
-    if ($lastMatrixEval === 0 || ($interactionCount - $lastMatrixEval) >= $evalInterval || empty($dynamics['_attraction_matrix_cache'])) {
-        $matrixResult = RelationshipDynamics::calculateAttractionMatrix($npcName, $dynamics);
-        $GLOBALS['RELDYN_ATTRACTION_MATRIX'] = $matrixResult;
-    } else {
-        // Use cached result
-        $GLOBALS['RELDYN_ATTRACTION_MATRIX'] = $dynamics['_attraction_matrix_cache'];
-    }
-
-    // Set globals for postrequest consumption
-    $GLOBALS['RELDYN_MATRIX_PASSION_MULT'] = floatval($dynamics['_attraction_passion_mult'] ?? 1.0);
-    $GLOBALS['RELDYN_MATRIX_TIER_CEILING'] = $dynamics['_attraction_tier_ceiling'] ?? 'sworn';
-    $GLOBALS['RELDYN_MATRIX_FRIENDZONED'] = !empty($dynamics['_attraction_friendzoned']);
-}
+// ========== ATTRACTION MATRIX (MDD §2, decisions §9) ==========
+// Every request: the player profile (skills, deeds, economic footprint) and the NPC's own
+// pillar definitions -> passes / friendzone / tier ceiling / passion gate. Stored in
+// $dynamics['_attraction'] for postrequest, context, the eval consumer and getRelationshipType;
+// passion above its hard cap drops to it here. Off: nothing is gated.
+RelationshipDynamics::updateAttraction($npcName, $dynamics);
 
 // ========== DUTY OVERRIDE (PR 12) ==========
 if (!empty($reldynCfg['duty_override_enabled'])) {

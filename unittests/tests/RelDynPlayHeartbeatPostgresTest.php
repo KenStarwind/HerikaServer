@@ -90,6 +90,8 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'))");
         // Same shape as data/database_default.sql: conf_opts(id text PRIMARY KEY, value text).
         pg_query($admin, "CREATE TABLE conf_opts (id text NOT NULL, value text, CONSTRAINT pid PRIMARY KEY (id))");
+        // core_player: the player profile the Attraction Matrix reads each request (RelDynPlayer::profile)
+        pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
         pg_close($admin);
 

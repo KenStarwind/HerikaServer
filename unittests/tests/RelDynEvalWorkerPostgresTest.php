@@ -110,6 +110,8 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'),
             md5 text, gamets_last_updated numeric, core text, base text, tags text)");
         pg_query($admin, "CREATE TABLE conf_opts (id text NOT NULL, value text, CONSTRAINT pid PRIMARY KEY (id))");
+        // core_player: the player profile the Attraction Matrix reads each request (RelDynPlayer::profile)
+        pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
         // Same columns as data/database_default.sql eventlog.
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,

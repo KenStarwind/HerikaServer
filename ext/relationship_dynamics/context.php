@@ -641,12 +641,10 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
 }
 
 // ========== ATTRACTION CONTEXT (PR 11) ==========
-$matrixResult = $GLOBALS['RELDYN_ATTRACTION_MATRIX'] ?? null;
-if ($matrixResult && !empty($matrixResult['enabled'])) {
-    $attractionText = RelationshipDynamics::generateAttractionContext($npcName, $matrixResult, $dynamics);
-    if (!empty($attractionText)) {
-        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<attraction_context>{$attractionText}</attraction_context>"];
-    }
+// The felt read of this request's Attraction Matrix (prerequest's summary): feelings, never numbers.
+$attractionText = RelDynAttraction::feltText($npcName, (array) ($dynamics['_attraction'] ?? []));
+if (!empty($attractionText)) {
+    $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<attraction_context>{$attractionText}</attraction_context>"];
 }
 
 // ========== DUTY OVERRIDE CONTEXT (PR 12) ==========

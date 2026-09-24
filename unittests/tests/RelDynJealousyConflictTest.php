@@ -88,8 +88,11 @@ final class RelDynJealousyConflictTest extends TestCase
         $this->assertEqualsWithDelta($base * 2.0 * 2.0,
             $gain(['inferred_temperament' => 'Jealous', 'attachment_style' => 'anxious'], 1), 1e-9, 'Anxious attachment 2.0x');
         $this->assertEqualsWithDelta(2.0, $gain(['inferred_temperament' => 'Romantic'], 3) / $gain(['inferred_temperament' => 'Romantic'], 1), 1e-9);
-        $this->assertEqualsWithDelta($base * 1.3 * 0.2,
+        // Relationship preference (pipeline doc: monogamous 2x, polyamorous 0.1x), from config
+        $this->assertEqualsWithDelta($base * 1.3 * 0.1,
             $gain(['inferred_temperament' => 'Romantic', 'relationship_preference' => 'polyamorous'], 1), 1e-9);
+        $this->assertEqualsWithDelta($base * 1.3 * 2.0,
+            $gain(['inferred_temperament' => 'Romantic', 'relationship_preference' => 'monogamous'], 1), 1e-9);
         $this->assertSame(0.0, $gain(['inferred_temperament' => 'Romantic', 'relationship_preference' => 'not_interested'], 3));
     }
 

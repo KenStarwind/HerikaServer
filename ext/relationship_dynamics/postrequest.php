@@ -403,9 +403,9 @@ if ($evalOwnsExchange) {
     // Apply topic and flirt bonuses on top of base passion gain
     $passionGain = $rawPassionGain * $topicBonus * $flirtBonus;
 
-    // ========== ATTRACTION MATRIX PASSION MODIFIER (PR 11) ==========
-    $matrixPassionMult = floatval($GLOBALS['RELDYN_MATRIX_PASSION_MULT'] ?? 1.0);
-    if ($matrixPassionMult != 1.0 && isset($passionGain) && $passionGain > 0) {
+    // ========== ATTRACTION x ATTACHMENT PASSION GATE (decisions §9) ==========
+    $matrixPassionMult = RelationshipDynamics::attractionPassionMult($npcName, $dynamics);
+    if ($passionGain > 0) {
         $passionGain *= $matrixPassionMult;
     }
 
@@ -529,17 +529,11 @@ if ($passionGain > 0 && !empty($dynamics['in_conflict'])) {
 
 skip_conflict:
 
-// ========== ATTRACTION MATRIX TIER CEILING (PR 11) ==========
-// The Matrix gates tier progression, not affinity. Affinity can still grow.
-// Tier label is controlled elsewhere (context injection reflects the ceiling).
-
-// ========== FRIENDZONE PASSION CAP (PR 11) ==========
-if (!empty($GLOBALS['RELDYN_MATRIX_FRIENDZONED'])) {
-    $friendzoneCap = 20;
-    if (RelationshipDynamics::getPassion($dynamics) > $friendzoneCap) {
-        RelationshipDynamics::setPassion($dynamics, $friendzoneCap);
-    }
-}
+// ========== ATTRACTION TIER CEILING + PASSION HARD CAP (MDD 8 / 6.2) ==========
+// The Matrix gates tier progression (getRelationshipType, attractionAllowsType), not affinity:
+// affinity can still grow. Passion never ends a request above the attraction cap
+// (friendzone / unattracted 20, a tolerated fail's reduced ceiling).
+RelDynAttraction::enforcePassionCap($dynamics);
 
 // ========== INTERACTION PATTERN TRACKING (PR 12) ==========
 if (!empty($reldynCfg['parasite_detection_enabled'])) {
