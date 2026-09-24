@@ -250,6 +250,19 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->assertEqualsWithDelta(self::T0, (float) $log[0]['since_gamets'], 0.001);
     }
 
+    public function testOneNeglectGrievancePerAbsenceEvenWithOtherGrievancesBetween(): void
+    {
+        $d = $this->npc(['relationship_type' => 'bonded']);
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 5 * self::DAY);
+        $d['dimensions']['resentment']['grievance_log'][] = ['text' => 'insulted my cooking', 'amount' => 5];
+        RelationshipDynamics::advanceCalendar($d, self::T0 + 5 * self::DAY, self::T0 + 9 * self::DAY);
+
+        $log = self::neglectEntries($d);
+        $this->assertCount(1, $log);
+        $this->assertEqualsWithDelta(9.0, $log[0]['game_days'], 1e-9);
+        $this->assertCount(2, $d['dimensions']['resentment']['grievance_log']);
+    }
+
     public function testNeglectGraceDependsOnBondTypeAndAttachment(): void
     {
         $cfg = RelationshipDynamics::defaultConfig();

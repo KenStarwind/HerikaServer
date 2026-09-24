@@ -2476,13 +2476,18 @@ class RelationshipDynamics
         $log = $dynamics['dimensions']['resentment']['grievance_log'] ?? [];
         if (!is_array($log)) $log = [];
         $gameDays = ($nowGamets - $sinceGamets) / self::GAMETS_PER_DAY;
-        $last = count($log) - 1;
-        if ($last >= 0 && is_array($log[$last]) && ($log[$last]['tag'] ?? null) === 'neglect'
-            && abs(floatval($log[$last]['since_gamets'] ?? -1) - $sinceGamets) < 0.5) {
-            $log[$last]['raw'] = round(floatval($log[$last]['raw'] ?? 0) + $raw, 4);
-            $log[$last]['game_days'] = $gameDays;
-            $log[$last]['gamets'] = $nowGamets;
-            $log[$last]['text'] = sprintf('neglect: no contact for %.1f game days', $gameDays);
+        $found = null;
+        foreach ($log as $i => $entry) {
+            if (is_array($entry) && ($entry['tag'] ?? null) === 'neglect'
+                && abs(floatval($entry['since_gamets'] ?? -1) - $sinceGamets) < 0.5) {
+                $found = $i;
+            }
+        }
+        if ($found !== null) {
+            $log[$found]['raw'] = round(floatval($log[$found]['raw'] ?? 0) + $raw, 4);
+            $log[$found]['game_days'] = $gameDays;
+            $log[$found]['gamets'] = $nowGamets;
+            $log[$found]['text'] = sprintf('neglect: no contact for %.1f game days', $gameDays);
         } else {
             $log[] = [
                 'text' => sprintf('neglect: no contact for %.1f game days', $gameDays),
