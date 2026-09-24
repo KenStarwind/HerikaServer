@@ -331,7 +331,8 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $aela = RelationshipDynamics::fulfillment('Aela', $this->dynamics('Aela'), $end);
         $serana = RelationshipDynamics::fulfillment('Serana', $this->dynamics('Serana'), $end);
         $this->assertTrue($aela['known']);
-        $this->assertSame(['quality_time', 'words_of_affirmation'], array_keys($aela['needs']), 'her love languages (no loved facets derived)');
+        $this->assertSame(['quality_time', 'words_of_affirmation', RelDynIntimacy::EMOTIONAL, RelDynIntimacy::PHYSICAL], array_keys($aela['needs']),
+            'her love languages (no loved facets derived) and her intimacy axes (rulings §10; a romance: physical in play)');
         $this->assertGreaterThan(0.3, $aela['band']);
         $this->assertLessThan(-0.6, $serana['band'], 'present every day, and still neglected');
         $this->assertLessThan(0.0, $serana['trend']);
@@ -674,7 +675,9 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $g = RelationshipDynamics::fulfillmentGraph('Aela', self::T0 + 4 * self::HOUR);
         $this->assertTrue($g['known']);
         $axes = array_column($g['axes'], null, 'axis');
-        $this->assertSame(['quality_time', 'nature', 'combat', 'words_of_affirmation'], array_keys($axes));
+        $this->assertSame(['quality_time', 'nature', 'combat', 'words_of_affirmation', RelDynIntimacy::EMOTIONAL, RelDynIntimacy::PHYSICAL],
+            array_keys($axes));
+        $this->assertSame('intimacy', $axes[RelDynIntimacy::PHYSICAL]['kind']);
         $this->assertSame('facet', $axes['nature']['kind']);
         $this->assertGreaterThan(0.5, $axes['quality_time']['coverage'], 'two quality-time exchanges today');
         $this->assertLessThan(0.0, $axes['combat']['coverage'], 'no fight together yet');

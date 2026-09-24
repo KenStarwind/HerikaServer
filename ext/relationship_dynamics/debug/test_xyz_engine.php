@@ -4816,32 +4816,8 @@ try {
 // AJ15/AJ16 (April interest/intimacy satisfaction) retired with calculateInterestSatisfaction:
 // weather deprivation is facet-based now (RelDynFacetEffectsTest).
 
-// ── AJ17: M/F context selection ──
-try {
-    // High coord_m → "restless"
-    $aj17DynM = RelationshipDynamics::defaultDynamics();
-    $aj17DynM['_interest_satisfaction'] = ['intimacy' => 0.0]; // below 0.3 threshold
-    $aj17DynM['dimensions']['coord_m']['x'] = 80;
-    $aj17DynM['dimensions']['coord_f']['x'] = 20;
-    $aj17DynM['dimensions']['maturity']['x'] = 50;
-
-    $aj17CtxM = RelationshipDynamics::generateIntimacyDeprivationContext('TestNPC_M', $aj17DynM);
-    check('AJ17a: High coord_m → contains restless', strpos($aj17CtxM ?? '', 'restless') !== false, true);
-    echo "      high_m ctx: " . ($aj17CtxM ?? 'null') . "\n";
-
-    // High coord_f → "aches"
-    $aj17DynF = RelationshipDynamics::defaultDynamics();
-    $aj17DynF['_interest_satisfaction'] = ['intimacy' => 0.0];
-    $aj17DynF['dimensions']['coord_m']['x'] = 20;
-    $aj17DynF['dimensions']['coord_f']['x'] = 80;
-    $aj17DynF['dimensions']['maturity']['x'] = 50;
-
-    $aj17CtxF = RelationshipDynamics::generateIntimacyDeprivationContext('TestNPC_F', $aj17DynF);
-    check('AJ17b: High coord_f → contains aches', strpos($aj17CtxF ?? '', 'aches') !== false, true);
-    echo "      high_f ctx: " . ($aj17CtxF ?? 'null') . "\n";
-} catch (Throwable $e) {
-    skip('AJ17', 'Exception: ' . $e->getMessage());
-}
+// AJ17 (M/F intimacy context selection) moved with the intimacy need (rulings 2026-09-24 §10):
+// RelDynIntimacy::feltText, unittests RelDynIntimacyNeedTest / RelDynIntimacyNeedPostgresTest.
 
 // ── AJ18: detectCreatureType returns null for normal NPC ──
 try {

@@ -100,6 +100,7 @@ final class RelDynEval
         'reassurance'      => 'the player calmed a fear or doubt they had',
         'apology'          => 'the player apologised or made amends',
         'confession'       => 'the player openly declared romantic feelings for them or asked to be more than friends',
+        'confiding'        => 'they opened up about something personal (or the player did) and it was met with care',
     ];
 
     /** Tags that mark an exchange as not positive, whatever the signals say. */

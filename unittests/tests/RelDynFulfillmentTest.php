@@ -95,7 +95,10 @@ final class RelDynFulfillmentTest extends TestCase
     public function testNeedsVectorIsLovedFacetsLoveLanguagesAndTraitNeeds(): void
     {
         $needs = RelDynFulfillment::needs($this->npc(), $this->prefs());
-        $this->assertSame(['quality_time' => 1.0, 'nature' => 0.9, 'combat' => 0.8, 'words_of_affirmation' => 0.6], $needs,
+        $this->assertSame(['quality_time' => 1.0, 'nature' => 0.9, 'combat' => 0.8, 'words_of_affirmation' => 0.6,
+            // rulings §10 intimacy axes from the same profile (RelDynIntimacy): emotional base 0.45,
+            // Independent -0.1, quality time +0.15, words x0.6 +0.06; physical base 0.45, in play (romantic)
+            RelDynIntimacy::EMOTIONAL => 0.56, RelDynIntimacy::PHYSICAL => 0.45], $needs,
             'loved facets by preference strength, primary 1.0 / secondary 0.6 love language; disliked and faint facets are no need');
 
         // Egocentric wants admiration; an anxious attachment wants time and reassurance; Proud adds admiration
@@ -126,7 +129,7 @@ final class RelDynFulfillmentTest extends TestCase
         $f = RelDynFulfillment::compute($d, [], self::T0);
         $this->assertTrue($f['known']);
         $this->assertSame(0.0, $f['band'], 'a new relationship starts neutral');
-        $this->assertSame([0.0, 0.0, 0.0, 0.0], array_values($f['coverage']));
+        $this->assertSame([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], array_values($f['coverage']));
 
         // One half-life (3 game days) with nothing delivered: every level halves, coverage -0.5
         $f = RelDynFulfillment::compute($d, [], self::T0 + 3 * self::DAY);
@@ -248,7 +251,8 @@ final class RelDynFulfillmentTest extends TestCase
     /** Deliver enough every game day to keep every need of hers covered. */
     private function goodDay(array &$d, float $at): void
     {
-        RelDynFulfillment::deliver($d, ['quality_time' => 1.5, 'words_of_affirmation' => 1.5, 'nature' => 1.5, 'combat' => 1.5], $at);
+        RelDynFulfillment::deliver($d, ['quality_time' => 1.5, 'words_of_affirmation' => 1.5, 'nature' => 1.5, 'combat' => 1.5,
+            RelDynIntimacy::EMOTIONAL => 1.5, RelDynIntimacy::PHYSICAL => 1.5], $at);
     }
 
     public function testMatureBoundaryIsStatedOnceAndConsistentChangeClearsIt(): void
@@ -351,10 +355,13 @@ final class RelDynFulfillmentTest extends TestCase
         RelDynFulfillment::deliver($d, ['nature' => 1.5], self::T0);
         $g = RelDynFulfillment::graph('Aela', $d, [], self::T0);
         $this->assertTrue($g['known']);
-        $this->assertSame(['quality_time', 'nature', 'combat', 'words_of_affirmation'], array_column($g['axes'], 'axis'));
+        $this->assertSame(['quality_time', 'nature', 'combat', 'words_of_affirmation', RelDynIntimacy::EMOTIONAL, RelDynIntimacy::PHYSICAL],
+            array_column($g['axes'], 'axis'));
         $byAxis = array_column($g['axes'], null, 'axis');
         $this->assertSame(['axis' => 'nature', 'kind' => 'facet', 'label' => 'time out in the wilds', 'need' => 0.9, 'coverage' => 1.0], $byAxis['nature']);
         $this->assertSame('love_language', $byAxis['quality_time']['kind']);
+        $this->assertSame(['intimacy', 'real closeness, being truly known'],
+            [$byAxis[RelDynIntimacy::EMOTIONAL]['kind'], $byAxis[RelDynIntimacy::EMOTIONAL]['label']]);
         $this->assertSame(['state' => 'none'], $g['boundary']);
         $this->assertNotFalse(json_encode($g));
     }

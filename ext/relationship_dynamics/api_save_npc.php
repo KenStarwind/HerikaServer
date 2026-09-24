@@ -134,6 +134,15 @@ try {
                     }
                 }
             }
+            // Intimacy need (rulings 2026-09-24 §10): per-NPC override of the derived physical /
+            // emotional axis, 0..1 (null clears it back to the trait-combo derivation).
+            if (isset($input['intimacy_need']) && is_array($input['intimacy_need'])) {
+                foreach ($input['intimacy_need'] as $axis => $need) {
+                    if (!RelDynIntimacy::setNeedOverride($dynamics, (string) $axis, $need === null ? null : floatval($need))) {
+                        error_log("[RelDyn] api_save_npc: intimacy need {$axis} for {$npcName} rejected");
+                    }
+                }
+            }
 
             // ========== MATURITY DIMENSION (PR 3) ==========
             // Update maturity overrides if provided

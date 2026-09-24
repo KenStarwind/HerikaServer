@@ -284,6 +284,36 @@ class RelDynAttraction
         ];
     }
 
+    /**
+     * The NPC's intimacy gate (plan §7: visceral / bond / balanced) and where it came from:
+     * the archetype profile (from _profile_autogen.archetype), overridden by the named preset
+     * (npc_overrides), the NPC editor's attraction_profile.intimacy_gate, then
+     * attraction_overrides.gate. Pure (no database).
+     *
+     * @return array [gate, source: 'archetype'|'preset'|'editor'|'override']
+     */
+    private static function gateWithSource(string $npcName, array $dynamics, array $cfg): array
+    {
+        $profiles = (array) $cfg['archetype_profiles'];
+        $arch = $dynamics['_profile_autogen']['archetype'] ?? null;
+        $base = (array) ((is_string($arch) ? ($profiles[$arch] ?? null) : null) ?? $profiles['default'] ?? []);
+        $preset = (array) (((array) $cfg['npc_overrides'])[strtolower(trim($npcName))] ?? []);
+        $editor = is_array($dynamics['attraction_profile'] ?? null) ? $dynamics['attraction_profile'] : [];
+        $over = is_array($dynamics['attraction_overrides'] ?? null) ? $dynamics['attraction_overrides'] : [];
+        $gate = in_array($base['gate'] ?? null, self::GATES, true) ? $base['gate'] : 'balanced';
+        $source = 'archetype';
+        foreach ([['preset', $preset['gate'] ?? null], ['editor', $editor['intimacy_gate'] ?? null], ['override', $over['gate'] ?? null]] as [$src, $g]) {
+            if (in_array($g, self::GATES, true)) { $gate = $g; $source = $src; }
+        }
+        return [$gate, $source];
+    }
+
+    /** The NPC's intimacy gate (gateWithSource), for the intimacy need derivation. */
+    public static function gateOf(string $npcName, array $dynamics): string
+    {
+        return self::gateWithSource($npcName, $dynamics, self::config())[0];
+    }
+
     /** Stored tables replace defaults table by table (like the other RelDyn config tables). */
     public static function config(): array
     {
@@ -331,10 +361,8 @@ class RelDynAttraction
         }
 
         // Intimacy gate
-        $gate = in_array($base['gate'] ?? null, self::GATES, true) ? $base['gate'] : 'balanced';
-        foreach ([['preset', $preset['gate'] ?? null], ['editor', $editor['intimacy_gate'] ?? null], ['override', $over['gate'] ?? null]] as [$src, $g]) {
-            if (in_array($g, self::GATES, true)) { $gate = $g; $sources['gate'] = $src; }
-        }
+        [$gate, $gateSource] = self::gateWithSource($npcName, $dynamics, $cfg);
+        if ($gateSource !== 'archetype') $sources['gate'] = $gateSource;
 
         // Pillar weights: 1 each, traits scale, irrelevant = 0
         $weights = array_fill_keys(self::PILLARS, 1.0);
