@@ -272,6 +272,12 @@ class RelationshipDynamics
     /** 30 game days in gamets (for plasticity override expiry, uses raw game clock). */
     const THIRTY_GAME_DAYS_GAMETS = 300000048; // 30 * 24 * 416667 (GAMETS_PER_HOUR)
 
+    /** Kill-streak window on the eventlog game clock: 5 min of real play. */
+    const COMBAT_KILL_STREAK_WINDOW_GAMETS = 694500; // 300 * GAMETS_PER_REAL_SECOND
+
+    /** Recent gift/consume window on the eventlog game clock: 30 s of real play. */
+    const ITEM_EVENT_WINDOW_GAMETS = 69450; // 30 * GAMETS_PER_REAL_SECOND
+
     // ========== DIVINE INTERVENTION CONSTANTS (PR 10) ==========
     /** Minimum play gamets between DI checks (one decay tick = ~10 real min). */
     const DI_COOLDOWN_GAMETS = 1389000; // same as GAMETS_PER_DECAY_TICK
@@ -1386,6 +1392,45 @@ class RelationshipDynamics
         $gamets = $gamets ?? self::currentGamets();
         if ($gamets <= 0) return null;
         return fmod($gamets / self::GAMETS_PER_DAY, 1.0) * 24.0;
+    }
+
+    // Timer helpers. Decay and cooldowns run on filtered play time
+    // (_accumulated_play_gamets); absence runs on the game calendar (raw gamets).
+    // Never the wall clock. A checkpoint that is unset, or ahead of its clock
+    // (a wall-clock value from an older build, or an earlier save loaded), reads
+    // as null so callers can re-arm it instead of trusting it.
+
+    /** Record the current filtered play clock under $key. */
+    public static function markPlayCheckpoint(array &$dynamics, string $key): void
+    {
+        $dynamics[$key] = self::getPlayGamets($dynamics);
+    }
+
+    /** Filtered play gamets elapsed since the checkpoint under $key, or null. */
+    public static function playGametsSince(array $dynamics, string $key): ?float
+    {
+        $mark = floatval($dynamics[$key] ?? 0);
+        if ($mark <= 0) return null;
+        $elapsed = self::getPlayGamets($dynamics) - $mark;
+        return $elapsed >= 0 ? $elapsed : null;
+    }
+
+    /** Record the current game calendar time (raw gamets) under $key, if known. */
+    public static function markGameClock(array &$dynamics, string $key): void
+    {
+        $now = self::currentGamets();
+        if ($now > 0) {
+            $dynamics[$key] = $now;
+        }
+    }
+
+    /** Game-calendar hours elapsed since the gamets stored under $key, or null. */
+    public static function gameHoursSince(array $dynamics, string $key): ?float
+    {
+        $mark = floatval($dynamics[$key] ?? 0);
+        $now = self::currentGamets();
+        if ($mark <= 0 || $now <= 0 || $now < $mark) return null;
+        return ($now - $mark) / (self::GAMETS_PER_DAY / 24.0);
     }
 
     /**
@@ -2932,11 +2977,17 @@ class RelationshipDynamics
                 }
             } catch (\Throwable $e) {}
 
-            // Count recent kills from eventlog (last 5 minutes game time)
-            try {
-                $rows = $db->fetchAll("SELECT COUNT(*) as cnt FROM eventlog WHERE type = 'death' AND people LIKE '%{$db->escape($npcName)}%'");
-                $recentKills = intval($rows[0]['cnt'] ?? 0);
-            } catch (\Throwable $e) {}
+            // Count recent kills from eventlog (last 5 minutes of play on the game clock)
+            $nowGamets = self::currentGamets();
+            if ($nowGamets > 0) {
+                $sinceGamets = intval($nowGamets - self::COMBAT_KILL_STREAK_WINDOW_GAMETS);
+                try {
+                    $rows = $db->fetchAll("SELECT COUNT(*) as cnt FROM eventlog WHERE type = 'death' AND people LIKE '%{$db->escape($npcName)}%' AND gamets > {$sinceGamets}");
+                    $recentKills = intval($rows[0]['cnt'] ?? 0);
+                } catch (\Throwable $e) {
+                    self::log("getCombatContext kill count error: " . $e->getMessage());
+                }
+            }
 
             if (!$inCombat && $recentKills === 0 && !$bleedingOut) return null;
 
@@ -8422,15 +8473,18 @@ class RelationshipDynamics
         }
 
         // --- Gift detection: eventlog "gave X to NPC" ---
+        // "Recent" = last 30 s of play on the eventlog game clock (gamets), not the wall clock.
         $db = $GLOBALS['db'] ?? null;
-        if ($db) {
+        $nowGamets = self::currentGamets();
+        $sinceGamets = intval($nowGamets - self::ITEM_EVENT_WINDOW_GAMETS);
+        if ($db && $nowGamets > 0) {
             try {
                 $escapedNpc = $db->escape($npcName);
                 $rows = $db->fetchAll(
                     "SELECT data FROM eventlog WHERE type='itemfound' "
                     . "AND data LIKE '%gave%to%{$escapedNpc}%' "
-                    . "AND ts > " . (time() - 30) . " "
-                    . "ORDER BY ts DESC LIMIT 3"
+                    . "AND gamets > {$sinceGamets} "
+                    . "ORDER BY gamets DESC, ts DESC LIMIT 3"
                 );
                 if (is_array($rows)) {
                     foreach ($rows as $row) {
@@ -8455,7 +8509,7 @@ class RelationshipDynamics
                     }
                 }
             } catch (\Throwable $e) {
-                // Silent fail
+                self::log("detectItemEvents gift lookup error: " . $e->getMessage());
             }
         }
 
@@ -8478,13 +8532,13 @@ class RelationshipDynamics
         }
 
         // --- Consumable detection: eventlog consume patterns ---
-        if ($db) {
+        if ($db && $nowGamets > 0) {
             try {
                 $rows = $db->fetchAll(
                     "SELECT data FROM eventlog WHERE type='itemfound' "
                     . "AND (data LIKE '%consumed%' OR data LIKE '%drank%' OR data LIKE '%ate%' OR data LIKE '%used%potion%') "
-                    . "AND ts > " . (time() - 30) . " "
-                    . "ORDER BY ts DESC LIMIT 3"
+                    . "AND gamets > {$sinceGamets} "
+                    . "ORDER BY gamets DESC, ts DESC LIMIT 3"
                 );
                 if (is_array($rows)) {
                     foreach ($rows as $row) {
@@ -8499,7 +8553,7 @@ class RelationshipDynamics
                     }
                 }
             } catch (\Throwable $e) {
-                // Silent fail
+                self::log("detectItemEvents consume lookup error: " . $e->getMessage());
             }
         }
 
@@ -11802,7 +11856,7 @@ class RelationshipDynamics
     const ICK_WARMTH_FLOOR = 30;          // Warmth must be below this OR passion below floor
     const ICK_RESENTMENT_PER_ATTEMPT = 5; // Resentment added per romantic attempt while ick active
     const ICK_COMFORT_OVERRIDE = -3.0;    // Forced comfort delta when ick active
-    const ICK_COOLDOWN_SECONDS = 600;     // 10 min IRL cooldown after ick clears
+    const ICK_COOLDOWN_PLAY_GAMETS = 1389000; // Cooldown after ick clears: 10 min of real play (600s * GAMETS_PER_REAL_SECOND)
     const ICK_RECOVERY = [
         'comfort'    => 50,   // Comfort must exceed this
         'passion'    => 40,   // Passion must exceed this
@@ -11869,7 +11923,7 @@ class RelationshipDynamics
                 'window_start'       => intval($dynamics['interaction_count'] ?? 0),
                 'ick_active'         => false,
                 'ick_triggered_at'   => 0,
-                'ick_cooldown_until' => 0,
+                'ick_cooldown_until_play_gamets' => 0,
             ];
         }
 
@@ -11923,8 +11977,8 @@ class RelationshipDynamics
             return false; // Need minimum interactions in window
         }
 
-        // Check cooldown
-        if (!empty($tracker['ick_cooldown_until']) && time() < $tracker['ick_cooldown_until']) {
+        // Check cooldown (accumulated play time; a legacy wall-clock ick_cooldown_until is ignored)
+        if (!empty($tracker['ick_cooldown_until_play_gamets']) && self::getPlayGamets($dynamics) < floatval($tracker['ick_cooldown_until_play_gamets'])) {
             return false;
         }
 
@@ -11994,7 +12048,8 @@ class RelationshipDynamics
 
         if ($comfortOk && $passionOk && ($resentmentOk || $confrontationOccurred)) {
             $tracker['ick_active'] = false;
-            $tracker['ick_cooldown_until'] = time() + self::ICK_COOLDOWN_SECONDS;
+            $tracker['ick_cooldown_until_play_gamets'] = self::getPlayGamets($dynamics) + self::ICK_COOLDOWN_PLAY_GAMETS;
+            unset($tracker['ick_cooldown_until']); // legacy wall-clock value
             $tracker['romantic_count'] = 0;
             $tracker['total_count'] = 0;
             $dynamics['_ick_confrontation_resolved'] = false;
@@ -12405,14 +12460,14 @@ class RelationshipDynamics
     const WALKAWAY_RESENTMENT_TICK = -0.5;            // Resentment decay per tick when player stays away
     const WALKAWAY_FOLLOW_RESENTMENT_MULT = 2.0;      // Resentment multiplier when player follows
     const WALKAWAY_FOLLOW_TRUST_PENALTY = -5.0;       // Permanent trust hit when player follows during walkaway
-    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum IRL hours for boundary test
-    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum IRL hours for boundary test
+    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum game-calendar hours for boundary test
+    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum game-calendar hours for boundary test
     const WALKAWAY_RECOVERY_RESENTMENT_MAX = 50;       // Resentment must be below this to recover
     const WALKAWAY_RECOVERY_COMFORT_MIN = 30;          // Comfort must be above this to recover
 
     // Hoover constants (Toxic exclusive)
-    const HOOVER_MIN_HOURS = 72;                       // Minimum hours before hoover triggers
-    const HOOVER_MAX_HOURS = 96;                       // Maximum hours for random hoover window
+    const HOOVER_MIN_HOURS = 72;                       // Minimum game-calendar hours before hoover triggers
+    const HOOVER_MAX_HOURS = 96;                       // Maximum game-calendar hours for random hoover window
     const HOOVER_MATURITY_CAP = 40;                    // Maturity must be below this for hoover
     const HOOVER_RESENTMENT_REBUILD_MULT = 1.5;        // Post-hoover resentment rebuilds faster
     const HOOVER_WALKAWAY_THRESHOLD_REDUCTION = 0.20;  // Next walkaway triggers 20% sooner
@@ -12679,7 +12734,7 @@ class RelationshipDynamics
 
         $dynamics['_walkaway_state'] = 'pending';
         $dynamics['_walkaway_reason'] = $reason;
-        $dynamics['_walkaway_started_at'] = time();
+        self::markGameClock($dynamics, '_walkaway_started_gamets');
         $dynamics['_walkaway_boundary_test_hours'] = round($testHours, 1);
         $dynamics['_walkaway_player_followed'] = false;
 
@@ -12696,7 +12751,7 @@ class RelationshipDynamics
     public static function activateWalkaway(&$dynamics, $npcName)
     {
         $dynamics['_walkaway_state'] = 'active';
-        $dynamics['_walkaway_activated_at'] = time();
+        self::markGameClock($dynamics, '_walkaway_activated_gamets');
 
         // Pause affinity decay during walkaway (they chose to leave, not forgotten)
         $dynamics['_walkaway_affinity_decay_paused'] = true;
@@ -12754,7 +12809,7 @@ class RelationshipDynamics
         // Move to boundary test phase after activation
         if ($state === 'active') {
             $dynamics['_walkaway_state'] = 'boundary_test';
-            $dynamics['_boundary_test_started_at'] = time();
+            self::markGameClock($dynamics, '_boundary_test_started_gamets');
             $result['state'] = 'boundary_test';
             $result['changed'] = true;
         }
@@ -12767,14 +12822,14 @@ class RelationshipDynamics
             $boundaryResult = self::checkBoundaryTest($dynamics);
             if ($boundaryResult === 'recovery') {
                 $dynamics['_walkaway_state'] = 'recovery';
-                $dynamics['_walkaway_recovery_at'] = time();
+                self::markGameClock($dynamics, '_walkaway_recovery_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
                 self::log("[WALKAWAY] {$npcName} entering recovery — conditions met");
                 $result['state'] = 'recovery';
                 $result['changed'] = true;
             } elseif ($boundaryResult === 'permanent') {
                 $dynamics['_walkaway_state'] = 'permanent';
-                $dynamics['_walkaway_permanent_at'] = time();
+                self::markGameClock($dynamics, '_walkaway_permanent_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
                 self::log("[WALKAWAY] {$npcName} permanent departure — boundary test failed");
                 $result['state'] = 'permanent';
@@ -12793,13 +12848,13 @@ class RelationshipDynamics
      */
     public static function checkBoundaryTest($dynamics)
     {
-        $testStart = intval($dynamics['_boundary_test_started_at'] ?? 0);
-        if ($testStart === 0) {
+        if (floatval($dynamics['_boundary_test_started_gamets'] ?? 0) <= 0) {
             return null;
         }
 
+        // Boundary test runs on the game calendar: the NPC is left alone for N game hours.
         $testHours = floatval($dynamics['_walkaway_boundary_test_hours'] ?? 36);
-        $elapsedHours = (time() - $testStart) / 3600.0;
+        $elapsedHours = self::gameHoursSince($dynamics, '_boundary_test_started_gamets') ?? 0.0;
 
         // Test hasn't expired yet — check early recovery
         $dims = $dynamics['dimensions'] ?? [];
@@ -12950,10 +13005,16 @@ class RelationshipDynamics
         $dynamics['_walkaway_affinity_decay_paused'] = false;
         unset(
             $dynamics['_walkaway_reason'],
-            $dynamics['_walkaway_started_at'],
-            $dynamics['_walkaway_activated_at'],
+            $dynamics['_walkaway_started_gamets'],
+            $dynamics['_walkaway_activated_gamets'],
             $dynamics['_walkaway_boundary_test_hours'],
             $dynamics['_walkaway_player_followed'],
+            $dynamics['_boundary_test_started_gamets'],
+            $dynamics['_walkaway_recovery_gamets'],
+            $dynamics['_walkaway_permanent_gamets'],
+            // legacy wall-clock stamps (pre-3.4.1 builds)
+            $dynamics['_walkaway_started_at'],
+            $dynamics['_walkaway_activated_at'],
             $dynamics['_boundary_test_started_at'],
             $dynamics['_walkaway_recovery_at'],
             $dynamics['_walkaway_permanent_at']
@@ -13012,13 +13073,17 @@ class RelationshipDynamics
             return false;
         }
 
-        // Walkaway must have been active long enough
-        $walkStart = intval($dynamics['_walkaway_activated_at'] ?? $dynamics['_walkaway_started_at'] ?? 0);
+        // Walkaway must have been active long enough (game calendar hours)
+        $walkKey = !empty($dynamics['_walkaway_activated_gamets']) ? '_walkaway_activated_gamets' : '_walkaway_started_gamets';
+        $walkStart = intval($dynamics[$walkKey] ?? 0);
         if ($walkStart === 0) {
             return false;
         }
 
-        $elapsedHours = (time() - $walkStart) / 3600.0;
+        $elapsedHours = self::gameHoursSince($dynamics, $walkKey);
+        if ($elapsedHours === null) {
+            return false;
+        }
 
         // Random window within min-max range (use deterministic seed from walkaway start)
         $hooverHours = self::HOOVER_MIN_HOURS
@@ -13055,7 +13120,8 @@ class RelationshipDynamics
 
         // Track hoover history
         $dynamics['_hoover_count'] = intval($dynamics['_hoover_count'] ?? 0) + 1;
-        $dynamics['_hoover_last_at'] = time();
+        self::markGameClock($dynamics, '_hoover_last_gamets');
+        unset($dynamics['_hoover_last_at']); // legacy wall-clock stamp
         $dynamics['_hoover_resentment_mult'] = self::HOOVER_RESENTMENT_REBUILD_MULT;
 
         // Reset walkaway state
@@ -13079,14 +13145,9 @@ class RelationshipDynamics
      */
     public static function getHooverContext($dynamics, $npcName)
     {
-        $lastHoover = intval($dynamics['_hoover_last_at'] ?? 0);
-        if ($lastHoover === 0) {
-            return null;
-        }
-
-        // Only inject for 48 hours after hoover
-        $hoursSince = (time() - $lastHoover) / 3600.0;
-        if ($hoursSince > 48) {
+        // Only inject for 48 game hours after hoover
+        $hoursSince = self::gameHoursSince($dynamics, '_hoover_last_gamets');
+        if ($hoursSince === null || $hoursSince > 48) {
             return null;
         }
 

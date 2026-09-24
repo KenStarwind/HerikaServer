@@ -2,6 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
+// data_functions.php pulls in chim_interaction.php, which would create conf/chim_interaction/.
+$GLOBALS['chim_interaction_generation'] = $GLOBALS['chim_interaction_generation'] ?? 0;
 require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../lib/data_functions.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';

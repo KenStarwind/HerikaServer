@@ -185,10 +185,10 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
                 } else {
                     // Negative drain (bleedout): clamp at zero, don't use addPassion
                     $dynamics['passion'] = max(0, floatval($dynamics['passion']) + $gain);
-                    $dynamics['passion_updated_at'] = time();
+                    $dynamics['passion_updated_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 }
                 $dynamics['interaction_count'] = intval($dynamics['interaction_count'] ?? 0) + 1;
-                $dynamics['last_interaction_at'] = time();
+                $dynamics['last_interaction_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 $dynamics['passion_sources']['combat'] = floatval($dynamics['passion_sources']['combat'] ?? 0) + $gain;
                 RelationshipDynamics::saveDynamics($combatNpc, $dynamics);
                 $witnessTag = $isWitness ? ' [WITNESS 0.5x]' : '';
