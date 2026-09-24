@@ -1215,7 +1215,8 @@ class RelationshipDynamics
             // (0..100 points) per game-calendar day. Raw goes through applyDelta, which adds
             // the 15.5 +50% (resentment > 30, maturity < 50) and the accumulator physics (inverted rubber
             // band, attachment gain mult), so the felt rate is roughly 2-4x the raw rate.
-            // Starting value 1.0: half the §5 jealousy-conversion k=2, because of that physics.
+            // Starting value 1.0 raw: with that physics about the felt rate of the §5 jealousy
+            // conversion at k=2 and jealousy 65 (1.0/day, which is added as is).
             'fester_resentment_per_game_day' => 1.0,
             'fester_maturity_below' => 50,
             // Positive-state fade with absence (decisions §2), passion (warmth below): after
@@ -1271,8 +1272,9 @@ class RelationshipDynamics
             // RAW resentment points removed per positive interaction (MDD 15.5: -1).
             'resentment_positive_decay' => 1.0,
             // Sustained jealousy converts into resentment (decisions §5): while jealousy (0..100)
-            // is above jealousy_resentment_above, RAW resentment += k x (jealousy - 30) / 70
-            // per game-calendar day (k = jealousy_resentment_k, start 2).
+            // is above jealousy_resentment_above, resentment (0..100 points, added as is, not
+            // through applyDelta) += k x (jealousy - 30) / 70 per game-calendar day
+            // (k = jealousy_resentment_k, start 2).
             'jealousy_resentment_k' => 2.0,
             'jealousy_resentment_above' => 30,
             // Jealousy (0..100 points) from an eval jealousy event at intensity 0/1, before the
@@ -3436,14 +3438,24 @@ class RelationshipDynamics
         }
 
         // Sustained jealousy converts into resentment (decisions §5): while jealousy (0..100)
-        // is above the threshold, k x (jealousy - 30) / 70 raw points per game day. Jealousy
-        // only cools in contact (decayJealousy), so it is constant over this interval.
+        // is above the threshold, resentment (0..100 points) += k x (jealousy - 30) / 70 per
+        // game day. That is the decided resentment itself, so it is added as is, not through
+        // applyDelta's physics (maturity Y, attachment gain, suppressed +50%), which would make
+        // it 0.9x..8x the decided rate depending on the NPC. Linear, so slicing never matters.
+        // Jealousy only cools in contact (decayJealousy), so it is constant over this interval.
         $jealousy = floatval($dynamics['jealousy_anger'] ?? 0);
         $jAbove = floatval(self::configValue('jealousy_resentment_above'));
         if ($jealousy > $jAbove && self::configValue('jealousy_enabled')) {
             $jRaw = floatval(self::configValue('jealousy_resentment_k'))
                 * ($jealousy - $jAbove) / (self::JEALOUSY_SCALE_MAX - $jAbove) * $days;
-            $raw += $jRaw;
+            if (!isset($dynamics['dimensions']['resentment']) || !is_array($dynamics['dimensions']['resentment'])) {
+                $dynamics['dimensions']['resentment'] = ['x' => 0, 'baseline' => 0, 'active' => true];
+            }
+            $max = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
+            $before = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
+            $after = min($max, $before + $jRaw);
+            $dynamics['dimensions']['resentment']['x'] = $after;   // unrounded: slicing must not drift
+            $out['resentment'] += $after - $before;
             $out['jealousy_resentment_raw'] = $jRaw;
         }
 
@@ -3634,7 +3646,8 @@ class RelationshipDynamics
         if (!$firstSight) {
             $step = self::advanceCalendar($dyn, $from, $now);
             $result['calendar'] = $step;
-            $changed = $changed || $step['resentment_raw'] > 0 || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0;
+            $changed = $changed || $step['resentment_raw'] > 0 || $step['jealousy_resentment_raw'] > 0
+                || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0;
         }
 
         // A walkaway resolves (or a Toxic sleeper hoovers back) while the player is elsewhere.

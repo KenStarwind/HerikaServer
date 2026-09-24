@@ -302,7 +302,7 @@ final class RelDynResentmentPostgresTest extends TestCase
         $this->prerequest('Lydia', self::T0 + 4 * self::DAY);   // the scan steps Aela's calendar
 
         $aela = $this->dynamics('Aela');
-        $this->assertGreaterThan(5.0, (float) $aela['dimensions']['resentment']['x'], '4 days x 2 x 35/70 = 4 raw');
+        $this->assertEqualsWithDelta(9.0, (float) $aela['dimensions']['resentment']['x'], 1e-6, '5 + 4 days x 2 x 35/70 = 9 (decisions §5, as is)');
         $this->assertSame(65.0, (float) $aela['jealousy_anger'], 'jealousy does not cool with absence');
         $this->assertSame(5.0, (float) $this->dynamics('Lydia')['dimensions']['resentment']['x'], 'no jealousy, no conversion');
     }

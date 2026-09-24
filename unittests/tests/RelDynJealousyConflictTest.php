@@ -160,24 +160,31 @@ final class RelDynJealousyConflictTest extends TestCase
 
     // ------------------------------------------------------------ jealousy -> resentment (§5)
 
-    /** While jealousy > 30: raw resentment += k x (jealousy - 30) / 70 per game day, k = 2. */
+    /**
+     * Decisions §5: while jealousy > 30, resentment += k x (jealousy - 30) / 70 per game day,
+     * k = 2. That is the resentment the NPC ends up with, whoever she is: the conversion does
+     * not go through applyDelta's physics (maturity Y, attachment gain, suppressed +50%).
+     */
     public function testSustainedJealousyConvertsIntoResentmentPerGameDay(): void
     {
         $k = (float) RelationshipDynamics::defaultConfig()['jealousy_resentment_k'];
         $this->assertSame(2.0, $k);
 
-        $d = $this->npc(['jealousy_anger' => 65.0], ['resentment' => 5.0]);
-        $expected = $d;
-        foreach (range(1, 3) as $_) {                       // 3 days x 2 x 35/70 = 3 raw, in 1-point quanta
-            RelationshipDynamics::applyDelta('resentment', $expected, 1.0, 'Stoic');
+        $profiles = [
+            'secure, maturity 60'                  => [['attachment_style' => 'secure'], ['maturity' => 60.0, 'resentment' => 5.0]],
+            'anxious, maturity 60'                 => [['attachment_style' => 'anxious'], ['maturity' => 60.0, 'resentment' => 5.0]],
+            'secure, maturity 40, resentment 35'   => [['attachment_style' => 'secure'], ['maturity' => 40.0, 'resentment' => 35.0]],
+            'anxious, maturity 30, resentment 35'  => [['attachment_style' => 'anxious'], ['maturity' => 30.0, 'resentment' => 35.0]],
+        ];
+        foreach ($profiles as $label => [$extra, $dims]) {
+            $d = $this->npc(['jealousy_anger' => 65.0] + $extra, $dims);
+            $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 3 * self::DAY);
+
+            // 3 days x 2 x (65 - 30) / 70 = 3.0 resentment points
+            $this->assertEqualsWithDelta(3.0, $r['jealousy_resentment_raw'], 1e-9, $label);
+            $this->assertEqualsWithDelta($dims['resentment'] + 3.0, self::res($d), 1e-9, "{$label}: exactly k(j-30)/70 per day");
+            $this->assertSame(65.0, (float) $d['jealousy_anger'], 'jealousy itself does not cool with absence');
         }
-
-        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 3 * self::DAY);
-
-        $this->assertEqualsWithDelta(3.0, $r['jealousy_resentment_raw'], 1e-9);
-        $this->assertEqualsWithDelta(3.0, $r['resentment_raw'], 1e-9);
-        $this->assertEqualsWithDelta(self::res($expected), self::res($d), 1e-9);
-        $this->assertSame(65.0, (float) $d['jealousy_anger'], 'jealousy itself does not cool with absence');
     }
 
     public function testJealousyAtOrBelowThirtyDoesNotConvert(): void
