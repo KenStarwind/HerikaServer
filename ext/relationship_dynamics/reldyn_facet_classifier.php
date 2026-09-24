@@ -555,17 +555,14 @@ final class RelDynFacetClassifier
     }
 
     /**
-     * Default config 'thing_appraisal': what an appraisal of a topic or a gift does.
-     * MDD 1.2: interests act as a 0.5x .. 2.0x multiplier.
+     * Default config 'thing_appraisal': what an appraisal of a topic or a gift does. The
+     * multiplier itself is MDD 1.2's 0.5x .. 2.0x through RelDynFacets::interestMultiplier().
      */
     public static function appraisalDefaults(): array
     {
         return [
-            // valence -1 -> interest_mult_min, 0 -> 1.0, +1 -> interest_mult_max (linear each side)
-            'interest_mult_min' => 0.5,
-            'interest_mult_max' => 2.0,
-            // |valence| (-1..+1) at which a topic counts as a match (positive) / a turn-off
-            // (negative): the felt read reaches the LLM, a positive match feeds flirt-in-context
+            // valence (-1..+1) from which a topic counts as a match: _last_topic_match, and it
+            // feeds flirt-in-context (whether it is felt at all is RelDynFacets::feltText's call)
             'topic_match_min_valence' => 0.3,
             // gift multiplier when the item has no facets at all (old processGift: a generic
             // gift feels transactional)
@@ -1262,19 +1259,6 @@ final class RelDynFacetClassifier
     }
 
     /**
-     * MDD 1.2 interest multiplier of a valence: -1 -> interest_mult_min (0.5), 0 -> 1.0,
-     * +1 -> interest_mult_max (2.0), linear on each side.
-     */
-    public static function interestMultiplier(float $valence, ?array $cfg = null): float
-    {
-        $cfg = $cfg ?? self::appraisalConfig();
-        $v = max(-1.0, min(1.0, $valence));
-        return $v >= 0.0
-            ? 1.0 + $v * ((float) $cfg['interest_mult_max'] - 1.0)
-            : 1.0 + $v * (1.0 - (float) $cfg['interest_mult_min']);
-    }
-
-    /**
      * The Oghma topics core grounded for THIS turn: processor/oghma.php runs before the ext
      * postrequest hooks in the same request (main.php) and leaves them in
      * $GLOBALS['OGHMA_PARITY_RESULT']['topics'] (conversation topics; forced-context articles
@@ -1333,7 +1317,7 @@ final class RelDynFacetClassifier
         }
         $v = (float) $a['valence'];
         $out['appraisal'] = $a;
-        $out['bonus'] = self::interestMultiplier($v, $cfg);
+        $out['bonus'] = RelDynFacets::interestMultiplier($v);   // MDD 1.2 0.5x..2.0x, the one mapping
         $min = (float) $cfg['topic_match_min_valence'];
         if ($v >= $min) {
             $out['match'] = $a['name'];
@@ -1358,7 +1342,7 @@ final class RelDynFacetClassifier
             return ['mult' => (float) $cfg['gift_unclassified_mult'], 'appraisal' => null, 'felt' => null];
         }
         return [
-            'mult' => self::interestMultiplier((float) $a['valence'], $cfg),
+            'mult' => RelDynFacets::interestMultiplier((float) $a['valence']),   // MDD 1.2 0.5x..2.0x
             'appraisal' => $a,
             'felt' => RelDynFacets::feltText($npcName, $a, 'item', $itemName),
         ];

@@ -501,7 +501,6 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
         $ashe = $this->postrequest('Ashe', ['dwemer']);
         $aela = $this->postrequest('Aela the Huntress', ['dwemer']);
 
-        $cfg = RelDynFacetClassifier::appraisalConfig();
         $facets = $this->stored('dwemer')['facets'];
         $vAshe = RelDynFacets::appraise(RelDynFacets::preferences($this->dynamics('Ashe'), 'Ashe'), $facets)['valence'];
         $vAela = RelDynFacets::appraise(RelDynFacets::preferences($this->dynamics('Aela the Huntress'), 'Aela the Huntress'), $facets)['valence'];
@@ -509,8 +508,8 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
         // Ashe warms to it past the match threshold, Aela is put off.
         $this->assertGreaterThan(0.3, $vAshe);
         $this->assertLessThan(0.0, $vAela);
-        $this->assertEqualsWithDelta(RelDynFacetClassifier::interestMultiplier($vAshe, $cfg), $ashe['topic_bonus'], 1e-9);
-        $this->assertEqualsWithDelta(RelDynFacetClassifier::interestMultiplier($vAela, $cfg), $aela['topic_bonus'], 1e-9);
+        $this->assertEqualsWithDelta(RelDynFacets::interestMultiplier($vAshe), $ashe['topic_bonus'], 1e-9);
+        $this->assertEqualsWithDelta(RelDynFacets::interestMultiplier($vAela), $aela['topic_bonus'], 1e-9);
         $this->assertGreaterThan(1.0, $ashe['topic_bonus']);
         $this->assertLessThan(1.0, $aela['topic_bonus']);
         $this->assertSame(1.2, $ashe['flirt_bonus'], 'flirty mood + a topic she warms to');

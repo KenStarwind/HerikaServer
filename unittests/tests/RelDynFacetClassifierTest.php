@@ -273,15 +273,17 @@ final class RelDynFacetClassifierTest extends TestCase
     // Hand-off to the appraisal
     // ------------------------------------------------------------------
 
-    public function testInterestMultiplierSpansTheMddRange(): void
+    /** One MDD 1.2 mapping (RelDynFacets::interestMultiplier) for places, topics and gifts alike. */
+    public function testTopicsAndGiftsUseTheOneMddInterestMapping(): void
     {
-        $cfg = RelDynFacetClassifier::appraisalDefaults();
-        $this->assertSame(0.5, RelDynFacetClassifier::interestMultiplier(-1.0, $cfg));
-        $this->assertSame(0.75, RelDynFacetClassifier::interestMultiplier(-0.5, $cfg));
-        $this->assertSame(1.0, RelDynFacetClassifier::interestMultiplier(0.0, $cfg));
-        $this->assertSame(1.5, RelDynFacetClassifier::interestMultiplier(0.5, $cfg));
-        $this->assertSame(2.0, RelDynFacetClassifier::interestMultiplier(1.0, $cfg));
-        $this->assertSame(2.0, RelDynFacetClassifier::interestMultiplier(3.0, $cfg), 'clamped');
+        $this->assertFalse(method_exists(RelDynFacetClassifier::class, 'interestMultiplier'), 'no second mapping');
+        $this->assertArrayNotHasKey('interest_mult_min', RelDynFacetClassifier::appraisalDefaults());
+        $this->assertArrayNotHasKey('interest_mult_max', RelDynFacetClassifier::appraisalDefaults());
+        $this->assertSame(0.5, RelDynFacets::interestMultiplier(-1.0));
+        $this->assertSame(0.75, RelDynFacets::interestMultiplier(-0.5));
+        $this->assertSame(1.0, RelDynFacets::interestMultiplier(0.0));
+        $this->assertSame(1.5, RelDynFacets::interestMultiplier(0.5));
+        $this->assertSame(2.0, RelDynFacets::interestMultiplier(3.0), 'clamped');
     }
 
     public function testTurnTopicsAreThisTurnsGroundedOghmaTopics(): void
