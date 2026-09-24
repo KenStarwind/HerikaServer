@@ -968,6 +968,14 @@ class RelationshipDynamics
 
     const CONFIG_ROW_ID = 'relationship_dynamics_config';
 
+    /**
+     * Stamp saveConfig() writes into the row as 'config_schema'. Rows without it (or older)
+     * were saved by the settings page before 2026-09-23, which stored every checkbox with
+     * isset() next to its hidden "" twin, so every toggle in them is true whatever was
+     * ticked. loadStoredConfig() drops those toggles so the current defaults apply.
+     */
+    const CONFIG_SCHEMA = 2;
+
     /** The stored conf_opts row as saved ([] when absent or unreadable). */
     public static function loadStoredConfig(): array
     {
@@ -984,6 +992,10 @@ class RelationshipDynamics
         if (!is_array($stored)) {
             error_log("[RelDyn] ERROR loadStoredConfig: conf_opts " . self::CONFIG_ROW_ID . " is not a JSON object; using defaults");
             return [];
+        }
+        if (intval($stored['config_schema'] ?? 1) < self::CONFIG_SCHEMA) {
+            // Pre-fix row: its toggles are all true by the isset() bug, not by choice.
+            $stored = array_diff_key($stored, array_flip(self::CONFIG_FORM_TOGGLES));
         }
         return $stored;
     }
@@ -1069,6 +1081,7 @@ class RelationshipDynamics
         $db = $GLOBALS['db'] ?? null;
         if (!$db) return false;
         $config = array_intersect_key($config, self::defaultConfig());
+        $config['config_schema'] = self::CONFIG_SCHEMA;   // this row's toggles are real choices
         try {
             $json = json_encode($config, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             $row = $db->fetchOne(
@@ -1102,6 +1115,7 @@ class RelationshipDynamics
     public static function defaultConfig()
     {
         return [
+            'config_schema' => self::CONFIG_SCHEMA,  // row stamp (see CONFIG_SCHEMA), set by saveConfig()
             'enabled' => true,
             'base_passion_gain' => 2.0,              // passion points (0..passion_max) per interaction
             'passion_max' => 100.0,                  // passion points

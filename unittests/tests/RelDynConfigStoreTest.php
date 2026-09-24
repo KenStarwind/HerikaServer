@@ -125,8 +125,10 @@ final class RelDynConfigStoreTest extends TestCase
 
     public function testStoredRowIsMergedOverDefaults(): void
     {
-        // A row saved by an older settings page: no cascade/attraction weight keys.
-        $this->useStoredRow(json_encode(['enabled' => true, 'log_enabled' => true, 'base_passion_gain' => 3.5]));
+        // A row saved by the current settings page (config_schema stamped) that predates some
+        // keys: no cascade/attraction weight keys.
+        $this->useStoredRow(json_encode(['config_schema' => RelationshipDynamics::CONFIG_SCHEMA,
+            'enabled' => true, 'log_enabled' => true, 'base_passion_gain' => 3.5]));
         $cfg = RelationshipDynamics::getConfig();
 
         $this->assertTrue($cfg['log_enabled'], 'stored value wins');
@@ -137,6 +139,31 @@ final class RelDynConfigStoreTest extends TestCase
             $this->assertArrayHasKey($key, $cfg, "{$key} missing from the stored row takes the current default");
             $this->assertSame($defaults[$key], $cfg[$key]);
         }
+    }
+
+    /**
+     * fresh-start-defaults: the settings page before 2026-09-23 saved every toggle with isset(),
+     * and each checkbox has a hidden "" twin, so its rows hold every toggle as true whatever
+     * was ticked. Those toggle values carry no choice; the current defaults apply (the numeric
+     * <social_mask> block stays off). Numbers in the row were typed values and are kept.
+     */
+    public function testRowSavedByThePreFixSettingsPageDoesNotSwitchTogglesOn(): void
+    {
+        $old = ['base_passion_gain' => 3.5, 'passion_max' => 120];
+        foreach (RelationshipDynamics::CONFIG_FORM_TOGGLES as $key) {
+            $old[$key] = true;   // what isset() stored for every checkbox
+        }
+        $this->useStoredRow(json_encode($old));
+
+        $cfg = RelationshipDynamics::getConfig();
+
+        $defaults = RelationshipDynamics::defaultConfig();
+        $this->assertFalse($cfg['social_masking_enabled'], 'no numeric <social_mask> block from a pre-fix row');
+        foreach (RelationshipDynamics::CONFIG_FORM_TOGGLES as $key) {
+            $this->assertSame($defaults[$key], $cfg[$key], "{$key}: a pre-fix row's toggle is not a choice");
+        }
+        $this->assertSame(3.5, $cfg['base_passion_gain'], 'typed numbers are kept');
+        $this->assertSame(120, $cfg['passion_max']);
     }
 
     public function testNoStoredRowGivesDefaults(): void
@@ -250,5 +277,18 @@ final class RelDynConfigStoreTest extends TestCase
         $this->assertTrue($stored['log_enabled']);
         $this->assertSame(150.0, (float)$stored['passion_max']);
         $this->assertSame(150.0, (float)RelationshipDynamics::getConfig()['passion_max']);
+    }
+
+    /** A save stamps the row, so a toggle the player really switches on is honoured. */
+    public function testASavedRowIsStampedAndItsTogglesAreHonoured(): void
+    {
+        $this->usePostgres();
+        $this->assertTrue(RelationshipDynamics::saveConfigFromForm($this->formPost(['enabled', 'social_masking_enabled'])));
+
+        $stored = $this->storedRow();
+        $this->assertSame(RelationshipDynamics::CONFIG_SCHEMA, $stored['config_schema']);
+        $cfg = RelationshipDynamics::getConfig();
+        $this->assertTrue($cfg['social_masking_enabled'], 'switched on by the player on the current page');
+        $this->assertFalse($cfg['hoover_enabled'], 'switched off on the current page');
     }
 }
