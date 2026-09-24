@@ -281,7 +281,7 @@ final class RelDynAffinityCoreTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['db', 'gameRequest', 'HERIKA_NAME', 'PLAYER_NAME', 'CACHE_PEOPLE', 'CACHE_PARTY'] as $key) {
+        foreach (['db', 'gameRequest', 'HERIKA_NAME', 'PLAYER_NAME', 'CACHE_PEOPLE', 'CACHE_PARTY', 'contextDataFull'] as $key) {
             $this->savedGlobals[$key] = array_key_exists($key, $GLOBALS) ? [$GLOBALS[$key]] : null;
         }
         foreach (array_keys($GLOBALS) as $key) {
@@ -578,6 +578,46 @@ final class RelDynAffinityCoreTest extends TestCase
         $this->assertSame('enemy', $stored['_core_rel_type'] ?? null, 'prerequest snapshots core Player.type');
         $this->assertSame('hostile', RelationshipDynamics::getRelationshipType(self::NPC, $stored));
         $this->assertSame(40, $this->coreAff(), 'hate is self-sustaining: a core enemy does not decay');
+    }
+
+    /** Runs prerequest then the context hook; returns the <relational_dimensions> block. */
+    private function relationalDimensionsBlock(): string
+    {
+        $GLOBALS['contextDataFull'] = [];
+        $this->runHook('prerequest');
+        $this->resetEngineCaches();
+        $this->runHook('context');
+        foreach ($GLOBALS['contextDataFull'] as $msg) {
+            if (strpos($msg['content'] ?? '', '<relational_dimensions>') !== false) {
+                return $msg['content'];
+            }
+        }
+        return '';
+    }
+
+    public function testANeutralStrangerGetsTierZeroContextAndNoHighWaterMark(): void
+    {
+        $this->setConfig(['dimension_context_enabled' => true]);
+        $this->seedNpc(['Player' => ['aff' => 0, 'type' => 'neutral']]);
+
+        $block = $this->relationalDimensionsBlock();
+
+        $this->assertStringContainsString('is a stranger to', $block);
+        $this->assertStringNotContainsString('Warm', $block);
+        $this->assertSame(0, intval($this->storedDynamics()['context_tier_hwm'] ?? 0));
+    }
+
+    public function testAcquaintanceAffinityLineUsesTheCoreBand(): void
+    {
+        $this->setConfig(['dimension_context_enabled' => true]);
+        // Core 28 = Acquaintance (tier 1). As a mirror (x = 64) it read as the 'Fond' band.
+        $this->seedNpc(['Player' => ['aff' => 28, 'type' => 'neutral']]);
+
+        $block = $this->relationalDimensionsBlock();
+
+        $this->assertSame(1, intval($this->storedDynamics()['context_tier_hwm'] ?? 0));
+        $this->assertStringContainsString('Affinity: Neutral —', $block, 'acquaintance = the draft band at the same step');
+        $this->assertStringNotContainsString('Affinity: Fond', $block);
     }
 
     public function testFractionalDeltasAccumulateInsteadOfRounding(): void

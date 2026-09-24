@@ -6325,6 +6325,43 @@ class RelationshipDynamics
         $dynamics['dimensions']['affinity']['x'] = round(($coreAff + 100.0) / 2.0, 4);
     }
 
+    /**
+     * Label of the DIMENSION_BANDS['affinity'] entry (the design draft's 0..100 bands) for each
+     * RelDyn tier on core affinity, following core's own labels: a neutral stranger has
+     * "no strong feelings" (Neutral), core Wary/Cold read Cold, Friendly reads Warm, Devoted
+     * reads Close. The hostile tier splits at AFFINITY_BAND_HOSTILE_MAX (core units).
+     */
+    const AFFINITY_BAND_BY_TIER = [
+        'hostile'      => 'Cold',
+        'stranger'     => 'Neutral',
+        'acquaintance' => 'Neutral',
+        'friend'       => 'Warm',
+        'close_friend' => 'Fond',
+        'bonded'       => 'Close',
+        'devoted'      => 'Devoted',
+    ];
+
+    /** Core affinity (-100..+100) at or below which the 'Hostile' band applies (core Resentful and below). */
+    const AFFINITY_BAND_HOSTILE_MAX = -56;
+
+    /**
+     * Affinity band for context lines, from core affinity (never look the mirror x up in
+     * DIMENSION_BANDS['affinity']: its ranges are the draft's 0..100 scale).
+     */
+    public static function getAffinityBand(array $dynamics): ?array
+    {
+        $core = self::getCoreAffinity($dynamics);
+        $label = ($core <= self::AFFINITY_BAND_HOSTILE_MAX)
+            ? 'Hostile'
+            : (self::AFFINITY_BAND_BY_TIER[self::getCurrentTier($core)] ?? null);
+        foreach (self::DIMENSION_BANDS['affinity'] ?? [] as $band) {
+            if ($band['label'] === $label) {
+                return $band;
+            }
+        }
+        return null;
+    }
+
     /** Context tier (0-3) the NPC's current core affinity supports, before the high-water mark. */
     public static function getAffinityContextTier(array $dynamics): int
     {

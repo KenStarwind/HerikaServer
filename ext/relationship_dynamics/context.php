@@ -429,11 +429,20 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
             continue;
         }
 
-        $baseline = floatval($dimData['baseline'] ?? $def['default_baseline']);
-        $dist = abs($x - $baseline);
+        if ($dimId === 'affinity') {
+            // x is only the mirror of core aff: band and baseline distance in core units
+            // (-100..+100; the affinity baseline is core units, as in applyDelta)
+            $x = RelationshipDynamics::getCoreAffinity($dynamics);
+            $baseline = floatval($dimData['baseline'] ?? RelationshipDynamics::getTemperamentBaseline($temperament ?: null, 'affinity'));
+            $dist = abs($x - $baseline);
+            $band = RelationshipDynamics::getAffinityBand($dynamics);
+        } else {
+            $baseline = floatval($dimData['baseline'] ?? $def['default_baseline']);
+            $dist = abs($x - $baseline);
 
-        // Get the band
-        $band = RelationshipDynamics::getDimensionBand($dimId, $x);
+            // Get the band
+            $band = RelationshipDynamics::getDimensionBand($dimId, $x);
+        }
         if ($band === null) {
             $skippedDims[] = "{$dimId}(no_band)";
             continue;
@@ -451,8 +460,10 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
         if (!empty($allBands)) {
             $firstBand = $allBands[0];
             $lastBand = $allBands[count($allBands) - 1];
-            $isExtreme = ($x >= $firstBand['range'][0] && $x <= $firstBand['range'][1])
-                      || ($x >= $lastBand['range'][0] && $x <= $lastBand['range'][1]);
+            $isExtreme = ($dimId === 'affinity')
+                ? ($band === $firstBand || $band === $lastBand)   // core units: compare the band itself
+                : (($x >= $firstBand['range'][0] && $x <= $firstBand['range'][1])
+                   || ($x >= $lastBand['range'][0] && $x <= $lastBand['range'][1]));
         }
 
         // Priority filtering: skip if near baseline and not extreme

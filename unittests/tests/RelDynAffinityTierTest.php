@@ -145,6 +145,29 @@ final class RelDynAffinityTierTest extends TestCase
         $this->assertSame(2, $d['context_tier_hwm']);
     }
 
+    public static function affinityBandProvider(): array
+    {
+        return [
+            'Hostile -100'    => [-100, 'Hostile'],
+            'Resentful -56'   => [-56, 'Hostile'],
+            'Cold -40'        => [-40, 'Cold'],
+            'Wary -10'        => [-10, 'Cold'],
+            'Neutral 0'       => [0, 'Neutral'],
+            'Acquaintance 20' => [20, 'Neutral'],
+            'Friendly 40'     => [40, 'Warm'],
+            'Fond 60'         => [60, 'Fond'],
+            'Devoted 80'      => [80, 'Close'],
+            'Bonded 95'       => [95, 'Devoted'],
+        ];
+    }
+
+    #[DataProvider('affinityBandProvider')]
+    public function testAffinityBandFollowsCoreAffinity(int $coreAff, string $label): void
+    {
+        $band = RelationshipDynamics::getAffinityBand($this->npcAtCoreAff($coreAff));
+        $this->assertSame($label, $band['label'] ?? null);
+    }
+
     public function testFriendzoneNeedsFriendTierOnCoreAffinity(): void
     {
         $d = $this->npcAtCoreAff(0);
