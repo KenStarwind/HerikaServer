@@ -18,6 +18,7 @@
  */
 
 require_once __DIR__ . '/reldyn_storage.php';
+require_once __DIR__ . '/reldyn_facets.php';
 
 class RelationshipDynamics
 {
@@ -1307,6 +1308,10 @@ class RelationshipDynamics
             // game-calendar gap longer than this; a drop of conflict_threshold_affinity_drop core
             // affinity points below the session's high opens a conflict.
             'conflict_session_gap_game_hours' => 6,
+            // ===== Place facets (decisions 2026-09-23 §6) =====
+            // Core location tags / name keywords / inside-outside / time of day / weather ->
+            // facet vector (facet => weight 0..1). See RelDynFacets::placeFacets().
+            'place_facets' => RelDynFacets::placeFacetDefaults(),
         ];
     }
 
