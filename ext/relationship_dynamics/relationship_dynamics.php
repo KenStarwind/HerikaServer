@@ -758,6 +758,15 @@ class RelationshipDynamics
         self::$requestScopeStartedAt = null;
     }
 
+    /**
+     * Identity of the open request scope (null outside one), so request-scoped caches kept by
+     * other RelDyn classes (RelDynPlayer::profile) expire exactly when this scope does.
+     */
+    public static function requestScopeToken(): ?string
+    {
+        return self::inRequestScope() ? self::$requestScopePid . ':' . self::$requestScopeStartedAt : null;
+    }
+
     private static function inRequestScope()
     {
         if (self::$requestScopePid === null || self::$requestScopePid !== getmypid()) {
@@ -1164,6 +1173,9 @@ class RelationshipDynamics
             'facet_classifier' => RelDynFacetClassifier::configDefaults(),
             // What a topic / gift appraisal does: MDD 1.2 interest multiplier range, match threshold.
             'thing_appraisal' => RelDynFacetClassifier::appraisalDefaults(),
+            // ===== Player profile (player-stats-pipeline, rulings 2026-09-24 §9) =====
+            // Archetype / pillar tables over CHIM core's player data (reldyn_player.php).
+            'player_profile' => RelDynPlayer::configDefaults(),
         ];
     }
 
@@ -15801,3 +15813,5 @@ class RelationshipDynamics
 
 // Facets -> appraisal -> feeling (decisions 2026-09-23 §6); its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_facets.php';
+// Player profile (player-stats-pipeline); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_player.php';
