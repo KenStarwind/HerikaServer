@@ -90,8 +90,8 @@ if (isset($stageContext[$stage])) {
 // Reunion warmth
 // -------------------------------------------------------------------------
 if ($reunionGiven) {
-    $lastSeen = intval($dynamics['last_seen_at'] ?? 0);
-    $hoursApart = $lastSeen > 0 ? (time() - $lastSeen) / 3600.0 : 0;
+    // last_seen_at is on the play-gamets clock (same measure checkReunion() used)
+    $hoursApart = (RelationshipDynamics::playGametsSince($dynamics, 'last_seen_at') ?? 0) / RelationshipDynamics::GAMETS_PER_REAL_HOUR;
     $player = $GLOBALS['PLAYER_NAME'];
 
     // Temperament-aware reunion text

@@ -186,10 +186,10 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
                 } else {
                     // Negative drain (bleedout): clamp at zero, don't use addPassion
                     RelationshipDynamics::setPassion($dynamics, max(0, RelationshipDynamics::getPassion($dynamics) + $gain));
-                    $dynamics['passion_updated_at'] = time();
+                    $dynamics['passion_updated_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 }
                 $dynamics['interaction_count'] = intval($dynamics['interaction_count'] ?? 0) + 1;
-                $dynamics['last_interaction_at'] = time();
+                $dynamics['last_interaction_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 $dynamics['passion_sources']['combat'] = floatval($dynamics['passion_sources']['combat'] ?? 0) + $gain;
                 RelationshipDynamics::saveDynamics($combatNpc, $dynamics);
                 $witnessTag = $isWitness ? ' [WITNESS 0.5x]' : '';
@@ -200,7 +200,8 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
         // ========== DEATH/GRIEF SYSTEM (PR 10) ==========
         if ($reqType === 'death' && !empty($reldynCfg['grief_system_enabled'] ?? true)) {
             $deceasedName = null;
-            $eventData2 = $GLOBALS['HERIKA_EVENT_DATA'] ?? ($GLOBALS['event_data'] ?? ($eventData ?? ''));
+            // 3.4.1 has no HERIKA_EVENT_DATA/event_data globals; $eventData is $gameRequest[3]
+            $eventData2 = $eventData ?? '';
 
             // Pattern 1: "X has defeated Y"
             if (preg_match('/has defeated\s+(.+?)[\.\s]*$/i', $eventData2, $m)) {

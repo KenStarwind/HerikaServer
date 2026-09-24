@@ -13,7 +13,9 @@ use PHPUnit\Framework\TestCase;
  *
  * No real database: RelDynAffinityFakeDb keeps core_npc_master rows as JSON and
  * emulates the handful of SQL shapes RelDyn issues (including jsonb_set semantics:
- * a missing intermediate path element makes jsonb_set a no-op, as in PostgreSQL).
+ * a missing intermediate path element makes jsonb_set a no-op, as in PostgreSQL),
+ * plus the RelDynStorage / NpcMaster::getPluginData shapes for
+ * plugin_extended_data.reldyn (where RelDyn's own state lives).
  */
 final class RelDynAffinityFakeDb
 {
@@ -32,7 +34,66 @@ final class RelDynAffinityFakeDb
 
     public function addNpc(int $id, string $name, array $extended): void
     {
-        $this->rows[$id] = ['id' => $id, 'npc_name' => $name, 'extended_data' => json_encode($extended)];
+        $this->rows[$id] = ['id' => $id, 'npc_name' => $name, 'extended_data' => json_encode($extended), 'plugin_extended_data' => []];
+    }
+
+    /** plugin_extended_data.reldyn.dynamics, falling back to the pre-migration location. */
+    public function dynamics(int $id): array
+    {
+        return $this->rows[$id]['plugin_extended_data']['reldyn']['dynamics']
+            ?? ($this->extended($id)['relationship_dynamics'] ?? []);
+    }
+
+    public function patchDynamics(int $id, array $patch): void
+    {
+        if (isset($this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'])) {
+            $this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'] = array_merge($this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'], $patch);
+            return;
+        }
+        $ext = $this->extended($id);
+        $ext['relationship_dynamics'] = array_merge($ext['relationship_dynamics'] ?? [], $patch);
+        $this->setExtended($id, $ext);
+    }
+
+    /** RelDynStorage / NpcMaster plugin-data statements (parameterized). */
+    private function pluginQuery(string $q, array $params)
+    {
+        $sql = preg_replace('/\s+/', ' ', trim($q));
+        if (strpos($sql, 'SELECT id FROM core_npc_master WHERE lower(npc_name) = lower($1)') === 0) {
+            $row = $this->findByName((string)$params[0]);
+            return $row ? ['id' => (string)$row['id']] : [];
+        }
+        $id = (int)($params[0] ?? 0);
+        if (!isset($this->rows[$id])) {
+            return [];
+        }
+        $plugin = &$this->rows[$id]['plugin_extended_data'];
+        if (strpos($sql, 'SELECT plugin_extended_data -> $2::text AS plugin_data FROM core_npc_master WHERE id = $1') === 0) {
+            $ns = $plugin[$params[1]] ?? null;
+            return ['plugin_data' => $ns === null ? null : json_encode((object)$ns)];
+        }
+        if (strpos($sql, 'WITH cur AS (') === 0 && strpos($sql, '#-') !== false) {
+            $value = $plugin[$params[1]][$params[2]] ?? null;
+            unset($plugin[$params[1]][$params[2]]);
+            return ['inbox' => $value === null ? null : json_encode($value)];
+        }
+        if (strpos($sql, "extended_data -> 'relationship_dynamics'") !== false) {
+            $legacy = $this->extended($id)['relationship_dynamics'] ?? null;
+            if (isset($plugin[$params[1]][$params[2]]) || !is_array($legacy) || $legacy === []) {
+                return [];
+            }
+            $plugin[$params[1]][$params[2]] = $legacy;
+            return ['id' => (string)$id];
+        }
+        if (strpos($sql, 'jsonb_build_array($4::jsonb)') !== false) {
+            $plugin[$params[1]][$params[2]][] = json_decode($params[3], true);
+            return ['id' => (string)$id];
+        }
+        if (strpos($sql, 'jsonb_build_object($3::text, $4::jsonb)') !== false) {
+            $plugin[$params[1]][$params[2]] = json_decode($params[3], true);
+            return ['id' => (string)$id];
+        }
+        throw new RuntimeException('RelDynAffinityFakeDb: unhandled parameterized query: ' . $sql);
     }
 
     public function extended(int $id): array
@@ -84,6 +145,9 @@ final class RelDynAffinityFakeDb
     public function fetchOne($q, array $params = [])
     {
         $this->queries[] = $q;
+        if (!empty($params)) {
+            return $this->pluginQuery($q, $params);
+        }
         if (preg_match("/FROM conf_opts WHERE (?:lower\()?id\)? = '((?:[^']|'')*)'/", $q, $m)) {
             $id = self::unescape($m[1]);
             return isset($this->confOpts[$id]) ? ['value' => $this->confOpts[$id]] : [];
@@ -317,14 +381,12 @@ final class RelDynAffinityCoreTest extends TestCase
 
     private function storedDynamics(): array
     {
-        return $this->db->extended(self::NPC_ID)['relationship_dynamics'] ?? [];
+        return $this->db->dynamics(self::NPC_ID);
     }
 
     private function setStoredDynamics(array $patch): void
     {
-        $ext = $this->db->extended(self::NPC_ID);
-        $ext['relationship_dynamics'] = array_merge($ext['relationship_dynamics'] ?? [], $patch);
-        $this->db->setExtended(self::NPC_ID, $ext);
+        $this->db->patchDynamics(self::NPC_ID, $patch);
         $this->resetEngineCaches();
     }
 

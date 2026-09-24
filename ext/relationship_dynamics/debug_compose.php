@@ -8,12 +8,16 @@
 
 header('Content-Type: text/plain; charset=utf-8');
 
-// Bootstrap
+// Bootstrap (3.4.1: conf/conf.php is empty, use the runtime bootstrap)
 $enginePath = realpath(__DIR__ . '/../../') . '/';
-$GLOBALS['ENGINE_PATH'] = $enginePath;
-require_once $enginePath . 'conf/conf.php';
-require_once $enginePath . "lib/{$GLOBALS['DBDRIVER']}.class.php";
-$GLOBALS['db'] = new sql();
+require_once $enginePath . 'lib/runtime_bootstrap.php';
+chimRuntimeBootstrapIfNeeded($enginePath, [
+    'run_db_updates' => false,
+    'load_general_settings' => true,
+    'load_stt_connector' => false,
+    'load_itt_connector' => false,
+    'load_player_name' => true,
+]);
 $GLOBALS['PLAYER_NAME'] = $GLOBALS['PLAYER_NAME'] ?? 'Player';
 
 // Load Sharmat NsfwNpcData if available
@@ -45,8 +49,10 @@ echo "Inferred Temperament:    " . ($dyn['inferred_temperament'] ?? '(none)') . 
 
 echo "Passion:                 " . number_format(floatval($dyn['passion']), 1) . " / {$cfg['passion_max']}\n";
 echo "Passion Band:            " . RelationshipDynamics::getPassionBand($dyn['passion']) . "\n";
-$lastPassionUpdate = intval($dyn['passion_updated_at'] ?? 0);
-echo "Passion Last Updated:    " . ($lastPassionUpdate > 0 ? date('Y-m-d H:i:s', $lastPassionUpdate) . " (" . round((time() - $lastPassionUpdate) / 60) . " min ago)" : 'never') . "\n";
+// passion_updated_at / last_interaction_at / last_seen_at are on the play-gamets clock
+$playMinute = RelationshipDynamics::GAMETS_PER_REAL_SECOND * 60.0;
+$passionSince = RelationshipDynamics::playGametsSince($dyn, 'passion_updated_at');
+echo "Passion Last Updated:    " . ($passionSince !== null ? round($passionSince / $playMinute) . " play-min ago" : 'never') . "\n";
 echo "Passion Sources:         " . json_encode($dyn['passion_sources'] ?? []) . "\n\n";
 
 echo "Affinity Gain Mult:      " . number_format(RelationshipDynamics::getAffinityGainMultiplier($dyn), 2) . "x (RPM→Speed)\n";
@@ -60,11 +66,11 @@ echo "In Conflict:             " . ($dyn['in_conflict'] ? 'YES' : 'no') . "\n";
 echo "Conflict Positive Count: " . intval($dyn['conflict_positive_count']) . "\n\n";
 
 echo "Interaction Count:       " . intval($dyn['interaction_count']) . "\n";
-$lastInt = intval($dyn['last_interaction_at'] ?? 0);
-echo "Last Interaction:        " . ($lastInt > 0 ? date('Y-m-d H:i:s', $lastInt) . " (" . round((time() - $lastInt) / 60) . " min ago)" : 'never') . "\n";
+$intSince = RelationshipDynamics::playGametsSince($dyn, 'last_interaction_at');
+echo "Last Interaction:        " . ($intSince !== null ? round($intSince / $playMinute) . " play-min ago" : 'never') . "\n";
 
-$lastSeen = intval($dyn['last_seen_at'] ?? 0);
-echo "Last Seen:               " . ($lastSeen > 0 ? date('Y-m-d H:i:s', $lastSeen) . " (" . round((time() - $lastSeen) / 3600, 1) . "h ago)" : 'never') . "\n";
+$seenSince = RelationshipDynamics::playGametsSince($dyn, 'last_seen_at');
+echo "Last Seen:               " . ($seenSince !== null ? round($seenSince / RelationshipDynamics::GAMETS_PER_REAL_HOUR, 1) . " play-h ago" : 'never') . "\n";
 echo "Reunion Spike Given:     " . ($dyn['reunion_spike_given'] ? 'YES' : 'no') . "\n\n";
 
 echo "Stage:                   " . strtoupper($dyn['stage'] ?? 'early') . "\n";

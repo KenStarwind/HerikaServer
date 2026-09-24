@@ -179,18 +179,20 @@ if ($ambientInterest && $ambientResonance >= 0.15) {
         $ambientCeiling = 10.0 * $ambientMult;
         $currentPassion = RelationshipDynamics::getPassion($dynamics);
 
-        // TRICKLE — passive gain, ~0.3/min at high resonance, stops at ceiling
-        $lastAmbient = intval($dynamics['_ambient_updated_at'] ?? 0);
-        $minutesSince = $lastAmbient > 0 ? (time() - $lastAmbient) / 60.0 : 0;
+        // TRICKLE — passive gain, ~0.3/min of play at high resonance, stops at ceiling.
+        // Minutes are filtered play time (play gamets), so AFK / wait / sleep add nothing.
+        $ambientSince = RelationshipDynamics::playGametsSince($dynamics, '_ambient_updated_play_gamets');
+        $minutesSince = $ambientSince !== null ? $ambientSince / (RelationshipDynamics::GAMETS_PER_REAL_SECOND * 60.0) : 0;
         if ($minutesSince > 0.5 && $currentPassion < $ambientCeiling) {
             $trickle = min($ambientCeiling - $currentPassion, 0.3 * ($ambientMult - 1.0) * $minutesSince);
             RelationshipDynamics::setPassion($dynamics, $currentPassion + $trickle);
-            $dynamics['_ambient_updated_at'] = time();
+            RelationshipDynamics::markPlayCheckpoint($dynamics, '_ambient_updated_play_gamets');
             if ($trickle > 0.01) {
                 RelationshipDynamics::log("Ambient trickle: {$npcName} @ '{$ambientLocation}' ({$ambientSource}, resonance=" . round($ambientResonance, 3) . ", mult={$ambientMult}x) +{" . round($trickle, 2) . "} passion=" . round($dynamics['passion'], 1) . " (ceiling=" . round($ambientCeiling, 0) . ")");
             }
-        } elseif ($lastAmbient === 0) {
-            $dynamics['_ambient_updated_at'] = time();
+        } elseif ($ambientSince === null) {
+            // First visit, or a legacy wall-clock stamp: start the play-time checkpoint now
+            RelationshipDynamics::markPlayCheckpoint($dynamics, '_ambient_updated_play_gamets');
         }
 
         // DECAY RESIST — while in matching location, reduce decay rate
