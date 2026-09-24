@@ -92,6 +92,10 @@ final class RelDynContextDefaultsTest extends TestCase
         $d['love_language_secondary'] = RelationshipDynamics::LL_WORDS;
         $d['inferred_temperament'] = 'Romantic';
         $d['dimensions']['affinity']['x'] = $affinityMirror;   // mirror scale 0..100 = (core aff + 100) / 2
+        // Core snapshot equal to the mirror (no uncommitted RelDyn change): getCoreAffinity reads
+        // core aff = 2 * mirror - 100 only when prerequest has taken this snapshot; without it the
+        // NPC is a core-0 stranger at context tier 0 and none of the tiered blocks render.
+        $d['_aff_mirror_x'] = $affinityMirror;
         foreach ($dims as $dim => $x) {
             $d['dimensions'][$dim]['x'] = $x;
         }
@@ -122,7 +126,13 @@ final class RelDynContextDefaultsTest extends TestCase
             }
             foreach ($bands as $band) {
                 $x = ($band['range'][0] + $band['range'][1]) / 2;   // band midpoint, in that dimension's own scale
-                foreach ([35.0, 55.0, 90.0] as $affinityMirror) {    // tiers 1, 2 and 3
+                // Mirror 60 / 72.5 / 92.5 = core aff 20 / 45 / 85 (-100..100) = acquaintance / friend /
+                // bonded = context tiers 1, 2 and 3.
+                foreach ([60.0, 72.5, 92.5] as $affinityMirror) {
+                    $expectedTier = ['60' => 1, '72.5' => 2, '92.5' => 3][(string)$affinityMirror];
+                    $this->assertSame($expectedTier,
+                        RelationshipDynamics::getContextTier($this->baseState($affinityMirror, [$dim => $x])),
+                        'the sweep really renders at context tiers 1, 2 and 3');
                     $this->assertNoNumbers($this->contextFor($this->baseState($affinityMirror, [$dim => $x])),
                         "{$dim}={$x} at affinity mirror {$affinityMirror}");
                     $checked++;
