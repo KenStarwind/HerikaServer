@@ -164,63 +164,8 @@ if ($reunionPassion > 0) {
 // Contact now (game calendar + play clock): absence, neglect and the next reunion count from here
 RelationshipDynamics::markContact($dynamics);
 
-// -------------------------------------------------------------------------
-// Ambient presence: being in a location matching NPC interests builds
-// warmth passively and resists decay. No interactions needed.
-// -------------------------------------------------------------------------
-$ambientResult = ($reldynCfg['ambient_enabled'] ?? true) ? RelationshipDynamics::detectCurrentInterest($dynamics) : null;
-$ambientInterest = is_array($ambientResult) ? ($ambientResult['interest'] ?? null) : $ambientResult;
-$ambientResonance = is_array($ambientResult) ? ($ambientResult['resonance'] ?? 0.0) : 0.0;
-$ambientSource = is_array($ambientResult) ? ($ambientResult['source'] ?? 'none') : 'none';
-$ambientLocation = is_array($ambientResult) ? ($ambientResult['location'] ?? '') : '';
-
-// Store for context.php and postrequest.php to use
-$GLOBALS['RELDYN_AMBIENT_INTEREST'] = $ambientInterest;
-$GLOBALS['RELDYN_AMBIENT_RESONANCE'] = $ambientResonance;
-$GLOBALS['RELDYN_AMBIENT_LOCATION'] = $ambientLocation;
-$GLOBALS['RELDYN_AMBIENT_SOURCE'] = $ambientSource;
-
-if ($ambientInterest && $ambientResonance >= 0.15) {
-    // Use resonance score directly for vector path, or interest multiplier for keyword path
-    if ($ambientSource === 'vector') {
-        // Vector resonance: scale 0.15-0.65 → multiplier 1.1-2.0
-        $ambientMult = 1.0 + min(1.0, ($ambientResonance - 0.15) * 2.0);
-    } else {
-        // Keyword fallback: use NPC's interest slider value
-        $interests = RelationshipDynamics::getInterests($dynamics);
-        $ambientMult = floatval($interests[$ambientInterest] ?? 1.0);
-    }
-
-    if ($ambientMult > 1.0) {
-        // CEILING — trickle builds up to this, then stops
-        // Aela in wilderness (resonance 0.61): ceiling ≈ 19
-        // Ashe in Dwemer ruin (resonance 0.65): ceiling ≈ 20
-        $ambientCeiling = 10.0 * $ambientMult;
-        $currentPassion = RelationshipDynamics::getPassion($dynamics);
-
-        // TRICKLE — passive gain, ~0.3/min of play at high resonance, stops at ceiling.
-        // Minutes are filtered play time (play gamets), so AFK / wait / sleep add nothing.
-        $ambientSince = RelationshipDynamics::playGametsSince($dynamics, '_ambient_updated_play_gamets');
-        $minutesSince = $ambientSince !== null ? $ambientSince / (RelationshipDynamics::GAMETS_PER_REAL_SECOND * 60.0) : 0;
-        if ($minutesSince > 0.5 && $currentPassion < $ambientCeiling) {
-            $trickle = min($ambientCeiling - $currentPassion, 0.3 * ($ambientMult - 1.0) * $minutesSince);
-            RelationshipDynamics::setPassion($dynamics, $currentPassion + $trickle);
-            RelationshipDynamics::markPlayCheckpoint($dynamics, '_ambient_updated_play_gamets');
-            if ($trickle > 0.01) {
-                RelationshipDynamics::log("Ambient trickle: {$npcName} @ '{$ambientLocation}' ({$ambientSource}, resonance=" . round($ambientResonance, 3) . ", mult={$ambientMult}x) +{" . round($trickle, 2) . "} passion=" . round($dynamics['passion'], 1) . " (ceiling=" . round($ambientCeiling, 0) . ")");
-            }
-        } elseif ($ambientSince === null) {
-            // First visit, or a legacy wall-clock stamp: start the play-time checkpoint now
-            RelationshipDynamics::markPlayCheckpoint($dynamics, '_ambient_updated_play_gamets');
-        }
-
-        // DECAY RESIST — while in matching location, reduce decay rate
-        $dynamics['_ambient_decay_resist'] = 1.0 / $ambientMult;
-    }
-} else {
-    // Not in a matching location — clear decay resist
-    unset($dynamics['_ambient_decay_resist']);
-}
+// Ambient presence (MDD 1.5 Points of Interest, decisions §6) runs in context.php:
+// the place read needs core's CACHE_LOCATION, which main.php sets after these hooks.
 
 // -------------------------------------------------------------------------
 // Physical State Bridges (PR 8): detect physical conditions from MinAI

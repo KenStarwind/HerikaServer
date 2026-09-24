@@ -148,8 +148,13 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
                 $gain = RelationshipDynamics::TEMPERAMENT_BLEEDOUT_DRAIN[$temperament] ?? -1.5;
                 RelationshipDynamics::log("Bleedout drain: {$combatNpc} temperament={$temperament} base_drain={$gain}");
             } else {
-                // Positive combat: use standard passion gain
-                $gain = RelationshipDynamics::calculatePassionGain($dynamics, $combatLL);
+                // Fighting together is an activity the NPC appraises (decisions §6): its combat
+                // facets against the NPC's preferences scale the gain (MDD 1.2 0.5x-2.0x), feed
+                // its internal weather and mark combat as fed (MDD 4.1 deprivation).
+                $combatPrefs = RelDynFacets::preferences($dynamics, $combatNpc);
+                $combatAppraisal = RelDynFacets::experienceThing($combatNpc, $dynamics, 'activity', 'combat',
+                    $combatPrefs, RelationshipDynamics::currentGamets());
+                $gain = RelationshipDynamics::calculatePassionGain($dynamics, $combatLL, $combatAppraisal);
 
                 // Witnesses get reduced credit (0.5x) -- they saw the kill but didn't make it
                 $isWitness = in_array(strtolower($combatNpc), $witnessSet);
@@ -166,7 +171,7 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
 
                 // MinAI shared danger bonus: low HP while fighting together
                 if ($combatCtx && $combatCtx['in_combat'] && $gain > 0) {
-                    $combatInterest = floatval($dynamics['interests']['combat'] ?? 1.0);
+                    $combatInterest = RelDynFacets::interestMultiplier($combatPrefs['combat']);   // MDD 1.2 0.5..2.0
                     $dangerThreshold = max(0.0, 0.30 - ($combatInterest * 0.15));
                     if ($combatCtx['health_pct'] <= $dangerThreshold && $combatCtx['health_pct'] > 0) {
                         $gain *= 1.5; // shared danger intensity boost
@@ -330,16 +335,8 @@ $interactionLL = RelationshipDynamics::classifyInteraction($GLOBALS['gameRequest
 $GLOBALS['RELDYN_LAST_INTERACTION_LL'] = $interactionLL;
 RelationshipDynamics::log("POST classify: npc={$npcName} type={$reqType} mood={$lastMood} LL=" . ($interactionLL ?? 'NULL'));
 
-// Detect interest context for passion weighting (all love languages)
-$currentInterest = RelationshipDynamics::detectInterestContext($interactionLL);
-$GLOBALS['RELDYN_CURRENT_INTEREST'] = $currentInterest;
-if ($currentInterest) {
-    $intMult = RelationshipDynamics::getInterestMultiplier($dynamics, $interactionLL);
-    $GLOBALS['RELDYN_INTEREST_MULT'] = $intMult;
-    $dynamics['last_interest'] = $currentInterest;
-    $dynamics['last_interest_mult'] = $intMult;
-    $dynamics['last_interest_ll'] = $interactionLL;
-}
+// The shared-activity multiplier (place / gift appraisal, decisions §6) is part of
+// calculatePassionGain() below.
 
 // -------------------------------------------------------------------------
 // 1b. Topic Talk Bonus — conversation topic matches NPC interests
@@ -410,7 +407,10 @@ if ($reldynCfg['flirt_bonus_enabled'] ?? true) {
 $flirtyMoods = ['flirty', 'romantic', 'playful', 'teasing', 'amused', 'charmed',
                 'smitten', 'coy', 'seductive', 'affectionate', 'bashful', 'flustered'];
 if (!empty($lastMood) && in_array(strtolower($lastMood), $flirtyMoods)) {
-    $hasLocationMatch = floatval($GLOBALS['RELDYN_AMBIENT_RESONANCE'] ?? 0) >= 0.3;
+    // A place the NPC loves (fresh place appraisal at Point-of-Interest valence, MDD 1.5)
+    $placeRead = RelDynFacets::freshPlaceAppraisal($dynamics, RelationshipDynamics::currentGamets());
+    $hasLocationMatch = $placeRead !== null
+        && floatval($placeRead['valence']) >= floatval(RelDynFacets::getAppraisalConfig()['poi_valence_min']);
     $hasTopicMatch = ($topicBonus > 1.0);
     if ($hasLocationMatch || $hasTopicMatch) {
         $flirtBonus = 1.2;

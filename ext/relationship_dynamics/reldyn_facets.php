@@ -793,6 +793,36 @@ class RelDynFacets
     }
 
     /**
+     * The context hook's turn (context.php runs after CHIM core has set CACHE_LOCATION and
+     * CACHE_PEOPLE, which the prerequest hooks run before): store the NPC's preferences,
+     * read the current place from core (currentPlaceContext / placeFacets), run placeTurn()
+     * and return the felt read for this turn's context.
+     *
+     * A place core knows but has no facets for is appraised as neutral (the NPC has left
+     * wherever it was). When core gives no place at all, the last read stays in force until
+     * it goes stale (place_appraisal_max_age_game_hours).
+     *
+     * @return array ['text' => ?string felt read, 'changed' => bool (save $dynamics), 'place' => ?string]
+     */
+    public static function contextTurn(string $npcName, array &$dynamics, float $now): array
+    {
+        $changed = self::ensurePreferences($npcName, $dynamics);
+        $ctx = static::currentPlaceContext($npcName);
+        $place = null;
+        if ($ctx) {
+            $place = trim((string) ($ctx['name'] ?? ''));
+            $facets = static::placeFacets($ctx);
+            $r = self::placeTurn($npcName, $dynamics, $place, $facets, self::preferences($dynamics, $npcName), $now);
+            $changed = true;
+            $a = $r['appraisal'];
+            RelationshipDynamics::log(sprintf('[PLACE] %s @ %s: valence %+.2f intensity %.2f dominant %s%s, comfort %+.2f mood %+.2f, discomfort %.1f, pressure %+.2f%s',
+                $npcName, $place, $a['valence'], $a['intensity'], $a['dominant'] ?? '-', $a['dominant'] ? ($a['dominant_sign'] < 0 ? '-' : '+') : '',
+                $r['comfort'], $r['mood'], $r['discomfort'], $r['pressure'], $r['poi_floor'] !== null ? ', POI floor' : ''));
+        }
+        return ['text' => self::placeFeltText($npcName, $dynamics, $now), 'changed' => $changed, 'place' => $place];
+    }
+
+    /**
      * The felt read of the current place for the LLM (no numbers): the dominant facet's
      * wording, plus the discomfort line once staying has worn on them. Null when the place
      * read is stale or nothing stands out.

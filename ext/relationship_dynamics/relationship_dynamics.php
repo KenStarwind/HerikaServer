@@ -3152,8 +3152,10 @@ class RelationshipDynamics
     /**
      * Calculate passion gain from an interaction.
      * Returns the passion gain amount (before adding to pool).
+     * $activityAppraisal: the appraisal of what is shared when it is not the place (a fight,
+     * a gift; RelDynFacets::appraise), see getInterestMultiplier().
      */
-    public static function calculatePassionGain($dynamics, $interactionLoveLanguage)
+    public static function calculatePassionGain($dynamics, $interactionLoveLanguage, ?array $activityAppraisal = null)
     {
         $cfg = self::getConfig();
         $baseGain = floatval($cfg['base_passion_gain'] ?? 2.0);
@@ -3179,8 +3181,8 @@ class RelationshipDynamics
         $temperament = $dynamics['inferred_temperament'] ?? null;
         $tempMult = self::TEMPERAMENT_PASSION_MULT[$temperament] ?? 1.0;
 
-        // Interest multiplier (context-weighted by shared experience + NPC interests)
-        $interestMult = self::getInterestMultiplier($dynamics, $interactionLoveLanguage);
+        // Shared-activity multiplier (facet appraisal of the place / activity, MDD 1.2 + 1.5)
+        $interestMult = self::getInterestMultiplier($dynamics, $interactionLoveLanguage, $activityAppraisal);
 
         // Conflict repair bonus
         $repairMult = 1.0;
@@ -4228,12 +4230,12 @@ class RelationshipDynamics
      * see RelDynFacets::sharedActivityPassionMult(). For a gift the item's facets decide the
      * interest when they are known (thingFacets), else the place being shared does.
      */
-    public static function getInterestMultiplier($dynamics, $interactionLL = null)
+    public static function getInterestMultiplier($dynamics, $interactionLL = null, ?array $activityAppraisal = null)
     {
         if ($interactionLL === null) return 1.0;
 
-        $activity = null;
-        if ($interactionLL === self::LL_GIFTS) {
+        $activity = $activityAppraisal;
+        if ($activity === null && $interactionLL === self::LL_GIFTS) {
             $item = self::detectGiftItemName();
             $facets = $item !== null ? RelDynFacets::thingFacets('item', $item) : [];
             if ($facets) {
@@ -9120,12 +9122,8 @@ class RelationshipDynamics
         // Attachment style modifies absence decay
         $absenceMult = self::getAttachmentModifier($dynamics, 'affinity_absence_mult') ?? 1.0;
         $totalDecay *= $absenceMult;
-
-        // --- Apply ambient decay resist if present ---
-        $ambientResist = floatval($dynamics['_ambient_decay_resist'] ?? 1.0);
-        if ($ambientResist > 0 && $ambientResist < 1.0) {
-            $totalDecay *= $ambientResist;
-        }
+        // (The April ambient decay resist is gone: absence decay is time apart, and a loved
+        // place halts in-contact passion decay instead, MDD 1.5 - RelDynFacets::poiPassionFloor.)
 
         // --- Apply decay to affinity, stopping at the baseline target ---
         $newAffinity = max($decayTarget, min((float) self::CORE_AFFINITY_MAX, $oldAffinity + $totalDecay));
