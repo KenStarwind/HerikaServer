@@ -32,27 +32,21 @@ final class RelDynAffinityFakeDb
     public ?array $snapshot = null;
     public bool $failRelationshipUpdates = false;
 
-    public function addNpc(int $id, string $name, array $extended): void
+    public function addNpc(int $id, string $name, array $extended, ?array $dynamics = null): void
     {
-        $this->rows[$id] = ['id' => $id, 'npc_name' => $name, 'extended_data' => json_encode($extended), 'plugin_extended_data' => []];
+        $plugin = $dynamics === null ? [] : ['reldyn' => ['dynamics' => $dynamics]];
+        $this->rows[$id] = ['id' => $id, 'npc_name' => $name, 'extended_data' => json_encode($extended), 'plugin_extended_data' => $plugin];
     }
 
-    /** plugin_extended_data.reldyn.dynamics, falling back to the pre-migration location. */
+    /** plugin_extended_data.reldyn.dynamics */
     public function dynamics(int $id): array
     {
-        return $this->rows[$id]['plugin_extended_data']['reldyn']['dynamics']
-            ?? ($this->extended($id)['relationship_dynamics'] ?? []);
+        return $this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'] ?? [];
     }
 
     public function patchDynamics(int $id, array $patch): void
     {
-        if (isset($this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'])) {
-            $this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'] = array_merge($this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'], $patch);
-            return;
-        }
-        $ext = $this->extended($id);
-        $ext['relationship_dynamics'] = array_merge($ext['relationship_dynamics'] ?? [], $patch);
-        $this->setExtended($id, $ext);
+        $this->rows[$id]['plugin_extended_data']['reldyn']['dynamics'] = array_merge($this->dynamics($id), $patch);
     }
 
     /** RelDynStorage / NpcMaster plugin-data statements (parameterized). */
@@ -76,14 +70,6 @@ final class RelDynAffinityFakeDb
             $value = $plugin[$params[1]][$params[2]] ?? null;
             unset($plugin[$params[1]][$params[2]]);
             return ['inbox' => $value === null ? null : json_encode($value)];
-        }
-        if (strpos($sql, "extended_data -> 'relationship_dynamics'") !== false) {
-            $legacy = $this->extended($id)['relationship_dynamics'] ?? null;
-            if (isset($plugin[$params[1]][$params[2]]) || !is_array($legacy) || $legacy === []) {
-                return [];
-            }
-            $plugin[$params[1]][$params[2]] = $legacy;
-            return ['id' => (string)$id];
         }
         if (strpos($sql, 'jsonb_build_array($4::jsonb)') !== false) {
             $plugin[$params[1]][$params[2]][] = json_decode($params[3], true);
@@ -367,10 +353,7 @@ final class RelDynAffinityCoreTest extends TestCase
             '_interest_vector' => [0.1, 0.2, 0.3],
             'passion' => 0.0,
         ], $dynamicsOverrides);
-        $this->db->addNpc(self::NPC_ID, self::NPC, [
-            'relationships' => $relationships,
-            'relationship_dynamics' => $dynamics,
-        ]);
+        $this->db->addNpc(self::NPC_ID, self::NPC, ['relationships' => $relationships], $dynamics);
     }
 
     private function coreAff(): int
@@ -482,7 +465,8 @@ final class RelDynAffinityCoreTest extends TestCase
     {
         $this->setConfig(['passion_enabled' => true]);
         // passion 100 -> getAffinityGainMultiplier = 2.0 -> +2 on a positive interaction
-        $this->seedNpc(['Player' => ['aff' => 10, 'type' => 'neutral']], ['passion' => 100.0]);
+        $this->seedNpc(['Player' => ['aff' => 10, 'type' => 'neutral']],
+            ['passion' => 100.0, 'dimensions' => ['passion' => ['x' => 100.0, 'baseline' => 0]]]);
 
         $this->runTurn();
 

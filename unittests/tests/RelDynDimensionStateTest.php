@@ -86,14 +86,7 @@ final class RelDynStateFakeDb
             }
             $ns = $params[1];
             $field = $params[2];
-            if (strpos($sql, "extended_data -> 'relationship_dynamics'") !== false) {
-                // One-time legacy migration: copy only when the plugin key is absent.
-                $legacy = $this->extended[$key]['relationship_dynamics'] ?? null;
-                if (isset($this->plugin[$key][$ns][$field]) || !is_array($legacy) || $legacy === []) {
-                    return false;
-                }
-                $this->plugin[$key][$ns][$field] = $legacy;
-            } elseif (strpos($sql, 'jsonb_build_array($4::jsonb)') !== false) {
+            if (strpos($sql, 'jsonb_build_array($4::jsonb)') !== false) {
                 $this->plugin[$key][$ns][$field][] = json_decode($params[3], true);
             } elseif (strpos($sql, 'jsonb_build_object($3::text, $4::jsonb)') !== false) {
                 $this->plugin[$key][$ns][$field] = json_decode($params[3], true);
@@ -161,9 +154,14 @@ final class RelDynDimensionStateTest extends TestCase
         RelationshipDynamics::clearNpcCache();
     }
 
-    private function seed(array $relationshipDynamics): void
+    /** Stored plugin state; a flat 'passion' is also written to its canonical dimensions.passion.x. */
+    private function seed(array $dynamics): void
     {
-        $this->db->extended[strtolower(self::NPC)] = ['relationship_dynamics' => $relationshipDynamics];
+        if (isset($dynamics['passion'])) {
+            $dynamics['dimensions']['passion'] = ['x' => $dynamics['passion'], 'baseline' => 0];
+        }
+        $this->db->extended[strtolower(self::NPC)] = [];
+        $this->db->plugin[strtolower(self::NPC)] = ['reldyn' => ['dynamics' => $dynamics]];
     }
 
     private function saveAndReload(array $dynamics): array
@@ -329,17 +327,15 @@ final class RelDynDimensionStateTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // Migration of data written by the April engine
+    // Fresh start: no April conversion (see RelDynFreshStartTest)
     // ------------------------------------------------------------------
 
-    public function testMigratesAliasedAprilBlob(): void
+    public function testStoredJealousyAndResentmentLoadAsStored(): void
     {
-        // April engine: resentment.x was always a copy of jealousy_anger, passion mirrored both ways.
         $this->seed([
             'passion' => 30.0,
             'jealousy_anger' => 25.0,
             'dimensions' => [
-                'passion' => ['x' => 30.0, 'baseline' => 0],
                 'resentment' => ['x' => 25.0, 'baseline' => 0, 'active' => true,
                     'pending_grievances' => [], 'grievance_log' => [], 'last_decay_tick' => 0],
             ],
@@ -347,25 +343,13 @@ final class RelDynDimensionStateTest extends TestCase
         $dynamics = RelationshipDynamics::getDynamics(self::NPC);
 
         $this->assertEqualsWithDelta(30.0, $dynamics['passion'], 0.0001);
-        $this->assertEqualsWithDelta(30.0, $dynamics['dimensions']['passion']['x'], 0.0001);
-        $this->assertEqualsWithDelta(25.0, $dynamics['jealousy_anger'], 0.0001, 'existing jealousy stays jealousy');
-        $this->assertEqualsWithDelta(0.0, $dynamics['dimensions']['resentment']['x'], 0.0001, 'no invented resentment history');
+        $this->assertEqualsWithDelta(25.0, $dynamics['jealousy_anger'], 0.0001);
+        $this->assertEqualsWithDelta(25.0, $dynamics['dimensions']['resentment']['x'], 0.0001);
 
         $reloaded = $this->saveAndReload($dynamics);
         $this->assertEqualsWithDelta(30.0, $reloaded['passion'], 0.0001);
         $this->assertEqualsWithDelta(25.0, $reloaded['jealousy_anger'], 0.0001);
-        $this->assertEqualsWithDelta(0.0, $reloaded['dimensions']['resentment']['x'], 0.0001);
-    }
-
-    public function testMigratesBlobWithoutDimensionsFromLegacyPassion(): void
-    {
-        $this->seed(['passion' => 42.0, 'jealousy_anger' => 3.0]);
-        $dynamics = RelationshipDynamics::getDynamics(self::NPC);
-
-        $this->assertEqualsWithDelta(42.0, $dynamics['dimensions']['passion']['x'], 0.0001);
-        $this->assertEqualsWithDelta(42.0, $dynamics['passion'], 0.0001);
-        $this->assertEqualsWithDelta(3.0, $dynamics['jealousy_anger'], 0.0001);
-        $this->assertEqualsWithDelta(0.0, $dynamics['dimensions']['resentment']['x'], 0.0001);
+        $this->assertEqualsWithDelta(25.0, $reloaded['dimensions']['resentment']['x'], 0.0001);
     }
 
     public function testNewNpcFirstSaveKeepsResentment(): void

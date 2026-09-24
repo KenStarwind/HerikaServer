@@ -9,7 +9,7 @@
  * Works without MARAS — degrades gracefully.
  *
  * All state in core_npc_master.plugin_extended_data.reldyn (see reldyn_storage.php);
- * legacy extended_data.relationship_dynamics is migrated once on first load.
+ * fresh start on 3.4.1: April data (extended_data.relationship_dynamics) is not carried over.
  * Config in conf_opts key 'relationship_dynamics_config'.
  *
  * No process-level caches: NPC state is read from the database on every load, and
@@ -1196,7 +1196,7 @@ class RelationshipDynamics
 
     /**
      * Raw stored dynamics for an NPC (no defaults merged), or null when none exist.
-     * Always reads the database; migrates the legacy extended_data blob on first load.
+     * Always reads the database. Fresh start: April data in extended_data is not read.
      */
     public static function loadStoredDynamics($npcName)
     {
@@ -1205,12 +1205,7 @@ class RelationshipDynamics
         $npcId = RelDynStorage::resolveNpcId($npcName);
         if ($npcId === null) return null;
 
-        $rd = RelDynStorage::loadDynamics($npcId);
-        if ($rd === null && RelDynStorage::migrateLegacy($npcId)) {
-            error_log("[RelDyn] Migrated extended_data.relationship_dynamics to plugin storage for {$npcName} (id {$npcId})");
-            $rd = RelDynStorage::loadDynamics($npcId);
-        }
-        return $rd;
+        return RelDynStorage::loadDynamics($npcId);
     }
 
     public static function getDynamics($npcName)
@@ -2930,7 +2925,8 @@ class RelationshipDynamics
 
     /**
      * Get or auto-generate interest preferences for an NPC.
-     * Checks for manual 'interests' key, falls back to old 'activity_preferences', then auto-gen.
+     * Uses the manual 'interests' key, else auto-generates (April 'activity_preferences'
+     * are not carried over: fresh start).
      */
     public static function getInterests($dynamics)
     {
@@ -2938,44 +2934,7 @@ class RelationshipDynamics
             return $dynamics['interests'];
         }
 
-        // Backward compat: migrate old activity_preferences
-        if (!empty($dynamics['activity_preferences']) && is_array($dynamics['activity_preferences'])) {
-            return self::migrateOldPreferences($dynamics['activity_preferences']);
-        }
-
         return self::generateInterests();
-    }
-
-    /**
-     * Migrate old activity_preferences keys to new interest categories.
-     */
-    private static function migrateOldPreferences($oldPrefs)
-    {
-        $migration = [
-            'smithing'   => 'crafting',
-            'dungeon'    => 'adventure',
-            'wilderness' => 'nature',
-            'tavern'     => 'social',
-            'studying'   => 'scholarly',
-            'cooking'    => 'domestic',
-            'exploring'  => 'adventure',
-            'traveling'  => 'adventure',
-            'camping'    => 'nature',
-            'alchemy'    => 'alchemy',
-            'enchanting' => 'enchanting',
-        ];
-
-        $newPrefs = [];
-        foreach ($oldPrefs as $oldKey => $value) {
-            $newKey = $migration[$oldKey] ?? null;
-            if ($newKey) {
-                $newPrefs[$newKey] = max($newPrefs[$newKey] ?? 0.5, floatval($value));
-            }
-        }
-        foreach (self::INTEREST_TYPES as $type) {
-            if (!isset($newPrefs[$type])) $newPrefs[$type] = 1.0;
-        }
-        return $newPrefs;
     }
 
     /**
@@ -3596,20 +3555,9 @@ class RelationshipDynamics
             }
         }
 
-        // One source of truth per value: dimensions.passion.x is canonical for passion.
-        // Blobs saved before DIMENSION_STATE_VERSION re-copied legacy passion into
-        // dimensions on every load, so for those the legacy key is the truth.
-        if (intval($dynamics['_dimension_state_version'] ?? 0) < self::DIMENSION_STATE_VERSION) {
-            $dynamics['dimensions']['passion']['x'] = floatval($dynamics['passion'] ?? 0);
-
-            // Jealousy (MDD 6.5) and resentment (MDD 15.5, grievance accumulator) are
-            // separate values. The April engine overwrote resentment.x with jealousy_anger
-            // on every load, so no stored resentment.x is its own history: jealousy_anger
-            // stays jealousy, resentment starts from its baseline of 0.
-            $dynamics['dimensions']['resentment']['x'] = 0;
-
-            $dynamics['_dimension_state_version'] = self::DIMENSION_STATE_VERSION;
-        }
+        // One source of truth per value: dimensions.passion.x is canonical for passion;
+        // jealousy_anger (MDD 6.5) and dimensions.resentment.x (MDD 15.5) are separate.
+        // Fresh start: no April-blob conversion, stored values are taken as they are.
         // Legacy mirror is derived from the canonical value, never the other way round.
         $dynamics['passion'] = self::getPassion($dynamics);
 
@@ -3925,13 +3873,6 @@ class RelationshipDynamics
     }
 
     /**
-     * Schema of the passion/jealousy/resentment state in the dynamics blob.
-     * < 2: April engine (legacy passion copied into dimensions on load,
-     *      resentment aliased to jealousy_anger). 2: one source of truth each.
-     */
-    const DIMENSION_STATE_VERSION = 2;
-
-    /**
      * Sync legacy flat keys FROM the dimensions sub-object.
      * Called on every saveDynamics() to keep legacy keys in sync when new
      * code writes to dimensions directly.
@@ -3953,8 +3894,6 @@ class RelationshipDynamics
         // passion mirror ← dimensions.passion.x (canonical, written only via setPassion)
         if (isset($dim['passion']['x']) && $dim['passion']['x'] !== null) {
             $dynamics['passion'] = floatval($dim['passion']['x']);
-            // Blob is now in canonical form: the next load must not re-migrate it.
-            $dynamics['_dimension_state_version'] = self::DIMENSION_STATE_VERSION;
         }
 
         // jealousy_anger is its own value (written via setJealousy) and resentment lives

@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.p
  *  - core_npc_master: extended_data stored as JSON text, so RelDyn's jsonb_set save
  *    and its SELECT reload round-trip through real json_encode/json_decode.
  *  - plugin_extended_data: the RelDynStorage / NpcMaster::getPluginData query shapes
- *    (RelDyn state lives in plugin_extended_data.reldyn; extended_data is migrated once).
+ *    (RelDyn state lives in plugin_extended_data.reldyn; April extended_data is not read).
  *  - eventlog: rows with type/data/people/gamets/ts, honouring the gamets/ts bounds
  *    and LIKE filters RelDyn puts in its queries.
  */
@@ -48,14 +48,6 @@ final class RelDynTimersFakeDb
             $value = $this->plugin[$key][$params[1]][$params[2]] ?? null;
             unset($this->plugin[$key][$params[1]][$params[2]]);
             return ['inbox' => $value === null ? null : json_encode($value)];
-        }
-        if (strpos($sql, "extended_data -> 'relationship_dynamics'") !== false) {
-            $legacy = (json_decode($this->npcs[$key], true) ?: [])['relationship_dynamics'] ?? null;
-            if (isset($this->plugin[$key][$params[1]][$params[2]]) || !is_array($legacy) || $legacy === []) {
-                return null;
-            }
-            $this->plugin[$key][$params[1]][$params[2]] = $legacy;
-            return ['id' => (string)$params[0]];
         }
         if (strpos($sql, 'jsonb_build_array($4::jsonb)') !== false) {
             $this->plugin[$key][$params[1]][$params[2]][] = json_decode($params[3], true);
@@ -303,15 +295,17 @@ final class RelDynGameTimersTest extends TestCase
 
     public function testBleedoutStampsPlayClockNotWallClock(): void
     {
-        $this->db->npcs['lydia'] = json_encode(['relationship_dynamics' => [
+        $this->db->npcs['lydia'] = json_encode([]);
+        $this->db->plugin['lydia'] = ['reldyn' => ['dynamics' => [
             'love_language_primary' => RelationshipDynamics::LL_SERVICE,
             'inferred_temperament' => 'Stoic',
             'passion' => 10.0,
+            'dimensions' => ['passion' => ['x' => 10.0, 'baseline' => 0]],
             'passion_updated_at' => 2900000.0,
             'last_interaction_at' => 2900000.0,
             'interaction_count' => 2,
             '_accumulated_play_gamets' => 3000000.0,
-        ]]);
+        ]]];
         self::setClock(self::at(20, 13), 'bleedout', 'Lydia falls to the ground, badly wounded.');
         $GLOBALS['RELDYN_NPC_NAME'] = 'Lydia';
         $GLOBALS['RELDYN_PLAYER_NAME'] = 'Player';

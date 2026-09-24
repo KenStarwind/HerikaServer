@@ -175,7 +175,6 @@ final class RelDynConcurrentSaveTest extends TestCase
                 'love_language_primary' => 'quality_time',
                 'warmth_curve' => 'moderate',
                 'inferred_temperament' => 'Stoic',
-                '_dimension_state_version' => RelationshipDynamics::DIMENSION_STATE_VERSION,
             ], $dynamics)]]);
     }
 
