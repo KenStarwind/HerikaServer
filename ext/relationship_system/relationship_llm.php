@@ -19,6 +19,18 @@
 require_once $GLOBALS["ENGINE_PATH"] . "lib/logger.php";
 require_once $GLOBALS["ENGINE_PATH"] . "lib/relationship_manager.php";
 
+// CHIM fork hook (RelDyn): does an extension own $npcId's affinity toward $target? Each ext/*/relationship_affinity_owner.php
+// (loaded here, so also in the standalone worker) may set $GLOBALS['CHIM_RELATIONSHIP_AFFINITY_OWNERS'][name] = fn($npcId, $target): bool.
+function chimRelationshipAffinityOwned($npcId, $target) {
+    foreach (glob($GLOBALS['ENGINE_PATH'] . 'ext/*/relationship_affinity_owner.php') ?: [] as $ownerFile) {
+        require_once $ownerFile;
+    }
+    foreach ($GLOBALS['CHIM_RELATIONSHIP_AFFINITY_OWNERS'] ?? [] as $owner) {
+        if ($owner((int)$npcId, (string)$target) === true) return true;
+    }
+    return false;
+}
+
 class RelationshipLLM {
 
     private $db;
@@ -1470,6 +1482,10 @@ PROMPT;
             // Normalize player name references to canonical "Player"
             $target = RelationshipManager::normalizeTargetName($target);
 
+            // CHIM fork hook (RelDyn): if an extension owns this affinity (applies its own eval deltas), keep the stored
+            // 'aff'; type, notes, romance gate, lock and timeline run as before on it. No owner registered = unchanged.
+            $affOwned = chimRelationshipAffinityOwned($npcId, $target);
+
             $targetExists = isset($currentRels[$target]);
             if ($targetExists && !is_array($currentRels[$target])) {
                 $this->logMalformedResponseField('stored relationship entry', $currentRels[$target]);
@@ -1500,7 +1516,7 @@ PROMPT;
             $oldType = is_string($currentRels[$target]['type'] ?? null)
                 ? $currentRels[$target]['type']
                 : 'neutral';
-            $newAff = max(-100, min(100, $oldAff + $delta));
+            $newAff = $affOwned ? $oldAff : max(-100, min(100, $oldAff + $delta));
             $currentRels[$target]['aff'] = $newAff;
 
             $typeChanged = false;
@@ -1593,7 +1609,8 @@ PROMPT;
                 'base_type' => $oldType,
                 'requested_type' => $newType,
                 'relation' => $relation,
-                'reason' => $reason
+                'reason' => $reason,
+                'aff_owned' => $affOwned
             ];
 
             // Include type change info if type changed
@@ -1603,7 +1620,7 @@ PROMPT;
             }
 
             Logger::info("[REL-LLM] {$npc['npc_name']} -> {$target}: " . sprintf("%+d", $delta) .
-                      " (was {$oldAff}, now {$newAff})" . ($reason ? " - {$reason}" : ""));
+                      " (was {$oldAff}, now {$newAff})" . ($affOwned ? " [aff owned by extension]" : "") . ($reason ? " - {$reason}" : ""));
         }
 
         if (!empty($applied)) {
@@ -1692,7 +1709,7 @@ PROMPT;
         $rebased = $freshRel;
         $freshAff = (int)($freshRel['aff'] ?? 0);
         $delta = (int)($change['delta'] ?? 0);
-        $rebasedAff = max(-100, min(100, $freshAff + $delta));
+        $rebasedAff = !empty($change['aff_owned']) ? $freshAff : max(-100, min(100, $freshAff + $delta));
         $rebased['aff'] = $rebasedAff;
 
         $freshType = strtolower(trim((string)($freshRel['type'] ?? 'neutral')));

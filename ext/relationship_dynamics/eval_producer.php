@@ -189,6 +189,19 @@ final class RelDynEval
         return null;
     }
 
+    /**
+     * Does RelDyn own core's relationships.<$target>.aff of this NPC? True for the Player
+     * while RelDyn, the dimension engine and this eval producer are all on: RelDyn's eval is
+     * then the one writer of the player's affinity from evaluations (M table, core lock), so
+     * core's own relationship eval keeps type and notes but leaves the number (Ken's ruling
+     * 2026-09-24, CHIM fork hook chimRelationshipAffinityOwned). Any switch off hands the
+     * number back to core on its next evaluation. Read fresh on every call.
+     */
+    public static function ownsCoreAffinity(int $npcId, string $target): bool
+    {
+        return $target === 'Player' && self::switchedOffReason() === null;
+    }
+
     public static function connectorId(array $cfg): int
     {
         $own = intval($cfg['connector_id'] ?? 0);
