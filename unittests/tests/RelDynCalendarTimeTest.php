@@ -59,6 +59,79 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->assertLessThanOrEqual(11 * self::REAL_SECOND, $credited);
     }
 
+    /**
+     * The per-gap cap (real seconds x GAMETS_PER_REAL_SECOND) cannot tell play from real time
+     * with the game clock stopped (quit overnight, menus). The global play heartbeat (played
+     * gamets across all requests, offline gaps capped) bounds the credit: a sleep after a real
+     * break is not play.
+     */
+    public function testSleepAfterAnOvernightBreakIsNotPlay(): void
+    {
+        $g0 = 100 * self::DAY;
+        $globalAtLastTurn = 5.0e8;                            // global play gamets at the NPC's last turn
+        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 12 * 3600, '_accumulated_play_gamets' => 1.0e6,
+              '_last_global_play_gamets' => $globalAtLastTurn];
+        // Back after 12 real hours offline: the heartbeat credited one capped gap (300 real s),
+        // then the player slept 9 game hours and talked.
+        $globalNow = $globalAtLastTurn + 300 * self::REAL_SECOND;
+
+        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 9 * self::GAME_HOUR, $globalNow);
+
+        $this->assertEqualsWithDelta(300 * self::REAL_SECOND, $credited, 0.001, 'only what the heartbeat saw as play');
+        $this->assertEqualsWithDelta($globalNow, (float) $d['_last_global_play_gamets'], 0.001);
+    }
+
+    public function testWithTheHeartbeatNormalPlayIsStillCreditedInFull(): void
+    {
+        $g0 = 100 * self::DAY;
+        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 600, '_accumulated_play_gamets' => 0.0,
+              '_last_global_play_gamets' => 1.0e6];
+        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 600 * 2000, 1.0e6 + 600 * 2000);
+        $this->assertEqualsWithDelta(600 * 2000, $credited, 0.001);
+    }
+
+    public function testFirstTurnSeenByTheHeartbeatCreditsNothingUnproven(): void
+    {
+        // Stored before the heartbeat existed: no global mark, so the gap cannot be proven play.
+        $g0 = 100 * self::DAY;
+        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 12 * 3600, '_accumulated_play_gamets' => 1.0e6];
+        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 9 * self::GAME_HOUR, 7.0e8);
+        $this->assertSame(0.0, $credited);
+        $this->assertEqualsWithDelta(7.0e8, (float) $d['_last_global_play_gamets'], 0.001, 'counted from here on');
+    }
+
+    /**
+     * Jealousy (0..100) decays in contact, on the play clock. Time the player spends playing
+     * elsewhere is on that clock too, so only one in-contact window per turn counts: a long
+     * gap between turns with this NPC is absence, and time does not heal (decisions §2).
+     */
+    public function testJealousyDoesNotCoolWhileThePlayerIsAway(): void
+    {
+        $g0 = 100 * self::DAY;
+        $rate = (float) RelationshipDynamics::defaultConfig()['jealousy_decay_per_hour'];   // jealousy points per real play hour
+        $play = 20 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
+        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 10 * 3600, '_accumulated_play_gamets' => $play,
+              '_last_global_play_gamets' => 1.0e9, 'jealousy_anger' => 60.0, 'jealousy_updated_at' => $play];
+
+        // 30 game days and 10 real hours of play elsewhere before the next turn with this NPC
+        RelationshipDynamics::updatePlayTime($d, $g0 + 30 * self::DAY, 1.0e9 + 10 * RelationshipDynamics::GAMETS_PER_REAL_HOUR);
+        RelationshipDynamics::decayJealousy($d);
+
+        $window = RelationshipDynamics::IN_CONTACT_DECAY_MAX_HOURS;             // real play hours
+        $this->assertEqualsWithDelta(60.0 - $rate * $window, (float) $d['jealousy_anger'], 1e-6,
+            'one in-contact window, not 10 hours apart');
+    }
+
+    public function testJealousyCoolsInContact(): void
+    {
+        $rate = (float) RelationshipDynamics::defaultConfig()['jealousy_decay_per_hour'];
+        $play = 20 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
+        $d = ['_accumulated_play_gamets' => $play + 5 * 60 * self::REAL_SECOND,   // 5 real minutes later
+              'jealousy_anger' => 60.0, 'jealousy_updated_at' => $play];
+        RelationshipDynamics::decayJealousy($d);
+        $this->assertEqualsWithDelta(60.0 - $rate * 5 / 60, (float) $d['jealousy_anger'], 1e-6);
+    }
+
     // ------------------------------------------------------------ contact + reunion
 
     private function setCalendar(float $gamets): void

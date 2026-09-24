@@ -283,6 +283,13 @@ class RelationshipDynamics
     /** Gamets per real hour of play time. */
     const GAMETS_PER_REAL_HOUR = 8334000; // 2315 * 3600
 
+    /**
+     * Real play hours of in-contact decay one turn can apply (jealousy; passion uses the same
+     * 10 minutes when decay_max_hours is 0): a longer gap between two turns with the NPC is
+     * time apart, not time together.
+     */
+    const IN_CONTACT_DECAY_MAX_HOURS = 0.167;
+
     /** 30 game days in gamets (for plasticity override expiry, uses raw game clock). */
     const THIRTY_GAME_DAYS_GAMETS = 300000048; // 30 * 24 * 416667 (GAMETS_PER_HOUR)
 
@@ -1757,12 +1764,30 @@ class RelationshipDynamics
      *
      * First call (last_gamets = 0) initializes without adding time.
      *
+     * The per-gap cap cannot tell play from real time with the game clock stopped (quit
+     * overnight, menus, alt-tab): after a real break, a wait or sleep fits under it. With
+     * $globalPlayGamets (the global play heartbeat, beatPlayClock(): played gamets across
+     * all requests, offline gaps capped) the credit is also bounded by the play the
+     * heartbeat saw since this NPC's last turn (_last_global_play_gamets). A gap with no
+     * heartbeat mark (stored before it existed) credits nothing: it cannot be proven play.
+     *
      * @param array &$dynamics       NPC dynamics blob (modified in place)
      * @param float|null $currentGamets  Current gamets value (from $gameRequest[2] or DB fallback)
+     * @param float|null $globalPlayGamets  Global play heartbeat now (play gamets), null = unavailable
      * @return float  The gamets delta that was actually counted (0 if filtered or first call)
      */
-    public static function updatePlayTime(&$dynamics, $currentGamets = null)
+    public static function updatePlayTime(&$dynamics, $currentGamets = null, ?float $globalPlayGamets = null)
     {
+        // Heartbeat bound for this gap (play gamets), read before the mark moves to now.
+        $globalBound = null;
+        if ($globalPlayGamets !== null) {
+            $lastGlobal = $dynamics['_last_global_play_gamets'] ?? null;
+            $globalBound = (is_numeric($lastGlobal) && floatval($lastGlobal) <= $globalPlayGamets)
+                ? $globalPlayGamets - floatval($lastGlobal)
+                : 0.0;   // no mark yet, or a mark from a reset heartbeat: nothing proven
+            $dynamics['_last_global_play_gamets'] = $globalPlayGamets;
+        }
+
         // Resolve current gamets: parameter > gameRequest > DB fallback
         if ($currentGamets === null) {
             $currentGamets = self::currentGamets();
@@ -1805,6 +1830,10 @@ class RelationshipDynamics
         $credited = min($gametsDelta, $realDelta * self::GAMETS_PER_REAL_SECOND);
         if ($credited < $gametsDelta && ($gametsDelta / $realDelta) > self::GAMETS_WAIT_SLEEP_THRESHOLD) {
             self::log("[RelDyn-GAMETS] wait/sleep in gap: delta={$gametsDelta} gamets in {$realDelta}s, credited {$credited}");
+        }
+        if ($globalBound !== null && $globalBound < $credited) {
+            self::log("[RelDyn-GAMETS] heartbeat saw {$globalBound} play gamets in the gap; credited {$globalBound} of {$credited}");
+            $credited = $globalBound;
         }
 
         $dynamics['_accumulated_play_gamets'] = floatval($dynamics['_accumulated_play_gamets'] ?? 0) + $credited;
@@ -2918,6 +2947,9 @@ class RelationshipDynamics
 
         $hoursSince = ($now - $lastUpdate) / self::GAMETS_PER_REAL_HOUR;
         if ($hoursSince <= 0) return;
+        // In contact only: the play clock also runs while the player plays elsewhere, and
+        // that is absence, which does not heal (decisions §2). One window per turn counts.
+        $hoursSince = min($hoursSince, self::IN_CONTACT_DECAY_MAX_HOURS);
 
         $cfg = self::getConfig();
         $decayRate = floatval($cfg['jealousy_decay_per_hour'] ?? 1.5);
