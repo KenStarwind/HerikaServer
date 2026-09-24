@@ -93,7 +93,10 @@ final class RelDynCoreSensorsPostgresTest extends TestCase
             factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,
             updated_at timestamp, world text, chim_added integer)");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
-        pg_query($admin, "CREATE TABLE oghma (topic text, topic_desc text, knowledge_class text, tags text, category text)");
+        // oghma with core 3.4.1's text columns (no vector384: pgvector is not needed here).
+        pg_query($admin, "CREATE TABLE oghma (topic character varying NOT NULL, topic_desc character varying,
+            knowledge_class text, topic_desc_basic text, knowledge_class_basic text, tags text, category text, aliases text,
+            retrieval_phrases text, source_type text)");
         // What MinAI would have written: RelDyn must not read any of it.
         foreach ([
             ['minai_combat_lydia', '{"inCombat":true,"healthPct":0.1,"bleedingOut":true}'],
@@ -282,7 +285,12 @@ final class RelDynCoreSensorsPostgresTest extends TestCase
     public function testItemClassificationSkipsTheMissingMinaiItemsTable(): void
     {
         pg_query($this->db->link, "INSERT INTO oghma (topic, knowledge_class, category) VALUES ('ebony_blade', 'blacksmith', 'artifacts')");
-        $this->assertSame('crafting', RelationshipDynamics::classifyItemInterest('Ebony Blade'));
+        // Core's Oghma row is the source (the classifier's knowledge_class / category prior,
+        // config facet_classifier): blacksmith gives crafting, the artifacts category leads.
+        $facets = RelDynFacets::thingFacets('item', 'Ebony Blade');
+        $this->assertEqualsWithDelta(0.36, $facets['crafting'] ?? 0.0, 1e-9, 'blacksmith 0.6 x knowledge_class weight 0.6');
+        $this->assertEqualsWithDelta(0.5, $facets['adventure'] ?? 0.0, 1e-9, 'artifacts 0.5 x category weight 1.0');
+        $this->assertSame('adventure', RelationshipDynamics::classifyItemInterest('Ebony Blade'));
         $this->assertSame('alchemy', RelationshipDynamics::classifyItemInterest('Potion of Healing'));
         $this->assertNoMinaiRead();
         $this->assertStringNotContainsString('ERROR', (string) @file_get_contents(sys_get_temp_dir() . '/reldyn_core_sensors_test.log'));

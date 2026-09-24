@@ -179,11 +179,16 @@ if (RelationshipDynamics::configValue('ambient_enabled')) {
 }
 
 // -------------------------------------------------------------------------
-// Topic resonance hint (from previous interaction's topic match)
+// Topic / gift resonance: the felt read of the previous turn's Oghma topic or gift
+// (RelDynFacetClassifier::topicTurn / giftAppraisal; prose, never numbers)
 // -------------------------------------------------------------------------
-$lastTopicMatch = $dynamics['_last_topic_match'] ?? null;
-if (!empty($lastTopicMatch)) {
-    $parts[] = "<topic_resonance>{$npcName} was genuinely engaged by a recent conversation about {$lastTopicMatch} — this topic touched on something they truly care about. If the subject comes up again, they'll light up.</topic_resonance>";
+$lastTopicFelt = $dynamics['_last_topic_felt'] ?? null;
+if (is_string($lastTopicFelt) && trim($lastTopicFelt) !== '') {
+    $parts[] = "<topic_resonance>{$lastTopicFelt}</topic_resonance>";
+}
+$lastGiftFelt = $dynamics['_last_gift_felt'] ?? null;
+if (is_string($lastGiftFelt) && trim($lastGiftFelt) !== '') {
+    $parts[] = "<gift_resonance>{$lastGiftFelt}</gift_resonance>";
 }
 
 // -------------------------------------------------------------------------

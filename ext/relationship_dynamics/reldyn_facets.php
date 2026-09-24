@@ -19,6 +19,7 @@
  */
 
 require_once __DIR__ . '/relationship_dynamics.php';
+require_once __DIR__ . '/reldyn_facet_classifier.php';
 
 class RelDynFacets
 {
@@ -454,14 +455,14 @@ class RelDynFacets
     // =====================================================================
 
     /**
-     * Facet vector for a thing. Classifier lane.
-     *
-     * @param string $kind item|topic|creature|place|activity
-     * @return array facet => 0..1, [] when unknown
+     * Facet vector of a thing, [] when unknown. Classifier lane. $kind: item|topic|creature|place|activity.
+     * Oghma entries come precomputed (embedding + prior, tools/build_oghma_facets.php) or as the
+     * live knowledge_class/category/tags prior; everything else from the kind's keyword table
+     * (config facet_classifier). See RelDynFacetClassifier::thingFacets().
      */
     public static function thingFacets(string $kind, string $name): array
     {
-        return [];
+        return RelDynFacetClassifier::thingFacets($kind, $name);
     }
 
     // =====================================================================

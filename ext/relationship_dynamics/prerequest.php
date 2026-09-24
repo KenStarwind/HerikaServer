@@ -77,9 +77,6 @@ if ($gametsDelta > 0) {
 // Auto-generate love language if missing
 RelationshipDynamics::ensureLoveLanguage($npcName, $dynamics);
 
-// Auto-generate interest vector if missing (~8ms, fires once per NPC)
-RelationshipDynamics::getInterestVector($dynamics);
-
 // Load config toggles
 $reldynCfg = RelationshipDynamics::getConfig();
 

@@ -274,10 +274,6 @@ try {
                 $dynamics['_director_goal'] = null;
             }
 
-            // Re-embed interest vector with updated sliders
-            $interests = RelationshipDynamics::getInterests($dynamics, $npcName);
-            RelationshipDynamics::embedInterestVector($npcName, $interests, $dynamics);
-
             // Save
             RelationshipDynamics::saveDynamics($npcName, $dynamics);
             RelationshipDynamics::clearConfigCache();
@@ -308,8 +304,6 @@ try {
                 $temp = $dynamics['inferred_temperament'] ?? null;
             }
 
-            // Auto-embed interest vector (async-safe, ~8ms)
-            RelationshipDynamics::embedInterestVector($npcName, $prefs, $dynamics);
             RelationshipDynamics::saveDynamics($npcName, $dynamics);
 
             echo json_encode([
