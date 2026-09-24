@@ -1204,6 +1204,8 @@ class RelationshipDynamics
             'temperament_autogen' => self::temperamentAutogenDefaults(),
             // Signed facet preferences (-1..+1) auto-derivation tables (decisions §6, reldyn_facets.php)
             'facet_preferences' => RelDynFacets::preferenceDefaults(),
+            // Appraisal: felt read, effects, internal weather (decisions §6, reldyn_facets.php)
+            'facet_appraisal' => RelDynFacets::appraisalDefaults(),
             // ===== Time (decisions 2026-09-23 §2: time does not heal, contact does) =====
             // Contacts (this NPC's requests) an NPC back from a resolved boundary test
             // waits before walking away again while its resentment is still high.
