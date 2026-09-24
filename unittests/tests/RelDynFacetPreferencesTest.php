@@ -238,6 +238,67 @@ final class RelDynFacetPreferencesTest extends TestCase
         $this->assertSame(0.5, $interests['social'], 'override: hates');
     }
 
+    /** What the NPC editor posts on Save: every slider, snapped to its 0.1 step (npc_editor_section.php). */
+    private static function editorSliders(array $interests): array
+    {
+        return array_map(fn($m) => round(max(0.5, min(2.0, $m)) * 10) / 10, $interests);
+    }
+
+    /**
+     * interests-11 review 2026-09-24: any editor Save (even one that only changed the love
+     * language) posted all 11 sliders and api_save_npc turned each into a permanent override,
+     * snapped to 0.1: temperament, trait and config changes never reached the interests again,
+     * and nothing in the editor could undo it. A slider still at its current value (at the
+     * slider's precision) is no edit; Auto-Generate clears the interest overrides.
+     */
+    public function testAnEditorSaveOverridesOnlyTheSlidersThatWereMoved(): void
+    {
+        $db = new RelDynFacetPrefsDb();
+        $db->rows['test huntress'] = RelDynFacetProfiles::huntressRow();
+        $GLOBALS['db'] = $db;
+        RelationshipDynamics::clearConfigCache();
+        $dyn = ['inferred_temperament' => 'Independent', 'traits' => []];
+        RelDynFacets::ensurePreferences('Test Huntress', $dyn);
+        $derivedCombat = RelDynFacets::preferences($dyn, 'Test Huntress')['combat'];
+
+        // Save with nothing moved: nothing overridden
+        $posted = self::editorSliders(RelationshipDynamics::getInterests($dyn, 'Test Huntress'));
+        $this->assertSame([], RelDynFacets::applyInterestSliders($dyn, 'Test Huntress', $posted));
+        $this->assertSame([], (array) ($dyn['facet_pref_overrides'] ?? []));
+
+        // the derivation still reaches the interests: a new temperament moves combat
+        $dyn['inferred_temperament'] = 'Gentle';
+        $this->assertLessThan($derivedCombat, RelDynFacets::preferences($dyn, 'Test Huntress')['combat']);
+
+        // Save with one slider moved: only that one is an override
+        $posted = self::editorSliders(RelationshipDynamics::getInterests($dyn, 'Test Huntress'));
+        $posted['scholarly'] = 1.6;
+        $this->assertSame(['scholarly'], RelDynFacets::applyInterestSliders($dyn, 'Test Huntress', $posted));
+        $this->assertSame(['scholarly'], array_keys($dyn['facet_pref_overrides']));
+        $this->assertEqualsWithDelta(0.6, RelDynFacets::preferences($dyn, 'Test Huntress')['scholarly'], 1e-9);
+        // the next untouched Save keeps it (the slider now shows the override)
+        $posted = self::editorSliders(RelationshipDynamics::getInterests($dyn, 'Test Huntress'));
+        $this->assertSame([], RelDynFacets::applyInterestSliders($dyn, 'Test Huntress', $posted));
+        $this->assertEqualsWithDelta(0.6, RelDynFacets::preferences($dyn, 'Test Huntress')['scholarly'], 1e-9);
+
+        // Auto-Generate: interests back to the derivation; a situational override is not a slider
+        RelDynFacets::setPreferenceOverride($dyn, 'crowd', -0.8);
+        $this->assertSame(['scholarly'], RelDynFacets::clearInterestOverrides($dyn));
+        $this->assertSame(['crowd' => -0.8], $dyn['facet_pref_overrides']);
+        $this->assertLessThan(0.0, RelDynFacets::preferences($dyn, 'Test Huntress')['scholarly'], 'derived again');
+    }
+
+    /** The editor and the endpoint use them: no Save path writes all 11 any more. */
+    public function testTheEditorPostsOnlyMovedSlidersAndTheEndpointUsesTheFilter(): void
+    {
+        $api = (string) file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/api_save_npc.php');
+        $this->assertStringContainsString('RelDynFacets::applyInterestSliders(', $api);
+        $this->assertStringContainsString('RelDynFacets::clearInterestOverrides(', $api);
+        $this->assertStringNotContainsString("foreach (\$input['interests'] as \$act => \$mult)", $api);
+        $editor = (string) file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/npc_editor_section.php');
+        $this->assertMatchesRegularExpression('/movedInterests\.has\(int\)/', $editor, 'collectData posts moved sliders only');
+    }
+
     public function testInterestSliderValuesMapBackToPreferences(): void
     {
         foreach ([[0.5, -1.0], [0.7, -0.6], [1.0, 0.0], [1.5, 0.5], [2.0, 1.0]] as [$m, $p]) {

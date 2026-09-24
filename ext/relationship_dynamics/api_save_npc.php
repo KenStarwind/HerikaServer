@@ -118,13 +118,13 @@ try {
             }
 
             // Interests (MDD 1.2 sliders, 0.5x-2.0x) are per-NPC overrides of the signed facet
-            // preferences (decisions §6), through the documented mapping; facet_prefs sets any
-            // facet directly (-1..+1, null clears the override).
+            // preferences (decisions §6), through the documented mapping, for the sliders that
+            // were moved only (an untouched slider stays derived); facet_prefs sets any facet
+            // directly (-1..+1, null clears the override).
             if (isset($input['interests']) && is_array($input['interests'])) {
-                foreach ($input['interests'] as $act => $mult) {
-                    if (in_array($act, RelDynFacets::INTERESTS, true) && is_numeric($mult)) {
-                        RelDynFacets::setPreferenceOverride($dynamics, $act, RelDynFacets::preferenceFromInterestMultiplier(floatval($mult)));
-                    }
+                $moved = RelDynFacets::applyInterestSliders($dynamics, $npcName, $input['interests']);
+                if ($moved) {
+                    RelationshipDynamics::log("api_save_npc: {$npcName} interest overrides set: " . implode(', ', $moved));
                 }
             }
             if (isset($input['facet_prefs']) && is_array($input['facet_prefs'])) {
@@ -285,8 +285,10 @@ try {
             $GLOBALS['HERIKA_NAME'] = $npcName;
 
             // Signed facet preferences from core class, skills, temperament and traits
-            // (decisions §6); the interest sliders show them as MDD 1.2 multipliers.
+            // (decisions §6); the interest sliders show them as MDD 1.2 multipliers. Generating
+            // from the profile drops the interest overrides, so the sliders show the derivation.
             $dynamics = RelationshipDynamics::getDynamics($npcName);
+            RelDynFacets::clearInterestOverrides($dynamics);
             RelDynFacets::ensurePreferences($npcName, $dynamics);
             $prefs = RelationshipDynamics::getInterests($dynamics, $npcName);
 

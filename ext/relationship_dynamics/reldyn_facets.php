@@ -737,6 +737,45 @@ class RelDynFacets
         return true;
     }
 
+    /** The NPC editor's interest sliders: range 0.5..2.0, step 0.1 (npc_editor_section.php). */
+    const INTEREST_SLIDER_STEP = 0.1;
+
+    /**
+     * The NPC editor's interest sliders (MDD 1.2 multipliers) as per-NPC overrides, for the
+     * sliders that were actually moved: a posted value equal, at the slider's step, to what the
+     * slider showed (the current effective multiplier) is no edit and leaves the facet as it
+     * is (derived, or its existing override). Returns the interests it overrode.
+     */
+    public static function applyInterestSliders(array &$dynamics, string $npcName, array $interests): array
+    {
+        $prefs = self::preferences($dynamics, $npcName);
+        $snap = fn(float $m) => round(max(0.5, min(2.0, $m)) / self::INTEREST_SLIDER_STEP);
+        $changed = [];
+        foreach ($interests as $interest => $mult) {
+            if (!in_array($interest, self::INTERESTS, true) || !is_numeric($mult)) continue;
+            if ($snap(floatval($mult)) === $snap(self::interestMultiplier(floatval($prefs[$interest] ?? 0.0)))) continue;
+            if (self::setPreferenceOverride($dynamics, $interest, self::preferenceFromInterestMultiplier(floatval($mult)))) {
+                $changed[] = $interest;
+            }
+        }
+        return $changed;
+    }
+
+    /**
+     * Drop the per-NPC overrides of the 11 interests (the editor's Auto-Generate), so they
+     * follow the derivation again; situational overrides stay. Returns the interests cleared.
+     */
+    public static function clearInterestOverrides(array &$dynamics): array
+    {
+        $overrides = (array) ($dynamics['facet_pref_overrides'] ?? []);
+        $cleared = array_values(array_intersect(self::INTERESTS, array_keys($overrides)));
+        foreach ($cleared as $interest) {
+            unset($overrides[$interest]);
+        }
+        $dynamics['facet_pref_overrides'] = $overrides;
+        return $cleared;
+    }
+
     /**
      * MDD 1.2 interest multiplier (0.5x .. 2.0x, 1.0 = indifferent) from a signed preference
      * or appraisal valence p (-1..+1). The documented mapping, piecewise linear:

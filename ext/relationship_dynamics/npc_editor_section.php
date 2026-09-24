@@ -1449,6 +1449,13 @@ if ($rdUiPos !== false) {
     const RELDYN_NPC = <?= json_encode($rdNpcName) ?>;
     const RELDYN_API = <?= json_encode($rdApiUrl . '/ext/relationship_dynamics/api_save_npc.php') ?>;
     const INTERESTS = <?= json_encode(array_keys($rdInterestTypes)) ?>;
+    // Sliders the user moved since the page (or Auto-Generate) filled them: only these are
+    // posted, so an untouched interest stays derived from the profile (not frozen as an override).
+    const movedInterests = new Set();
+    INTERESTS.forEach(int => {
+        const slider = document.getElementById('reldyn_int_' + int);
+        if (slider) slider.addEventListener('input', () => movedInterests.add(int));
+    });
 
     window.reldynUpdateSlider = function(act, val) {
         const el = document.getElementById('reldyn_int_val_' + act);
@@ -1515,7 +1522,7 @@ if ($rdUiPos !== false) {
         };
         INTERESTS.forEach(int => {
             const slider = document.getElementById('reldyn_int_' + int);
-            if (slider) data.interests[int] = parseFloat(slider.value);
+            if (slider && movedInterests.has(int)) data.interests[int] = parseFloat(slider.value);
         });
         return data;
     }
@@ -1557,7 +1564,8 @@ if ($rdUiPos !== false) {
             });
             const json = await resp.json();
             if (json.ok && json.preferences) {
-                // Update sliders
+                // Update sliders (now the derivation again: nothing moved)
+                movedInterests.clear();
                 Object.entries(json.preferences).forEach(([act, val]) => {
                     const slider = document.getElementById('reldyn_int_' + act);
                     if (slider) {
