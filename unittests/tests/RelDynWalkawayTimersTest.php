@@ -10,7 +10,10 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.p
  *  - both run on the GAME CALENDAR (raw gamets; waiting and sleeping count as time apart);
  *  - leaving the NPC alone resolves the boundary test: the walkaway clears, the resentment
  *    behind it does not (time does not heal; no passive resentment decay while away);
- *  - following them during the test is still a permanent departure;
+ *  - following them during the test is still a permanent departure; talking to them as they
+ *    leave a NEGLECT walkaway (the parting conversation on the player's return,
+ *    walkaway_parting_game_minutes) is not following (rulings 2026-09-24 §8), while a plea
+ *    as they walk out of a fight still is; the test counts from when they left;
  *  - hoover sleeper = 72-96 game-calendar hours; a Toxic sleeper waits for its hoover
  *    instead of resolving through the boundary test.
  * No database ($GLOBALS['db'] unset): return/dismiss commands are no-ops.
@@ -104,10 +107,17 @@ final class RelDynWalkawayTimersTest extends TestCase
         $this->assertEqualsWithDelta($before, (float) $d['dimensions']['resentment']['x'], 1e-9, 'resentment untouched');
     }
 
+    /** Game-calendar hours of the parting conversation (walkaway_parting_game_minutes). */
+    private static function partingHours(): float
+    {
+        return (float) RelationshipDynamics::defaultConfig()['walkaway_parting_game_minutes'] / 60.0;
+    }
+
     public function testFollowingThemDuringTheTestIsPermanent(): void
     {
         $d = $this->inBoundaryTest();
-        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // player talks to them
+        $this->calendarAdvance(self::partingHours() + 1);                           // they are gone
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // player seeks them out
         $this->assertTrue($d['_walkaway_player_followed']);
         $this->calendarAdvance(1);
         $r = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);
@@ -130,6 +140,7 @@ final class RelDynWalkawayTimersTest extends TestCase
         RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);   // pending -> active
         $this->assertSame('active', $d['_walkaway_state']);
 
+        $this->calendarAdvance(self::partingHours() + 1);
         RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // player follows
         $this->assertTrue($d['_walkaway_player_followed']);
         $this->calendarAdvance(1);
@@ -137,6 +148,99 @@ final class RelDynWalkawayTimersTest extends TestCase
 
         $this->assertFalse($r['returned'], 'followed: no early-recovery return');
         $this->assertSame('permanent', $d['_walkaway_state']);
+    }
+
+    /**
+     * Rulings §8: talking to an NPC on your return is not following a neglect walkaway. The
+     * greeting that set the walkaway off and the lines right after it (a plea, a goodbye) are
+     * the conversation they walked out of; left alone after that, the boundary test resolves
+     * and they come back.
+     */
+    public function testThePartingConversationOfANeglectWalkawayIsNotPursuit(): void
+    {
+        $d = $this->npc();
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'neglect');
+        $d['_walkaway_boundary_test_hours'] = 24.0;
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // the greeting: pending -> active
+        $this->assertSame('active', $d['_walkaway_state']);
+
+        $this->calendarAdvance(self::partingHours() / 4);
+        $t = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // "wait, please"
+        $this->calendarAdvance(self::partingHours() / 2);
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);        // "I'm sorry"
+        $this->assertEmpty($d['_walkaway_player_followed'], 'still the parting conversation');
+        $this->assertSame('boundary_test', $d['_walkaway_state']);
+        $this->assertEqualsWithDelta(70.0, (float) $d['dimensions']['resentment']['x'], 1e-9, 'no pursuit penalty');
+
+        $this->calendarAdvance(25);                                                     // then left alone
+        $r = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);
+        $this->assertTrue($r['returned'], 'resolved: they come back');
+        $this->assertSame('normal', $d['_walkaway_state']);
+    }
+
+    public static function inPersonReasons(): array
+    {
+        return ['a fight' => ['resentment'], 'jealousy' => ['jealousy'], 'the ick' => ['ick_comfort'], 'autonomy' => ['autonomy']];
+    }
+
+    /**
+     * The exemption is the neglect walkaway's alone (rulings §8). An NPC walking out of an
+     * argument (or over jealousy, the ick, autonomy) is followed by the first plea after they
+     * left, parting window or not: MDD 6.4.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('inPersonReasons')]
+    public function testAPleaAsTheyWalkOutInPersonIsPursuit(string $reason): void
+    {
+        $d = $this->npc();
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', $reason);
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // pending -> active: they leave
+        $this->assertSame('active', $d['_walkaway_state']);
+
+        $this->calendarAdvance(self::partingHours() / 4);
+        $t = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // "wait, please"
+        $this->assertTrue($d['_walkaway_player_followed'], "{$reason}: following them");
+        $this->assertArrayNotHasKey('parting', $t);
+        $this->assertEqualsWithDelta(100.0, (float) $d['dimensions']['resentment']['x'], 1e-9, 'penalty doubles (70 -> 100 cap)');
+    }
+
+    /** Pursuit = still seeking them after they left: the parting window has passed. */
+    public function testSeekingThemAfterThePartingWindowIsPursuit(): void
+    {
+        $d = $this->npc();
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'neglect');
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // pending -> active
+        $this->calendarAdvance(self::partingHours() + 0.1);
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);
+        $this->assertTrue($d['_walkaway_player_followed']);
+        $this->assertEqualsWithDelta(100.0, (float) $d['dimensions']['resentment']['x'], 1e-9, 'penalty doubles (70 -> 100 cap)');
+    }
+
+    /**
+     * The boundary test counts from when they left, not from the next tick: a player who
+     * left them alone and comes back after the test finds them returned, even when no scan
+     * ticked in between, so the first hello on that return is not pursuit.
+     */
+    public function testTheBoundaryTestCountsFromWhenTheyLeft(): void
+    {
+        $d = $this->npc();
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'resentment');
+        $d['_walkaway_boundary_test_hours'] = 24.0;
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);   // pending -> active
+        $left = (float) $d['_walkaway_activated_calendar_gamets'];
+
+        $this->calendarAdvance(30);                                                 // away, nobody ticked it
+        $r = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);   // the return's calendar step
+        $this->assertTrue($r['returned'], '30 game hours since they left > the 24 h test');
+        $this->assertSame('normal', $d['_walkaway_state']);
+
+        $d2 = $this->npc();
+        RelationshipDynamics::initiateWalkaway($d2, 'Lydia', 'resentment');
+        RelationshipDynamics::resolveWalkawayTick($d2, 'Lydia', 'Jealous', false);
+        $this->calendarAdvance(1);
+        RelationshipDynamics::resolveWalkawayTick($d2, 'Lydia', 'Jealous', false);  // active -> boundary_test
+        $this->assertEqualsWithDelta((float) $d2['_walkaway_activated_calendar_gamets'],
+            (float) $d2['_boundary_test_started_calendar_gamets'], 0.001, 'test clock = departure');
+        $this->assertGreaterThan($left, (float) $d2['_walkaway_activated_calendar_gamets']);
     }
 
     /** MDD 6.6: a Toxic sleeper vanishes until its 72-96 h hoover, whatever its resentment. */

@@ -365,9 +365,9 @@ final class RelDynGameTimersTest extends TestCase
         $this->assertSame($start, $dyn['_walkaway_started_calendar_gamets']);
         $dyn['_walkaway_boundary_test_hours'] = 30.0;
 
-        RelationshipDynamics::processWalkawayTick($dyn, 'Ashe', 'Stoic'); // pending -> active
+        RelationshipDynamics::processWalkawayTick($dyn, 'Ashe', 'Guarded'); // pending -> active
         $this->assertSame($start, $dyn['_walkaway_activated_calendar_gamets']);
-        RelationshipDynamics::processWalkawayTick($dyn, 'Ashe', 'Stoic'); // active -> boundary_test
+        RelationshipDynamics::processWalkawayTick($dyn, 'Ashe', 'Guarded'); // active -> boundary_test
         $this->assertSame('boundary_test', $dyn['_walkaway_state']);
         $this->assertSame($start, $dyn['_boundary_test_started_calendar_gamets']);
         $this->assertEquals(80, $dyn['dimensions']['resentment']['x'], 'no passive resentment decay while away');
@@ -396,7 +396,7 @@ final class RelDynGameTimersTest extends TestCase
         $this->assertTrue(RelationshipDynamics::checkHooverEligibility($dyn));
 
         $hooverAt = $dyn['_accumulated_play_gamets'];
-        RelationshipDynamics::executeHoover($dyn, 'Ashe', 'Stoic');
+        RelationshipDynamics::executeHoover($dyn, 'Ashe', 'Guarded');
         $this->assertEquals($hooverAt, $dyn['_hoover_last_gamets']);
         $this->assertArrayNotHasKey('_walkaway_activated_calendar_gamets', $dyn, 'walkaway clock cleared on reset');
 

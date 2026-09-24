@@ -278,7 +278,7 @@ final class RelDynTemperamentAutogenTest extends TestCase
     public static function namedPresets(): array
     {
         return [
-            'Ashe'   => ['Ashe', 'temperament', 'Stoic'],
+            'Ashe'   => ['Ashe', 'temperament', 'Guarded'],   // rulings 2026-09-24 §8 (MDD 8.2/3.3)
             'Ashe2'  => ['Ashe', 'maturity_type', 'Resilient'],
             'Mikael' => ['Mikael', 'maturity_type', 'Volatile'],
             'Serana' => ['Serana', 'maturity_type', 'Growth'],
