@@ -98,7 +98,7 @@ final class RelDynCalendarScanPostgresTest extends TestCase
             extended_data jsonb,
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'))");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
-        pg_query($admin, "CREATE TABLE core_player (id text NOT NULL, value text, CONSTRAINT core_player_pkey PRIMARY KEY (id))"); // prerequest gold ledger (RelDynPlayer)
+        pg_query($admin, "CREATE TABLE core_player (id text NOT NULL, value text, CONSTRAINT core_player_pkey PRIMARY KEY (id))"); // prerequest gold ledger + profile the Attraction Matrix reads (RelDynPlayer)
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
         pg_close($admin);
 

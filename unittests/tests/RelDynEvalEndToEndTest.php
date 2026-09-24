@@ -139,6 +139,8 @@ final class RelDynEvalEndToEndTest extends TestCase
         pg_query($admin, "CREATE TABLE core_npc_master_history (history_id serial PRIMARY KEY, npc_id integer NOT NULL,
             created timestamp without time zone DEFAULT now(), " . str_replace('npc_name text NOT NULL', 'npc_name text', $columns) . ")");
         pg_query($admin, "CREATE TABLE conf_opts (id text NOT NULL, value text, CONSTRAINT pid PRIMARY KEY (id))");
+        // core_player: the player profile the Attraction Matrix reads each request (RelDynPlayer::profile)
+        pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
         // Same columns as data/database_default.sql eventlog / responselog.
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,

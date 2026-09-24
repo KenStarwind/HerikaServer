@@ -173,6 +173,8 @@ final class RelDynCoreAffinityHookPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE core_npc_master_history (history_id serial PRIMARY KEY, npc_id integer NOT NULL,
             created timestamp without time zone DEFAULT now(), " . str_replace('npc_name text NOT NULL', 'npc_name text', $columns) . ")");
         pg_query($admin, "CREATE TABLE conf_opts (id text NOT NULL, value text, CONSTRAINT pid PRIMARY KEY (id))");
+        // core_player: the player profile the Attraction Matrix reads each request (RelDynPlayer::profile)
+        pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
         // ext/relationship_system/async_queue.php _relCreateQueueTable()
         pg_query($admin, "CREATE TABLE relationship_eval_queue (id SERIAL PRIMARY KEY, npc_id INTEGER NOT NULL UNIQUE,
             eval_data JSONB NOT NULL, created_at TIMESTAMP DEFAULT NOW(), retry_count INTEGER DEFAULT 0, last_error TEXT)");
