@@ -40,6 +40,16 @@ final class RelDynFacetPgDb
     public function execQuery($q) { return pg_query($this->link, $q); }
     public function escape($s) { return $s === null ? '' : pg_escape_string($this->link, (string) $s); }
     public function escapeLiteral($s) { return $s === null ? '' : pg_escape_literal($this->link, (string) $s); }
+
+    /** lib/postgresql.class.php insert(): core's timeline stamp writes core_npc_master_history with it. */
+    public function insert($table, $data)
+    {
+        $cols = array_keys($data);
+        $ph = [];
+        foreach ($cols as $i => $_) $ph[] = '$' . ($i + 1);
+        return pg_query_params($this->link,
+            "INSERT INTO {$table} (" . implode(', ', $cols) . ') VALUES (' . implode(', ', $ph) . ')', array_values($data));
+    }
 }
 
 /**
@@ -83,6 +93,21 @@ final class RelDynFacetPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE core_npc_master (
             id serial PRIMARY KEY,
             npc_name text NOT NULL,
+            npc_favorite integer DEFAULT 0,
+            lock_profile integer DEFAULT 0,
+            prompt_head text,
+            oghma_knowledge_tags text,
+            emote_moods text,
+            relationships text,
+            occupation text,
+            appearance text,
+            skills text,
+            goals text,
+            profile_id integer,
+            dynamic_profile integer,
+            md5 text,
+            base text,
+            tags text,
             refid text,
             personality text, speechstyle text, core text, npc_static_bio text,
             voiceid text, gender text, race text,
@@ -90,10 +115,25 @@ final class RelDynFacetPostgresTest extends TestCase
             extended_data jsonb,
             gamets_last_updated numeric,
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'))");
+        // lib/core/database_schema/core_npc_master_history.sql: core's timeline stamp after a relationship write
+        pg_query($admin, "CREATE TABLE core_npc_master_history (history_id serial PRIMARY KEY, npc_id integer NOT NULL,
+            created timestamp without time zone DEFAULT now(),
+            npc_name text, npc_favorite integer DEFAULT 0, lock_profile integer DEFAULT 0, prompt_head text,
+            npc_static_bio text, oghma_knowledge_tags text, emote_moods text, personality text,
+            relationships text, occupation text, appearance text, skills text, speechstyle text, goals text,
+            voiceid text, metadata jsonb, gender text, race text, refid character varying(16),
+            profile_id integer, dynamic_profile integer, extended_data jsonb,
+            plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb, md5 text, gamets_last_updated numeric,
+            core text, base text, tags text)");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
         pg_query($admin, "CREATE TABLE eventlog (rowid bigserial, ts bigint, gamets bigint, type text, data text, people text, localts bigint, location text)");
         pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
+        // core quests journal (RelDynPlayer::profile questlines)
+        pg_query($admin, "CREATE TABLE quests (ts text NOT NULL, sess varchar(1024), id_quest varchar(1024) NOT NULL,
+            name text, editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
+            stage integer, briefing text, briefing2 text, localts bigint NOT NULL, gamets bigint NOT NULL, data text,
+            status text, rowid bigserial PRIMARY KEY)");
         pg_query($admin, "CREATE TABLE locations (name text, formid bigint, region text, hold text, tags text,
             factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,
             updated_at timestamp, world text, chim_added integer)");

@@ -26,9 +26,20 @@ final class RelDynEvalPipelineConfDb
         throw new RuntimeException('unexpected query in a pure-math test: ' . $q);
     }
 
-    public function fetchAll($q) { throw new RuntimeException('unexpected query: ' . $q); }
+    /**
+     * The player profile (RelDynPlayer, read by the attraction gate on the passion signal)
+     * reads core's player tables: this pure-math game has none of that data yet.
+     */
+    public function fetchAll($q)
+    {
+        if (preg_match('/FROM (core_player|conf_opts|eventlog|quests)/', (string) $q)) {
+            return [];
+        }
+        throw new RuntimeException('unexpected query: ' . $q);
+    }
     public function execQuery($q) { throw new RuntimeException('unexpected query: ' . $q); }
     public function escape($s) { return str_replace("'", "''", (string) $s); }
+    public function escapeLiteral($s) { return "'" . str_replace("'", "''", (string) $s) . "'"; }
 }
 
 /**

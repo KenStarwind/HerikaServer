@@ -109,9 +109,24 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
             extended_data jsonb,
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'),
             md5 text, gamets_last_updated numeric, core text, base text, tags text)");
+        // lib/core/database_schema/core_npc_master_history.sql: core's timeline stamp after a relationship write
+        pg_query($admin, "CREATE TABLE core_npc_master_history (history_id serial PRIMARY KEY, npc_id integer NOT NULL,
+            created timestamp without time zone DEFAULT now(),
+            npc_name text, npc_favorite integer DEFAULT 0, lock_profile integer DEFAULT 0, prompt_head text,
+            npc_static_bio text, oghma_knowledge_tags text, emote_moods text, personality text,
+            relationships text, occupation text, appearance text, skills text, speechstyle text, goals text,
+            voiceid text, metadata jsonb, gender text, race text, refid character varying(16),
+            profile_id integer, dynamic_profile integer, extended_data jsonb,
+            plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb, md5 text, gamets_last_updated numeric,
+            core text, base text, tags text)");
         pg_query($admin, "CREATE TABLE conf_opts (id text NOT NULL, value text, CONSTRAINT pid PRIMARY KEY (id))");
         // core_player: the player profile the Attraction Matrix reads each request (RelDynPlayer::profile)
         pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
+        // core quests journal (RelDynPlayer::profile questlines)
+        pg_query($admin, "CREATE TABLE quests (ts text NOT NULL, sess varchar(1024), id_quest varchar(1024) NOT NULL,
+            name text, editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
+            stage integer, briefing text, briefing2 text, localts bigint NOT NULL, gamets bigint NOT NULL, data text,
+            status text, rowid bigserial PRIMARY KEY)");
         // Same columns as data/database_default.sql eventlog.
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,

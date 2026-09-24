@@ -159,6 +159,11 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
         // lib/core/database_schema/core_player.sql (the attraction matrix reads the player's appearance)
         pg_query($admin, "CREATE TABLE core_player (id text NOT NULL PRIMARY KEY, value text)");
+        // core quests journal (RelDynPlayer::profile questlines)
+        pg_query($admin, "CREATE TABLE quests (ts text NOT NULL, sess varchar(1024), id_quest varchar(1024) NOT NULL,
+            name text, editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
+            stage integer, briefing text, briefing2 text, localts bigint NOT NULL, gamets bigint NOT NULL, data text,
+            status text, rowid bigserial PRIMARY KEY)");
         pg_close($admin);
 
         $this->db = new RelDynFulfillmentPgDb($dsn, $this->schema);

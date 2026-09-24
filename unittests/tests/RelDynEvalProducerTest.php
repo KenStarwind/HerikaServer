@@ -244,7 +244,7 @@ final class RelDynEvalProducerTest extends TestCase
     public function testEveryContractTagIsDefinedForTheModel(): void
     {
         $decided = ['gift', 'praise', 'help', 'rescue', 'quality_time', 'touch', 'intimacy', 'insult', 'criticism', 'neglect',
-            'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology'];
+            'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology', 'confession'];
         $this->assertSame($decided, array_keys(RelDynEval::TAG_DEFINITIONS));
         foreach (RelDynEval::NEGATIVE_TAGS as $t) {
             $this->assertArrayHasKey($t, RelDynEval::TAG_DEFINITIONS);

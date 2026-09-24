@@ -153,6 +153,11 @@ final class RelDynAsheAelaTest extends TestCase
             updated_at timestamp, world text, chim_added integer)");
         pg_query($admin, "CREATE TABLE moods_issued (speaker text, mood text, localts bigint)");
         pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
+        // core quests journal (RelDynPlayer::profile questlines)
+        pg_query($admin, "CREATE TABLE quests (ts text NOT NULL, sess varchar(1024), id_quest varchar(1024) NOT NULL,
+            name text, editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
+            stage integer, briefing text, briefing2 text, localts bigint NOT NULL, gamets bigint NOT NULL, data text,
+            status text, rowid bigserial PRIMARY KEY)");
         // Core 3.4.1 oghma text columns (vector384 needs pgvector and is empty on the live install).
         pg_query($admin, "CREATE TABLE oghma (topic character varying NOT NULL, topic_desc character varying,
             knowledge_class text, topic_desc_basic text, knowledge_class_basic text, tags text, category text, aliases text,

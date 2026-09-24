@@ -1185,6 +1185,9 @@ class RelationshipDynamics
             // Needs vector, deliveries, decay, band thresholds, boundary windows, felt text
             // (reldyn_fulfillment.php, RelDynFulfillment::configDefaults()).
             'fulfillment' => RelDynFulfillment::configDefaults(),
+            // ===== Romance promotion + Sharmat handoff (rulings 2026-09-24 §9) =====
+            // Ladder, moment thresholds, momentum per NPC (reldyn_romance.php).
+            'romance_promotion' => RelDynRomance::configDefaults(),
         ];
     }
 
@@ -6997,6 +7000,9 @@ class RelationshipDynamics
                 self::saveDynamics($npcName, $dynamics);   // the worker has no later save
             }
         }
+        // Romance promotion (rulings §9): the moments these items carried, checked on core's
+        // fresh type and affinity (after the commit above); saves what it consumed.
+        RelDynRomance::maybePromote($npcName, $dynamics);
         return $evalResults;
     }
 
@@ -7085,6 +7091,7 @@ class RelationshipDynamics
     const EVAL_CONTRACT_TAGS = [
         'gift', 'praise', 'help', 'rescue', 'quality_time', 'touch', 'intimacy', 'insult', 'criticism',
         'neglect', 'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology',
+        'confession',
     ];
 
     /** Fingerprints of applied items kept per NPC (count), so a re-queued copy is skipped. */
@@ -7580,7 +7587,12 @@ class RelationshipDynamics
         $level = max(1, min(3, (int) round($n['significance'] * 3)));
         $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] = max($level, intval($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? 0));
         // A lifted attraction ceiling advances only through significant interactions
-        // (attraction design memory); a completed lift refreshes the summary at once.
+        // (attraction design memory); a completed lift refreshes the summary at once. A bond the
+        // Matrix has not tracked yet (eval worker before any prerequest, or a passionless item
+        // that never asked for the passion gate) is evaluated first, so the item still counts.
+        if (!is_array($dynamics['_attraction_state'] ?? null) && $n['positive_interaction']) {
+            self::updateAttraction((string) $npcName, $dynamics);
+        }
         RelDynAttraction::recordSignificance((string) $npcName, $dynamics, $n['significance'], $n['positive_interaction']);
 
         // Grievance / jealousy / positive interaction (resentment, conflict): once per accepted
@@ -7591,6 +7603,8 @@ class RelationshipDynamics
         // What the exchange gave against the NPC's needs (rulings §9 fulfillment), at its game time.
         RelDynFulfillment::deliver($dynamics, RelDynFulfillment::evalItemAmounts($n),
             floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
+        // A romantic moment or a setback, for the romance promotion after the inbox (rulings §9)
+        RelDynRomance::noteMoment($dynamics, $n);
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -12574,7 +12588,13 @@ class RelationshipDynamics
      */
     public static function attractionFor(string $npcName, array $dynamics, ?array $playerProfile = null): array
     {
-        return RelDynAttraction::evaluate($npcName, $dynamics, $playerProfile ?? RelDynPlayer::profile());
+        return RelDynAttraction::evaluate($npcName, $dynamics, $playerProfile ?? self::attractionPlayerProfile());
+    }
+
+    /** The player profile for the Matrix; not read at all while the Matrix is off (it gates nothing). */
+    private static function attractionPlayerProfile(): array
+    {
+        return empty(self::getConfig()['attraction_matrix_enabled']) ? ['known' => false] : RelDynPlayer::profile();
     }
 
     /**
@@ -12583,7 +12603,7 @@ class RelationshipDynamics
      */
     public static function updateAttraction(string $npcName, array &$dynamics, ?array $playerProfile = null): array
     {
-        return RelDynAttraction::update($npcName, $dynamics, $playerProfile ?? RelDynPlayer::profile());
+        return RelDynAttraction::update($npcName, $dynamics, $playerProfile ?? self::attractionPlayerProfile());
     }
 
     /**
@@ -16142,13 +16162,16 @@ class RelationshipDynamics
      * entry is missing or a legacy real-name entry must be folded in); nothing is written when
      * extended_data.relationships_locked is set (editor lock); core's timeline stamp runs after
      * a write. $newType must be one of core's types (RelationshipManager::TYPES or an alias).
-     * $expectedFrom (optional): write only while core still holds that type, so a decision made
-     * on an older snapshot never overrides a type core changed meanwhile.
+     * $expectedFrom (optional, compare-and-set): write only while core still holds that type (a
+     * string) or one of those types (a list: the romance ladder's step), so a decision made on
+     * an older snapshot never overrides a type core changed meanwhile.
+     * After a write, RelDyn's record of it (plugin_extended_data.reldyn core_type_change: from,
+     * to, reason, gamets, direction) for the romance ladder, which reads a step-back from it.
      *
      * @return bool true when core holds $newType afterwards (already did: no write), false when
      *              refused (unknown type, editor lock, type changed meanwhile, no row) or failed
      */
-    public static function changeCoreRelationshipType(string $npcName, string $newType, string $reason, ?string $expectedFrom = null): bool
+    public static function changeCoreRelationshipType(string $npcName, string $newType, string $reason, string|array|null $expectedFrom = null): bool
     {
         self::loadRelationshipManager();
         $type = strtolower(trim($newType));
@@ -16186,8 +16209,11 @@ class RelationshipDynamics
             $refusal = null;
             if (!empty($extended['relationships_locked'])) {
                 $refusal = 'relationships_locked (manual edits protected)';
-            } elseif ($expectedFrom !== null && $oldType !== strtolower(trim($expectedFrom))) {
-                $refusal = "core type is '{$oldType}', not the expected '{$expectedFrom}'";
+            } elseif ($expectedFrom !== null) {
+                $expected = array_map(fn($t) => strtolower(trim((string) $t)), (array) $expectedFrom);
+                if (!in_array($oldType, $expected, true)) {
+                    $refusal = "core type is '{$oldType}', not the expected '" . implode('/', $expected) . "'";
+                }
             }
             if ($refusal !== null || $oldType === $type) {
                 if ($db->execQuery("COMMIT") === false) {
@@ -16234,7 +16260,13 @@ class RelationshipDynamics
         if (function_exists('chimRelationshipTimelineStamp')) {
             chimRelationshipTimelineStamp($npcId);
         }
-        error_log("[RelDyn-TYPE] {$npcName} -> Player: type {$oldType} -> {$type} ({$reason})");
+        $direction = RelDynRomance::direction($oldType, $type);
+        $record = ['from' => $oldType, 'to' => $type, 'reason' => substr($reason, 0, 200),
+                   'gamets' => self::currentGamets(), 'direction' => $direction];
+        if (!RelDynStorage::setKey($npcId, RelDynRomance::STORAGE_KEY_TYPE_CHANGE, $record)) {
+            error_log("[RelDyn-TYPE] ERROR {$npcName}: core type changed but RelDyn's record of it was not stored");
+        }
+        error_log("[RelDyn-TYPE] {$npcName} -> Player: type {$oldType} -> {$type} ({$reason}) [{$direction}]");
         return true;
     }
 
@@ -16250,3 +16282,5 @@ require_once __DIR__ . '/reldyn_player.php';
 require_once __DIR__ . '/reldyn_attraction.php';
 // Fulfillment coverage and the mature boundary (rulings 2026-09-24 §9); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_fulfillment.php';
+// Romance promotion + Sharmat handoff (rulings 2026-09-24 §9); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_romance.php';

@@ -75,6 +75,9 @@ class RelDynAttraction
             // Pillar score used for beauty while the profile has no appearance read (null):
             // neutral; an unknown beauty never blocks a pass or a tier
             'beauty_unknown_score' => 0.5,
+            // Same for strength / status / competence when the profile has no data for them
+            // (RelDynPlayer::profile() returns null, not 0, for an unread pillar)
+            'unknown_pillar_score' => 0.5,
             // Share of a pillar seen through the NPC's archetype lens (rest: the generic pillar)
             'lens_share' => ['beauty' => 0.0, 'strength' => 0.8, 'status' => 0.0, 'competence' => 0.5],
             // sum(facet preference x facet_archetypes) at which the NPC fully values an archetype
@@ -322,9 +325,7 @@ class RelDynAttraction
             if (in_array($g, ['heterosexual', 'homosexual', 'bisexual'], true)) $genderPref = $g;
         }
 
-        // The relationship preference filter runs while the settings page's type filter is on
-        $pref = !empty(RelationshipDynamics::getConfig()['type_filter_enabled'])
-            ? strtolower(trim((string) ($dynamics['relationship_preference'] ?? ''))) : '';
+        $pref = self::preferenceOf($dynamics);
         return [
             'archetype'  => $arch,
             'rigidity'   => $rigidity,
@@ -334,9 +335,51 @@ class RelDynAttraction
             'lens_share' => $lensShare,
             'openness'   => $band,
             'gender_pref'=> $genderPref,
-            'preference' => in_array($pref, self::PREFERENCES, true) ? $pref : null,
+            'preference' => $pref,
             'sources'    => $sources,
         ];
+    }
+
+    /**
+     * The NPC's relationship preference; the filter runs while the settings page's type
+     * filter is on. It is the NPC's own trait, so it holds with or without player data.
+     */
+    private static function preferenceOf(array $dynamics): ?string
+    {
+        if (empty(RelationshipDynamics::getConfig()['type_filter_enabled'])) return null;
+        $pref = strtolower(trim((string) ($dynamics['relationship_preference'] ?? '')));
+        return in_array($pref, self::PREFERENCES, true) ? $pref : null;
+    }
+
+    /**
+     * An open result (the Matrix does not judge the player) still carries the NPC's own
+     * relationship preference: romance types above its romance_max are blocked (demisexual:
+     * all of them until core affinity reaches bond_core_aff), intimacy follows the row, and
+     * a romance_max of 0 caps passion like a friendzone (aromantic / not interested).
+     */
+    private static function withPreference(array $r, array $dynamics): array
+    {
+        $pref = self::preferenceOf($dynamics);
+        if ($pref === null) return $r;
+        $cfg = self::config();
+        $row = (array) (((array) $cfg['preferences'])[$pref] ?? []);
+        $max = intval($row['romance_max'] ?? self::ROMANCE_FULL);
+        if ($pref === 'demisexual' && RelationshipDynamics::getCoreAffinity($dynamics) < floatval($row['bond_core_aff'] ?? 60)) {
+            $max = self::ROMANCE_NONE;
+        }
+        $blocked = [];
+        foreach ((array) $cfg['romance_types'] as $type => $level) {
+            if (intval($level) > $max) $blocked[] = (string) $type;
+        }
+        $r['preference'] = $pref;
+        $r['blocked_types'] = $blocked;
+        $r['romance'] = ['allowed' => $max, 'earned' => $max, 'effective' => $max];
+        $r['intimacy_allowed'] = !empty($row['intimacy'] ?? true) && $max > self::ROMANCE_NONE;
+        if (intval($row['romance_max'] ?? self::ROMANCE_FULL) === self::ROMANCE_NONE) {
+            $r['passion_cap'] = floatval(((array) $cfg['passion'])['friendzone_cap']);
+        }
+        $r['reason'] .= ", {$pref}";
+        return $r;
     }
 
     /**
@@ -398,14 +441,18 @@ class RelDynAttraction
     // EVALUATION (the shared contract: RelationshipDynamics::attractionFor)
     // =====================================================================
 
-    /** Speech as 0..1 from the profile: 'speech' (0..1), else facts speech / skills.speech (level 0..100). */
+    /**
+     * Speech as 0..1 from the profile: 'speech' (0..1), else the skill level (0..100) from
+     * facts (RelDynPlayer: facts.skills.value.speechcraft, core's gamedata key).
+     */
     public static function speechLevel(array $profile): float
     {
         if (is_numeric($profile['speech'] ?? null)) {
             return max(0.0, min(1.0, floatval($profile['speech'])));
         }
         $facts = (array) ($profile['facts'] ?? []);
-        $candidates = [$facts['speech'] ?? null, $facts['skills']['value']['speech'] ?? null, $facts['skills']['speech'] ?? null];
+        $candidates = [$facts['speech'] ?? null, $facts['skills']['value']['speechcraft'] ?? null,
+            $facts['skills']['value']['speech'] ?? null, $facts['skills']['speech'] ?? null];
         foreach ($candidates as $c) {
             if (is_array($c)) $c = $c['value'] ?? null;
             if (is_numeric($c)) {
@@ -442,10 +489,10 @@ class RelDynAttraction
     public static function evaluate(string $npcName, array $dynamics, array $profile, ?array $def = null): array
     {
         if (empty(RelationshipDynamics::getConfig()['attraction_matrix_enabled'])) {
-            return self::openResult('attraction matrix off');
+            return self::withPreference(self::openResult('attraction matrix off'), $dynamics);
         }
         if (empty($profile['known'])) {
-            return self::openResult('no player data');
+            return self::withPreference(self::openResult('no player data'), $dynamics);
         }
         $cfg = self::config();
         $def = $def ?? self::definition($npcName, $dynamics);
@@ -461,9 +508,11 @@ class RelDynAttraction
         $valued = null;
         foreach (self::PILLARS as $p) {
             $rig = $def['rigidity'][$p];
-            $known = !($p === 'beauty' && !is_numeric($generic['beauty'] ?? null));
+            // A pillar the profile cannot read (null: RelDynPlayer leaves unknown inputs out)
+            // is neutral and never gates; beauty is always NPC-subjective (MDD 2.1).
+            $known = is_numeric($generic[$p] ?? null);
             if (!$known) {
-                $score = max(0.0, min(1.0, floatval($cfg['beauty_unknown_score'])));
+                $score = max(0.0, min(1.0, floatval($p === 'beauty' ? $cfg['beauty_unknown_score'] : $cfg['unknown_pillar_score'])));
             } else {
                 $score = max(0.0, min(1.0, floatval($generic[$p] ?? 0.0)));
                 $lens = $def['lens'][$p] ?? null;
