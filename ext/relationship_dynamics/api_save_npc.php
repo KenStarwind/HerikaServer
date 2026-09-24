@@ -620,5 +620,6 @@ try {
             echo json_encode(['ok' => false, 'error' => 'Unknown action: ' . $action]);
     }
 } catch (Throwable $e) {
+    RelationshipDynamics::logError('api_save_npc', $e);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }

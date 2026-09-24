@@ -480,7 +480,7 @@ if ($rdUiPos !== false) {
                                 $rdLocations[] = $lr['name'];
                             }
                         }
-                    } catch (\Throwable $e) { /* silent */ }
+                    } catch (\Throwable $e) { RelationshipDynamics::logError('npc editor locations list', $e); }
                     ?>
                     <datalist id="reldyn_home_locations_list">
                         <?php foreach ($rdLocations as $loc): ?>

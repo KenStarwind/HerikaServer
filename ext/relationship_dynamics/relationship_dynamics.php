@@ -2058,6 +2058,7 @@ class RelationshipDynamics
             $row = $db->fetchOne("SELECT race FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
             return $row['race'] ?? null;
         } catch (Throwable $e) {
+            self::logError('getNpcRace', $e);
             return null;
         }
     }
@@ -2685,6 +2686,7 @@ class RelationshipDynamics
                 return true;
             }
         } catch (\Throwable $e) {
+            self::logError('isNpcInCombatRecently', $e);
             // Silently fail — combat detection is a bonus, not critical
         }
 
@@ -2745,7 +2747,7 @@ class RelationshipDynamics
                     if ($interest) return $interest;
                     // category=Misc falls through to Tier 2
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('classifyItemInterest minai_items', $e); }
         }
 
         // Tier 2: oghma.knowledge_class (8% coverage, finer classification)
@@ -2772,7 +2774,7 @@ class RelationshipDynamics
                         return $catMap[$row['category']];
                     }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('classifyItemInterest oghma', $e); }
         }
 
         // Tier 3: keyword fallback (for items not in any DB)
@@ -2921,6 +2923,7 @@ class RelationshipDynamics
                 }
             }
         } catch (\Throwable $e) {
+            self::logError('detectCurrentInterest', $e);
             // Silently fail
         }
 
@@ -2968,7 +2971,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('generateInterests', $e); }
 
         $prefs = self::CLASS_INTEREST_DEFAULTS[$class] ?? [
             'combat' => 1.0, 'crafting' => 1.0, 'alchemy' => 1.0, 'enchanting' => 1.0,
@@ -3256,6 +3259,15 @@ class RelationshipDynamics
     }
 
     /**
+     * Escape LIKE wildcards (% _ and the escape character itself) so a name matches literally.
+     * Use with ESCAPE '\' in the query; apply this first, then the database's own quoting.
+     */
+    public static function escapeLike(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+    }
+
+    /**
      * Get a human-readable passion band label.
      */
     public static function getPassionBand($passion)
@@ -3340,7 +3352,7 @@ class RelationshipDynamics
             $data = json_decode($result, true);
             return $data['vector'] ?? $data['embedding'] ?? $data ?? null;
         } catch (\Throwable $e) {
-            self::log("embedInterestVector error: " . $e->getMessage());
+            self::logError('embedInterestVector', $e);
             return null;
         }
     }
@@ -3385,7 +3397,7 @@ class RelationshipDynamics
                     $healthPct = floatval($combatData['healthPct'] ?? 1.0);
                     $bleedingOut = !empty($combatData['bleedingOut']);
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('getCombatContext minai_combat', $e); }
 
             // Fallback: check gameRequest for combat event types
             $reqType = $GLOBALS['gameRequest'][0] ?? '';
@@ -3403,17 +3415,18 @@ class RelationshipDynamics
                     $inCombat = true;
                     $source = 'minai_flag';
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('getCombatContext inCombat flag', $e); }
 
             // Count recent kills from eventlog (last 5 minutes of play on the game clock)
             $nowGamets = self::currentGamets();
             if ($nowGamets > 0) {
                 $sinceGamets = intval($nowGamets - self::COMBAT_KILL_STREAK_WINDOW_GAMETS);
                 try {
-                    $rows = $db->fetchAll("SELECT COUNT(*) as cnt FROM eventlog WHERE type = 'death' AND people LIKE '%{$db->escape($npcName)}%' AND gamets > {$sinceGamets}");
+                    $namePattern = $db->escape(self::escapeLike($npcName));
+                    $rows = $db->fetchAll("SELECT COUNT(*) as cnt FROM eventlog WHERE type = 'death' AND people LIKE '%{$namePattern}%' ESCAPE '\\' AND gamets > {$sinceGamets}");
                     $recentKills = intval($rows[0]['cnt'] ?? 0);
                 } catch (\Throwable $e) {
-                    self::log("getCombatContext kill count error: " . $e->getMessage());
+                    self::logError('getCombatContext kill count', $e);
                 }
             }
 
@@ -3427,7 +3440,7 @@ class RelationshipDynamics
                 'source' => $source,
             ];
         } catch (\Throwable $e) {
-            self::log("getCombatContext error: " . $e->getMessage());
+            self::logError('getCombatContext', $e);
             return null;
         }
     }
@@ -3487,7 +3500,7 @@ class RelationshipDynamics
 
             return implode(' ', $parts);
         } catch (\Throwable $e) {
-            self::log("getRecentCombatSummary error: " . $e->getMessage());
+            self::logError('getRecentCombatSummary', $e);
             return null;
         }
     }
@@ -8341,7 +8354,7 @@ class RelationshipDynamics
 
             return 'unknown';
         } catch (\Throwable $e) {
-            self::log('[RelDyn-ENV] detectLocation error: ' . $e->getMessage());
+            self::logError('detectLocation', $e);
             return 'unknown';
         }
     }
@@ -8388,7 +8401,7 @@ class RelationshipDynamics
 
             return 'day';
         } catch (\Throwable $e) {
-            self::log('[RelDyn-ENV] detectTimeOfDay error: ' . $e->getMessage());
+            self::logError('detectTimeOfDay', $e);
             return 'day';
         }
     }
@@ -8427,6 +8440,7 @@ class RelationshipDynamics
 
             return 'day';
         } catch (\Throwable $e) {
+            self::logError('detectTimeOfDayFromInfoLoc', $e);
             return 'day';
         }
     }
@@ -9085,16 +9099,17 @@ class RelationshipDynamics
         $sinceGamets = intval($nowGamets - self::ITEM_EVENT_WINDOW_GAMETS);
         if ($db && $nowGamets > 0) {
             try {
-                $escapedNpc = $db->escape($npcName);
+                // NPC name matched literally: its % and _ are escaped, not LIKE wildcards
+                $escapedNpc = $db->escape(self::escapeLike($npcName));
                 $rows = $db->fetchAll(
                     "SELECT data FROM eventlog WHERE type='itemfound' "
-                    . "AND data LIKE '%gave%to%{$escapedNpc}%' "
+                    . "AND data LIKE '%gave%to%{$escapedNpc}%' ESCAPE '\\' "
                     . "AND gamets > {$sinceGamets} "
                     . "ORDER BY gamets DESC, ts DESC LIMIT 3"
                 );
                 if (is_array($rows)) {
                     foreach ($rows as $row) {
-                        if (preg_match('/gave\s+(?:\d+\s+)?(.+?)\s+to\s+/i', $row['data'] ?? '', $gm)) {
+                        if (preg_match('/\bgave\s+(?:\d+\s+)?(.+?)\s+to\s+/i', $row['data'] ?? '', $gm)) {
                             $giftItem = trim($gm[1]);
                             // Avoid duplicating if already detected from ExtCmdGiveItem
                             $alreadyDetected = false;
@@ -9115,7 +9130,7 @@ class RelationshipDynamics
                     }
                 }
             } catch (\Throwable $e) {
-                self::log("detectItemEvents gift lookup error: " . $e->getMessage());
+                self::logError('detectItemEvents gift lookup', $e);
             }
         }
 
@@ -9140,16 +9155,17 @@ class RelationshipDynamics
         // --- Consumable detection: eventlog consume patterns ---
         if ($db && $nowGamets > 0) {
             try {
+                // Whole words only (PostgreSQL \m \M word boundaries): 'private chest' is not 'ate'.
                 $rows = $db->fetchAll(
                     "SELECT data FROM eventlog WHERE type='itemfound' "
-                    . "AND (data LIKE '%consumed%' OR data LIKE '%drank%' OR data LIKE '%ate%' OR data LIKE '%used%potion%') "
+                    . "AND (data ~* '\\m(consumed|drank|ate)\\M' OR data ~* '\\mused\\M.*potion') "
                     . "AND gamets > {$sinceGamets} "
                     . "ORDER BY gamets DESC, ts DESC LIMIT 3"
                 );
                 if (is_array($rows)) {
                     foreach ($rows as $row) {
                         $data = $row['data'] ?? '';
-                        if (preg_match('/(?:consumed|drank|ate|used)\s+(?:\d+\s+)?(.+?)(?:\s*$|\s*,)/i', $data, $cm)) {
+                        if (preg_match('/\b(?:consumed|drank|ate|used)\s+(?:\d+\s+)?(.+?)(?:\s*$|\s*,)/i', $data, $cm)) {
                             $events[] = [
                                 'action' => 'consume',
                                 'item'   => trim($cm[1]),
@@ -9159,7 +9175,7 @@ class RelationshipDynamics
                     }
                 }
             } catch (\Throwable $e) {
-                self::log("detectItemEvents consume lookup error: " . $e->getMessage());
+                self::logError('detectItemEvents consume lookup', $e);
             }
         }
 
@@ -9824,6 +9840,7 @@ class RelationshipDynamics
                 }
             }
         } catch (\Throwable $e) {
+            self::logError('detectNpcHold', $e);
             // Silent failure -- reputation is non-critical
         }
 
@@ -10578,7 +10595,7 @@ class RelationshipDynamics
                 }
             }
         } catch (\Throwable $e) {
-            self::log("getPlayerAppearance: core_player read failed: " . $e->getMessage());
+            self::logError('getPlayerAppearance core_player', $e);
         }
 
         // Fallback to the player bio. 3.4.1 has no PLAYER_BIOS global; core resolves
@@ -10614,7 +10631,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('getPlayerAppearanceEmbedding', $e); }
 
         // Generate new embedding
         if (!function_exists('getEmbedding')) {
@@ -10797,7 +10814,7 @@ class RelationshipDynamics
                     if (!empty($keywords) && function_exists('getEmbedding')) {
                         try {
                             $npcEmbed = getEmbedding(implode(', ', $keywords));
-                        } catch (\Throwable $e) {}
+                        } catch (\Throwable $e) { self::logError('scoreAttractionPillar embedding', $e); }
                     }
                 }
                 if (empty($npcEmbed)) return 0.5 * $weight;
@@ -11340,7 +11357,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('getDutyOverrideFactor', $e); }
 
         // Check request type for quest indicators
         $gameRequest = $GLOBALS['gameRequest'] ?? [];
@@ -11660,7 +11677,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('getFactionInterestFloors', $e); }
 
         return $floors;
     }
@@ -11901,7 +11918,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('detectCreatureType', $e); }
 
         return null;
     }
@@ -13562,7 +13579,7 @@ class RelationshipDynamics
             return true;
 
         } catch (\Throwable $e) {
-            self::log("[WALKAWAY] Error dismissing {$npcName}: " . $e->getMessage());
+            self::logError("walkaway dismiss {$npcName}", $e);
             return false;
         }
     }
@@ -13602,7 +13619,7 @@ class RelationshipDynamics
             return true;
 
         } catch (\Throwable $e) {
-            self::log("[WALKAWAY] Error returning {$npcName}: " . $e->getMessage());
+            self::logError("walkaway return {$npcName}", $e);
             return false;
         }
     }

@@ -121,6 +121,7 @@ try {
         }
     }
 } catch (Throwable $e) {
+    RelationshipDynamics::logError('debug_compose', $e);
     echo "Error reading CHIM data: " . $e->getMessage() . "\n";
 }
 

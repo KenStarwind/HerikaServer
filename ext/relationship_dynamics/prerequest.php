@@ -435,6 +435,7 @@ try {
         }
     }
 } catch (Throwable $e) {
+    RelationshipDynamics::logError('prerequest intimacy disposal read', $e);
     // Use 0
 }
 
@@ -463,6 +464,7 @@ if (class_exists('NsfwNpcData')) {
     try {
         NsfwNpcData::setKey($npcName, 'sex_disposal', intval($effectiveDisposal));
     } catch (\Throwable $e) {
+        RelationshipDynamics::logError('prerequest Sharmat disposal write', $e);
         // Sharmat not available — silently continue
     }
 }
