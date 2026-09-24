@@ -1852,6 +1852,73 @@ class RelationshipDynamics
         return intval($dynamics['_accumulated_time'] ?? 0) / 60.0;
     }
 
+    // ---------- Global play heartbeat ----------
+    // One conf_opts row counts played gamets across every request RelDyn's prerequest sees,
+    // whatever NPC it is for. Each gap between two requests credits
+    // min(game gamets passed, min(real seconds, PLAY_HEARTBEAT_GAP_CAP_S) x GAMETS_PER_REAL_SECOND):
+    // a wait or sleep adds only the real seconds it took, and an offline gap (quit, menus,
+    // alt-tab) adds at most the cap. updatePlayTime() bounds each NPC's play credit by it.
+
+    const PLAY_HEARTBEAT_ROW_ID = 'relationship_dynamics_play_clock';
+    /** Real seconds: the longest gap between two requests still counted as play (clock 3's cap). */
+    const PLAY_HEARTBEAT_GAP_CAP_S = 300;
+    /** Real seconds: requests closer than this do not write (the gap is counted by the next write). */
+    const PLAY_HEARTBEAT_MIN_WRITE_S = 5;
+
+    /**
+     * Advance the global play heartbeat to now and return its total (play gamets), or null
+     * when there is no database or no game clock. Compare-and-set: of two concurrent requests
+     * one writes; the other returns the stored total (its gap is counted by the next beat).
+     */
+    public static function beatPlayClock(?float $gamets = null, ?int $nowReal = null): ?float
+    {
+        $db = $GLOBALS['db'] ?? null;
+        $gamets = $gamets ?? self::currentGamets();       // raw game-calendar gamets
+        $nowReal = $nowReal ?? time();                     // real seconds (unix)
+        if (!$db || $gamets <= 0) {
+            return null;
+        }
+        try {
+            $row = $db->fetchOne('SELECT value FROM conf_opts WHERE id = $1', [self::PLAY_HEARTBEAT_ROW_ID]);
+            $raw = is_array($row) ? ($row['value'] ?? null) : null;
+            $cur = is_string($raw) ? json_decode($raw, true) : null;
+            if (!is_array($cur) || !is_numeric($cur['real_ts'] ?? null) || !is_numeric($cur['gamets'] ?? null)
+                || !is_numeric($cur['play'] ?? null)) {
+                $fresh = json_encode(['real_ts' => $nowReal, 'gamets' => $gamets, 'play' => 0.0]);
+                if ($raw === null) {
+                    $db->fetchOne('INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING id',
+                        [self::PLAY_HEARTBEAT_ROW_ID, $fresh]);
+                } else {
+                    error_log("[RelDyn] ERROR beatPlayClock: conf_opts " . self::PLAY_HEARTBEAT_ROW_ID . " unreadable; restarting it");
+                    $db->fetchOne('UPDATE conf_opts SET value = $2 WHERE id = $1 AND value = $3 RETURNING id',
+                        [self::PLAY_HEARTBEAT_ROW_ID, $fresh, $raw]);
+                }
+                return 0.0;
+            }
+            $play = floatval($cur['play']);
+            $realDelta = $nowReal - intval($cur['real_ts']);
+            if ($realDelta < self::PLAY_HEARTBEAT_MIN_WRITE_S) {
+                return $play;   // also a clock that went backwards: nothing to credit
+            }
+            $gametsDelta = $gamets - floatval($cur['gamets']);   // negative after a reload: no credit
+            $credit = $gametsDelta > 0
+                ? min($gametsDelta, min($realDelta, self::PLAY_HEARTBEAT_GAP_CAP_S) * self::GAMETS_PER_REAL_SECOND)
+                : 0.0;
+            $next = json_encode(['real_ts' => $nowReal, 'gamets' => $gamets, 'play' => $play + $credit]);
+            $won = $db->fetchOne('UPDATE conf_opts SET value = $2 WHERE id = $1 AND value = $3 RETURNING id',
+                [self::PLAY_HEARTBEAT_ROW_ID, $next, $raw]);
+            if (isset($won['id'])) {
+                return $play + $credit;
+            }
+            $again = $db->fetchOne('SELECT value FROM conf_opts WHERE id = $1', [self::PLAY_HEARTBEAT_ROW_ID]);
+            $other = json_decode((string)($again['value'] ?? ''), true);
+            return is_array($other) && is_numeric($other['play'] ?? null) ? floatval($other['play']) : $play;
+        } catch (Throwable $e) {
+            self::logError('beatPlayClock', $e);
+            return null;
+        }
+    }
+
     /**
      * Get current accumulated play gamets from dynamics blob.
      */

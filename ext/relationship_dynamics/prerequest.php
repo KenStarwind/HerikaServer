@@ -41,6 +41,11 @@ if (!RelationshipDynamics::isEnabled()) {
     return;
 }
 
+// ========== GLOBAL PLAY HEARTBEAT ==========
+// Played gamets across every request (waits and offline gaps excluded); bounds each NPC's
+// play-clock credit in updatePlayTime() below.
+$globalPlayGamets = RelationshipDynamics::beatPlayClock();
+
 // ========== GAME CALENDAR (decisions 2026-09-23 §2: time does not heal) ==========
 // Time moves for every bond, not only this one: each NPC whose calendar step is due gets
 // fester, neglect, passion fade and walkaway/hoover timers advanced. This NPC goes first,
@@ -63,7 +68,7 @@ if ($timeDelta > 0) {
 // Must run alongside accumulated time -- before any decay/cooldown logic.
 // Reads gamets from $gameRequest[2] (set by CHIM from Skyrim game clock).
 // Filters out wait/sleep by comparing gamets/real-time ratio.
-$gametsDelta = RelationshipDynamics::updatePlayTime($dynamics);
+$gametsDelta = RelationshipDynamics::updatePlayTime($dynamics, null, $globalPlayGamets);
 $playGametsTotal = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
 if ($gametsDelta > 0) {
     RelationshipDynamics::log("[RelDyn-GAMETS] {$npcName}: +{$gametsDelta} gamets, total: {$playGametsTotal} play_gamets");
