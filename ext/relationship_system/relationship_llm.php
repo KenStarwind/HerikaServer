@@ -19,17 +19,7 @@
 require_once $GLOBALS["ENGINE_PATH"] . "lib/logger.php";
 require_once $GLOBALS["ENGINE_PATH"] . "lib/relationship_manager.php";
 
-// CHIM fork hook (RelDyn): does an extension own $npcId's affinity toward $target? Each ext/*/relationship_affinity_owner.php
-// (loaded here, so also in the standalone worker) may set $GLOBALS['CHIM_RELATIONSHIP_AFFINITY_OWNERS'][name] = fn($npcId, $target): bool.
-function chimRelationshipAffinityOwned($npcId, $target) {
-    foreach (glob($GLOBALS['ENGINE_PATH'] . 'ext/*/relationship_affinity_owner.php') ?: [] as $ownerFile) {
-        require_once $ownerFile;
-    }
-    foreach ($GLOBALS['CHIM_RELATIONSHIP_AFFINITY_OWNERS'] ?? [] as $owner) {
-        if ($owner((int)$npcId, (string)$target) === true) return true;
-    }
-    return false;
-}
+// CHIM fork hook (RelDyn): chimRelationshipAffinityOwned() is in lib/relationship_manager.php (parseChanges asks it too).
 
 class RelationshipLLM {
 

@@ -275,11 +275,12 @@ $reldynCfg = RelationshipDynamics::getConfig();
 // ── EVAL PRODUCER (assessment Phase 2 option A) ──
 // Queue this exchange for RelDyn's own multi-signal eval (eval_producer.php). It decides
 // itself: never the Narrator, radiant / NPC-to-NPC only when the player is addressed,
-// config chance and cooldown. The worker runs outside this request and fills the eval inbox.
+// config chance and cooldown. The worker runs outside this request, fills the eval inbox and
+// applies it (eval_producer.apply_in_worker).
 require_once __DIR__ . '/eval_producer.php';
 $evalJobId = RelDynEval::onPostrequest($npcName, $GLOBALS['gameRequest']);
-// An exchange the eval scores is the eval's alone: its item (applied on this NPC's next
-// request) moves affinity, passion, resentment decay and conflict repair. The legacy local
+// An exchange the eval scores is the eval's alone: its item (applied by the worker, else on
+// this NPC's next request) moves affinity, passion, resentment decay and conflict repair. The legacy local
 // classifier below stands down for it, so nothing is counted twice. An exchange the eval
 // does not score (eval off, no connector, chance, cooldown) keeps the local heuristics.
 $evalOwnsExchange = ($evalJobId !== null);
@@ -647,42 +648,9 @@ if ($dutyFactor < 1.0) {
 // ========== XYZ EVAL DELTA PROCESSING (PR 3) ==========
 $rdConfig = RelationshipDynamics::getConfig();
 if (!empty($rdConfig['dimension_engine_enabled'])) {
-    $evalResults = RelationshipDynamics::processPendingEvalDeltas($npcName, $dynamics);
-    $evalFeelings = $GLOBALS['RELDYN_EVAL_FEELINGS'] ?? [];
-    if (!empty($evalFeelings)) {
-        // Grievances, jealousy, resentment decay and repair from contract items
-        RelationshipDynamics::saveDynamics($npcName, $dynamics);
-        // The player was intimate with this NPC: the committed NPCs who SAW it (the exchange's
-        // eventlog people, item.witnesses) get jealous, not whoever is near her now.
-        if ($reldynCfg['jealousy_enabled'] ?? true) {
-            foreach ($evalFeelings as $f) {
-                if (empty($f['romantic_exposure'])) {
-                    continue;
-                }
-                if (!is_array($f['witnesses'] ?? null)) {
-                    RelationshipDynamics::log("Bystander jealousy for {$npcName}: the eval item recorded no witnesses; nobody is made jealous");
-                    continue;
-                }
-                RelationshipDynamics::scanBystanderJealousy($npcName, '|' . implode('|', $f['witnesses']) . '|');
-            }
-        }
-    }
-    if (!empty($evalResults)) {
-        error_log("[RelDyn-POST] XYZ eval deltas applied for {$npcName}: " . json_encode($evalResults));
-        // affinity_delta moved the mirror; push it to core as a locked delta
-        RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
-        RelationshipDynamics::saveDynamics($npcName, $dynamics);
-
-        // ========== BETRAYAL DETECTION (PR 10) ==========
-        // If trust dropped by 50+ in a single eval, fire Divine Intervention
-        $trustDeltaActual = $evalResults['trust'] ?? 0;
-        if ($trustDeltaActual <= -50) {
-            if (!empty($rdConfig['divine_intervention_enabled'])) {
-                RelationshipDynamics::triggerDivineIntervention($npcName, 'betrayal', 4, $dynamics);
-                RelationshipDynamics::log("[RelDyn-POST] Betrayal detected for {$npcName}: trust_delta={$trustDeltaActual}");
-            }
-        }
-    }
+    // Items the eval worker could not apply itself (another request held the inbox, or
+    // eval_producer.apply_in_worker is off): applied here, with what follows from them.
+    RelationshipDynamics::applyEvalInbox($npcName, $dynamics);
 
     // ========== RESENTMENT DIMENSION (PR 7) ==========
     // PR 16: Post-hoover resentment builds faster (patterns don't heal from carpet-sweeping)

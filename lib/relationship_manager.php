@@ -11,6 +11,21 @@
  *   - queries: RelationshipManager::getRelationship($npcName, $targetName)
  */
 
+// CHIM fork hook (RelDyn): does an extension own $npcId's affinity toward $target? Each ext/*/relationship_affinity_owner.php
+// (loaded here, so also in the standalone worker) may set $GLOBALS['CHIM_RELATIONSHIP_AFFINITY_OWNERS'][name] = fn($npcId, $target): bool.
+// Both core writers of 'aff' ask it: RelationshipLLM::applyChanges (REL LLM) and RelationshipManager::parseChanges (#REL tags).
+if (!function_exists('chimRelationshipAffinityOwned')) {
+    function chimRelationshipAffinityOwned($npcId, $target) {
+        foreach (glob(($GLOBALS['ENGINE_PATH'] ?? dirname(__DIR__) . '/') . 'ext/*/relationship_affinity_owner.php') ?: [] as $ownerFile) {
+            require_once $ownerFile;
+        }
+        foreach ($GLOBALS['CHIM_RELATIONSHIP_AFFINITY_OWNERS'] ?? [] as $owner) {
+            if ($owner((int)$npcId, (string)$target) === true) return true;
+        }
+        return false;
+    }
+}
+
 class RelationshipManager {
 
     // Valid relationship types (the "flavor" of the relationship)
@@ -900,22 +915,51 @@ class RelationshipManager {
         require_once __DIR__ . "/core/npc_master.class.php";
         $npcMaster = new NpcMaster();
         $npcData = self::resolveNpcByName($npcName);
+        $stripped = preg_replace('/#(REL|TYPE):[^#]+#/', '', $aiResponse);
 
         if (!$npcData) {
             // Can't update relationships for unknown NPC
-            return preg_replace('/#(REL|TYPE):[^#]+#/', '', $aiResponse);
+            return $stripped;
         }
 
-        $extended = json_decode($npcData['extended_data'] ?? '{}', true) ?: [];
-        $rels = self::normalizeRelationshipMap($extended['relationships'] ?? []);
-        $changed = false;
+        $affTags = preg_match_all('/#REL:([^=]+)=([+-]?\d+)#/', $aiResponse, $affMatches) ? $affMatches : [[], [], []];
+        $typeTags = preg_match_all('/#TYPE:([^=]+)=([a-zA-Z][a-zA-Z0-9_-]{0,49})#/', $aiResponse, $typeMatches) ? $typeMatches : [[], [], []];
+        if (empty($affTags[1]) && empty($typeTags[1])) {
+            return $stripped;
+        }
 
-        // Parse affinity changes: #REL:Target=+5# or #REL:Target=-10#
-        if (preg_match_all('/#REL:([^=]+)=([+-]?\d+)#/', $aiResponse, $matches)) {
-            foreach ($matches[1] as $i => $target) {
+        // CHIM fork hook (RelDyn): read-modify-write of extended_data under core's per-NPC advisory lock
+        // (1001000000 + id, as RelationshipLLM::applyChanges and RelDyn's affinity commits), reading the row
+        // under it, so a concurrent writer is neither overwritten nor raced.
+        $npcId = (int)$npcData['id'];
+        $lockId = 1001000000 + $npcId;
+        if ($GLOBALS['db']->execQuery("SELECT pg_advisory_lock({$lockId})") === false) {
+            error_log("[REL] $npcName: advisory lock {$lockId} failed; relationship tags not applied");
+            return $stripped;
+        }
+        $changed = false;
+        $result = false;
+        try {
+            $fresh = $GLOBALS['db']->fetchOne("SELECT extended_data FROM core_npc_master WHERE id = {$npcId}");
+            $rawExtended = $fresh['extended_data'] ?? null;
+            $extended = ($rawExtended === null || $rawExtended === '') ? [] : json_decode($rawExtended, true);
+            if (!is_array($extended)) {
+                error_log("[REL] $npcName: extended_data of npc_id {$npcId} is not a JSON object; relationship tags not applied");
+                return $stripped;
+            }
+            $rels = self::normalizeRelationshipMap($extended['relationships'] ?? []);
+
+            // Parse affinity changes: #REL:Target=+5# or #REL:Target=-10#
+            foreach ($affTags[1] as $i => $target) {
                 $target = self::normalizeTargetName($target);
                 if (in_array(strtolower($target), ['the narrator', 'narrator'], true)) continue; // never track the narrator as a relationship
-                $delta = (int)$matches[2][$i];
+                $delta = (int)$affTags[2][$i];
+
+                // CHIM fork hook (RelDyn): an extension that owns this affinity applies its own eval deltas; keep the stored 'aff'.
+                if (chimRelationshipAffinityOwned($npcId, $target)) {
+                    error_log("[REL] $npcName -> $target: " . sprintf("%+d", $delta) . " not applied [aff owned by extension]");
+                    continue;
+                }
 
                 // Initialize if doesn't exist
                 if (!isset($rels[$target])) {
@@ -930,17 +974,15 @@ class RelationshipManager {
                           " (was $oldAff, now " . $rels[$target]['aff'] . ")");
                 $changed = true;
             }
-        }
 
-        // Parse type changes: #TYPE:Target=Romantic#
-        // The model may select a built-in type or an existing player-created custom
-        // type. It may never create a new type merely by emitting a new word.
-        $allowedCustomTypes = self::getCustomRelationshipTypes($rels);
-        if (preg_match_all('/#TYPE:([^=]+)=([a-zA-Z][a-zA-Z0-9_-]{0,49})#/', $aiResponse, $matches)) {
-            foreach ($matches[1] as $i => $target) {
+            // Parse type changes: #TYPE:Target=Romantic#
+            // The model may select a built-in type or an existing player-created custom
+            // type. It may never create a new type merely by emitting a new word.
+            $allowedCustomTypes = self::getCustomRelationshipTypes($rels);
+            foreach ($typeTags[1] as $i => $target) {
                 $target = self::normalizeTargetName($target);
                 if (in_array(strtolower($target), ['the narrator', 'narrator'], true)) continue; // never track the narrator as a relationship
-                $rawType = trim($matches[2][$i]);
+                $rawType = trim($typeTags[2][$i]);
                 $newType = self::canonicalizeRelationshipType($rawType, $allowedCustomTypes);
 
                 if ($newType === null) {
@@ -957,24 +999,29 @@ class RelationshipManager {
                 error_log("[REL] $npcName -> $target: type $oldType -> $newType");
                 $changed = true;
             }
-        }
 
-        // Save if changed
-        if ($changed) {
-            $extended['relationships'] = $rels;
-            $result = chimRunWithRelationshipExtendedDataWrite(function () use ($npcMaster, $npcData, $extended) {
-                return $npcMaster->updateByArray([
-                    'id' => $npcData['id'],
-                    'extended_data' => json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-                ]);
-            });
-            if ($result !== false && function_exists('chimRelationshipTimelineStamp')) {
-                chimRelationshipTimelineStamp($npcData['id']);
+            // Save if changed
+            if ($changed) {
+                $extended['relationships'] = $rels;
+                $result = chimRunWithRelationshipExtendedDataWrite(function () use ($npcMaster, $npcId, $extended) {
+                    return $npcMaster->updateByArray([
+                        'id' => $npcId,
+                        'extended_data' => json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                    ]);
+                });
+                if ($result === false) {
+                    error_log("[REL] $npcName: saving relationship tag changes for npc_id {$npcId} failed");
+                }
             }
+        } finally {
+            $GLOBALS['db']->execQuery("SELECT pg_advisory_unlock({$lockId})");
+        }
+        if ($changed && $result !== false && function_exists('chimRelationshipTimelineStamp')) {
+            chimRelationshipTimelineStamp($npcId);
         }
 
         // Strip commands before TTS
-        return preg_replace('/#(REL|TYPE):[^#]+#/', '', $aiResponse);
+        return $stripped;
     }
 
     /**

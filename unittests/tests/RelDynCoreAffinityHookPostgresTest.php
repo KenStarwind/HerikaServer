@@ -188,6 +188,9 @@ final class RelDynCoreAffinityHookPostgresTest extends TestCase
         unset($GLOBALS['gameRequest']);
         $GLOBALS['db'] = $this->db;
         $GLOBALS['PLAYER_NAME'] = self::PLAYER;
+        // Core's relationship LLM is configured (its worker path runs only then); RelDyn's
+        // eval falls back to the same connector (eval_producer.connector_id 0).
+        $GLOBALS['RELLLM_CONNECTOR'] = 5;
         Logger::setCustomLog(sys_get_temp_dir() . '/reldyn_core_hook_test.log');
         $this->logFile = tempnam(sys_get_temp_dir(), 'rdcorehook');
         $this->prevLog = ini_set('error_log', $this->logFile);
@@ -401,6 +404,7 @@ final class ChildDb {
     public function escape($s) { return pg_escape_string($this->link, (string) $s); }
 }
 $GLOBALS['db'] = new ChildDb($dsn, $schema);
+$GLOBALS['RELLLM_CONNECTOR'] = 5;   // worker.php: chimLoadGeneralSettingsIntoGlobals()
 $before = class_exists('RelDynEval', false);
 echo json_encode(['reldyn_loaded_before' => $before, 'player' => chimRelationshipAffinityOwned((int) $npcId, 'Player'),
     'farkas' => chimRelationshipAffinityOwned((int) $npcId, 'Farkas')]);
@@ -488,5 +492,125 @@ PHP);
 
         $this->assertSame(['aff' => 20, 'type' => 'platonic'], $this->relationships($lockedId)['Player']);
         $this->assertSame([], $this->timeline($lockedId));
+    }
+
+    // ------------------------------------------------------------------ tag mode (core's REL LLM off)
+
+    private const TAG_REPLY = 'Hmph. A fine hunt, I suppose. #REL:Player=+6# #TYPE:Player=rival# #REL:Farkas=+3#';
+
+    /**
+     * Core's relationship LLM off (RELLLM_CONNECTOR 0): core's postrequest parses the NPC's
+     * own #REL / #TYPE tags with RelationshipManager::parseChanges(). $relDynConnector is
+     * RelDyn's eval_producer.connector_id (> 0: RelDyn's eval still runs on its own connector).
+     */
+    private function tagMode(int $relDynConnector, array $config = []): void
+    {
+        $GLOBALS['RELLLM_CONNECTOR'] = 0;
+        $this->storeRelDynConfig(array_replace_recursive(['eval_producer' => ['connector_id' => $relDynConnector]], $config));
+    }
+
+    public function testTagModeLeavesAnOwnedPlayerAffinityToRelDynButAppliesTypeAndOtherTargets(): void
+    {
+        $this->tagMode(7);
+        $this->assertTrue(chimRelationshipAffinityOwned($this->npcId, 'Player'), 'RelDyn eval runs on its own connector');
+
+        $clean = RelationshipManager::parseChanges(self::TAG_REPLY, self::NPC);
+
+        $this->assertSame('Hmph. A fine hunt, I suppose.   ', $clean, 'tags stripped as before');
+        $rels = $this->relationships($this->npcId);
+        $this->assertSame(30, $rels['Player']['aff'], "core's +6 tag is not counted next to RelDyn's eval");
+        $this->assertSame('rival', $rels['Player']['type']);
+        $this->assertSame('shared a hunt', $rels['Player']['note']);
+        $this->assertSame(43, $rels[self::OTHER]['aff'], 'other targets keep the tag delta');
+        $timeline = $this->timeline($this->npcId);
+        $this->assertCount(1, $timeline);
+        $this->assertSame(30, $timeline[0]['Player']['aff']);
+        $this->assertSame('rival', $timeline[0]['Player']['type']);
+        $this->assertStringContainsString('aff owned by extension', (string) file_get_contents($this->logFile));
+        $this->assertSame([], $this->db->failures, 'failed SQL statements');
+    }
+
+    public function testTagModeWithNoEvalConnectorAtAllKeepsCoresTagDelta(): void
+    {
+        // Neither core's REL LLM nor RelDyn's own connector: RelDyn's eval cannot run
+        // (onPostrequest skips 'no eval connector'), so the number stays core's.
+        $this->tagMode(0);
+        $this->assertFalse(chimRelationshipAffinityOwned($this->npcId, 'Player'));
+
+        RelationshipManager::parseChanges(self::TAG_REPLY, self::NPC);
+
+        $rels = $this->relationships($this->npcId);
+        $this->assertSame(36, $rels['Player']['aff']);
+        $this->assertSame('rival', $rels['Player']['type']);
+        $this->assertSame(43, $rels[self::OTHER]['aff']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('switchedOffConfigs')]
+    public function testTagModeWithRelDynEvalOffKeepsCoresTagDelta(array $config): void
+    {
+        $this->tagMode(7, $config);
+        $this->assertFalse(chimRelationshipAffinityOwned($this->npcId, 'Player'));
+
+        RelationshipManager::parseChanges(self::TAG_REPLY, self::NPC);
+
+        $this->assertSame(36, $this->relationships($this->npcId)['Player']['aff']);
+    }
+
+    /**
+     * parseChanges() rewrites the whole extended_data. It must take core's per-NPC lock
+     * (1001000000 + id, the key applyChanges and RelDyn's commitPlayerAffinity use) and read
+     * the row under it, so a RelDyn commit made meanwhile is not overwritten.
+     */
+    public function testTagModeWritesUnderCoresLockFromAFreshRead(): void
+    {
+        $this->tagMode(0);   // core's tag delta applies, so the fresh read shows in the number
+        $lockKey = 1001000000 + $this->npcId;
+        $holder = pg_connect($this->dsn, PGSQL_CONNECT_FORCE_NEW);
+        pg_query($holder, "SET search_path TO {$this->schema}");
+        pg_query($holder, "SELECT pg_advisory_lock({$lockKey})");
+
+        $base = tempnam(sys_get_temp_dir(), 'rdcorehooktag');
+        $child = $base . '.php';
+        $out = $base . '.out';
+        file_put_contents($child, <<<'PHP'
+<?php
+[, $unittests, $testFile, $enginePath, $dsn, $schema, $npc, $reply, $log] = $argv;
+$GLOBALS['ENGINE_PATH'] = $enginePath;
+require $unittests . '/vendor/autoload.php';
+require $testFile;   // the pg adapter; core's files load at its top
+ini_set('error_log', $log);
+$GLOBALS['db'] = new RelDynCoreHookPgDb($dsn, $schema);
+$GLOBALS['PLAYER_NAME'] = 'Kaida';
+$GLOBALS['RELLLM_CONNECTOR'] = 0;
+RelationshipManager::parseChanges($reply, $npc);   // ext/relationship_system/postrequest.php MODE 2
+echo json_encode(['failures' => $GLOBALS['db']->failures]);
+PHP);
+        try {
+            $cmd = implode(' ', array_map('escapeshellarg', [PHP_BINARY, $child, dirname(__DIR__), __FILE__,
+                $GLOBALS['ENGINE_PATH'], $this->dsn, $this->schema, self::NPC, self::TAG_REPLY, $this->logFile]));
+            $proc = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['file', $out, 'w'], 2 => ['file', $out, 'a']], $pipes);
+            $this->assertIsResource($proc);
+            usleep(800000);
+            $this->assertTrue(proc_get_status($proc)['running'], "parseChanges waits for core's per-NPC lock: " . file_get_contents($out));
+
+            // RelDyn commits Player.aff 30 -> 36 while holding the lock, then releases it.
+            pg_query($holder, "UPDATE core_npc_master SET extended_data = jsonb_set(extended_data, '{relationships,Player,aff}', '36'::jsonb) WHERE id = {$this->npcId}");
+            pg_query($holder, "SELECT pg_advisory_unlock({$lockKey})");
+
+            $deadline = microtime(true) + 15;
+            while (($status = proc_get_status($proc))['running'] && microtime(true) < $deadline) usleep(50000);
+            $this->assertFalse($status['running'], 'parseChanges finished after the lock was released');
+            proc_close($proc);
+            $this->assertSame(0, $status['exitcode'], (string) file_get_contents($out));
+            $this->assertSame(['failures' => []], json_decode((string) file_get_contents($out), true), (string) file_get_contents($out));
+
+            $rels = $this->relationships($this->npcId);
+            $this->assertSame(42, $rels['Player']['aff'], "RelDyn's 36 read under the lock, plus the tag's +6");
+            $this->assertSame('rival', $rels['Player']['type']);
+            $this->assertSame(43, $rels[self::OTHER]['aff']);
+        } finally {
+            pg_close($holder);
+            foreach ([$child, $out, $base] as $f) @unlink($f);
+        }
     }
 }
