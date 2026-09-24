@@ -35,8 +35,25 @@ final class RelDynPgTestDb
         return $result;
     }
 
+    /** @var callable|null When set, the next fetchOne is sent async and this runs while it waits. */
+    public $whileWaiting = null;
+    public bool $wasBlocked = false;
+
     public function fetchOne($q, array $params = [])
     {
+        if ($this->whileWaiting !== null) {
+            $callback = $this->whileWaiting;
+            $this->whileWaiting = null;
+            $params ? pg_send_query_params($this->link, $q, $params) : pg_send_query($this->link, $q);
+            usleep(300000);
+            $this->wasBlocked = pg_connection_busy($this->link);   // still waiting on a lock
+            $callback();
+            $res = pg_get_result($this->link);
+            while (pg_get_result($this->link) !== false) {
+            }
+            $row = ($res && pg_result_status($res) === PGSQL_TUPLES_OK) ? (pg_fetch_assoc($res) ?: []) : [];
+            return $this->done($q, $row);
+        }
         $res = $params ? @pg_query_params($this->link, $q, $params) : @pg_query($this->link, $q);
         $row = $res ? (pg_fetch_assoc($res) ?: []) : [];
         return $this->done($q, $row);
@@ -217,6 +234,43 @@ final class RelDynPostgresStorageTest extends TestCase
         $this->assertArrayNotHasKey('eval_inbox', $this->row()['plugin']['reldyn']);
         $this->assertSame([], RelationshipDynamics::processPendingEvalDeltas(self::NPC, $d));
         $this->assertTrue(RelationshipDynamics::saveDynamics(self::NPC, $d));
+    }
+
+    public function testTakeBlockedByAnAppendInFlightGetsThatItemExactlyOnce(): void
+    {
+        $this->seed([], null);
+        RelDynStorage::appendItem($this->npcId, RelDynStorage::KEY_EVAL_INBOX, ['eval' => ['trust_delta' => 1]]);
+
+        // Another process is appending (row locked, not committed yet) when the consumer takes.
+        pg_query($this->other->link, 'BEGIN');
+        pg_query($this->other->link, "UPDATE core_npc_master SET plugin_extended_data = jsonb_set(plugin_extended_data,
+            '{reldyn,eval_inbox}', (plugin_extended_data #> '{reldyn,eval_inbox}') || '[{\"eval\":{\"respect_delta\":2}}]')
+            WHERE id = {$this->npcId}");
+
+        $this->db->whileWaiting = fn() => pg_query($this->other->link, 'COMMIT');
+        $taken = RelDynStorage::takeItems($this->npcId, RelDynStorage::KEY_EVAL_INBOX);
+
+        $this->assertTrue($this->db->wasBlocked, 'the take waited for the row lock');
+        $this->assertSame([['eval' => ['trust_delta' => 1]], ['eval' => ['respect_delta' => 2]]], $taken,
+            'the append that committed first is included');
+        $this->assertSame([], RelDynStorage::takeItems($this->npcId, RelDynStorage::KEY_EVAL_INBOX), 'nothing taken twice');
+    }
+
+    public function testCompareAndSetBlockedByAConcurrentWriterIsRefused(): void
+    {
+        $this->seed([], ['jealousy_anger' => 0.0]);
+        $read = RelDynStorage::readKeyForUpdate($this->npcId, RelDynStorage::KEY_DYNAMICS);
+
+        pg_query($this->other->link, 'BEGIN');
+        pg_query($this->other->link, "UPDATE core_npc_master SET plugin_extended_data =
+            jsonb_set(plugin_extended_data, '{reldyn,dynamics,jealousy_anger}', '3') WHERE id = {$this->npcId}");
+
+        $this->db->whileWaiting = fn() => pg_query($this->other->link, 'COMMIT');
+        $ok = RelDynStorage::setKeyIfUnchanged($this->npcId, RelDynStorage::KEY_DYNAMICS, $read['expected'], ['jealousy_anger' => 0.0, 'x' => 1]);
+
+        $this->assertTrue($this->db->wasBlocked);
+        $this->assertFalse($ok, 'the row changed while this write waited: refused, caller re-merges');
+        $this->assertEquals(3, $this->row()['plugin']['reldyn']['dynamics']['jealousy_anger']);
     }
 
     public function testAffinityDeltaWaitsForCoresSessionLockAndHonoursTheEditorLock(): void
