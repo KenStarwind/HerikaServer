@@ -15,7 +15,10 @@
  *                          (dynamics saves: RelationshipDynamics::saveDynamics() merges and retries)
  *   - setKey()     replaces one key unconditionally
  *   - appendItem() appends to a list key     (eval producers)
- *   - takeItems()  returns and removes a list key under a row lock (eval consumer)
+ *   - appendItemConsumingRow() appends and deletes the queue job, one statement (eval worker)
+ *   - peekItems() + dropFirstItems() under tryLockInbox(): the eval consumer reads, applies,
+ *                  saves, then removes what it applied (nothing lost if it dies in between)
+ *   - takeItems()  returns and removes a list key under a row lock (drop with the engine off)
  *
  * No process-level caching: every call reads the database, so long-lived processes
  * (the relationship worker daemon) never write from stale data.
@@ -26,6 +29,8 @@ class RelDynStorage
     const PLUGIN_ID      = 'reldyn';
     const KEY_DYNAMICS   = 'dynamics';
     const KEY_EVAL_INBOX = 'eval_inbox';
+    // Inbox items that failed to apply EVAL_ITEM_MAX_FAILURES times: [{failed_at, error, eval}]
+    const KEY_EVAL_DEAD  = 'eval_inbox_dead';
     // {"checked_gamets": raw game-calendar gamets up to which the calendar step has run}
     const KEY_CALENDAR   = 'calendar';
 
@@ -256,6 +261,53 @@ class RelDynStorage
         }
         $items = json_decode($row['inbox'], true, 512, JSON_THROW_ON_ERROR);
         return (is_array($items) && array_is_list($items)) ? $items : [];
+    }
+
+    /**
+     * Remove the first $count items of a list key (the ones a consumer peeked and applied);
+     * items appended since stay. The key is removed when nothing is left. One statement.
+     */
+    public static function dropFirstItems(int $npcId, string $key, int $count): bool
+    {
+        if ($count <= 0) {
+            return true;
+        }
+        $row = self::db()->fetchOne(
+            "UPDATE core_npc_master
+             SET plugin_extended_data = CASE
+                 WHEN jsonb_array_length(plugin_extended_data -> \$2::text -> \$3::text) <= \$4::int
+                     THEN plugin_extended_data #- ARRAY[\$2::text, \$3::text]
+                 ELSE jsonb_set(plugin_extended_data, ARRAY[\$2::text, \$3::text],
+                     (SELECT jsonb_agg(t.e ORDER BY t.i)
+                      FROM jsonb_array_elements(plugin_extended_data -> \$2::text -> \$3::text) WITH ORDINALITY AS t(e, i)
+                      WHERE t.i > \$4::int))
+                 END
+             WHERE id = \$1 AND jsonb_typeof(plugin_extended_data -> \$2::text -> \$3::text) = 'array'
+             RETURNING id",
+            [$npcId, self::PLUGIN_ID, $key, $count]
+        );
+        return isset($row['id']);
+    }
+
+    /**
+     * pg advisory lock (two-int4 key space: INBOX_LOCK_CLASS, npc id) held by the one request
+     * applying an NPC's eval inbox. Session-level: a request that dies drops its connection
+     * and with it the lock. Returns false when another request holds it.
+     */
+    const INBOX_LOCK_CLASS = 1380218441;   // int4 constant, 'RDvI'
+
+    public static function tryLockInbox(int $npcId): bool
+    {
+        $row = self::db()->fetchOne('SELECT pg_try_advisory_lock($1::int, $2::int) AS got', [self::INBOX_LOCK_CLASS, $npcId]);
+        return in_array($row['got'] ?? null, ['t', true], true);
+    }
+
+    public static function unlockInbox(int $npcId): void
+    {
+        $row = self::db()->fetchOne('SELECT pg_advisory_unlock($1::int, $2::int) AS released', [self::INBOX_LOCK_CLASS, $npcId]);
+        if (!in_array($row['released'] ?? null, ['t', true], true)) {
+            error_log("[RelDyn] ERROR unlockInbox: eval inbox lock of npc {$npcId} was not held");
+        }
     }
 
     /**

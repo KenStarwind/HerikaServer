@@ -6932,64 +6932,143 @@ class RelationshipDynamics
         return is_array($legacy) ? $legacy : [];
     }
 
+    /** Times one inbox item may fail to apply (throw) before it is dead-lettered (count). */
+    const EVAL_ITEM_MAX_FAILURES = 3;
+
     /**
-     * Drain pending XYZ eval deltas queued for this NPC.
+     * Apply the pending evals queued for this NPC, and SAVE $dynamics.
      *
-     * Atomically takes every eval from the inbox (plus a legacy _pending_xyz_eval left in
-     * a migrated blob) and applies them in order to $dynamics. The caller must save
-     * $dynamics afterwards; overlapping callers never receive the same eval twice.
+     * At-least-once with idempotent apply, so no item is ever lost or applied twice:
+     *   1. one request at a time applies an NPC's inbox (RelDynStorage::tryLockInbox; a
+     *      request that dies drops the lock with its connection);
+     *   2. the items are read, not taken, and applied in order to a copy: an item that
+     *      throws is not half-applied; it stops the run (later items wait, in order) and is
+     *      dead-lettered to eval_inbox_dead after EVAL_ITEM_MAX_FAILURES tries;
+     *   3. $dynamics (with the applied items' fingerprints in _eval_applied) is saved;
+     *   4. only then are the handled items removed from the inbox. A save that fails
+     *      leaves $dynamics as it was and every item in the inbox; a request that dies
+     *      after the save leaves items whose fingerprints are stored, skipped next time.
+     * A legacy _pending_xyz_eval left in a migrated blob is applied as well (saved with it).
      *
      * @param string $npcName   NPC name
-     * @param array  &$dynamics NPC dynamics blob (by reference)
+     * @param array  &$dynamics NPC dynamics blob (by reference); saved when anything was handled
      * @return array  Map of dimensionId => summed actual_delta applied, or empty array
      */
     public static function processPendingEvalDeltas($npcName, &$dynamics)
     {
+        $GLOBALS['RELDYN_EVAL_FEELINGS'] = [];
+        $before = $dynamics;
         $pendingList = [];
         if (isset($dynamics['_pending_xyz_eval'])) {
             if (is_array($dynamics['_pending_xyz_eval'])) {
-                $pendingList[] = $dynamics['_pending_xyz_eval'];
+                $pendingList[] = ['eval' => $dynamics['_pending_xyz_eval'], 'raw' => null];
             }
             unset($dynamics['_pending_xyz_eval']);
         }
 
+        $npcId = RelDynStorage::resolveNpcId($npcName);
+        $locked = false;
+        if ($npcId !== null) {
+            $locked = RelDynStorage::tryLockInbox($npcId);
+            if (!$locked) {
+                self::log("[EVAL] {$npcName}: another request is applying the eval inbox; left for the next request");
+            }
+        }
         try {
-            $npcId = RelDynStorage::resolveNpcId($npcName);
-            if ($npcId !== null) {
-                foreach (RelDynStorage::takeItems($npcId, RelDynStorage::KEY_EVAL_INBOX) as $item) {
-                    // {queued_at, eval} from queuePendingEval(), or a bare shared-contract item
-                    $pending = is_array($item['eval'] ?? null) ? $item['eval'] : (self::isEvalContractItem($item) ? $item : null);
-                    if ($pending === null) {
-                        error_log("[RelDyn-EVAL] processPendingEvalDeltas: unrecognised inbox item for {$npcName} dropped: " . substr((string) json_encode($item), 0, 300));
-                        continue;
-                    }
-                    if (self::isEvalContractItem($pending) && is_numeric($pending['npc_id'] ?? null) && intval($pending['npc_id']) !== $npcId) {
-                        error_log("[RelDyn-EVAL] processPendingEvalDeltas: item for npc_id {$pending['npc_id']} in the inbox of {$npcName} (id {$npcId}) dropped");
-                        continue;
-                    }
-                    $pendingList[] = $pending;
+            $handled = 0;      // inbox items (from the head) that leave the inbox after the save
+            $dead = [];        // [{failed_at, error, eval}] to eval_inbox_dead
+            if ($locked) {
+                // Fingerprints already stored by another request (this copy may be older)
+                $stored = RelDynStorage::loadDynamics($npcId);
+                if (is_array($stored['_eval_applied'] ?? null)) {
+                    $dynamics['_eval_applied'] = array_slice(array_values(array_unique(array_merge(
+                        array_values($stored['_eval_applied']), array_values((array) ($dynamics['_eval_applied'] ?? []))))), -self::EVAL_APPLIED_KEEP);
+                }
+                foreach (RelDynStorage::peekItems($npcId, RelDynStorage::KEY_EVAL_INBOX) as $item) {
+                    $pendingList[] = ['eval' => $item, 'raw' => $item];
                 }
             }
-        } catch (\Throwable $e) {
-            error_log("[RelDyn-EVAL] processPendingEvalDeltas: inbox take failed for {$npcName}: " . $e->getMessage());
-        }
 
-        $totals = [];
-        $feelings = [];
-        foreach ($pendingList as $pending) {
-            $f = [];
-            // Contract v1: signals, then grievance / jealousy / positive interaction, once per item
-            $applied = self::isEvalContractItem($pending)
-                ? self::processEvalContractItem($npcName, $pending, $dynamics, $f)
-                : self::processEvalDeltas($npcName, $pending, $dynamics);
-            foreach ($applied as $dimId => $actual) {
-                $totals[$dimId] = ($totals[$dimId] ?? 0) + $actual;
+            $totals = [];
+            $feelings = [];
+            foreach ($pendingList as $entry) {
+                $item = $entry['eval'];
+                $fromInbox = $entry['raw'] !== null;
+                // {queued_at, eval} from queuePendingEval(), or a bare shared-contract item
+                $pending = !$fromInbox ? $item
+                    : (is_array($item['eval'] ?? null) ? $item['eval'] : (self::isEvalContractItem($item) ? $item : null));
+                if ($pending === null) {
+                    error_log("[RelDyn-EVAL] processPendingEvalDeltas: unrecognised inbox item for {$npcName} dropped: " . substr((string) json_encode($item), 0, 300));
+                    $handled++;
+                    continue;
+                }
+                if ($fromInbox && self::isEvalContractItem($pending) && is_numeric($pending['npc_id'] ?? null) && intval($pending['npc_id']) !== $npcId) {
+                    error_log("[RelDyn-EVAL] processPendingEvalDeltas: item for npc_id {$pending['npc_id']} in the inbox of {$npcName} (id {$npcId}) dropped");
+                    $handled++;
+                    continue;
+                }
+
+                $copy = $dynamics;
+                $f = [];
+                try {
+                    // Contract v1: signals, then grievance / jealousy / positive interaction, once per item
+                    $applied = self::isEvalContractItem($pending)
+                        ? self::processEvalContractItem($npcName, $pending, $copy, $f)
+                        : self::processEvalDeltas($npcName, $pending, $copy);
+                } catch (\Throwable $e) {
+                    $key = sha1((string) json_encode($item));
+                    $fails = is_array($dynamics['_eval_item_failures'] ?? null) ? $dynamics['_eval_item_failures'] : [];
+                    $fails[$key] = intval($fails[$key] ?? 0) + 1;
+                    $msg = get_class($e) . ': ' . $e->getMessage();
+                    error_log("[RelDyn-EVAL] ERROR applying eval item for {$npcName} (failure {$fails[$key]}/" . self::EVAL_ITEM_MAX_FAILURES . "): {$msg}");
+                    if (!$fromInbox) {
+                        $dynamics['_eval_item_failures'] = array_slice($fails, -self::EVAL_APPLIED_KEEP, null, true);
+                        continue;   // legacy blob key: nothing to keep it in
+                    }
+                    if ($fails[$key] < self::EVAL_ITEM_MAX_FAILURES) {
+                        $dynamics['_eval_item_failures'] = array_slice($fails, -self::EVAL_APPLIED_KEEP, null, true);
+                        break;      // this item and the ones after it wait for the next request, in order
+                    }
+                    unset($fails[$key]);
+                    $dynamics['_eval_item_failures'] = $fails;
+                    $dead[] = ['failed_at' => time(), 'error' => substr($msg, 0, 500), 'eval' => $item];
+                    $handled++;
+                    continue;
+                }
+                $dynamics = $copy;
+                if ($fromInbox) $handled++;
+                foreach ($applied as $dimId => $actual) {
+                    $totals[$dimId] = ($totals[$dimId] ?? 0) + $actual;
+                }
+                if ($f !== []) $feelings[] = $f;
             }
-            if ($f !== []) $feelings[] = $f;
+
+            if ($pendingList === []) {
+                return [];
+            }
+            if (!self::saveDynamics($npcName, $dynamics)) {
+                error_log("[RelDyn-EVAL] ERROR {$npcName}: saving the applied eval items failed; they stay in the inbox for the next request");
+                $dynamics = $before;
+                return [];
+            }
+            if ($locked) {
+                foreach ($dead as $d) {
+                    if (!RelDynStorage::appendItem($npcId, RelDynStorage::KEY_EVAL_DEAD, $d)) {
+                        error_log("[RelDyn-EVAL] ERROR {$npcName}: could not store a dead-lettered eval item: " . substr((string) json_encode($d), 0, 300));
+                    }
+                }
+                if (!RelDynStorage::dropFirstItems($npcId, RelDynStorage::KEY_EVAL_INBOX, $handled)) {
+                    error_log("[RelDyn-EVAL] ERROR {$npcName}: removing {$handled} applied eval item(s) from the inbox failed; their fingerprints skip them next time");
+                }
+            }
+            // For the hook's bystander jealousy scan (romantic_exposure), after the save
+            $GLOBALS['RELDYN_EVAL_FEELINGS'] = $feelings;
+            return $totals;
+        } finally {
+            if ($locked) {
+                RelDynStorage::unlockInbox($npcId);
+            }
         }
-        // For the hook's bystander jealousy scan (romantic_exposure), after the save
-        $GLOBALS['RELDYN_EVAL_FEELINGS'] = $feelings;
-        return $totals;
     }
 
     /**

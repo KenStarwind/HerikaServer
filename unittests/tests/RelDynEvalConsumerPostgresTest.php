@@ -22,14 +22,23 @@ final class RelDynEvalConsumerPgDb
         pg_query($this->link, "SET search_path TO {$schema}");
     }
 
+    /** Test seam: callable(string $sql): ?array. A non-null return replaces running the statement; it may throw. */
+    public $beforeQuery = null;
+
     public function fetchOne($q, array $params = [])
     {
+        if ($this->beforeQuery !== null && ($replaced = ($this->beforeQuery)((string) $q)) !== null) {
+            return $replaced;
+        }
         $res = $params ? pg_query_params($this->link, $q, $params) : pg_query($this->link, $q);
         return $res ? (pg_fetch_assoc($res) ?: []) : [];
     }
 
     public function fetchAll($q, $log = false)
     {
+        if ($this->beforeQuery !== null && ($replaced = ($this->beforeQuery)((string) $q)) !== null) {
+            return $replaced;
+        }
         $res = pg_query($this->link, $q);
         $rows = [];
         while ($res && ($row = pg_fetch_assoc($res))) {
@@ -276,6 +285,99 @@ final class RelDynEvalConsumerPostgresTest extends TestCase
         $third = RelationshipDynamics::getDynamics(self::NPC);
         $this->assertSame([], $this->consume($third));
         $this->assertSame(12, $this->coreAff($id));
+    }
+
+    private function inbox(int $id): array
+    {
+        return $this->plugin($id)['eval_inbox'] ?? [];
+    }
+
+    public function testAnItemIsNotLostWhenTheConsumingSaveFails(): void
+    {
+        $id = $this->seedNazeem(15);
+        $this->assertTrue(RelDynStorage::appendItem($id, RelDynStorage::KEY_EVAL_INBOX, $this->item($id)));
+        $dyn = RelationshipDynamics::getDynamics(self::NPC);
+
+        // Every compare-and-set write of the dynamics loses (saveDynamics gives up after 5).
+        $this->db->beforeQuery = fn(string $q): ?array => str_contains($q, 'IS NOT DISTINCT FROM') ? [] : null;
+        $results = $this->consume($dyn);
+        $this->db->beforeQuery = null;
+
+        $this->assertSame([], $results, 'nothing counts as applied');
+        $this->assertCount(1, $this->inbox($id), 'the item stays in the inbox');
+        $this->assertSame(15, $this->coreAff($id));
+        $this->assertStringContainsString('ERROR', (string) file_get_contents($this->errorLog));
+
+        // The next request applies it, once.
+        $next = RelationshipDynamics::getDynamics(self::NPC);
+        $this->assertArrayHasKey('affinity', $this->consume($next));
+        $this->assertSame(18, $this->coreAff($id));
+        $this->assertSame([], $this->inbox($id));
+        $again = RelationshipDynamics::getDynamics(self::NPC);
+        $this->assertSame([], $this->consume($again));
+        $this->assertSame(18, $this->coreAff($id));
+    }
+
+    public function testAnItemThatThrowsIsRetriedThenDeadLetteredNeverLost(): void
+    {
+        $id = $this->seedNazeem(15);
+        $insult = $this->item($id, [
+            'signals' => ['affinity' => -10, 'trust' => 0, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0],
+            'tags' => ['insult'], 'significance' => 1.0, 'positive_interaction' => false,
+            'grievance' => ['flag' => true, 'kind' => 'mocked', 'severity' => 1],
+            'summary' => 'Kaida mocked him',
+        ]);
+        $praise = $this->item($id, ['gamets' => 987654399, 'summary' => 'Kaida praised him later']);
+        RelDynStorage::appendItem($id, RelDynStorage::KEY_EVAL_INBOX, $insult);
+        RelDynStorage::appendItem($id, RelDynStorage::KEY_EVAL_INBOX, $praise);
+
+        // Recording the grievance hits a database error (the grievance log reads the game clock).
+        unset($GLOBALS['gameRequest']);
+        $this->db->beforeQuery = function (string $q): ?array {
+            if (str_contains($q, 'MAX(gamets)')) throw new RuntimeException('connection lost');
+            return null;
+        };
+        for ($request = 1; $request <= 2; $request++) {
+            $dyn = RelationshipDynamics::getDynamics(self::NPC);
+            $this->assertSame([], $this->consume($dyn), "request {$request}: nothing applied");
+            $this->assertCount(2, $this->inbox($id), "request {$request}: both items stay, in order");
+            $this->assertSame(15, $this->coreAff($id), 'no half-applied item reaches core');
+        }
+        $log = (string) file_get_contents($this->errorLog);
+        $this->assertStringContainsString('connection lost', $log);
+
+        // Third failure: dead-lettered (kept for inspection), and the next item goes through.
+        $dyn = RelationshipDynamics::getDynamics(self::NPC);
+        $results = RelationshipDynamics::processPendingEvalDeltas(self::NPC, $dyn);
+        $this->db->beforeQuery = null;
+        $GLOBALS['gameRequest'] = ['inputtext', '1727000000', '987654400', 'Kaida: hello'];
+        RelationshipDynamics::commitPlayerAffinity(self::NPC, $dyn);
+        RelationshipDynamics::saveDynamics(self::NPC, $dyn);
+        $this->assertArrayHasKey('affinity', $results, 'the praise behind it is applied');
+        $this->assertSame([], $this->inbox($id));
+        $dead = $this->plugin($id)['eval_inbox_dead'] ?? [];
+        $this->assertCount(1, $dead);
+        $this->assertSame('Kaida mocked him', $dead[0]['eval']['summary']);
+        $this->assertStringContainsString('connection lost', $dead[0]['error']);
+        $stored = $this->plugin($id)['dynamics'];
+        $this->assertSame([], $stored['dimensions']['resentment']['grievance_log'] ?? [], 'the failed item left no trace');
+    }
+
+    public function testWhileAnotherRequestAppliesTheInboxThisOneLeavesItAlone(): void
+    {
+        $id = $this->seedNazeem(15);
+        RelDynStorage::appendItem($id, RelDynStorage::KEY_EVAL_INBOX, $this->item($id));
+        $other = pg_connect($this->dsn, PGSQL_CONNECT_FORCE_NEW);
+        pg_query($other, 'SELECT pg_advisory_lock(' . RelDynStorage::INBOX_LOCK_CLASS . ", {$id})");
+
+        $dyn = RelationshipDynamics::getDynamics(self::NPC);
+        $this->assertSame([], $this->consume($dyn));
+        $this->assertCount(1, $this->inbox($id), 'left for the request holding the lock');
+        pg_close($other);   // that request ends; its lock goes with its session
+
+        $dyn = RelationshipDynamics::getDynamics(self::NPC);
+        $this->assertArrayHasKey('affinity', $this->consume($dyn));
+        $this->assertSame([], $this->inbox($id));
     }
 
     public function testItemAddressedToAnotherNpcIdIsDropped(): void

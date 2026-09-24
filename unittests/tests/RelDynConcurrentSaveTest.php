@@ -19,6 +19,8 @@ final class RelDynConcurrentFakeDb
     public array $npcs = [];
     public array $confOpts = [];
     public array $unhandled = [];
+    /** held pg advisory locks: 'class:key' => count */
+    public array $advisoryLocks = [];
     public int $casFailures = 0;
     /** @var callable|null */
     public $afterQuery = null;
@@ -69,6 +71,31 @@ final class RelDynConcurrentFakeDb
             if (!isset($this->npcs[$id])) return [];
             $ns = $this->npcs[$id]['plugin_extended_data'][$params[1]] ?? null;
             return ['plugin_data' => $ns === null ? null : json_encode((object) $ns)];
+        }
+        // ---- pg advisory locks (session-level, re-entrant within one session, as in PostgreSQL) ----
+        if (strpos($sql, 'SELECT pg_try_advisory_lock($1::int, $2::int)') === 0) {
+            $k = $params[0] . ':' . $params[1];
+            $this->advisoryLocks[$k] = ($this->advisoryLocks[$k] ?? 0) + 1;
+            return ['got' => 't'];
+        }
+        if (strpos($sql, 'SELECT pg_advisory_unlock($1::int, $2::int)') === 0) {
+            $k = $params[0] . ':' . $params[1];
+            if (empty($this->advisoryLocks[$k])) return ['released' => 'f'];
+            if (--$this->advisoryLocks[$k] === 0) unset($this->advisoryLocks[$k]);
+            return ['released' => 't'];
+        }
+        // ---- RelDyn storage: drop the first N items of a list key ----
+        if (strpos($sql, 'UPDATE core_npc_master') === 0 && strpos($sql, 'WITH ORDINALITY') !== false) {
+            $id = (int) $params[0];
+            $list = $this->npcs[$id]['plugin_extended_data'][$params[1]][$params[2]] ?? null;
+            if (!is_array($list)) return [];
+            $rest = array_slice($list, (int) $params[3]);
+            if ($rest === []) {
+                unset($this->npcs[$id]['plugin_extended_data'][$params[1]][$params[2]]);
+            } else {
+                $this->npcs[$id]['plugin_extended_data'][$params[1]][$params[2]] = $rest;
+            }
+            return ['id' => (string) $id];
         }
         if (strpos($sql, 'WITH cur AS (') === 0 && strpos($sql, '#-') !== false) {
             $id = (int) $params[0];
