@@ -317,7 +317,7 @@ function chimSettingsPresetSafeFields(): array
     $safe = [];
     foreach (chimSettingsPresetFieldMap() as $name => $field) {
         $type = strtolower((string)($field['type'] ?? 'string'));
-        if (strpos($type, 'foreign:') === 0 || $type === 'url') {
+        if (strpos($type, 'foreign:') === 0 || $type === 'url' || $type === 'apikey') {
             continue;
         }
         $safe[$name] = $field;

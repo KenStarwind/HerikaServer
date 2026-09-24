@@ -105,6 +105,16 @@ function chimPrismaGlobalSettingsSections(): array
             ['name' => 'CHIM_ITEM_PICKUP_EVENTLOG_MIN_VALUE', 'type' => 'integer', 'min' => 0],
             ['name' => 'PROMPT_TIMESTAMP', 'type' => 'boolean'],
         ],
+        'Jev Tactical Layer' => [
+            ['name' => 'JEV_TACTICAL_ENABLED', 'type' => 'boolean', 'default' => false],
+            ['name' => 'JEV_API_KEY', 'type' => 'apikey'],
+            ['name' => 'JEV_MODEL', 'type' => 'string', 'default' => 'jev-latest'],
+            ['name' => 'JEV_MIN_CONFIDENCE', 'type' => 'number', 'min' => 0, 'max' => 1, 'step' => 0.05, 'default' => 0.6],
+            ['name' => 'JEV_ESCALATE_THRESHOLD', 'type' => 'number', 'min' => 0, 'max' => 1, 'step' => 0.05, 'default' => 0.7],
+            ['name' => 'JEV_LOW_CONFIDENCE_ESCALATE_AFTER', 'type' => 'integer', 'min' => 0, 'max' => 20, 'default' => 3],
+            ['name' => 'JEV_GOAL_TTL_SECONDS', 'type' => 'integer', 'min' => 30, 'max' => 7200, 'default' => 900],
+            ['name' => 'JEV_TIMEOUT', 'type' => 'integer', 'min' => 1, 'max' => 30, 'default' => 5],
+        ],
         'Context Selections' => [
             ['name' => 'MAGIC_EVENT_BLACKLIST', 'type' => 'longstring'],
             ['name' => 'LOCATION_BLACKLIST', 'type' => 'longstring'],
@@ -154,6 +164,7 @@ function chimPrismaGlobalSettingsSectionTabs(): array
         'Prompt & Rechat' => 'prompt-rechat',
         'Memory' => 'ai-memory', 'Misc' => 'ai-memory', 'Quests' => 'ai-memory', 'Translation' => 'ai-memory',
         'Oghma' => 'context-knowledge', 'Context' => 'context-knowledge', 'Context Selections' => 'context-knowledge',
+        'Jev Tactical Layer' => 'context-knowledge',
         'Global Connectors' => 'global-connectors',
     ];
 }
