@@ -5303,15 +5303,17 @@ class RelationshipDynamics
      * The pending eval that belongs to THIS request, for readers that run before
      * processPendingEvalDeltas() (ick, charisma, director goal).
      *
-     * Only processPendingEvalDeltas() consumes _pending_xyz_eval, and it runs only
-     * with the dimension engine enabled. With the engine off the same eval would be
-     * re-read on every request forever, so it is dropped here instead. The legacy
-     * '_pending_eval' key has no consumer at all and is always dropped.
+     * Only processPendingEvalDeltas() consumes the eval inbox (and a legacy
+     * _pending_xyz_eval left in a migrated blob), and it runs only with the dimension
+     * engine enabled. With the engine off the same evals would be re-read on every
+     * request and the inbox would grow forever, so they are dropped here instead. The
+     * legacy '_pending_eval' key has no consumer at all and is always dropped.
      *
-     * @param array &$dynamics NPC dynamics blob (by reference)
-     * @return array  The pending eval, or [] when there is none / engine is off
+     * @param string $npcName   NPC name
+     * @param array  &$dynamics NPC dynamics blob (by reference)
+     * @return array  The latest pending eval (not consumed), or [] when there is none / engine is off
      */
-    public static function pendingEvalForRequest(&$dynamics)
+    public static function pendingEvalForRequest($npcName, &$dynamics)
     {
         if (array_key_exists('_pending_eval', $dynamics)) {
             unset($dynamics['_pending_eval']);
@@ -5323,11 +5325,21 @@ class RelationshipDynamics
                 unset($dynamics['_pending_xyz_eval']);
                 self::log("Dimension engine disabled: dropped unprocessed _pending_xyz_eval");
             }
+            try {
+                $npcId = RelDynStorage::resolveNpcId($npcName);
+                if ($npcId !== null) {
+                    $dropped = RelDynStorage::takeItems($npcId, RelDynStorage::KEY_EVAL_INBOX);
+                    if (!empty($dropped)) {
+                        self::log("Dimension engine disabled: dropped " . count($dropped) . " queued eval(s) for {$npcName}");
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log("[RelDyn-EVAL] pendingEvalForRequest: inbox drop failed for {$npcName}: " . $e->getMessage());
+            }
             return [];
         }
 
-        $pending = $dynamics['_pending_xyz_eval'] ?? null;
-        return is_array($pending) ? $pending : [];
+        return self::peekPendingEval($npcName, $dynamics);
     }
 
 

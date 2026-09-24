@@ -644,11 +644,11 @@ if (!empty($reldynCfg['parasite_detection_enabled'])) {
 
 // A5: the eval readers below must only see this request's pending eval. With the
 // dimension engine off nothing consumes it, so pendingEvalForRequest() drops it.
-$rdPendingEval = RelationshipDynamics::pendingEvalForRequest($dynamics);
+// Engine on: read-only peek of the latest queued eval; the inbox is consumed by
+// processPendingEvalDeltas below.
+$rdPendingEval = RelationshipDynamics::pendingEvalForRequest($npcName, $dynamics);
 
 // ========== ICK TRACKER + CHARISMA DETECTION (PR 15) ==========
-// Latest queued eval (read-only peek; the inbox is consumed by processPendingEvalDeltas below)
-$rdPendingEval = RelationshipDynamics::peekPendingEval($npcName, $dynamics);
 if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
     $evalPending = $rdPendingEval;

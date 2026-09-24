@@ -5,16 +5,37 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 
 /**
- * In-memory stand-in for CHIM's $db. Stores core_npc_master.extended_data as
- * decoded JSON so saveDynamics() -> getDynamics() is a real round trip through
- * json_encode/json_decode, the same way the jsonb column behaves.
+ * In-memory stand-in for CHIM's $db. Stores core_npc_master.extended_data and
+ * plugin_extended_data as decoded JSON so saveDynamics() -> getDynamics() is a real
+ * round trip through json_encode/json_decode, the same way the jsonb columns behave.
+ * Emulates the RelDynStorage / NpcMaster::getPluginData query shapes (plugin 'reldyn').
  */
 final class RelDynStateFakeDb
 {
-    /** @var array<string, array> lower(npc_name) => extended_data */
+    /** @var array<string, array> lower(npc_name) => extended_data (legacy April location) */
     public array $extended = [];
+    /** @var array<string, array> lower(npc_name) => plugin_extended_data */
+    public array $plugin = [];
     public ?array $config = null;
     public array $executed = [];
+    public array $unhandled = [];
+
+    private function names(): array
+    {
+        return array_values(array_unique(array_merge(array_keys($this->extended), array_keys($this->plugin))));
+    }
+
+    /** Stable fake core_npc_master.id per known NPC name. */
+    private function idOf(string $key): ?int
+    {
+        $i = array_search($key, $this->names(), true);
+        return $i === false ? null : $i + 1;
+    }
+
+    private function keyOf(int $id): ?string
+    {
+        return $this->names()[$id - 1] ?? null;
+    }
 
     public function escape($value): string
     {
@@ -33,8 +54,54 @@ final class RelDynStateFakeDb
 
     public function fetchOne($sql, $params = null)
     {
+        $sql = preg_replace('/\s+/', ' ', trim((string)$sql));
         if (preg_match("/FROM conf_opts WHERE id = 'relationship_dynamics_config'/", $sql)) {
             return $this->config === null ? false : ['value' => json_encode($this->config)];
+        }
+        if (strpos($sql, 'SELECT id FROM core_npc_master WHERE lower(npc_name) = lower($1)') === 0) {
+            $id = $this->idOf(strtolower((string)$params[0]));
+            return $id === null ? false : ['id' => (string)$id];
+        }
+        if (strpos($sql, 'SELECT plugin_extended_data -> $2::text AS plugin_data FROM core_npc_master WHERE id = $1') === 0) {
+            $key = $this->keyOf((int)$params[0]);
+            if ($key === null) {
+                return false;
+            }
+            $ns = $this->plugin[$key][$params[1]] ?? null;
+            return ['plugin_data' => $ns === null ? null : json_encode((object)$ns)];
+        }
+        if (strpos($sql, 'WITH cur AS (') === 0 && strpos($sql, '#-') !== false) {
+            $key = $this->keyOf((int)$params[0]);
+            if ($key === null) {
+                return false;
+            }
+            $value = $this->plugin[$key][$params[1]][$params[2]] ?? null;
+            unset($this->plugin[$key][$params[1]][$params[2]]);
+            return ['inbox' => $value === null ? null : json_encode($value)];
+        }
+        if (strpos($sql, 'UPDATE core_npc_master') === 0 && strpos($sql, 'plugin_extended_data') !== false) {
+            $key = $this->keyOf((int)$params[0]);
+            if ($key === null) {
+                return false;
+            }
+            $ns = $params[1];
+            $field = $params[2];
+            if (strpos($sql, "extended_data -> 'relationship_dynamics'") !== false) {
+                // One-time legacy migration: copy only when the plugin key is absent.
+                $legacy = $this->extended[$key]['relationship_dynamics'] ?? null;
+                if (isset($this->plugin[$key][$ns][$field]) || !is_array($legacy) || $legacy === []) {
+                    return false;
+                }
+                $this->plugin[$key][$ns][$field] = $legacy;
+            } elseif (strpos($sql, 'jsonb_build_array($4::jsonb)') !== false) {
+                $this->plugin[$key][$ns][$field][] = json_decode($params[3], true);
+            } elseif (strpos($sql, 'jsonb_build_object($3::text, $4::jsonb)') !== false) {
+                $this->plugin[$key][$ns][$field] = json_decode($params[3], true);
+            } else {
+                $this->unhandled[] = $sql;
+                return false;
+            }
+            return ['id' => (string)$params[0]];
         }
         if (preg_match("/SELECT extended_data FROM core_npc_master WHERE lower\(npc_name\) = lower\('((?:[^']|'')*)'\)/", $sql, $m)) {
             $key = strtolower(self::unescape($m[1]));
@@ -122,7 +189,7 @@ final class RelDynDimensionStateTest extends TestCase
         $reloaded = $this->saveAndReload($dynamics);
         $this->assertEqualsWithDelta(15.0, $reloaded['passion'], 0.0001);
         $this->assertEqualsWithDelta(15.0, $reloaded['dimensions']['passion']['x'], 0.0001);
-        $this->assertEqualsWithDelta(15.0, $this->db->extended['test npc']['relationship_dynamics']['dimensions']['passion']['x'], 0.0001);
+        $this->assertEqualsWithDelta(15.0, $this->db->plugin['test npc']['reldyn']['dynamics']['dimensions']['passion']['x'], 0.0001);
     }
 
     public function testDecayPassionSurvivesSaveAndReload(): void
@@ -336,11 +403,16 @@ final class RelDynDimensionStateTest extends TestCase
         $dynamics['_pending_xyz_eval'] = ['romantic_intent' => 3, 'goal_addressed' => true, 'affinity_delta' => 5];
         $dynamics['_pending_eval'] = ['romantic_intent' => 2];
 
-        $this->assertSame([], RelationshipDynamics::pendingEvalForRequest($dynamics));
+        $this->seed([]);
+        $this->assertTrue(RelationshipDynamics::queuePendingEval(self::NPC, ['romantic_intent' => 4]));
+
+        $this->assertSame([], RelationshipDynamics::pendingEvalForRequest(self::NPC, $dynamics));
         $this->assertArrayNotHasKey('_pending_xyz_eval', $dynamics);
         $this->assertArrayNotHasKey('_pending_eval', $dynamics);
+        // The unconsumed inbox is dropped too, so it cannot grow while the engine is off.
+        $this->assertArrayNotHasKey('eval_inbox', $this->db->plugin['test npc']['reldyn'] ?? []);
         // Next request sees nothing either.
-        $this->assertSame([], RelationshipDynamics::pendingEvalForRequest($dynamics));
+        $this->assertSame([], RelationshipDynamics::pendingEvalForRequest(self::NPC, $dynamics));
     }
 
     public function testEnabledEngineReturnsPendingEvalWithoutConsumingIt(): void
@@ -352,9 +424,16 @@ final class RelDynDimensionStateTest extends TestCase
         $pending = ['romantic_intent' => 3, 'goal_addressed' => true];
         $dynamics['_pending_xyz_eval'] = $pending;
 
-        $this->assertSame($pending, RelationshipDynamics::pendingEvalForRequest($dynamics));
+        $this->assertSame($pending, RelationshipDynamics::pendingEvalForRequest(self::NPC, $dynamics));
         // processPendingEvalDeltas consumes it later in the same request.
         $this->assertSame($pending, $dynamics['_pending_xyz_eval']);
+
+        // Queued evals in the plugin inbox win over the legacy key, and peeking keeps them.
+        $this->seed([]);
+        $queued = ['romantic_intent' => 1, 'goal_addressed' => false];
+        $this->assertTrue(RelationshipDynamics::queuePendingEval(self::NPC, $queued));
+        $this->assertSame($queued, RelationshipDynamics::pendingEvalForRequest(self::NPC, $dynamics));
+        $this->assertCount(1, $this->db->plugin['test npc']['reldyn']['eval_inbox']);
     }
 
     public function testLegacyPendingEvalKeyIsNeverReadBecauseNothingConsumesIt(): void
@@ -365,7 +444,7 @@ final class RelDynDimensionStateTest extends TestCase
         $dynamics = RelationshipDynamics::defaultDynamics();
         $dynamics['_pending_eval'] = ['romantic_intent' => 2, 'goal_addressed' => true];
 
-        $this->assertSame([], RelationshipDynamics::pendingEvalForRequest($dynamics));
+        $this->assertSame([], RelationshipDynamics::pendingEvalForRequest(self::NPC, $dynamics));
         $this->assertArrayNotHasKey('_pending_eval', $dynamics);
     }
 }
