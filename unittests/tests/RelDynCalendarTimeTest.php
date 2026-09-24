@@ -113,6 +113,185 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->assertSame(0.0, RelationshipDynamics::checkReunion($d, 60));
     }
 
+    // ------------------------------------------------------------ calendar step
+
+    private const T0 = 200 * self::DAY;   // last contact: game day 200, midnight
+
+    /** @param array $extra top-level overrides; dims: dimension => x */
+    private function npc(array $extra = [], array $dims = []): array
+    {
+        $this->setCalendar(self::T0);
+        $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
+            'inferred_temperament' => 'Stoic',
+            'attachment_style' => 'secure',
+            '_accumulated_play_gamets' => 10.0 * RelationshipDynamics::GAMETS_PER_REAL_HOUR,
+        ], $extra));
+        foreach ($dims + ['maturity' => 60.0, 'resentment' => 0.0] as $dim => $x) {
+            $d['dimensions'][$dim]['x'] = $x;
+        }
+        RelationshipDynamics::markContact($d);
+        return $d;
+    }
+
+    private static function resentment(array $d): float
+    {
+        return (float) $d['dimensions']['resentment']['x'];
+    }
+
+    private static function neglectEntries(array $d): array
+    {
+        return array_values(array_filter($d['dimensions']['resentment']['grievance_log'] ?? [],
+            fn($g) => is_array($g) && ($g['tag'] ?? null) === 'neglect'));
+    }
+
+    public function testNegativeStatesDoNotDecayWithTimeAlone(): void
+    {
+        // Not bonded, no open conflict: a month passes and nothing negative moves.
+        $d = $this->npc(['jealousy_anger' => 35.0], ['resentment' => 40.0, 'resentment_self' => 12.0]);
+        $d['dimensions']['resentment']['grievance_log'] = [['text' => 'insulted', 'amount' => 5]];
+
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 30 * self::DAY);
+
+        $this->assertSame(40.0, self::resentment($d));
+        $this->assertSame(12.0, (float) $d['dimensions']['resentment_self']['x']);
+        $this->assertCount(1, $d['dimensions']['resentment']['grievance_log']);
+    }
+
+    public function testImmatureNpcFestersWhileTheConflictIsOpen(): void
+    {
+        $rate = (float) RelationshipDynamics::defaultConfig()['fester_resentment_per_game_day'];
+        $this->assertGreaterThan(0.0, $rate);
+
+        $d = $this->npc(['in_conflict' => true], ['maturity' => 30.0, 'resentment' => 10.0]);
+        $expected = $d;
+        for ($i = 0; $i < (int) round(3 * $rate); $i++) {   // 3 game days of raw festering, 1-point quanta
+            RelationshipDynamics::applyDelta('resentment', $expected, 1.0, 'Stoic');
+        }
+
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 3 * self::DAY);
+
+        $this->assertGreaterThan(10.0 + 3 * $rate * 1.5 - 1e-6, self::resentment($d), 'MDD 15.5 +50% for maturity < 50, then the accumulator physics');
+        $this->assertEqualsWithDelta(self::resentment($expected), self::resentment($d), 1e-6);
+        $this->assertEqualsWithDelta(3 * $rate, $r['resentment_raw'], 1e-9);
+    }
+
+    public function testMatureNpcOrClosedConflictDoesNotFester(): void
+    {
+        $mature = $this->npc(['in_conflict' => true], ['maturity' => 60.0, 'resentment' => 10.0]);
+        RelationshipDynamics::advanceCalendar($mature, self::T0, self::T0 + 10 * self::DAY);
+        $this->assertSame(10.0, self::resentment($mature));
+
+        $noConflict = $this->npc([], ['maturity' => 20.0, 'resentment' => 10.0]);
+        RelationshipDynamics::advanceCalendar($noConflict, self::T0, self::T0 + 10 * self::DAY);
+        $this->assertSame(10.0, self::resentment($noConflict));
+    }
+
+    public function testFesterDoesNotDependOnHowTheTimeIsSliced(): void
+    {
+        $once = $this->npc(['in_conflict' => true], ['maturity' => 30.0, 'resentment' => 10.0]);
+        $sliced = $once;
+        RelationshipDynamics::advanceCalendar($once, self::T0, self::T0 + 5 * self::DAY);
+        for ($h = 0; $h < 5 * 24; $h++) {                       // scanned every game hour instead
+            RelationshipDynamics::advanceCalendar($sliced, self::T0 + $h * self::GAME_HOUR, self::T0 + ($h + 1) * self::GAME_HOUR);
+        }
+        $this->assertEqualsWithDelta(self::resentment($once), self::resentment($sliced), 1e-6);
+    }
+
+    public function testPassionFadesWithAbsenceScaledByAttachment(): void
+    {
+        $cfg = RelationshipDynamics::defaultConfig();
+        $rate = (float) $cfg['passion_absence_fade_per_game_day'];
+        $graceDays = (float) $cfg['passion_absence_grace_game_hours'] / 24.0;
+        $absent = 3.0 - $graceDays;                              // absent days past the grace
+
+        $fade = [];
+        foreach (['secure' => 1.0, 'anxious' => 2.0, 'avoidant' => 0.5] as $style => $mult) {
+            $d = $this->npc(['attachment_style' => $style]);
+            RelationshipDynamics::setPassion($d, 60.0);
+            $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 3 * self::DAY);
+            $fade[$style] = 60.0 - RelationshipDynamics::getPassion($d);
+            $this->assertEqualsWithDelta($rate * $absent * $mult, $fade[$style], 1e-6, "{$style} x{$mult}");
+            $this->assertEqualsWithDelta($fade[$style], $r['passion_fade'], 1e-6);
+        }
+        $this->assertEqualsWithDelta(2.0, $fade['anxious'] / $fade['secure'], 1e-9, 'Anxious x2');
+        $this->assertEqualsWithDelta(0.5, $fade['avoidant'] / $fade['secure'], 1e-9, 'Avoidant x0.5');
+    }
+
+    public function testPassionFadeStopsAtTheStageFloorAndNotWithinTheGrace(): void
+    {
+        $d = $this->npc(['stage' => RelationshipDynamics::STAGE_DEEP]);
+        RelationshipDynamics::setPassion($d, 30.0);
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 12 * self::GAME_HOUR);
+        $this->assertSame(30.0, RelationshipDynamics::getPassion($d), 'within the grace');
+
+        RelationshipDynamics::advanceCalendar($d, self::T0 + 12 * self::GAME_HOUR, self::T0 + 60 * self::DAY);
+        $this->assertEqualsWithDelta((float) RelationshipDynamics::STAGE_PARAMS['deep']['floor'], RelationshipDynamics::getPassion($d), 1e-9);
+    }
+
+    public function testNeglectAccruesForABondedNpcPastItsGrace(): void
+    {
+        $bond = RelationshipDynamics::defaultConfig()['neglect_bond_types']['bonded'];
+        $d = $this->npc(['relationship_type' => 'bonded']);
+
+        // Inside the grace: nothing.
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + ($bond['grace_game_days'] - 0.5) * self::DAY);
+        $this->assertSame(0.0, $r['neglect_days']);
+        $this->assertSame(0.0, self::resentment($d));
+
+        // A month: every day past the grace is neglect.
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0 + ($bond['grace_game_days'] - 0.5) * self::DAY, self::T0 + 30 * self::DAY);
+        $this->assertEqualsWithDelta(30 - $bond['grace_game_days'], $r['neglect_days'], 1e-9);
+        $this->assertEqualsWithDelta((30 - $bond['grace_game_days']) * $bond['resentment_per_game_day'], $r['resentment_raw'], 1e-9);
+        $this->assertGreaterThan(0.0, self::resentment($d));
+
+        $log = self::neglectEntries($d);
+        $this->assertCount(1, $log, 'one neglect grievance for this absence');
+        $this->assertEqualsWithDelta(30.0, $log[0]['game_days'], 1e-9);
+        $this->assertEqualsWithDelta(self::T0, (float) $log[0]['since_gamets'], 0.001);
+    }
+
+    public function testNeglectGraceDependsOnBondTypeAndAttachment(): void
+    {
+        $cfg = RelationshipDynamics::defaultConfig();
+        $days = 10.0;
+        $neglect = function (string $type, string $style) use ($days): float {
+            $d = $this->npc(['relationship_type' => $type, 'attachment_style' => $style]);
+            return RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + $days * self::DAY)['neglect_days'];
+        };
+        $graceMult = $cfg['neglect_attachment_grace_mult'];
+
+        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'], $neglect('bonded', 'secure'), 1e-9);
+        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult['anxious'], $neglect('bonded', 'anxious'), 1e-9);
+        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['friend']['grace_game_days'] * $graceMult['secure'], $neglect('friend', 'secure'), 1e-9);
+        $this->assertLessThan($neglect('bonded', 'secure'), $neglect('bonded', 'avoidant'), 'avoidant waits longer');
+        $this->assertSame(0.0, $neglect('acquaintance', 'anxious'), 'not a bond: no neglect');
+    }
+
+    public function testContactStopsNeglectButDoesNotHealIt(): void
+    {
+        $d = $this->npc(['relationship_type' => 'bonded']);
+        RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 10 * self::DAY);
+        $after = self::resentment($d);
+        $this->assertGreaterThan(0.0, $after);
+
+        $this->setCalendar(self::T0 + 10 * self::DAY);
+        RelationshipDynamics::markContact($d);
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0 + 10 * self::DAY, self::T0 + 11 * self::DAY);
+
+        $this->assertSame(0.0, $r['neglect_days'], 'fresh contact, inside the grace again');
+        $this->assertEqualsWithDelta($after, self::resentment($d), 1e-9, 'the neglect already felt stays');
+    }
+
+    public function testNoNeglectOrFadeWhileTheyAreTheOneWhoLeft(): void
+    {
+        $d = $this->npc(['relationship_type' => 'bonded', '_walkaway_state' => 'boundary_test']);
+        RelationshipDynamics::setPassion($d, 50.0);
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 10 * self::DAY);
+        $this->assertSame(0.0, $r['neglect_days']);
+        $this->assertSame(50.0, RelationshipDynamics::getPassion($d));
+        $this->assertSame(0.0, self::resentment($d));
+    }
+
     public function testNormalPlayIsCreditedInFull(): void
     {
         $g0 = 100 * self::DAY;

@@ -1038,6 +1038,39 @@ class RelationshipDynamics
             // time apart must also hold this many real minutes of filtered play (no reunion
             // from a wait or sleep alone).
             'reunion_min_play_minutes' => 10,
+            // Fester (MDD 15.5 + decisions §2): while a conflict is open, an NPC with
+            // maturity (0..100) below fester_maturity_below gains this much RAW resentment
+            // (0..100 points) per game-calendar day. Raw goes through applyDelta, which adds
+            // the 15.5 +50% for maturity < 50 and the accumulator physics (inverted rubber
+            // band, attachment gain mult), so the felt rate is roughly 2-4x the raw rate.
+            // Starting value 1.0: half the §5 jealousy-conversion k=2, because of that physics.
+            'fester_resentment_per_game_day' => 1.0,
+            'fester_maturity_below' => 50,
+            // Positive-state fade with absence (decisions §2), passion only: after
+            // passion_absence_grace_game_hours without contact, passion (0..100) loses
+            // passion_absence_fade_per_game_day per game-calendar day x attachment multiplier,
+            // down to the stage floor. In-contact decay stays decayPassion() on the play clock.
+            'passion_absence_grace_game_hours' => 24,
+            'passion_absence_fade_per_game_day' => 3.0,
+            'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
+            // Global neglect (decisions §2): per RelDyn bond type (getRelationshipType), game days
+            // without contact before neglect starts, and RAW resentment (0..100 points, through
+            // applyDelta like fester) per game day after that. Types not listed never accrue.
+            'neglect_enabled' => true,
+            'neglect_bond_types' => [
+                'bonded'     => ['grace_game_days' => 3, 'resentment_per_game_day' => 1.0],
+                'crush'      => ['grace_game_days' => 4, 'resentment_per_game_day' => 0.75],
+                'sworn'      => ['grace_game_days' => 5, 'resentment_per_game_day' => 0.5],
+                'friend'     => ['grace_game_days' => 7, 'resentment_per_game_day' => 0.25],
+                'friendzone' => ['grace_game_days' => 7, 'resentment_per_game_day' => 0.25],
+                'parasite'   => ['grace_game_days' => 2, 'resentment_per_game_day' => 0.5],
+            ],
+            // Grace multiplier by attachment style: Anxious feels it sooner, Avoidant later.
+            'neglect_attachment_grace_mult' => ['anxious' => 0.5, 'avoidant' => 2.0, 'secure' => 1.0, 'toxic' => 0.75],
+            // Calendar scan: NPCs whose calendar step is at least this many game hours old are
+            // advanced on any request; at most calendar_scan_max_npcs per request.
+            'calendar_scan_interval_game_hours' => 1,
+            'calendar_scan_max_npcs' => 10,
         ];
     }
 
@@ -2298,6 +2331,140 @@ class RelationshipDynamics
     {
         self::markGameClock($dynamics, '_last_contact_gamets');
         self::markPlayCheckpoint($dynamics, '_last_contact_play_gamets');
+    }
+
+    // =========================================================================
+    // GAME-CALENDAR STEP (decisions 2026-09-23 §2: time does not heal, contact does)
+    // =========================================================================
+
+    /**
+     * Raw resentment (0..100 points) handed to applyDelta per call. Calendar resentment
+     * accrues linearly into _calendar_resentment_raw and is applied in these fixed quanta,
+     * so the result does not depend on how often the calendar is stepped (applyDelta's
+     * inverted rubber band makes one big delta and many small ones differ).
+     */
+    const CALENDAR_RESENTMENT_QUANTUM = 1.0;
+
+    /** Game days (raw gamets / GAMETS_PER_DAY) of [from, to] at or after $start. */
+    private static function calendarDaysFrom(float $from, float $to, float $start): float
+    {
+        return max(0.0, $to - max($from, $start)) / self::GAMETS_PER_DAY;
+    }
+
+    /**
+     * Advance one NPC through game-calendar time [from, to] (raw gamets) with no contact:
+     *  - fester: open conflict + maturity below fester_maturity_below -> raw resentment per day;
+     *  - neglect: bonded NPC past its grace since _last_contact_gamets -> raw resentment per
+     *    day, logged as one 'neglect' grievance per absence;
+     *  - passion fade: past the absence grace, passion fades per day x attachment multiplier
+     *    down to the stage floor.
+     * Nothing negative is ever reduced here. Neglect and fade are skipped while the NPC is
+     * the one who left (walkaway). Pure: no database, no clock reads.
+     *
+     * @return array ['game_days', 'resentment_raw', 'resentment', 'neglect_days', 'passion_fade', 'bond_type']
+     */
+    public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
+    {
+        $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0,
+                'neglect_days' => 0.0, 'passion_fade' => 0.0, 'bond_type' => null];
+        if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
+            return $out;
+        }
+        $days = ($toGamets - $fromGamets) / self::GAMETS_PER_DAY;
+        $out['game_days'] = $days;
+
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);   // 0..100
+        $attachment = self::getAttachmentStyle($dynamics);
+        $away = ($dynamics['_walkaway_state'] ?? 'normal') !== 'normal';
+        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);       // raw gamets
+        $raw = 0.0;                                                            // raw resentment points
+
+        // Fester: an open conflict in an immature NPC grows every game day.
+        if (!empty($dynamics['in_conflict']) && $maturity < floatval(self::configValue('fester_maturity_below'))) {
+            $raw += floatval(self::configValue('fester_resentment_per_game_day')) * $days;
+        }
+
+        // Neglect: game days past the bond's grace since the player's last contact.
+        if (!$away && $lastContact > 0 && self::configValue('neglect_enabled')) {
+            $bondType = self::getRelationshipType('', $dynamics);
+            $out['bond_type'] = $bondType;
+            $bond = (self::configValue('neglect_bond_types') ?? [])[$bondType] ?? null;
+            if (is_array($bond)) {
+                $graceMult = floatval((self::configValue('neglect_attachment_grace_mult') ?? [])[$attachment] ?? 1.0);
+                $graceDays = floatval($bond['grace_game_days'] ?? 0) * $graceMult;
+                $neglectDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceDays * self::GAMETS_PER_DAY);
+                if ($neglectDays > 0) {
+                    $neglectRaw = floatval($bond['resentment_per_game_day'] ?? 0) * $neglectDays;
+                    $raw += $neglectRaw;
+                    $out['neglect_days'] = $neglectDays;
+                    self::recordNeglectGrievance($dynamics, $lastContact, $toGamets, $neglectRaw);
+                }
+            }
+        }
+
+        // Positive states fade with absence (passion), scaled by attachment.
+        if (!$away && $lastContact > 0) {
+            $graceGamets = floatval(self::configValue('passion_absence_grace_game_hours')) * self::GAMETS_PER_DAY / 24.0;
+            $absentDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceGamets);
+            if ($absentDays > 0) {
+                $mult = floatval((self::configValue('passion_absence_attachment_mult') ?? [])[$attachment] ?? 1.0);
+                $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
+                $floor = floatval(self::STAGE_PARAMS[$stage]['floor'] ?? 0);
+                $passion = self::getPassion($dynamics);
+                if ($passion > $floor) {
+                    $fade = floatval(self::configValue('passion_absence_fade_per_game_day')) * $absentDays * $mult;
+                    $new = max($floor, $passion - $fade);
+                    self::setPassion($dynamics, $new);
+                    $out['passion_fade'] = $passion - $new;
+                }
+            }
+        }
+
+        // Feed the resentment accumulator in fixed quanta (see CALENDAR_RESENTMENT_QUANTUM).
+        $out['resentment_raw'] = $raw;
+        $buffer = floatval($dynamics['_calendar_resentment_raw'] ?? 0) + $raw;
+        $max = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
+        while ($buffer >= self::CALENDAR_RESENTMENT_QUANTUM - 1e-9) {
+            if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) >= $max) {
+                $buffer = 0.0;   // already at the ceiling: nothing left to feel
+                break;
+            }
+            $out['resentment'] += self::applyDelta('resentment', $dynamics, self::CALENDAR_RESENTMENT_QUANTUM, $temperament);
+            $buffer -= self::CALENDAR_RESENTMENT_QUANTUM;
+        }
+        $dynamics['_calendar_resentment_raw'] = round(max(0.0, $buffer), 9);
+
+        return $out;
+    }
+
+    /** One 'neglect' grievance per absence (keyed by the contact it counts from), kept current. */
+    private static function recordNeglectGrievance(array &$dynamics, float $sinceGamets, float $nowGamets, float $raw): void
+    {
+        if (!isset($dynamics['dimensions']['resentment']) || !is_array($dynamics['dimensions']['resentment'])) {
+            $dynamics['dimensions']['resentment'] = ['x' => 0, 'baseline' => 0, 'active' => true];
+        }
+        $log = $dynamics['dimensions']['resentment']['grievance_log'] ?? [];
+        if (!is_array($log)) $log = [];
+        $gameDays = ($nowGamets - $sinceGamets) / self::GAMETS_PER_DAY;
+        $last = count($log) - 1;
+        if ($last >= 0 && is_array($log[$last]) && ($log[$last]['tag'] ?? null) === 'neglect'
+            && abs(floatval($log[$last]['since_gamets'] ?? -1) - $sinceGamets) < 0.5) {
+            $log[$last]['raw'] = round(floatval($log[$last]['raw'] ?? 0) + $raw, 4);
+            $log[$last]['game_days'] = $gameDays;
+            $log[$last]['gamets'] = $nowGamets;
+            $log[$last]['text'] = sprintf('neglect: no contact for %.1f game days', $gameDays);
+        } else {
+            $log[] = [
+                'text' => sprintf('neglect: no contact for %.1f game days', $gameDays),
+                'tag' => 'neglect',
+                'since_gamets' => $sinceGamets,
+                'game_days' => $gameDays,
+                'raw' => round($raw, 4),
+                'gamets' => $nowGamets,
+            ];
+        }
+        $dynamics['dimensions']['resentment']['grievance_log'] = array_slice($log, -10);
     }
 
     // =========================================================================
