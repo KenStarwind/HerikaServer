@@ -4,6 +4,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
+require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
 
 /**
  * conf_opts only: the RelDyn config row, so a test can switch subsystems the way the
@@ -336,6 +337,30 @@ final class RelDynEvalPipelineTest extends TestCase
         $n0 = $npc;
         RelationshipDynamics::applyEvalSignal('Hulda', $npc, 'affinity', 10, ['help'], 1.0);
         $this->assertEqualsWithDelta(5.75, $this->coreAffinityMoved($n0, $npc), 1e-3);
+    }
+
+    public function testProducerConsumerAndResentmentShareOneTagVocabulary(): void
+    {
+        // The contract's tag list, as the producer defines it for the model and the consumer
+        // validates it: the same set in the same order.
+        $this->assertSame(array_keys(RelDynEval::TAG_DEFINITIONS), RelationshipDynamics::EVAL_CONTRACT_TAGS);
+        $this->assertSame(RelDynEval::CONTRACT_VERSION, RelationshipDynamics::EVAL_CONTRACT_VERSION);
+        $this->assertSame(RelDynEval::SOURCE, RelationshipDynamics::EVAL_CONTRACT_SOURCE);
+        $this->assertSame(array_keys(RelDynEval::SIGNAL_LIMITS), array_keys(RelationshipDynamics::EVAL_CONTRACT_SIGNALS));
+
+        // Every tag the M table, the love-language map and the resentment/jealousy code key on
+        // is a contract tag (a typo would silently never match).
+        $cfg = RelationshipDynamics::defaultConfig();
+        $used = [];
+        foreach ($cfg['affinity_modifiers'] as $row) {
+            foreach ((array) $row['tags'] as $t) $used["M:{$row['id']}"][] = $t;
+        }
+        $used['affinity_tag_love_language'] = array_keys($cfg['affinity_tag_love_language']);
+        $used['jealousy_bystander_tags'] = $cfg['jealousy_bystander_tags'];
+        $used['applyEvalFeelings'] = ['jealousy_trigger'];
+        foreach ($used as $where => $tags) {
+            $this->assertSame([], array_values(array_diff($tags, RelationshipDynamics::EVAL_CONTRACT_TAGS)), "{$where}: unknown tag");
+        }
     }
 
     public function testResentmentAtSeventyFreezesEvalGainsAndLossesStillLand(): void
