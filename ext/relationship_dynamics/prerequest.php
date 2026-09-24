@@ -17,6 +17,23 @@ if ($reqType === 'maras_sync') {
     return;
 }
 
+// ========== SAVE LOAD (save-load-rollback) ==========
+// 'init' = the player loaded a save. This hook runs BEFORE core's comm.php prunes the later
+// eventlog and restores every NPC row from its history snapshot, so nothing here may touch
+// RelDyn state: stash it (keep policy, pending evals) and stop. The reconcile runs on the
+// first RelDyn entry after core's restore (below, and in the eval worker).
+if ($reqType === 'init') {
+    require_once __DIR__ . '/relationship_dynamics.php';
+    RelationshipDynamics::beginRequest();
+    try {
+        RelDynTimeline::beforeCoreLoad(floatval($GLOBALS['gameRequest'][2] ?? 0));
+    } catch (Throwable $e) {
+        RelationshipDynamics::logError('save-load stash before core restore', $e);
+    }
+    RelationshipDynamics::endRequest();
+    return;
+}
+
 // Skip NPC-to-NPC radiant dialogue — player isn't involved.
 // CHIM core's relationship_system handles NPC↔NPC affinity.
 // Ambient trickle/decay would be wasted work since these NPCs
@@ -39,6 +56,15 @@ RelationshipDynamics::beginRequest();
 
 if (!RelationshipDynamics::isEnabled()) {
     return;
+}
+
+// A save was loaded since RelDyn last ran: drop what the load discarded, rebaseline the game
+// clocks, keep or follow core's restore, re-read core's affinity. Once per load, before
+// anything below reads or writes RelDyn state.
+try {
+    RelDynTimeline::reconcileIfLoaded();
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('save-load reconcile', $e);
 }
 
 // ========== GLOBAL PLAY HEARTBEAT ==========

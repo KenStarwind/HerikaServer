@@ -55,6 +55,10 @@ final class RelDynConcurrentFakeDb
         if (in_array(strtoupper($sql), ['BEGIN', 'COMMIT', 'ROLLBACK'], true) || stripos($sql, 'pg_advisory_xact_lock') !== false) {
             return [];
         }
+        // ---- save-load generation (RelDynTimeline::freshLoadGeneration): no load in this eventlog ----
+        if ($sql === "SELECT max(rowid) AS r FROM eventlog WHERE type = 'init'") {
+            return ['r' => null];
+        }
         if (preg_match("/FROM conf_opts WHERE id = '([^']+)'/", $sql, $m)) {
             return array_key_exists($m[1], $this->confOpts) ? ['value' => $this->confOpts[$m[1]]] : [];
         }

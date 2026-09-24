@@ -525,6 +525,12 @@ final class RelDynEval
             return $stats;
         }
         try {
+            // A save loaded since the last RelDyn request: reconcile before any job lands
+            try {
+                RelDynTimeline::reconcileIfLoaded();
+            } catch (\Throwable $e) {
+                RelationshipDynamics::logError('eval worker save-load reconcile', $e);
+            }
             $limit = max(1, intval(self::config()['jobs_per_run']));
             while ($stats['processed'] < $limit) {
                 if (self::switchPending()) {
@@ -607,7 +613,8 @@ final class RelDynEval
                 throw new RuntimeException("eval inbox write failed: '{$job['npc']}' is not in core_npc_master");
             }
             if (!RelDynStorage::appendItemConsumingRow($npcId, RelDynStorage::KEY_EVAL_INBOX,
-                    RelationshipDynamics::evalInboxEntry($result['item']), self::QUEUE_TABLE, $id)) {
+                    RelationshipDynamics::evalInboxEntry($result['item'],
+                        is_numeric($job['anchor_rowid'] ?? null) ? intval($job['anchor_rowid']) : null), self::QUEUE_TABLE, $id)) {
                 throw new RuntimeException('eval inbox write + job delete wrote nothing');
             }
             error_log("[RelDyn-EVAL] job {$id} {$npc}: " . json_encode($result['item']['signals'])
@@ -687,6 +694,12 @@ final class RelDynEval
 
         if ($anchor === null || !self::eventlogRowExists($anchor)) {
             error_log("[RelDyn-EVAL] job for {$npc} dropped: its exchange is no longer in eventlog (save load rolled it back)");
+            return ['drop' => 'rolled_back'];
+        }
+        // A load to a game time at or before the exchange discarded it, even when the anchor
+        // row itself (an older line the exchange was anchored to) survived core's prune.
+        if (RelDynTimeline::enabled() && RelDynTimeline::rolledBack(is_numeric($job['gamets'] ?? null) ? floatval($job['gamets']) : null, $anchor, null)) {
+            error_log("[RelDyn-EVAL] job for {$npc} dropped: a save load to before its exchange (gamets {$job['gamets']}) discarded it");
             return ['drop' => 'rolled_back'];
         }
 

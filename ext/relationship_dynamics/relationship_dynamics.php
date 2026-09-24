@@ -1185,6 +1185,9 @@ class RelationshipDynamics
             // ===== Romance promotion + Sharmat handoff (rulings 2026-09-24 §9) =====
             // Ladder, moment thresholds, momentum per NPC (reldyn_romance.php).
             'romance_promotion' => RelDynRomance::configDefaults(),
+            // ===== Save load (roadmap save-load-rollback) =====
+            // What survives loading an earlier save, ledger checkpoints (reldyn_timeline.php).
+            'save_load' => RelDynTimeline::configDefaults(),
         ];
     }
 
@@ -1382,12 +1385,12 @@ class RelationshipDynamics
                     self::applyReputationModifiers($merged, $GLOBALS['PLAYER_NAME'], $npcName, $temperament);
                 }
                 // saveDynamics() merges this copy's changes onto whatever is stored by then
-                $merged[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($base);
+                $merged[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($base, RelDynTimeline::loadGeneration());
                 return $merged;
             }
             if (!empty($GLOBALS['db']) && RelDynStorage::resolveNpcId($npcName) !== null) {
                 $defaults = self::defaultDynamics();
-                $defaults[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase(self::defaultDynamics());
+                $defaults[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase(self::defaultDynamics(), RelDynTimeline::loadGeneration());
                 self::ensureTemperamentProfile($npcName, $defaults);
                 return $defaults;
             }
@@ -1445,6 +1448,17 @@ class RelationshipDynamics
                     if ($base === null) {
                         error_log("[RelDyn] saveDynamics for {$npcName}: copy has no load snapshot (not from getDynamics() in this process); it overwrites the stored state");
                     }
+                    // A copy read before a save load is not saved after it (save-load-rollback):
+                    // its changes, clocks included, belong to the timeline the load discarded.
+                    $gen = ($token !== null) ? (self::$loadedGenerations[$token] ?? null) : null;
+                    if ($gen !== null) {
+                        $nowGen = RelDynTimeline::freshLoadGeneration();
+                        if ($nowGen !== null && $nowGen !== $gen) {
+                            error_log("[RelDyn] saveDynamics for {$npcName}: a save was loaded after this copy was read (init row {$gen} -> {$nowGen}); its changes belong to the discarded timeline and are dropped");
+                            return false;
+                        }
+                        $gen = $nowGen ?? $gen;
+                    }
                     for ($attempt = 1; $attempt <= self::SAVE_MERGE_ATTEMPTS; $attempt++) {
                         $current = RelDynStorage::readKeyForUpdate($npcId, RelDynStorage::KEY_DYNAMICS);
                         if ($current === null) {
@@ -1457,7 +1471,7 @@ class RelationshipDynamics
                             $toWrite = self::syncLegacyFromDimensions(self::mergeDynamics($base, $mine, $theirs));
                         }
                         if (RelDynStorage::setKeyIfUnchanged($npcId, RelDynStorage::KEY_DYNAMICS, $current['expected'], $toWrite)) {
-                            $toWrite[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($toWrite);
+                            $toWrite[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($toWrite, $gen);
                             $dynamics = $toWrite;
                             return true;
                         }
@@ -1487,6 +1501,8 @@ class RelationshipDynamics
 
     /** token => the stored state (normalized) a loaded copy was derived from, this process only. */
     private static $loadedBases = [];
+    /** token => load generation (RelDynTimeline::loadGeneration) when the copy was read; null = unknown. */
+    private static $loadedGenerations = [];
 
     /** Stored blob in the shape getDynamics() hands out (defaults filled, dimensions migrated). */
     private static function normalizeStoredDynamics(?array $stored): array
@@ -1496,13 +1512,15 @@ class RelationshipDynamics
         return self::syncLegacyFromDimensions($d);
     }
 
-    private static function rememberLoadedBase(array $base): string
+    private static function rememberLoadedBase(array $base, ?int $generation = null): string
     {
-        $token = md5(serialize($base));
-        unset(self::$loadedBases[$token]);
+        $token = md5(serialize($base) . '|' . ($generation ?? '-'));
+        unset(self::$loadedBases[$token], self::$loadedGenerations[$token]);
         self::$loadedBases[$token] = $base;
+        self::$loadedGenerations[$token] = $generation;
         while (count(self::$loadedBases) > self::LOADED_BASES_MAX) {
-            unset(self::$loadedBases[array_key_first(self::$loadedBases)]);
+            $oldest = array_key_first(self::$loadedBases);
+            unset(self::$loadedBases[$oldest], self::$loadedGenerations[$oldest]);
         }
         return $token;
     }
@@ -6818,7 +6836,15 @@ class RelationshipDynamics
                 error_log("[RelDyn-EVAL] queuePendingEval: unknown NPC '{$npcName}', eval dropped");
                 return false;
             }
-            return RelDynStorage::appendItem($npcId, RelDynStorage::KEY_EVAL_INBOX, self::evalInboxEntry($evalResult));
+            // Anchored to the newest eventlog row now: a save load logged after it can tell
+            // whether it discarded this exchange (RelDynTimeline::inboxItemRolledBack)
+            $anchor = null;
+            try {
+                $anchor = RelDynTimeline::enabled() ? RelDynTimeline::newestEventlogRowid() : null;
+            } catch (\Throwable $e) {
+                self::logError('queuePendingEval anchor (queued_at orders the item instead)', $e);
+            }
+            return RelDynStorage::appendItem($npcId, RelDynStorage::KEY_EVAL_INBOX, self::evalInboxEntry($evalResult, $anchor));
         } catch (\Throwable $e) {
             error_log("[RelDyn-EVAL] queuePendingEval failed for {$npcName}: " . $e->getMessage());
             return false;
@@ -6826,12 +6852,18 @@ class RelationshipDynamics
     }
 
     /**
-     * One eval inbox entry: {queued_at, eval}. queued_at is a unix timestamp kept for the
-     * logs / editor only; nothing measures a duration with it.
+     * One eval inbox entry: {queued_at, eval, anchor_rowid?}. queued_at is a unix timestamp
+     * kept for the logs / editor and, without an anchor, to order the item against a save
+     * load; nothing measures a duration with it. anchor_rowid: an eventlog row logged no later
+     * than the exchange's queueing (the worker's job anchor, else the newest row then).
      */
-    public static function evalInboxEntry(array $evalResult): array
+    public static function evalInboxEntry(array $evalResult, ?int $anchorRowid = null): array
     {
-        return ['queued_at' => time(), 'eval' => $evalResult];
+        $entry = ['queued_at' => time(), 'eval' => $evalResult];
+        if ($anchorRowid !== null) {
+            $entry['anchor_rowid'] = $anchorRowid;
+        }
+        return $entry;
     }
 
     /**
@@ -6927,6 +6959,17 @@ class RelationshipDynamics
                     : (is_array($item['eval'] ?? null) ? $item['eval'] : (self::isEvalContractItem($item) ? $item : null));
                 if ($pending === null) {
                     error_log("[RelDyn-EVAL] processPendingEvalDeltas: unrecognised inbox item for {$npcName} dropped: " . substr((string) json_encode($item), 0, 300));
+                    $handled++;
+                    continue;
+                }
+                $rolledBack = false;
+                try {
+                    $rolledBack = $fromInbox && RelDynTimeline::enabled() && RelDynTimeline::inboxItemRolledBack($item);
+                } catch (\Throwable $e) {
+                    self::logError("processPendingEvalDeltas save-load check for {$npcName} (item applied)", $e);
+                }
+                if ($rolledBack) {
+                    error_log("[RelDyn-EVAL] processPendingEvalDeltas: eval item for {$npcName} dropped: a save load discarded its exchange (gamets " . ($pending['gamets'] ?? '?') . ")");
                     $handled++;
                     continue;
                 }
@@ -16242,3 +16285,5 @@ require_once __DIR__ . '/reldyn_fulfillment.php';
 require_once __DIR__ . '/reldyn_intimacy.php';
 // Romance promotion + Sharmat handoff (rulings 2026-09-24 §9); its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_romance.php';
+// Save-load consistency (roadmap save-load-rollback); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_timeline.php';
