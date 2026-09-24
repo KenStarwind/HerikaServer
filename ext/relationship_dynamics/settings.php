@@ -664,7 +664,7 @@ html, body {
             <label for="rd_rmh">Minimum Hours Apart</label>
             <input type="number" step="1" min="1" max="48" id="rd_rmh" name="reunion_min_hours"
                    value="<?php echo htmlspecialchars($cfg['reunion_min_hours']); ?>">
-            <span class="rd-hint">Real-time hours before reunion fires (default: 8)</span>
+            <span class="rd-hint">Game-calendar hours apart before reunion fires; waiting and sleeping count, but some real play must happen in between (default: 8)</span>
         </div>
         <div class="rd-row">
             <label for="rd_rma">Minimum Affection</label>

@@ -267,7 +267,7 @@ class RelationshipDynamics
     // GAMETS_PER_DECAY_TICK = 10 real minutes of normal gameplay:
     //   600 real seconds * 2315 gamets/sec = 1,389,000 gamets.
 
-    /** Gamets/real-second ratio above which a delta is classified as wait/sleep and filtered out. */
+    /** Gamets/real-second ratio above which a gap is logged as containing a wait/sleep. */
     const GAMETS_WAIT_SLEEP_THRESHOLD = 10000;
 
     /** Accumulated play gamets per decay tick (~10 real minutes at 20:1 game speed). */
@@ -1113,7 +1113,7 @@ class RelationshipDynamics
             'conflict_resolution_positive_count' => 3, // positive interactions
             'conflict_repair_passion_burst' => 20.0, // passion points
             'conflict_repair_passion_mult' => 1.5,   // multiplier
-            'reunion_min_hours' => 8,                // real play hours apart
+            'reunion_min_hours' => 8,                // game-calendar hours since last contact
             'reunion_min_affection' => 40,           // core affinity (-100..100)
             'stage_established_threshold' => 50,     // positive interactions
             'stage_deep_threshold' => 200,           // positive interactions
@@ -1181,7 +1181,58 @@ class RelationshipDynamics
             'director_goals_enabled' => true,
             // Temperament / attachment / maturity-type / trait auto-generation tables
             'temperament_autogen' => self::temperamentAutogenDefaults(),
+            // ===== Time (decisions 2026-09-23 §2: time does not heal, contact does) =====
+            // Contacts (this NPC's requests) an NPC back from a resolved boundary test
+            // waits before walking away again while its resentment is still high.
+            'walkaway_return_grace_contacts' => 5,
+            // Reunion: reunion_min_hours is GAME-CALENDAR hours since the last contact; the
+            // time apart must also hold this many real minutes of filtered play (no reunion
+            // from a wait or sleep alone).
+            'reunion_min_play_minutes' => 10,
+            // Fester (MDD 15.5 + decisions §2): while a conflict is open, an NPC with
+            // maturity (0..100) below fester_maturity_below gains this much RAW resentment
+            // (0..100 points) per game-calendar day. Raw goes through applyDelta, which adds
+            // the 15.5 +50% for maturity < 50 and the accumulator physics (inverted rubber
+            // band, attachment gain mult), so the felt rate is roughly 2-4x the raw rate.
+            // Starting value 1.0: half the §5 jealousy-conversion k=2, because of that physics.
+            'fester_resentment_per_game_day' => 1.0,
+            'fester_maturity_below' => 50,
+            // Positive-state fade with absence (decisions §2), passion only: after
+            // passion_absence_grace_game_hours without contact, passion (0..100) loses
+            // passion_absence_fade_per_game_day per game-calendar day x attachment multiplier,
+            // down to the stage floor. In-contact decay stays decayPassion() on the play clock.
+            'passion_absence_grace_game_hours' => 24,
+            'passion_absence_fade_per_game_day' => 3.0,
+            'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
+            // Global neglect (decisions §2): per RelDyn bond type (getRelationshipType), game days
+            // without contact before neglect starts, and RAW resentment (0..100 points, through
+            // applyDelta like fester) per game day after that. Types not listed never accrue.
+            'neglect_enabled' => true,
+            'neglect_bond_types' => [
+                'bonded'     => ['grace_game_days' => 3, 'resentment_per_game_day' => 1.0],
+                'crush'      => ['grace_game_days' => 4, 'resentment_per_game_day' => 0.75],
+                'sworn'      => ['grace_game_days' => 5, 'resentment_per_game_day' => 0.5],
+                'friend'     => ['grace_game_days' => 7, 'resentment_per_game_day' => 0.25],
+                'friendzone' => ['grace_game_days' => 7, 'resentment_per_game_day' => 0.25],
+                'parasite'   => ['grace_game_days' => 2, 'resentment_per_game_day' => 0.5],
+            ],
+            // Grace multiplier by attachment style: Anxious feels it sooner, Avoidant later.
+            'neglect_attachment_grace_mult' => ['anxious' => 0.5, 'avoidant' => 2.0, 'secure' => 1.0, 'toxic' => 0.75],
+            // Calendar scan: NPCs whose calendar step is at least this many game hours old are
+            // advanced on any request; at most calendar_scan_max_npcs per request.
+            'calendar_scan_interval_game_hours' => 1,
+            'calendar_scan_max_npcs' => 10,
         ];
+    }
+
+    /**
+     * One config value, falling back to the current default when neither the stored row
+     * nor defaultConfig() has the key (getConfig() already lays the row over the defaults).
+     */
+    public static function configValue(string $key)
+    {
+        $cfg = self::getConfig();
+        return array_key_exists($key, $cfg) ? $cfg[$key] : (self::defaultConfig()[$key] ?? null);
     }
 
     /** Drop cached config and close any open request scope, so nothing stays cached. */
@@ -1676,9 +1727,11 @@ class RelationshipDynamics
     /**
      * Update filtered play time using gamets (Skyrim internal game clock).
      *
-     * Compares gamets delta against real-time delta to detect wait/sleep.
+     * Compares gamets delta against real-time delta to drop wait/sleep.
      * Normal gameplay at 20:1 time compression produces ~2315 gamets/real-sec.
-     * Wait/sleep produces 100K+ gamets/real-sec -- those deltas are discarded.
+     * Wait/sleep produces 100K+ gamets/real-sec. The credit is capped at
+     * real seconds x GAMETS_PER_REAL_SECOND, so a wait or sleep anywhere in the
+     * gap adds nothing beyond the real seconds that passed.
      *
      * First call (last_gamets = 0) initializes without adding time.
      *
@@ -1722,19 +1775,19 @@ class RelationshipDynamics
             return 0.0;
         }
 
-        // Calculate ratio: gamets per real second
-        $gametsPerSecond = $gametsDelta / $realDelta;
-
-        // Filter: if ratio exceeds threshold, this is wait/sleep -- discard
-        if ($gametsPerSecond > self::GAMETS_WAIT_SLEEP_THRESHOLD) {
-            self::log("[RelDyn-GAMETS] FILTERED wait/sleep: delta={$gametsDelta} gamets in {$realDelta}s (ratio=" . round($gametsPerSecond, 0) . " > " . self::GAMETS_WAIT_SLEEP_THRESHOLD . ")");
-            return 0.0;
+        // Credit at most what normal play (timescale 20, GAMETS_PER_REAL_SECOND) produces in
+        // the real seconds that passed. A gap can mix play with a wait or sleep (1 h of play
+        // + a 24 h sleep averages ~5100 gamets/s, under GAMETS_WAIT_SLEEP_THRESHOLD), so a
+        // ratio test over the whole gap cannot drop the sleep; the cap drops it. A pure wait
+        // or sleep is credited only the few real seconds it took.
+        $credited = min($gametsDelta, $realDelta * self::GAMETS_PER_REAL_SECOND);
+        if ($credited < $gametsDelta && ($gametsDelta / $realDelta) > self::GAMETS_WAIT_SLEEP_THRESHOLD) {
+            self::log("[RelDyn-GAMETS] wait/sleep in gap: delta={$gametsDelta} gamets in {$realDelta}s, credited {$credited}");
         }
 
-        // Real gameplay -- accumulate
-        $dynamics['_accumulated_play_gamets'] = floatval($dynamics['_accumulated_play_gamets'] ?? 0) + $gametsDelta;
+        $dynamics['_accumulated_play_gamets'] = floatval($dynamics['_accumulated_play_gamets'] ?? 0) + $credited;
 
-        return $gametsDelta;
+        return (float) $credited;
     }
 
     /**
@@ -1791,11 +1844,39 @@ class RelationshipDynamics
         return fmod($gamets / self::GAMETS_PER_DAY, 1.0) * 24.0;
     }
 
-    // Timer helpers. Decay and cooldowns run on filtered play time
-    // (_accumulated_play_gamets); absence runs on the game calendar (raw gamets).
-    // Never the wall clock. A checkpoint that is unset, or ahead of its clock
-    // (a wall-clock value from an older build, or an earlier save loaded), reads
-    // as null so callers can re-arm it instead of trusting it.
+    // ===================== CLOCK MODEL (decisions 2026-09-23 §2) =====================
+    // Never the IRL wall clock for anything that changes how an NPC feels.
+    //
+    // 1. GAME CALENDAR: raw gamets from the game ($gameRequest[2]); 1 game day =
+    //    GAMETS_PER_DAY, 1 game hour = GAMETS_PER_DAY/24. Waiting and sleeping count,
+    //    because they are time passing in the world. Used for everything that is about
+    //    time APART or time in the WORLD:
+    //      - contact stamp _last_contact_gamets (markContact) and the reunion spike
+    //        (checkReunion: game hours apart, see its wait-scum guard below);
+    //      - the calendar step (advanceCalendar via runCalendarScan, checkpoint in
+    //        plugin_extended_data.reldyn.calendar): fester, global neglect, passion
+    //        absence fade;
+    //      - walkaway boundary test (24-48 h) and hoover sleeper (72-96 h);
+    //      - consumable expiry, plasticity override (30 game days), night/moon.
+    //    Rule: negative states never go DOWN on this clock (time does not heal); they
+    //    only go down through positive contact. Positive states fade on it.
+    // 2. FILTERED PLAY CLOCK: _accumulated_play_gamets, per NPC, advanced by
+    //    updatePlayTime() on that NPC's requests and capped at real seconds x
+    //    GAMETS_PER_REAL_SECOND, so waits and sleeps add nothing. Unit: play gamets;
+    //    GAMETS_PER_REAL_HOUR = one real hour of play. Used for what happens WHILE the
+    //    player is playing: in-contact passion and jealousy decay, the diminishing-
+    //    returns session multiplier, cooldowns (resentment -1 debounce, ick, divine
+    //    intervention, ambient trickle), the hoover's 48 h after-glow context, and
+    //    reunion's check that the time apart held real play (no reunion from a wait).
+    //    A wait or sleep must never be able to trigger or clear these.
+    // 3. ACCUMULATED REAL SECONDS: _accumulated_time, capped at 300 s per gap. Only for
+    //    positive cooldowns that must not be farmable (diary reflection). Legacy users
+    //    still on it: attachment drift (18000 s) and grief bond duration, and the
+    //    resentment-decay debounce fallback before the play clock has a value.
+    //
+    // A checkpoint that is unset, or ahead of its clock (a value from another clock or
+    // an older build, or an earlier save loaded), reads as null so callers can re-arm
+    // it instead of trusting it.
 
     /** Record the current filtered play clock under $key. */
     public static function markPlayCheckpoint(array &$dynamics, string $key): void
@@ -2718,7 +2799,8 @@ class RelationshipDynamics
     // =========================================================================
 
     /**
-     * Apply time-based passion decay. Call at prerequest time.
+     * Apply in-contact passion decay on the play clock. Call at prerequest time.
+     * Fade across absences is advanceCalendar()'s (game calendar, attachment-scaled).
      */
     public static function decayPassion(&$dynamics)
     {
@@ -2995,35 +3077,28 @@ class RelationshipDynamics
     public static function checkReunion(&$dynamics, $npcAffection = 0)
     {
         $cfg = self::getConfig();
-        $minHours = floatval($cfg['reunion_min_hours'] ?? 8);
-        $minAff = intval($cfg['reunion_min_affection'] ?? 40);
+        $minHours = floatval(self::configValue('reunion_min_hours'));             // game-calendar hours
+        $minAff = intval($cfg['reunion_min_affection'] ?? 40);                    // core affinity, -100..100
+        $minPlayMinutes = floatval(self::configValue('reunion_min_play_minutes')); // real minutes of play
 
         // Already spiked this visit
         if (!empty($dynamics['reunion_spike_given'])) return 0.0;
 
-        $now = self::getPlayGamets($dynamics);
-        $lastSeen = floatval($dynamics['last_seen_at'] ?? 0);
-        if ($lastSeen <= 0) {
-            // First time — initialize, no spike
-            $dynamics['last_seen_at'] = $now;
-            return 0.0;
-        }
-
-        // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
-        // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
-        // itself passes 1e9 after ~120 real hours with an NPC.
-        if ($lastSeen > $now) {
-            $lastSeen = $now;
-            $dynamics['last_seen_at'] = $now;
-        }
+        // Time apart is game-calendar hours since the last contact (waiting and sleeping
+        // count). Null: no calendar contact yet (markContact starts it) or an earlier save.
+        $hoursApart = self::gameHoursSince($dynamics, '_last_contact_gamets');
+        if ($hoursApart === null) return 0.0;
 
         // Check affection threshold
         if ($npcAffection < $minAff) return 0.0;
 
-        $hoursApart = ($now - $lastSeen) / self::GAMETS_PER_REAL_HOUR;
         if ($hoursApart < $minHours) return 0.0;
 
-        // Calculate spike
+        // No wait-scumming: the separation must hold real play, not only a wait or sleep.
+        $playApart = self::playGametsSince($dynamics, '_last_contact_play_gamets') ?? 0.0;
+        if ($playApart / (self::GAMETS_PER_REAL_SECOND * 60.0) < $minPlayMinutes) return 0.0;
+
+        // Calculate spike (tiers in game-calendar hours)
         $spike = 0.0;
         if ($hoursApart >= 72) {
             $spike = 25.0;
@@ -3043,10 +3118,275 @@ class RelationshipDynamics
         $spike *= $tempMult;
 
         $dynamics['reunion_spike_given'] = true;
+        $dynamics['_reunion_hours_apart'] = round($hoursApart, 2);   // game-calendar hours, for context.php
 
-        self::log("Reunion spike for NPC: +{$spike} passion (hours_apart={$hoursApart}, temp_mult={$tempMult})");
+        self::log("Reunion spike for NPC: +{$spike} passion (game_hours_apart={$hoursApart}, temp_mult={$tempMult})");
 
         return $spike;
+    }
+
+    /**
+     * Record contact with the player now: this NPC's request is being handled. Stamps the
+     * game calendar (absence, reunion, neglect) and the play clock (reunion's check that
+     * the time apart held real play). Call after checkReunion() and after the calendar
+     * step for this NPC, which both measure the time since the previous contact.
+     */
+    public static function markContact(array &$dynamics): void
+    {
+        self::markGameClock($dynamics, '_last_contact_gamets');
+        self::markPlayCheckpoint($dynamics, '_last_contact_play_gamets');
+    }
+
+    // =========================================================================
+    // GAME-CALENDAR STEP (decisions 2026-09-23 §2: time does not heal, contact does)
+    // =========================================================================
+
+    /**
+     * Raw resentment (0..100 points) handed to applyDelta per call. Calendar resentment
+     * accrues linearly into _calendar_resentment_raw and is applied in these fixed quanta,
+     * so the result does not depend on how often the calendar is stepped (applyDelta's
+     * inverted rubber band makes one big delta and many small ones differ).
+     */
+    const CALENDAR_RESENTMENT_QUANTUM = 1.0;
+
+    /** Game days (raw gamets / GAMETS_PER_DAY) of [from, to] at or after $start. */
+    private static function calendarDaysFrom(float $from, float $to, float $start): float
+    {
+        return max(0.0, $to - max($from, $start)) / self::GAMETS_PER_DAY;
+    }
+
+    /**
+     * Advance one NPC through game-calendar time [from, to] (raw gamets) with no contact:
+     *  - fester: open conflict + maturity below fester_maturity_below -> raw resentment per day;
+     *  - neglect: bonded NPC past its grace since _last_contact_gamets -> raw resentment per
+     *    day, logged as one 'neglect' grievance per absence;
+     *  - passion fade: past the absence grace, passion fades per day x attachment multiplier
+     *    down to the stage floor.
+     * Nothing negative is ever reduced here. Neglect and fade are skipped while the NPC is
+     * the one who left (walkaway). Pure: no database, no clock reads.
+     *
+     * @return array ['game_days', 'resentment_raw', 'resentment', 'neglect_days', 'passion_fade', 'bond_type']
+     */
+    public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
+    {
+        $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0,
+                'neglect_days' => 0.0, 'passion_fade' => 0.0, 'bond_type' => null];
+        if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
+            return $out;
+        }
+        $days = ($toGamets - $fromGamets) / self::GAMETS_PER_DAY;
+        $out['game_days'] = $days;
+
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);   // 0..100
+        $attachment = self::getAttachmentStyle($dynamics);
+        $away = ($dynamics['_walkaway_state'] ?? 'normal') !== 'normal';
+        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);       // raw gamets
+        $raw = 0.0;                                                            // raw resentment points
+
+        // Fester: an open conflict in an immature NPC grows every game day.
+        if (!empty($dynamics['in_conflict']) && $maturity < floatval(self::configValue('fester_maturity_below'))) {
+            $raw += floatval(self::configValue('fester_resentment_per_game_day')) * $days;
+        }
+
+        // Neglect: game days past the bond's grace since the player's last contact.
+        if (!$away && $lastContact > 0 && self::configValue('neglect_enabled')) {
+            $bondType = self::getRelationshipType('', $dynamics);
+            $out['bond_type'] = $bondType;
+            $bond = (self::configValue('neglect_bond_types') ?? [])[$bondType] ?? null;
+            if (is_array($bond)) {
+                $graceMult = floatval((self::configValue('neglect_attachment_grace_mult') ?? [])[$attachment] ?? 1.0);
+                $graceDays = floatval($bond['grace_game_days'] ?? 0) * $graceMult;
+                $neglectDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceDays * self::GAMETS_PER_DAY);
+                if ($neglectDays > 0) {
+                    $neglectRaw = floatval($bond['resentment_per_game_day'] ?? 0) * $neglectDays;
+                    $raw += $neglectRaw;
+                    $out['neglect_days'] = $neglectDays;
+                    self::recordNeglectGrievance($dynamics, $lastContact, $toGamets, $neglectRaw);
+                }
+            }
+        }
+
+        // Positive states fade with absence (passion), scaled by attachment.
+        if (!$away && $lastContact > 0) {
+            $graceGamets = floatval(self::configValue('passion_absence_grace_game_hours')) * self::GAMETS_PER_DAY / 24.0;
+            $absentDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceGamets);
+            if ($absentDays > 0) {
+                $mult = floatval((self::configValue('passion_absence_attachment_mult') ?? [])[$attachment] ?? 1.0);
+                $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
+                $floor = floatval(self::STAGE_PARAMS[$stage]['floor'] ?? 0);
+                $passion = self::getPassion($dynamics);
+                if ($passion > $floor) {
+                    $fade = floatval(self::configValue('passion_absence_fade_per_game_day')) * $absentDays * $mult;
+                    $new = max($floor, $passion - $fade);
+                    self::setPassion($dynamics, $new);
+                    $out['passion_fade'] = $passion - $new;
+                }
+            }
+        }
+
+        // Feed the resentment accumulator in fixed quanta (see CALENDAR_RESENTMENT_QUANTUM).
+        $out['resentment_raw'] = $raw;
+        $buffer = floatval($dynamics['_calendar_resentment_raw'] ?? 0) + $raw;
+        $max = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
+        while ($buffer >= self::CALENDAR_RESENTMENT_QUANTUM - 1e-9) {
+            if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) >= $max) {
+                $buffer = 0.0;   // already at the ceiling: nothing left to feel
+                break;
+            }
+            $out['resentment'] += self::applyDelta('resentment', $dynamics, self::CALENDAR_RESENTMENT_QUANTUM, $temperament);
+            $buffer -= self::CALENDAR_RESENTMENT_QUANTUM;
+        }
+        $dynamics['_calendar_resentment_raw'] = round(max(0.0, $buffer), 9);
+
+        return $out;
+    }
+
+    /** One 'neglect' grievance per absence (keyed by the contact it counts from), kept current. */
+    private static function recordNeglectGrievance(array &$dynamics, float $sinceGamets, float $nowGamets, float $raw): void
+    {
+        if (!isset($dynamics['dimensions']['resentment']) || !is_array($dynamics['dimensions']['resentment'])) {
+            $dynamics['dimensions']['resentment'] = ['x' => 0, 'baseline' => 0, 'active' => true];
+        }
+        $log = $dynamics['dimensions']['resentment']['grievance_log'] ?? [];
+        if (!is_array($log)) $log = [];
+        $gameDays = ($nowGamets - $sinceGamets) / self::GAMETS_PER_DAY;
+        $found = null;
+        foreach ($log as $i => $entry) {
+            if (is_array($entry) && ($entry['tag'] ?? null) === 'neglect'
+                && abs(floatval($entry['since_gamets'] ?? -1) - $sinceGamets) < 0.5) {
+                $found = $i;
+            }
+        }
+        if ($found !== null) {
+            $log[$found]['raw'] = round(floatval($log[$found]['raw'] ?? 0) + $raw, 4);
+            $log[$found]['game_days'] = $gameDays;
+            $log[$found]['gamets'] = $nowGamets;
+            $log[$found]['text'] = sprintf('neglect: no contact for %.1f game days', $gameDays);
+        } else {
+            $log[] = [
+                'text' => sprintf('neglect: no contact for %.1f game days', $gameDays),
+                'tag' => 'neglect',
+                'since_gamets' => $sinceGamets,
+                'game_days' => $gameDays,
+                'raw' => round($raw, 4),
+                'gamets' => $nowGamets,
+            ];
+        }
+        $dynamics['dimensions']['resentment']['grievance_log'] = array_slice($log, -10);
+    }
+
+    /**
+     * Advance the game calendar for NPCs whose calendar step is due (at least
+     * calendar_scan_interval_game_hours old), so time moves for every bond on any request,
+     * not only for the NPC being talked to. $priorityNpc (the NPC of this request) goes
+     * first when due, so its absence is felt before contact is marked; then at most
+     * calendar_scan_max_npcs others, oldest step first. Cost when nothing is due: one SELECT
+     * (plus two small reads for $priorityNpc).
+     *
+     * @return array npcName => ['calendar' => advanceCalendar() result|null, 'walkaway' => state|null, 'hoover' => bool]
+     */
+    public static function runCalendarScan(?string $priorityNpc = null): array
+    {
+        $now = self::currentGamets();   // raw game-calendar gamets
+        if ($now <= 0 || empty($GLOBALS['db'])) {
+            return [];
+        }
+        $dueBefore = $now - floatval(self::configValue('calendar_scan_interval_game_hours')) * self::GAMETS_PER_DAY / 24.0;
+        $limit = max(0, intval(self::configValue('calendar_scan_max_npcs')));
+
+        $done = [];
+        try {
+            if ($priorityNpc !== null && $priorityNpc !== '') {
+                $id = RelDynStorage::resolveNpcId($priorityNpc);
+                if ($id !== null) {
+                    $r = self::advanceNpcCalendar($id, $priorityNpc, $now, $dueBefore);
+                    if ($r !== null) $done[$priorityNpc] = $r;
+                }
+            }
+            if ($limit > 0) {
+                $others = 0;
+                foreach (RelDynStorage::dueForCalendar($dueBefore, $limit + count($done)) as $row) {
+                    if ($others >= $limit) break;
+                    if (isset($done[$row['npc_name']])) continue;   // the priority NPC, already stepped
+                    $r = self::advanceNpcCalendar($row['id'], $row['npc_name'], $now, $dueBefore);
+                    if ($r !== null) {
+                        $done[$row['npc_name']] = $r;
+                        $others++;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-CAL] calendar scan failed: " . $e->getMessage());
+        }
+        return $done;
+    }
+
+    /**
+     * One NPC's calendar step from its stored checkpoint to $now (raw gamets).
+     *
+     * The interval is claimed first with a compare-and-set on the 'calendar' key: of two
+     * overlapping requests only the one whose write lands applies it, the other skips
+     * (a crash after the claim loses the interval rather than applying it twice). The
+     * effects are then saved with the usual merge, so a concurrent save of this NPC keeps
+     * both. First sight (no step yet, or a save loaded from before the step) starts the
+     * clocks at $now without backdated effects.
+     *
+     * @return array|null null when not due or another request took the interval
+     */
+    public static function advanceNpcCalendar(int $npcId, string $npcName, float $now, float $dueBefore): ?array
+    {
+        $cur = RelDynStorage::readKeyForUpdate($npcId, RelDynStorage::KEY_CALENDAR);
+        if ($cur === null) {
+            return null;
+        }
+        $from = floatval($cur['value']['checked_gamets'] ?? 0);
+        $firstSight = ($from <= 0 || $from > $now);
+        if (!$firstSight && $from > $dueBefore) {
+            return null;
+        }
+        if (!RelDynStorage::setKeyIfUnchanged($npcId, RelDynStorage::KEY_CALENDAR, $cur['expected'], ['checked_gamets' => $now])) {
+            return null;
+        }
+
+        $dyn = self::getDynamics($npcName);
+        $changed = false;
+        $result = ['calendar' => null, 'walkaway' => null, 'hoover' => false];
+
+        if (floatval($dyn['_last_contact_gamets'] ?? 0) <= 0 || floatval($dyn['_last_contact_gamets']) > $now) {
+            $dyn['_last_contact_gamets'] = $now;   // absence counts from the first time we see them
+            $changed = true;
+        }
+        if (!$firstSight) {
+            $step = self::advanceCalendar($dyn, $from, $now);
+            $result['calendar'] = $step;
+            $changed = $changed || $step['resentment_raw'] > 0 || $step['passion_fade'] > 0;
+        }
+
+        // A walkaway resolves (or a Toxic sleeper hoovers back) while the player is elsewhere.
+        // 'pending' waits for the NPC's own next request, when they physically leave.
+        $cfg = self::getConfig();
+        $temperament = $dyn['inferred_temperament'] ?? $dyn['temperament'] ?? 'Stoic';
+        $walkState = $dyn['_walkaway_state'] ?? 'normal';
+        if (($cfg['autonomy_enabled'] ?? true) && in_array($walkState, ['active', 'boundary_test'], true)) {
+            $walkKeys = fn(array $d) => array_filter($d, fn($k) => is_string($k)
+                && (str_starts_with($k, '_walkaway_') || str_starts_with($k, '_boundary_test_')), ARRAY_FILTER_USE_KEY);
+            $before = $walkKeys($dyn);
+            $tick = self::resolveWalkawayTick($dyn, $npcName, $temperament, false);
+            $result['walkaway'] = $tick['state'];
+            // Save any state change, and clocks a first tick started (older builds' walkaways)
+            $changed = $changed || $tick['returned'] || $walkKeys($dyn) != $before;
+        }
+        if (($cfg['hoover_enabled'] ?? true) && self::checkHooverEligibility($dyn)) {
+            self::executeHoover($dyn, $npcName, $temperament);
+            $result['hoover'] = true;
+            $changed = true;
+        }
+
+        if ($changed) {
+            self::saveDynamics($npcName, $dyn);
+        }
+        return $result;
     }
 
     // =========================================================================
@@ -13907,18 +14247,18 @@ class RelationshipDynamics
         ],
     ];
 
-    // Walkaway constants
-    const WALKAWAY_RESENTMENT_TICK = -0.5;            // Resentment decay per tick when player stays away
+    // Walkaway constants. No passive resentment decay while the NPC is away (decisions
+    // 2026-09-23 §2: time does not heal); leaving them alone resolves the boundary test.
     const WALKAWAY_FOLLOW_RESENTMENT_MULT = 2.0;      // Resentment multiplier when player follows
     const WALKAWAY_FOLLOW_TRUST_PENALTY = -5.0;       // Permanent trust hit when player follows during walkaway
-    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum real play hours for boundary test
-    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum real play hours for boundary test
-    const WALKAWAY_RECOVERY_RESENTMENT_MAX = 50;       // Resentment must be below this to recover
-    const WALKAWAY_RECOVERY_COMFORT_MIN = 30;          // Comfort must be above this to recover
+    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum boundary test, game-calendar hours
+    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum boundary test, game-calendar hours
+    const WALKAWAY_RECOVERY_RESENTMENT_MAX = 50;       // Early recovery: resentment (0..100) below this
+    const WALKAWAY_RECOVERY_COMFORT_MIN = 30;          // Early recovery: comfort (0..100) above this
 
     // Hoover constants (Toxic exclusive)
-    const HOOVER_MIN_HOURS = 72;                       // Minimum real play hours before hoover triggers (MDD 6.6)
-    const HOOVER_MAX_HOURS = 96;                       // Maximum real play hours for random hoover window
+    const HOOVER_MIN_HOURS = 72;                       // Minimum sleeper timer, game-calendar hours (MDD 6.6, decisions §2)
+    const HOOVER_MAX_HOURS = 96;                       // Maximum sleeper timer, game-calendar hours
     const HOOVER_MATURITY_CAP = 40;                    // Maturity must be below this for hoover
     const HOOVER_RESENTMENT_REBUILD_MULT = 1.5;        // Post-hoover resentment rebuilds faster
     const HOOVER_WALKAWAY_THRESHOLD_REDUCTION = 0.20;  // Next walkaway triggers 20% sooner
@@ -14179,13 +14519,22 @@ class RelationshipDynamics
             return;
         }
 
-        // Calculate boundary test duration (random within range)
+        // Back from a resolved boundary test with the resentment still there: the player
+        // gets a few contacts to start repairing it before the NPC leaves again.
+        $grace = intval($dynamics['_walkaway_return_grace'] ?? 0);
+        if ($grace > 0) {
+            $dynamics['_walkaway_return_grace'] = $grace - 1;
+            self::log("[WALKAWAY] {$npcName} holds off leaving again ({$reason}); return grace left: " . ($grace - 1));
+            return;
+        }
+
+        // Calculate boundary test duration (random within range, game-calendar hours)
         $testHours = self::BOUNDARY_TEST_MIN_HOURS
                    + (mt_rand(0, 100) / 100.0) * (self::BOUNDARY_TEST_MAX_HOURS - self::BOUNDARY_TEST_MIN_HOURS);
 
         $dynamics['_walkaway_state'] = 'pending';
         $dynamics['_walkaway_reason'] = $reason;
-        self::markPlayCheckpoint($dynamics, '_walkaway_started_gamets');
+        self::markGameClock($dynamics, '_walkaway_started_calendar_gamets');
         $dynamics['_walkaway_boundary_test_hours'] = round($testHours, 1);
         $dynamics['_walkaway_player_followed'] = false;
 
@@ -14202,7 +14551,7 @@ class RelationshipDynamics
     public static function activateWalkaway(&$dynamics, $npcName)
     {
         $dynamics['_walkaway_state'] = 'active';
-        self::markPlayCheckpoint($dynamics, '_walkaway_activated_gamets');
+        self::markGameClock($dynamics, '_walkaway_activated_calendar_gamets');
 
         // Pause affinity decay during walkaway (they chose to leave, not forgotten)
         $dynamics['_walkaway_affinity_decay_paused'] = true;
@@ -14230,9 +14579,16 @@ class RelationshipDynamics
             return ['state' => $state, 'changed' => false];
         }
 
-        // Timers started by an older build hold wall-clock or game-calendar values
-        foreach (['_walkaway_started_gamets', '_walkaway_activated_gamets', '_boundary_test_started_gamets'] as $timerKey) {
-            self::rearmPlayCheckpoint($dynamics, $timerKey);
+        // Walkaway timers are game-calendar stamps. A walkaway started by an older build
+        // holds only play-clock or wall-clock stamps (other keys), and an earlier save puts
+        // a stamp in the future: (re)start those clocks now instead of trusting them.
+        $calendarKeys = ['_walkaway_started_calendar_gamets'];
+        if ($state === 'active' || $state === 'boundary_test') $calendarKeys[] = '_walkaway_activated_calendar_gamets';
+        if ($state === 'boundary_test') $calendarKeys[] = '_boundary_test_started_calendar_gamets';
+        foreach ($calendarKeys as $timerKey) {
+            if (self::gameHoursSince($dynamics, $timerKey) === null) {
+                self::markGameClock($dynamics, $timerKey);
+            }
         }
 
         // Pending → Active on next interaction
@@ -14265,27 +14621,25 @@ class RelationshipDynamics
         // Move to boundary test phase after activation
         if ($state === 'active') {
             $dynamics['_walkaway_state'] = 'boundary_test';
-            self::markPlayCheckpoint($dynamics, '_boundary_test_started_gamets');
+            self::markGameClock($dynamics, '_boundary_test_started_calendar_gamets');
             $result['state'] = 'boundary_test';
             $result['changed'] = true;
         }
 
-        // During boundary test — passive resentment decay
+        // During boundary test: no passive resentment decay (time away does not heal)
         if ($state === 'boundary_test' || $dynamics['_walkaway_state'] === 'boundary_test') {
-            self::applyDelta('resentment', $dynamics, self::WALKAWAY_RESENTMENT_TICK, $temperament);
-
             // Check boundary test outcome
             $boundaryResult = self::checkBoundaryTest($dynamics);
             if ($boundaryResult === 'recovery') {
                 $dynamics['_walkaway_state'] = 'recovery';
-                self::markPlayCheckpoint($dynamics, '_walkaway_recovery_gamets');
+                self::markGameClock($dynamics, '_walkaway_recovery_calendar_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
-                self::log("[WALKAWAY] {$npcName} entering recovery — conditions met");
+                self::log("[WALKAWAY] {$npcName} entering recovery — boundary test resolved");
                 $result['state'] = 'recovery';
                 $result['changed'] = true;
             } elseif ($boundaryResult === 'permanent') {
                 $dynamics['_walkaway_state'] = 'permanent';
-                self::markPlayCheckpoint($dynamics, '_walkaway_permanent_gamets');
+                self::markGameClock($dynamics, '_walkaway_permanent_calendar_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
                 self::log("[WALKAWAY] {$npcName} permanent departure — boundary test failed");
                 $result['state'] = 'permanent';
@@ -14304,37 +14658,73 @@ class RelationshipDynamics
      */
     public static function checkBoundaryTest($dynamics)
     {
-        if (floatval($dynamics['_boundary_test_started_gamets'] ?? 0) <= 0) {
+        if (floatval($dynamics['_boundary_test_started_calendar_gamets'] ?? 0) <= 0) {
             return null;
         }
 
-        // MDD 6.4 "hidden real-time timer": real hours of filtered play (never the game
-        // calendar, which one long sleep or wait would push past the whole test).
+        // Game-calendar hours (decisions 2026-09-23 §2): time apart in the world, so a
+        // wait or a sleep counts. Leaving them alone is what the test asks for.
         $testHours = floatval($dynamics['_walkaway_boundary_test_hours'] ?? 36);
-        $elapsedHours = self::playHoursSince($dynamics, '_boundary_test_started_gamets') ?? 0.0;
+        $elapsedHours = self::gameHoursSince($dynamics, '_boundary_test_started_calendar_gamets') ?? 0.0;
 
-        // Test hasn't expired yet — check early recovery
         $dims = $dynamics['dimensions'] ?? [];
         $resentment = floatval($dims['resentment']['x'] ?? 0);
         $comfort = floatval($dims['comfort']['x'] ?? 50);
 
-        // Recovery: resentment dropped below threshold AND comfort above minimum
+        // Early recovery: resentment already below threshold AND comfort above minimum
         if ($resentment < self::WALKAWAY_RECOVERY_RESENTMENT_MAX
             && $comfort > self::WALKAWAY_RECOVERY_COMFORT_MIN) {
             return 'recovery';
         }
 
-        // Test window expired — if conditions not met, it's permanent
-        if ($elapsedHours >= $testHours) {
-            return 'permanent';
-        }
-
-        // Player followed → immediate fail
+        // Player followed → failed (MDD 6.4)
         if (!empty($dynamics['_walkaway_player_followed'])) {
             return 'permanent';
         }
 
+        // A Toxic sleeper does not come back through the boundary test: it vanishes until
+        // its hoover (MDD 6.6, 72-96 game-calendar hours).
+        if (self::isHooverSleeper($dynamics)) {
+            return null;
+        }
+
+        // Left alone for the whole test → resolved. This clears the walkaway only; the
+        // resentment behind it stays until positive contact brings it down.
+        if ($elapsedHours >= $testHours) {
+            return 'recovery';
+        }
+
         return null; // Still testing
+    }
+
+    /**
+     * Advance a walkaway by one tick and carry out a resolved boundary test: the NPC
+     * returns and the walkaway state is cleared (resentment is left as it is), with a
+     * return grace so they do not walk out again before the player can make amends.
+     *
+     * @return array ['state' => string after the tick, 'returned' => bool]
+     */
+    public static function resolveWalkawayTick(&$dynamics, $npcName, $temperament = 'Stoic', $isDialogue = false)
+    {
+        $tick = self::processWalkawayTick($dynamics, $npcName, $temperament, $isDialogue);
+        $returned = false;
+        if (($tick['state'] ?? '') === 'recovery') {
+            self::executeAutonomousReturn($npcName, $dynamics);
+            self::resetWalkawayState($dynamics);
+            $dynamics['_walkaway_return_grace'] = max(0, intval(self::configValue('walkaway_return_grace_contacts')));
+            $returned = true;
+        }
+        return ['state' => $dynamics['_walkaway_state'] ?? 'normal', 'returned' => $returned];
+    }
+
+    /** Toxic/Disorganized NPC below the hoover maturity cap, with the hoover enabled. */
+    public static function isHooverSleeper($dynamics): bool
+    {
+        if (!(self::getConfig()['hoover_enabled'] ?? true)) {
+            return false;
+        }
+        return ($dynamics['attachment_style'] ?? 'secure') === 'toxic'
+            && floatval($dynamics['dimensions']['maturity']['x'] ?? 50) < self::HOOVER_MATURITY_CAP;
     }
 
     /**
@@ -14469,6 +14859,11 @@ class RelationshipDynamics
             $dynamics['_boundary_test_started_gamets'],
             $dynamics['_walkaway_recovery_gamets'],
             $dynamics['_walkaway_permanent_gamets'],
+            $dynamics['_walkaway_started_calendar_gamets'],
+            $dynamics['_walkaway_activated_calendar_gamets'],
+            $dynamics['_boundary_test_started_calendar_gamets'],
+            $dynamics['_walkaway_recovery_calendar_gamets'],
+            $dynamics['_walkaway_permanent_calendar_gamets'],
             // legacy wall-clock stamps (pre-3.4.1 builds)
             $dynamics['_walkaway_started_at'],
             $dynamics['_walkaway_activated_at'],
@@ -14518,26 +14913,24 @@ class RelationshipDynamics
             return false;
         }
 
-        // Must be toxic attachment
+        // Must be toxic attachment with maturity below the cap
         $attachment = $dynamics['attachment_style'] ?? 'secure';
         if ($attachment !== 'toxic') {
             return false;
         }
-
-        // Maturity must be below cap
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
         if ($maturity >= self::HOOVER_MATURITY_CAP) {
             return false;
         }
 
-        // Walkaway must have been active long enough (MDD 6.6: 72-96 IRL hours = real play hours)
-        $walkKey = !empty($dynamics['_walkaway_activated_gamets']) ? '_walkaway_activated_gamets' : '_walkaway_started_gamets';
+        // Sleeper timer: 72-96 game-calendar hours since they left (decisions 2026-09-23 §2)
+        $walkKey = !empty($dynamics['_walkaway_activated_calendar_gamets']) ? '_walkaway_activated_calendar_gamets' : '_walkaway_started_calendar_gamets';
         $walkStart = intval($dynamics[$walkKey] ?? 0);
         if ($walkStart === 0) {
             return false;
         }
 
-        $elapsedHours = self::playHoursSince($dynamics, $walkKey);
+        $elapsedHours = self::gameHoursSince($dynamics, $walkKey);
         if ($elapsedHours === null) {
             return false;
         }

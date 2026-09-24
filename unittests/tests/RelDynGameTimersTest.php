@@ -351,54 +351,54 @@ final class RelDynGameTimersTest extends TestCase
         ];
     }
 
-    // MDD 6.4/6.6 real-time timers run on real hours of filtered play, not the game
-    // calendar (a single 48 h sleep must not end a boundary test or unlock a hoover).
-    public function testBoundaryTestExpiresOnRealPlayHours(): void
+    // Decisions 2026-09-23 §2: the boundary test (MDD 6.4) and the hoover sleeper (MDD 6.6)
+    // run on the game calendar; leaving the NPC alone resolves the test (walkaway cleared,
+    // resentment kept). The hoover's after-glow context stays on played hours.
+    public function testBoundaryTestUsesTheGameCalendar(): void
     {
-        $realHour = RelationshipDynamics::GAMETS_PER_REAL_HOUR;
-        $start = 40.0 * $realHour;
-        self::setClock(self::at(40, 8));
+        $start = self::setClock(self::at(40, 8));
         $dyn = self::walkawayDynamics();
-        $dyn['_accumulated_play_gamets'] = $start;
+        $dyn['attachment_style'] = 'secure';          // not a hoover sleeper
+        $dyn['_accumulated_play_gamets'] = 40.0 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
 
         RelationshipDynamics::initiateWalkaway($dyn, 'Ashe', 'resentment');
-        $this->assertSame($start, $dyn['_walkaway_started_gamets']);
+        $this->assertSame($start, $dyn['_walkaway_started_calendar_gamets']);
         $dyn['_walkaway_boundary_test_hours'] = 30.0;
 
         RelationshipDynamics::processWalkawayTick($dyn, 'Ashe', 'Stoic'); // pending -> active
-        $this->assertSame($start, $dyn['_walkaway_activated_gamets']);
+        $this->assertSame($start, $dyn['_walkaway_activated_calendar_gamets']);
         RelationshipDynamics::processWalkawayTick($dyn, 'Ashe', 'Stoic'); // active -> boundary_test
         $this->assertSame('boundary_test', $dyn['_walkaway_state']);
-        $this->assertSame($start, $dyn['_boundary_test_started_gamets']);
-        $dyn['dimensions']['resentment']['x'] = 80; // keep recovery out of reach
+        $this->assertSame($start, $dyn['_boundary_test_started_calendar_gamets']);
+        $this->assertEquals(80, $dyn['dimensions']['resentment']['x'], 'no passive resentment decay while away');
 
-        self::setClock(self::at(40, 8) + 72 * self::HOUR);   // three game days of sleeping
-        $dyn['_accumulated_play_gamets'] = $start + 29 * $realHour;
-        $this->assertNull(RelationshipDynamics::checkBoundaryTest($dyn), '29 real play hours: still testing');
+        self::setClock($start + 29 * self::HOUR);
+        $this->assertNull(RelationshipDynamics::checkBoundaryTest($dyn), '29 game hours: still testing');
 
-        $dyn['_accumulated_play_gamets'] = $start + 31 * $realHour;
-        $this->assertSame('permanent', RelationshipDynamics::checkBoundaryTest($dyn), '31 real play hours: expired');
+        self::setClock($start + 31 * self::HOUR);
+        $this->assertSame('recovery', RelationshipDynamics::checkBoundaryTest($dyn), '31 game hours, left alone: resolved');
     }
 
-    public function testHooverWindowAndContextUseRealPlayHours(): void
+    public function testHooverWindowUsesGameCalendarAndContextUsesPlayHours(): void
     {
         $realHour = RelationshipDynamics::GAMETS_PER_REAL_HOUR;
-        $start = 50 * $realHour + 37; // seed: intval(start) % 100 = 37
+        $start = self::setClock(self::at(50, 0) + 37); // seed: intval(start) % 100 = 37
+        $this->assertSame(37, intval($start) % 100);
         $dyn = self::walkawayDynamics();
         $dyn['_walkaway_state'] = 'boundary_test';
-        $dyn['_walkaway_activated_gamets'] = $start;
+        $dyn['_walkaway_activated_calendar_gamets'] = $start;
+        $dyn['_accumulated_play_gamets'] = 500 * $realHour;
         $hooverHours = RelationshipDynamics::HOOVER_MIN_HOURS + 0.37 * (RelationshipDynamics::HOOVER_MAX_HOURS - RelationshipDynamics::HOOVER_MIN_HOURS);
 
-        self::setClock(self::at(50, 0) + 200 * self::HOUR);   // calendar far past the window
-        $dyn['_accumulated_play_gamets'] = $start + ($hooverHours - 1) * $realHour;
+        self::setClock($start + ($hooverHours - 1) * self::HOUR);
         $this->assertFalse(RelationshipDynamics::checkHooverEligibility($dyn));
-        $dyn['_accumulated_play_gamets'] = $start + ($hooverHours + 1) * $realHour;
+        self::setClock($start + ($hooverHours + 1) * self::HOUR);
         $this->assertTrue(RelationshipDynamics::checkHooverEligibility($dyn));
 
         $hooverAt = $dyn['_accumulated_play_gamets'];
         RelationshipDynamics::executeHoover($dyn, 'Ashe', 'Stoic');
-        $this->assertSame($hooverAt, $dyn['_hoover_last_gamets']);
-        $this->assertArrayNotHasKey('_walkaway_activated_gamets', $dyn, 'walkaway clock cleared on reset');
+        $this->assertEquals($hooverAt, $dyn['_hoover_last_gamets']);
+        $this->assertArrayNotHasKey('_walkaway_activated_calendar_gamets', $dyn, 'walkaway clock cleared on reset');
 
         $dyn['_accumulated_play_gamets'] = $hooverAt + 47 * $realHour;
         $this->assertNotNull(RelationshipDynamics::getHooverContext($dyn, 'Ashe'));
