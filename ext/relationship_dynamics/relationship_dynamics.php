@@ -267,7 +267,7 @@ class RelationshipDynamics
     // GAMETS_PER_DECAY_TICK = 10 real minutes of normal gameplay:
     //   600 real seconds * 2315 gamets/sec = 1,389,000 gamets.
 
-    /** Gamets/real-second ratio above which a delta is classified as wait/sleep and filtered out. */
+    /** Gamets/real-second ratio above which a gap is logged as containing a wait/sleep. */
     const GAMETS_WAIT_SLEEP_THRESHOLD = 10000;
 
     /** Accumulated play gamets per decay tick (~10 real minutes at 20:1 game speed). */
@@ -1527,9 +1527,11 @@ class RelationshipDynamics
     /**
      * Update filtered play time using gamets (Skyrim internal game clock).
      *
-     * Compares gamets delta against real-time delta to detect wait/sleep.
+     * Compares gamets delta against real-time delta to drop wait/sleep.
      * Normal gameplay at 20:1 time compression produces ~2315 gamets/real-sec.
-     * Wait/sleep produces 100K+ gamets/real-sec -- those deltas are discarded.
+     * Wait/sleep produces 100K+ gamets/real-sec. The credit is capped at
+     * real seconds x GAMETS_PER_REAL_SECOND, so a wait or sleep anywhere in the
+     * gap adds nothing beyond the real seconds that passed.
      *
      * First call (last_gamets = 0) initializes without adding time.
      *
@@ -1573,19 +1575,19 @@ class RelationshipDynamics
             return 0.0;
         }
 
-        // Calculate ratio: gamets per real second
-        $gametsPerSecond = $gametsDelta / $realDelta;
-
-        // Filter: if ratio exceeds threshold, this is wait/sleep -- discard
-        if ($gametsPerSecond > self::GAMETS_WAIT_SLEEP_THRESHOLD) {
-            self::log("[RelDyn-GAMETS] FILTERED wait/sleep: delta={$gametsDelta} gamets in {$realDelta}s (ratio=" . round($gametsPerSecond, 0) . " > " . self::GAMETS_WAIT_SLEEP_THRESHOLD . ")");
-            return 0.0;
+        // Credit at most what normal play (timescale 20, GAMETS_PER_REAL_SECOND) produces in
+        // the real seconds that passed. A gap can mix play with a wait or sleep (1 h of play
+        // + a 24 h sleep averages ~5100 gamets/s, under GAMETS_WAIT_SLEEP_THRESHOLD), so a
+        // ratio test over the whole gap cannot drop the sleep; the cap drops it. A pure wait
+        // or sleep is credited only the few real seconds it took.
+        $credited = min($gametsDelta, $realDelta * self::GAMETS_PER_REAL_SECOND);
+        if ($credited < $gametsDelta && ($gametsDelta / $realDelta) > self::GAMETS_WAIT_SLEEP_THRESHOLD) {
+            self::log("[RelDyn-GAMETS] wait/sleep in gap: delta={$gametsDelta} gamets in {$realDelta}s, credited {$credited}");
         }
 
-        // Real gameplay -- accumulate
-        $dynamics['_accumulated_play_gamets'] = floatval($dynamics['_accumulated_play_gamets'] ?? 0) + $gametsDelta;
+        $dynamics['_accumulated_play_gamets'] = floatval($dynamics['_accumulated_play_gamets'] ?? 0) + $credited;
 
-        return $gametsDelta;
+        return (float) $credited;
     }
 
     /**
