@@ -27,8 +27,8 @@ class RelDynStorage
     const KEY_DYNAMICS   = 'dynamics';
     const KEY_EVAL_INBOX = 'eval_inbox';
 
-    // Pre-3.4.1 location of the whole state blob (kept in place after migration).
-    const LEGACY_EXTENDED_KEY = 'relationship_dynamics';
+    // Fresh start on 3.4.1 (decisions 2026-09-23 section 3): the April blob in
+    // extended_data.relationship_dynamics is never read or copied.
 
     private static function db()
     {
@@ -99,32 +99,6 @@ class RelDynStorage
     public static function saveDynamics(int $npcId, array $dynamics): bool
     {
         return self::setKey($npcId, self::KEY_DYNAMICS, $dynamics);
-    }
-
-    /**
-     * One-time, idempotent migration: copy extended_data.relationship_dynamics into
-     * plugin_extended_data.reldyn.dynamics only when the plugin key is absent. The old key
-     * is left untouched. Returns true when a copy happened.
-     */
-    public static function migrateLegacy(int $npcId): bool
-    {
-        $row = self::db()->fetchOne(
-            "UPDATE core_npc_master
-             SET plugin_extended_data = jsonb_set(
-                 plugin_extended_data,
-                 ARRAY[\$2::text],
-                 (CASE WHEN jsonb_typeof(plugin_extended_data -> \$2::text) = 'object'
-                       THEN plugin_extended_data -> \$2::text ELSE '{}'::jsonb END)
-                 || jsonb_build_object(\$3::text, extended_data -> 'relationship_dynamics'),
-                 true)
-             WHERE id = \$1
-               AND (plugin_extended_data -> \$2::text -> \$3::text) IS NULL
-               AND jsonb_typeof(extended_data -> 'relationship_dynamics') = 'object'
-               AND extended_data -> 'relationship_dynamics' <> '{}'::jsonb
-             RETURNING id",
-            [$npcId, self::PLUGIN_ID, self::KEY_DYNAMICS]
-        );
-        return isset($row['id']);
     }
 
     /** Replace one top-level key of the 'reldyn' namespace; other keys are untouched. */

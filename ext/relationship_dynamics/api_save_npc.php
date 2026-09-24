@@ -128,12 +128,6 @@ try {
                 $dynamics['interests'] = !empty($prefs) ? $prefs : null;
             }
 
-            // Backward compat: accept old activity_preferences key
-            if (!isset($input['interests']) && isset($input['activity_preferences']) && is_array($input['activity_preferences'])) {
-                $dynamics['interests'] = RelationshipDynamics::migrateOldPreferences($input['activity_preferences']);
-                unset($dynamics['activity_preferences']);
-            }
-
             // ========== MATURITY DIMENSION (PR 3) ==========
             // Update maturity overrides if provided
             if (isset($input['maturity_x']) && $input['maturity_x'] !== null && $input['maturity_x'] !== '') {
@@ -626,5 +620,6 @@ try {
             echo json_encode(['ok' => false, 'error' => 'Unknown action: ' . $action]);
     }
 } catch (Throwable $e) {
+    RelationshipDynamics::logError('api_save_npc', $e);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }

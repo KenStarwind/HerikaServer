@@ -34,7 +34,7 @@ $rdJealousy     = floatval($rdDynamics['jealousy_anger'] ?? 0);
 $rdStage        = $rdDynamics['stage'] ?? 'early';
 $rdTotalPos     = intval($rdDynamics['total_positive_interactions'] ?? 0);
 $rdInConflict   = !empty($rdDynamics['in_conflict']);
-$rdInterests    = $rdDynamics['interests'] ?? ($rdDynamics['activity_preferences'] ?? []);
+$rdInterests    = $rdDynamics['interests'] ?? [];
 $rdInteractions = intval($rdDynamics['interaction_count'] ?? 0);
 
 // ========== MATURITY DIMENSION (PR 3) ==========
@@ -480,7 +480,7 @@ if ($rdUiPos !== false) {
                                 $rdLocations[] = $lr['name'];
                             }
                         }
-                    } catch (\Throwable $e) { /* silent */ }
+                    } catch (\Throwable $e) { RelationshipDynamics::logError('npc editor locations list', $e); }
                     ?>
                     <datalist id="reldyn_home_locations_list">
                         <?php foreach ($rdLocations as $loc): ?>

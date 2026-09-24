@@ -180,7 +180,6 @@ final class RelDynPostgresStorageTest extends TestCase
             '_interest_satisfaction' => new stdClass(),
             'passion' => 0.1,
             'dimensions' => ['passion' => ['x' => 0.1, 'baseline' => 0], 'arousal' => ['x' => 1.0E-7, 'baseline' => 10]],
-            '_dimension_state_version' => RelationshipDynamics::DIMENSION_STATE_VERSION,
         ]);
 
         $d = RelationshipDynamics::getDynamics(self::NPC);
@@ -195,8 +194,7 @@ final class RelDynPostgresStorageTest extends TestCase
 
     public function testCompareAndSetRefusesAWriteFromAnotherConnectionAndTheRetryKeepsIt(): void
     {
-        $this->seed([], ['jealousy_anger' => 0.0, 'total_positive_interactions' => 10,
-            '_dimension_state_version' => RelationshipDynamics::DIMENSION_STATE_VERSION]);
+        $this->seed([], ['jealousy_anger' => 0.0, 'total_positive_interactions' => 10]);
         $d = RelationshipDynamics::getDynamics(self::NPC);
         $d['total_positive_interactions'] = 11;
 
@@ -217,13 +215,12 @@ final class RelDynPostgresStorageTest extends TestCase
         $this->assertSame(11, $stored['total_positive_interactions']);
     }
 
-    public function testInboxAppendTakeAndLegacyMigrationRunOnPostgres(): void
+    public function testInboxAppendAndTakeRunOnPostgres(): void
     {
-        $this->seed(['relationship_dynamics' => ['love_language_primary' => 'gifts', 'total_positive_interactions' => 3]], null);
+        $this->seed([], ['love_language_primary' => 'gifts', 'total_positive_interactions' => 3]);
 
         $d = RelationshipDynamics::getDynamics(self::NPC);
-        $this->assertSame('gifts', $d['love_language_primary'], 'migrated from extended_data');
-        $this->assertSame('gifts', $this->row()['plugin']['reldyn']['dynamics']['love_language_primary']);
+        $this->assertSame('gifts', $d['love_language_primary']);
 
         $this->assertTrue(RelationshipDynamics::queuePendingEval(self::NPC, ['trust_delta' => 3]));
         $this->assertTrue(RelationshipDynamics::queuePendingEval(self::NPC, ['respect_delta' => 2]));

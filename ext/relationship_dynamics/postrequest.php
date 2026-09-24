@@ -310,6 +310,7 @@ try {
         $lastMood = $moodRow['mood'] ?? null;
     }
 } catch (Throwable $e) {
+    RelationshipDynamics::logError('postrequest mood lookup', $e);
     // Mood query failed, continue without
 }
 
@@ -382,6 +383,7 @@ try {
         }
     }
 } catch (\Throwable $e) {
+    RelationshipDynamics::logError('postrequest topic bonus', $e);
     // Topic bonus is optional — don't crash on failure
 }
 } // end topic_bonus_enabled

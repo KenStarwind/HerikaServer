@@ -533,9 +533,9 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
         if ($matBand) {
             $matLabel = $matBand['label'];
             $matKeywords = $matBand['keywords'];
-            $matXRounded = round($matX);
+            // Felt steering: band label and keywords only, never the number.
             $dimParts[] = "<maturity_guidance>"
-                . "{$npcName}'s emotional maturity is {$matLabel} ({$matXRounded}/100): {$matKeywords}. "
+                . "{$npcName}'s emotional maturity is {$matLabel}: {$matKeywords}. "
                 . "This affects HOW they express other emotions — a mature NPC handles jealousy differently than an immature one."
                 . "</maturity_guidance>";
         }

@@ -122,22 +122,6 @@ final class RelDynStorageFakeDb
             return ['id' => (string) $id];
         }
 
-        // ---- RelDyn storage: one-time legacy migration (copy only when absent) ----
-        if (strpos($sql, 'UPDATE core_npc_master') === 0 && strpos($sql, "extended_data -> 'relationship_dynamics'") !== false) {
-            $id = (int) $params[0];
-            if (!isset($this->npcs[$id])) {
-                return [];
-            }
-            $legacy = $this->npcs[$id]['extended_data']['relationship_dynamics'] ?? null;
-            $current = $this->npcs[$id]['plugin_extended_data'][$params[1]][$params[2]] ?? null;
-            if ($current !== null || !is_array($legacy) || $legacy === []) {
-                return [];
-            }
-            $ns = &$this->namespaceRef($id, $params[1]);
-            $ns[$params[2]] = $legacy;
-            return ['id' => (string) $id];
-        }
-
         // ---- RelDyn storage: set one top-level key inside the namespace ----
         if (strpos($sql, 'UPDATE core_npc_master') === 0 && strpos($sql, 'jsonb_build_object($3::text, $4::jsonb)') !== false) {
             $id = (int) $params[0];
@@ -242,10 +226,6 @@ final class RelDynStorageTest extends TestCase
             $this->db->npcs[$id]['plugin_extended_data']['reldyn']['dynamics'] =
                 array_merge($this->db->npcs[$id]['plugin_extended_data']['reldyn']['dynamics'], $changes);
         }
-        if (isset($this->db->npcs[$id]['extended_data']['relationship_dynamics'])) {
-            $this->db->npcs[$id]['extended_data']['relationship_dynamics'] =
-                array_merge($this->db->npcs[$id]['extended_data']['relationship_dynamics'], $changes);
-        }
     }
 
     // ------------------------------------------------------------------
@@ -276,8 +256,9 @@ final class RelDynStorageTest extends TestCase
         $this->assertSame([], $this->db->unhandled);
     }
 
-    public function testLegacyBlobMigratesOnceAndOldKeyIsKept(): void
+    public function testAprilExtendedBlobIsNotCarriedOver(): void
     {
+        // Fresh start (decisions 2026-09-23 section 3): the April location is never read.
         $legacy = [
             'love_language_primary' => 'physical_touch',
             'warmth_curve' => 'guarded',
@@ -286,19 +267,15 @@ final class RelDynStorageTest extends TestCase
         $this->db->addNpc(9, 'Lydia', ['relationship_dynamics' => $legacy, 'relationships' => ['Player' => ['aff' => 20]]]);
 
         $dyn = RelationshipDynamics::getDynamics('Lydia');
-        $this->assertSame('physical_touch', $dyn['love_language_primary']);
-        $this->assertSame(40, $dyn['total_positive_interactions']);
+        $this->assertNull($dyn['love_language_primary']);
+        $this->assertSame(0, $dyn['total_positive_interactions']);
+        $this->assertNull($this->storedDynamics(9), 'nothing copied into the plugin namespace');
 
-        $this->assertSame($legacy, $this->storedDynamics(9), 'legacy blob copied verbatim into the plugin namespace');
-        $this->assertSame($legacy, $this->db->npcs[9]['extended_data']['relationship_dynamics'], 'old key left in place');
-
-        // Plugin data now wins: a later change to the old key must not be re-migrated.
-        $dyn['total_positive_interactions'] = 41;
+        $dyn['total_positive_interactions'] = 1;
         RelationshipDynamics::saveDynamics('Lydia', $dyn);
-        $this->db->npcs[9]['extended_data']['relationship_dynamics']['total_positive_interactions'] = 999;
-        RelationshipDynamics::clearNpcCache();
-        $this->assertSame(41, RelationshipDynamics::getDynamics('Lydia')['total_positive_interactions']);
-        $this->assertSame(41, $this->storedDynamics(9)['total_positive_interactions']);
+        $this->assertSame(1, $this->storedDynamics(9)['total_positive_interactions']);
+        $this->assertSame($legacy, $this->db->npcs[9]['extended_data']['relationship_dynamics'], 'old key left alone');
+        $this->assertSame([], $this->db->unhandled);
     }
 
     public function testNpcWithoutAnyStateGetsDefaultsAndNoWrite(): void
@@ -333,7 +310,7 @@ final class RelDynStorageTest extends TestCase
         $job2['_last_topic_match'] = 'combat';
         RelationshipDynamics::saveDynamics('Ashe', $job2);
 
-        $stored = $this->storedDynamics(7) ?? $this->db->npcs[7]['extended_data']['relationship_dynamics'];
+        $stored = $this->storedDynamics(7);
         $this->assertSame(9, $stored['total_positive_interactions'], 'stale blob must not overwrite the newer write');
         $this->assertSame('quick_warmth', $stored['warmth_curve']);
     }
@@ -438,12 +415,12 @@ final class RelDynStorageTest extends TestCase
         $this->assertSame([], $r2, 'second overlapping consumer gets nothing');
     }
 
-    public function testLegacyPendingEvalInsideMigratedBlobIsStillConsumedOnce(): void
+    public function testLegacyPendingEvalKeyInStoredBlobIsStillConsumedOnce(): void
     {
-        $this->db->addNpc(9, 'Lydia', ['relationship_dynamics' => [
+        $this->db->addNpc(9, 'Lydia', [], ['reldyn' => ['dynamics' => [
             'love_language_primary' => 'gifts',
             '_pending_xyz_eval' => ['respect_delta' => 5, 'romantic_intent' => 1],
-        ]]);
+        ]]]);
 
         $dyn = RelationshipDynamics::getDynamics('Lydia');
         $this->assertSame(1, RelationshipDynamics::peekPendingEval('Lydia', $dyn)['romantic_intent']);

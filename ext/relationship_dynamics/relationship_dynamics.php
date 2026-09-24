@@ -9,7 +9,7 @@
  * Works without MARAS — degrades gracefully.
  *
  * All state in core_npc_master.plugin_extended_data.reldyn (see reldyn_storage.php);
- * legacy extended_data.relationship_dynamics is migrated once on first load.
+ * fresh start on 3.4.1: April data (extended_data.relationship_dynamics) is not carried over.
  * Config in conf_opts key 'relationship_dynamics_config'.
  *
  * No process-level caches: NPC state is read from the database on every load, and
@@ -958,46 +958,182 @@ class RelationshipDynamics
             return self::$config;
         }
 
-        $config = self::defaultConfig();
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db) {
-                $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = 'relationship_dynamics_config' LIMIT 1");
-                if (is_array($row) && !empty($row['value'])) {
-                    $config = json_decode($row['value'], true) ?: self::defaultConfig();
-                }
-            }
-        } catch (Throwable $e) {
-            error_log("[RelDyn] Config load error: " . $e->getMessage());
-            $config = self::defaultConfig();
-        }
+        // Stored row merged over the defaults: a key the row lacks (older settings page,
+        // key added since) takes its current default instead of disappearing.
+        $config = array_merge(self::defaultConfig(), self::loadStoredConfig());
 
         self::$config = $cacheable ? $config : null;
         return $config;
     }
 
+    const CONFIG_ROW_ID = 'relationship_dynamics_config';
+
+    /** The stored conf_opts row as saved ([] when absent or unreadable). */
+    public static function loadStoredConfig(): array
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return [];
+        try {
+            $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = '" . self::CONFIG_ROW_ID . "' LIMIT 1");
+        } catch (Throwable $e) {
+            self::logError('loadStoredConfig', $e);
+            return [];
+        }
+        if (!is_array($row) || !isset($row['value']) || $row['value'] === '') return [];
+        $stored = json_decode($row['value'], true);
+        if (!is_array($stored)) {
+            error_log("[RelDyn] ERROR loadStoredConfig: conf_opts " . self::CONFIG_ROW_ID . " is not a JSON object; using defaults");
+            return [];
+        }
+        return $stored;
+    }
+
+    /** Settings-page checkboxes (each rendered as a hidden "" input followed by the checkbox). */
+    const CONFIG_FORM_TOGGLES = [
+        'enabled', 'log_enabled',
+        'passion_enabled', 'ambient_enabled', 'combat_enabled', 'jealousy_enabled', 'reunion_enabled',
+        'conflict_enabled', 'topic_bonus_enabled', 'flirt_bonus_enabled', 'type_filter_enabled',
+        'dimension_engine_enabled', 'dimension_context_enabled', 'dimension_debug_logging',
+        'divine_intervention_enabled', 'grief_system_enabled', 'attachment_style_enabled',
+        'attraction_matrix_enabled',
+        'cascade_network_enabled', 'duty_override_enabled', 'parasite_detection_enabled',
+        'significance_scaling_enabled', 'baseline_drift_enabled', 'internal_weather_enabled',
+        'creature_moodifications_enabled', 'emergent_emotions_enabled',
+        'social_masking_enabled', 'autonomous_diary_enabled',
+        'social_sensitivity_enabled', 'ick_system_enabled', 'charisma_detection_enabled',
+        'autonomy_enabled', 'walkaway_enabled', 'hoover_enabled',
+        'director_goals_enabled',
+    ];
+
+    /** Settings-page number fields: key => [int|float, min, max] (units: see defaultConfig()). */
+    const CONFIG_FORM_NUMBERS = [
+        'base_passion_gain'                  => ['float', 0.1, 10.0],
+        'passion_max'                        => ['float', 10, 200],
+        'decay_max_hours'                    => ['float', 0, 168],
+        'jealousy_max'                       => ['float', 10, 200],
+        'jealousy_decay_per_hour'            => ['float', 0.1, 10.0],
+        'conflict_threshold_affinity_drop'   => ['int', 1, 50],
+        'conflict_threshold_jealousy'        => ['int', 5, 100],
+        'conflict_resolution_positive_count' => ['int', 1, 20],
+        'conflict_repair_passion_burst'      => ['float', 1.0, 50.0],
+        'conflict_repair_passion_mult'       => ['float', 1.0, 3.0],
+        'reunion_min_hours'                  => ['int', 1, 48],
+        'reunion_min_affection'              => ['int', -100, 100],
+        'stage_established_threshold'        => ['int', 10, 500],
+        'stage_deep_threshold'               => ['int', 50, 2000],
+        'attraction_eval_interval'           => ['int', 1, 50],
+        'diary_interaction_gap'              => ['int', 5, 50],
+        'mask_maturity_cost'                 => ['float', 0.0, 1.0],
+        'ick_base_threshold'                 => ['float', 0.2, 0.9],
+    ];
+
+    /**
+     * Config row to store from a settings-form POST.
+     *
+     * Each checkbox comes after a hidden input of the same name with value "", so PHP sees
+     * "" when unticked and the checkbox value ("on") when ticked: the value decides, not
+     * isset(). A field missing from the POST keeps its stored value. Only keys of
+     * defaultConfig() are kept, so a known key the form does not show and that was never
+     * stored stays absent and follows its default.
+     */
+    public static function configFromForm(array $post, array $stored): array
+    {
+        $known = self::defaultConfig();
+        $config = array_intersect_key($stored, $known);
+
+        foreach (self::CONFIG_FORM_TOGGLES as $key) {
+            if (array_key_exists($key, $post)) {
+                $v = is_array($post[$key]) ? end($post[$key]) : $post[$key];
+                $config[$key] = !in_array(strtolower(trim((string)$v)), ['', '0', 'off', 'false', 'no'], true);
+            }
+        }
+        foreach (self::CONFIG_FORM_NUMBERS as $key => [$type, $min, $max]) {
+            if (!array_key_exists($key, $post) || !is_scalar($post[$key]) || trim((string)$post[$key]) === ''
+                || !is_numeric(trim((string)$post[$key]))) {
+                continue;
+            }
+            $v = max($min, min($max, floatval($post[$key])));
+            $config[$key] = ($type === 'int') ? intval(round($v)) : floatval($v);
+        }
+        if (array_key_exists('diary_reflection_mode', $post)) {
+            $mode = (string)$post['diary_reflection_mode'];
+            $config['diary_reflection_mode'] = in_array($mode, ['baseline', 'trajectory'], true) ? $mode : 'baseline';
+        }
+
+        return array_intersect_key($config, $known);
+    }
+
+    /** Store a config row (known keys only) and drop the cached config. */
+    public static function saveConfig(array $config): bool
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return false;
+        $config = array_intersect_key($config, self::defaultConfig());
+        try {
+            $json = json_encode($config, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $row = $db->fetchOne(
+                'INSERT INTO conf_opts (id, value) VALUES ($1, $2)
+                 ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value
+                 RETURNING id',
+                [self::CONFIG_ROW_ID, $json]
+            );
+        } catch (Throwable $e) {
+            self::logError('saveConfig', $e);
+            return false;
+        }
+        self::clearConfigCache();
+        if (!isset($row['id'])) {
+            error_log("[RelDyn] ERROR saveConfig: conf_opts " . self::CONFIG_ROW_ID . " was not written");
+            return false;
+        }
+        return true;
+    }
+
+    /** Settings page save: merge the POSTed form onto the stored row and store it. */
+    public static function saveConfigFromForm(array $post): bool
+    {
+        return self::saveConfig(self::configFromForm($post, self::loadStoredConfig()));
+    }
+
+    /**
+     * Every config key RelDyn reads, with its default. Units are given per key; affinity
+     * thresholds are core affinity (extended_data.relationships.Player.aff, -100..100).
+     */
     public static function defaultConfig()
     {
         return [
             'enabled' => true,
-            'base_passion_gain' => 2.0,
-            'passion_max' => 100.0,
-            'jealousy_max' => 100.0,
-            'jealousy_decay_per_hour' => 1.5,
-            'conflict_threshold_affinity_drop' => 10,
-            'conflict_threshold_jealousy' => 40,
-            'conflict_resolution_positive_count' => 3,
-            'conflict_repair_passion_burst' => 20.0,
-            'conflict_repair_passion_mult' => 1.5,
-            'reunion_min_hours' => 8,
-            'reunion_min_affection' => 40,
-            'stage_established_threshold' => 50,
-            'stage_deep_threshold' => 200,
-            'log_enabled' => false,
+            'base_passion_gain' => 2.0,              // passion points (0..passion_max) per interaction
+            'passion_max' => 100.0,                  // passion points
+            'decay_max_hours' => 0,                  // real play hours of between-session passion decay; 0 = none
+            'jealousy_max' => 100.0,                 // jealousy points
+            'jealousy_decay_per_hour' => 1.5,        // jealousy points per real play hour
+            'conflict_threshold_affinity_drop' => 10, // core affinity points lost in one commit
+            'conflict_threshold_jealousy' => 40,     // jealousy points
+            'conflict_resolution_positive_count' => 3, // positive interactions
+            'conflict_repair_passion_burst' => 20.0, // passion points
+            'conflict_repair_passion_mult' => 1.5,   // multiplier
+            'reunion_min_hours' => 8,                // real play hours apart
+            'reunion_min_affection' => 40,           // core affinity (-100..100)
+            'stage_established_threshold' => 50,     // positive interactions
+            'stage_deep_threshold' => 200,           // positive interactions
+            'log_enabled' => false,                  // debug log (errors are always logged)
+            // Subsystem toggles (the hooks' former '?? true' fallbacks)
+            'passion_enabled'    => true,
+            'ambient_enabled'    => true,
+            'combat_enabled'     => true,
+            'jealousy_enabled'   => true,
+            'reunion_enabled'    => true,
+            'conflict_enabled'   => true,
+            'topic_bonus_enabled' => true,
+            'flirt_bonus_enabled' => true,
+            'type_filter_enabled' => true,           // not read by the engine yet (relationship-preference-type-filter)
             // XYZ Dimension Engine — on by default: the MDD section 15 eval signals,
             // modifier pipeline and resentment accumulator all run through it.
             'dimension_engine_enabled' => true,
-            'dimension_context_enabled' => false,
+            // Dimension state reaches the LLM as band keywords (felt steering, never numbers;
+            // decisions 2026-09-23 section 3).
+            'dimension_context_enabled' => true,
             'dimension_debug_logging' => false,
             'dimension_max_context_lines' => 10,
             // Diary reflection mode: 'baseline' (math-only) or 'trajectory' (LLM-scored)
@@ -1015,8 +1151,8 @@ class RelationshipDynamics
             'attraction_competence_weight' => 1.0,
             // PR 12: Affinity Network + Relationship Types
             'cascade_network_enabled' => true,
-            'cascade_threshold' => 15,
-            'cascade_decay' => 0.3,
+            'cascade_threshold' => 15,               // core affinity points (|delta| that ripples)
+            'cascade_decay' => 0.3,                  // fraction
             'duty_override_enabled' => true,
             'parasite_detection_enabled' => true,
             // PR 13: Environmental Quirks
@@ -1026,10 +1162,23 @@ class RelationshipDynamics
             'emergent_emotions_enabled' => true,
             'significance_scaling_enabled' => true,
             // PR 14: Social Masking + Autonomous Diary
-            'social_masking_enabled' => true,
+            // Off by default: <social_mask> can only state comfort/resentment/warmth as numbers
+            // (generateMaskingContext) until its felt-steering rewrite.
+            'social_masking_enabled' => false,
             'autonomous_diary_enabled' => true,
-            'diary_interaction_gap' => 15,
-            'mask_maturity_cost' => 0.15,
+            'diary_interaction_gap' => 15,           // interactions
+            'mask_maturity_cost' => 0.15,            // maturity points per masked interaction
+            // PR 15: Social Sensitivity + Ick + Charisma
+            'social_sensitivity_enabled' => true,
+            'ick_system_enabled' => true,
+            'ick_base_threshold' => 0.5,             // fraction of romantic attempts in the window
+            'charisma_detection_enabled' => true,
+            // PR 16: Autonomy Override + Walkaway + Hoover
+            'autonomy_enabled' => true,
+            'walkaway_enabled' => true,              // not read by the engine yet (walkaway-boundary)
+            'hoover_enabled' => true,
+            // PR 39: Director-Assigned Goals (the hooks ran them unless switched off)
+            'director_goals_enabled' => true,
         ];
     }
 
@@ -1051,7 +1200,7 @@ class RelationshipDynamics
 
     /**
      * Raw stored dynamics for an NPC (no defaults merged), or null when none exist.
-     * Always reads the database; migrates the legacy extended_data blob on first load.
+     * Always reads the database. Fresh start: April data in extended_data is not read.
      */
     public static function loadStoredDynamics($npcName)
     {
@@ -1060,12 +1209,7 @@ class RelationshipDynamics
         $npcId = RelDynStorage::resolveNpcId($npcName);
         if ($npcId === null) return null;
 
-        $rd = RelDynStorage::loadDynamics($npcId);
-        if ($rd === null && RelDynStorage::migrateLegacy($npcId)) {
-            error_log("[RelDyn] Migrated extended_data.relationship_dynamics to plugin storage for {$npcName} (id {$npcId})");
-            $rd = RelDynStorage::loadDynamics($npcId);
-        }
-        return $rd;
+        return RelDynStorage::loadDynamics($npcId);
     }
 
     public static function getDynamics($npcName)
@@ -1914,6 +2058,7 @@ class RelationshipDynamics
             $row = $db->fetchOne("SELECT race FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
             return $row['race'] ?? null;
         } catch (Throwable $e) {
+            self::logError('getNpcRace', $e);
             return null;
         }
     }
@@ -2541,6 +2686,7 @@ class RelationshipDynamics
                 return true;
             }
         } catch (\Throwable $e) {
+            self::logError('isNpcInCombatRecently', $e);
             // Silently fail — combat detection is a bonus, not critical
         }
 
@@ -2601,7 +2747,7 @@ class RelationshipDynamics
                     if ($interest) return $interest;
                     // category=Misc falls through to Tier 2
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('classifyItemInterest minai_items', $e); }
         }
 
         // Tier 2: oghma.knowledge_class (8% coverage, finer classification)
@@ -2628,7 +2774,7 @@ class RelationshipDynamics
                         return $catMap[$row['category']];
                     }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('classifyItemInterest oghma', $e); }
         }
 
         // Tier 3: keyword fallback (for items not in any DB)
@@ -2777,6 +2923,7 @@ class RelationshipDynamics
                 }
             }
         } catch (\Throwable $e) {
+            self::logError('detectCurrentInterest', $e);
             // Silently fail
         }
 
@@ -2785,7 +2932,8 @@ class RelationshipDynamics
 
     /**
      * Get or auto-generate interest preferences for an NPC.
-     * Checks for manual 'interests' key, falls back to old 'activity_preferences', then auto-gen.
+     * Uses the manual 'interests' key, else auto-generates (April 'activity_preferences'
+     * are not carried over: fresh start).
      */
     public static function getInterests($dynamics)
     {
@@ -2793,44 +2941,7 @@ class RelationshipDynamics
             return $dynamics['interests'];
         }
 
-        // Backward compat: migrate old activity_preferences
-        if (!empty($dynamics['activity_preferences']) && is_array($dynamics['activity_preferences'])) {
-            return self::migrateOldPreferences($dynamics['activity_preferences']);
-        }
-
         return self::generateInterests();
-    }
-
-    /**
-     * Migrate old activity_preferences keys to new interest categories.
-     */
-    private static function migrateOldPreferences($oldPrefs)
-    {
-        $migration = [
-            'smithing'   => 'crafting',
-            'dungeon'    => 'adventure',
-            'wilderness' => 'nature',
-            'tavern'     => 'social',
-            'studying'   => 'scholarly',
-            'cooking'    => 'domestic',
-            'exploring'  => 'adventure',
-            'traveling'  => 'adventure',
-            'camping'    => 'nature',
-            'alchemy'    => 'alchemy',
-            'enchanting' => 'enchanting',
-        ];
-
-        $newPrefs = [];
-        foreach ($oldPrefs as $oldKey => $value) {
-            $newKey = $migration[$oldKey] ?? null;
-            if ($newKey) {
-                $newPrefs[$newKey] = max($newPrefs[$newKey] ?? 0.5, floatval($value));
-            }
-        }
-        foreach (self::INTEREST_TYPES as $type) {
-            if (!isset($newPrefs[$type])) $newPrefs[$type] = 1.0;
-        }
-        return $newPrefs;
     }
 
     /**
@@ -2860,7 +2971,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('generateInterests', $e); }
 
         $prefs = self::CLASS_INTEREST_DEFAULTS[$class] ?? [
             'combat' => 1.0, 'crafting' => 1.0, 'alchemy' => 1.0, 'enchanting' => 1.0,
@@ -3139,6 +3250,24 @@ class RelationshipDynamics
     }
 
     /**
+     * Log a caught error. Always on: not gated by log_enabled (that is the debug log),
+     * so a failure the code recovers from is still visible in the server log.
+     */
+    public static function logError(string $where, \Throwable $e): void
+    {
+        error_log("[RelDyn] ERROR {$where}: " . get_class($e) . ': ' . $e->getMessage());
+    }
+
+    /**
+     * Escape LIKE wildcards (% _ and the escape character itself) so a name matches literally.
+     * Use with ESCAPE '\' in the query; apply this first, then the database's own quoting.
+     */
+    public static function escapeLike(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+    }
+
+    /**
      * Get a human-readable passion band label.
      */
     public static function getPassionBand($passion)
@@ -3223,7 +3352,7 @@ class RelationshipDynamics
             $data = json_decode($result, true);
             return $data['vector'] ?? $data['embedding'] ?? $data ?? null;
         } catch (\Throwable $e) {
-            self::log("embedInterestVector error: " . $e->getMessage());
+            self::logError('embedInterestVector', $e);
             return null;
         }
     }
@@ -3268,7 +3397,7 @@ class RelationshipDynamics
                     $healthPct = floatval($combatData['healthPct'] ?? 1.0);
                     $bleedingOut = !empty($combatData['bleedingOut']);
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('getCombatContext minai_combat', $e); }
 
             // Fallback: check gameRequest for combat event types
             $reqType = $GLOBALS['gameRequest'][0] ?? '';
@@ -3286,17 +3415,18 @@ class RelationshipDynamics
                     $inCombat = true;
                     $source = 'minai_flag';
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) { self::logError('getCombatContext inCombat flag', $e); }
 
             // Count recent kills from eventlog (last 5 minutes of play on the game clock)
             $nowGamets = self::currentGamets();
             if ($nowGamets > 0) {
                 $sinceGamets = intval($nowGamets - self::COMBAT_KILL_STREAK_WINDOW_GAMETS);
                 try {
-                    $rows = $db->fetchAll("SELECT COUNT(*) as cnt FROM eventlog WHERE type = 'death' AND people LIKE '%{$db->escape($npcName)}%' AND gamets > {$sinceGamets}");
+                    $namePattern = $db->escape(self::escapeLike($npcName));
+                    $rows = $db->fetchAll("SELECT COUNT(*) as cnt FROM eventlog WHERE type = 'death' AND people LIKE '%{$namePattern}%' ESCAPE '\\' AND gamets > {$sinceGamets}");
                     $recentKills = intval($rows[0]['cnt'] ?? 0);
                 } catch (\Throwable $e) {
-                    self::log("getCombatContext kill count error: " . $e->getMessage());
+                    self::logError('getCombatContext kill count', $e);
                 }
             }
 
@@ -3310,7 +3440,7 @@ class RelationshipDynamics
                 'source' => $source,
             ];
         } catch (\Throwable $e) {
-            self::log("getCombatContext error: " . $e->getMessage());
+            self::logError('getCombatContext', $e);
             return null;
         }
     }
@@ -3370,7 +3500,7 @@ class RelationshipDynamics
 
             return implode(' ', $parts);
         } catch (\Throwable $e) {
-            self::log("getRecentCombatSummary error: " . $e->getMessage());
+            self::logError('getRecentCombatSummary', $e);
             return null;
         }
     }
@@ -3442,20 +3572,9 @@ class RelationshipDynamics
             }
         }
 
-        // One source of truth per value: dimensions.passion.x is canonical for passion.
-        // Blobs saved before DIMENSION_STATE_VERSION re-copied legacy passion into
-        // dimensions on every load, so for those the legacy key is the truth.
-        if (intval($dynamics['_dimension_state_version'] ?? 0) < self::DIMENSION_STATE_VERSION) {
-            $dynamics['dimensions']['passion']['x'] = floatval($dynamics['passion'] ?? 0);
-
-            // Jealousy (MDD 6.5) and resentment (MDD 15.5, grievance accumulator) are
-            // separate values. The April engine overwrote resentment.x with jealousy_anger
-            // on every load, so no stored resentment.x is its own history: jealousy_anger
-            // stays jealousy, resentment starts from its baseline of 0.
-            $dynamics['dimensions']['resentment']['x'] = 0;
-
-            $dynamics['_dimension_state_version'] = self::DIMENSION_STATE_VERSION;
-        }
+        // One source of truth per value: dimensions.passion.x is canonical for passion;
+        // jealousy_anger (MDD 6.5) and dimensions.resentment.x (MDD 15.5) are separate.
+        // Fresh start: no April-blob conversion, stored values are taken as they are.
         // Legacy mirror is derived from the canonical value, never the other way round.
         $dynamics['passion'] = self::getPassion($dynamics);
 
@@ -3771,13 +3890,6 @@ class RelationshipDynamics
     }
 
     /**
-     * Schema of the passion/jealousy/resentment state in the dynamics blob.
-     * < 2: April engine (legacy passion copied into dimensions on load,
-     *      resentment aliased to jealousy_anger). 2: one source of truth each.
-     */
-    const DIMENSION_STATE_VERSION = 2;
-
-    /**
      * Sync legacy flat keys FROM the dimensions sub-object.
      * Called on every saveDynamics() to keep legacy keys in sync when new
      * code writes to dimensions directly.
@@ -3799,8 +3911,6 @@ class RelationshipDynamics
         // passion mirror ← dimensions.passion.x (canonical, written only via setPassion)
         if (isset($dim['passion']['x']) && $dim['passion']['x'] !== null) {
             $dynamics['passion'] = floatval($dim['passion']['x']);
-            // Blob is now in canonical form: the next load must not re-migrate it.
-            $dynamics['_dimension_state_version'] = self::DIMENSION_STATE_VERSION;
         }
 
         // jealousy_anger is its own value (written via setJealousy) and resentment lives
@@ -3940,7 +4050,7 @@ class RelationshipDynamics
             ['label' => 'Simmering',   'range' => [16, 30],  'keywords' => 'occasionally bites tongue, small things bother more than they should'],
             ['label' => 'Edged',       'range' => [31, 50],  'keywords' => 'passive-aggressive edge creeping in, sighs instead of speaking up, shorter patience'],
             ['label' => 'Frustrated',  'range' => [51, 70],  'keywords' => 'visibly frustrated, withdrawing emotionally, affinity gains frozen'],
-            ['label' => 'Withdrawn',   'range' => [71, 90],  'keywords' => 'cold, distant, stopped trying, comfort drops to 0, considering leaving'],
+            ['label' => 'Withdrawn',   'range' => [71, 90],  'keywords' => 'cold, distant, stopped trying, no longer at ease around them, considering leaving'],
             ['label' => 'Done',        'range' => [91, 100], 'keywords' => 'walkaway imminent, done, emotionally checked out'],
         ],
         'self_confidence' => [
@@ -8244,7 +8354,7 @@ class RelationshipDynamics
 
             return 'unknown';
         } catch (\Throwable $e) {
-            self::log('[RelDyn-ENV] detectLocation error: ' . $e->getMessage());
+            self::logError('detectLocation', $e);
             return 'unknown';
         }
     }
@@ -8291,7 +8401,7 @@ class RelationshipDynamics
 
             return 'day';
         } catch (\Throwable $e) {
-            self::log('[RelDyn-ENV] detectTimeOfDay error: ' . $e->getMessage());
+            self::logError('detectTimeOfDay', $e);
             return 'day';
         }
     }
@@ -8330,6 +8440,7 @@ class RelationshipDynamics
 
             return 'day';
         } catch (\Throwable $e) {
+            self::logError('detectTimeOfDayFromInfoLoc', $e);
             return 'day';
         }
     }
@@ -8988,16 +9099,17 @@ class RelationshipDynamics
         $sinceGamets = intval($nowGamets - self::ITEM_EVENT_WINDOW_GAMETS);
         if ($db && $nowGamets > 0) {
             try {
-                $escapedNpc = $db->escape($npcName);
+                // NPC name matched literally: its % and _ are escaped, not LIKE wildcards
+                $escapedNpc = $db->escape(self::escapeLike($npcName));
                 $rows = $db->fetchAll(
                     "SELECT data FROM eventlog WHERE type='itemfound' "
-                    . "AND data LIKE '%gave%to%{$escapedNpc}%' "
+                    . "AND data LIKE '%gave%to%{$escapedNpc}%' ESCAPE '\\' "
                     . "AND gamets > {$sinceGamets} "
                     . "ORDER BY gamets DESC, ts DESC LIMIT 3"
                 );
                 if (is_array($rows)) {
                     foreach ($rows as $row) {
-                        if (preg_match('/gave\s+(?:\d+\s+)?(.+?)\s+to\s+/i', $row['data'] ?? '', $gm)) {
+                        if (preg_match('/\bgave\s+(?:\d+\s+)?(.+?)\s+to\s+/i', $row['data'] ?? '', $gm)) {
                             $giftItem = trim($gm[1]);
                             // Avoid duplicating if already detected from ExtCmdGiveItem
                             $alreadyDetected = false;
@@ -9018,7 +9130,7 @@ class RelationshipDynamics
                     }
                 }
             } catch (\Throwable $e) {
-                self::log("detectItemEvents gift lookup error: " . $e->getMessage());
+                self::logError('detectItemEvents gift lookup', $e);
             }
         }
 
@@ -9043,16 +9155,17 @@ class RelationshipDynamics
         // --- Consumable detection: eventlog consume patterns ---
         if ($db && $nowGamets > 0) {
             try {
+                // Whole words only (PostgreSQL \m \M word boundaries): 'private chest' is not 'ate'.
                 $rows = $db->fetchAll(
                     "SELECT data FROM eventlog WHERE type='itemfound' "
-                    . "AND (data LIKE '%consumed%' OR data LIKE '%drank%' OR data LIKE '%ate%' OR data LIKE '%used%potion%') "
+                    . "AND (data ~* '\\m(consumed|drank|ate)\\M' OR data ~* '\\mused\\M.*potion') "
                     . "AND gamets > {$sinceGamets} "
                     . "ORDER BY gamets DESC, ts DESC LIMIT 3"
                 );
                 if (is_array($rows)) {
                     foreach ($rows as $row) {
                         $data = $row['data'] ?? '';
-                        if (preg_match('/(?:consumed|drank|ate|used)\s+(?:\d+\s+)?(.+?)(?:\s*$|\s*,)/i', $data, $cm)) {
+                        if (preg_match('/\b(?:consumed|drank|ate|used)\s+(?:\d+\s+)?(.+?)(?:\s*$|\s*,)/i', $data, $cm)) {
                             $events[] = [
                                 'action' => 'consume',
                                 'item'   => trim($cm[1]),
@@ -9062,7 +9175,7 @@ class RelationshipDynamics
                     }
                 }
             } catch (\Throwable $e) {
-                self::log("detectItemEvents consume lookup error: " . $e->getMessage());
+                self::logError('detectItemEvents consume lookup', $e);
             }
         }
 
@@ -9383,7 +9496,7 @@ class RelationshipDynamics
             $reason = $mem['reason'] ?? '';
             $ts = $mem['ts'] ?? '';
 
-            // Human-readable time ago
+            // Human-readable time ago, in words (felt steering: no numbers reach the LLM)
             $timeAgo = 'recently';
             if (!empty($ts)) {
                 $memTime = strtotime($ts);
@@ -9392,11 +9505,11 @@ class RelationshipDynamics
                     if ($diffSec < 3600) {
                         $timeAgo = 'moments ago';
                     } elseif ($diffSec < 86400) {
-                        $hours = max(1, intval($diffSec / 3600));
-                        $timeAgo = $hours === 1 ? '1 hour ago' : "{$hours} hours ago";
+                        $timeAgo = 'earlier today';
+                    } elseif ($diffSec < 7 * 86400) {
+                        $timeAgo = 'a few days ago';
                     } else {
-                        $days = max(1, intval($diffSec / 86400));
-                        $timeAgo = $days === 1 ? '1 day ago' : "{$days} days ago";
+                        $timeAgo = 'a while ago';
                     }
                 }
             }
@@ -9727,6 +9840,7 @@ class RelationshipDynamics
                 }
             }
         } catch (\Throwable $e) {
+            self::logError('detectNpcHold', $e);
             // Silent failure -- reputation is non-critical
         }
 
@@ -10481,7 +10595,7 @@ class RelationshipDynamics
                 }
             }
         } catch (\Throwable $e) {
-            self::log("getPlayerAppearance: core_player read failed: " . $e->getMessage());
+            self::logError('getPlayerAppearance core_player', $e);
         }
 
         // Fallback to the player bio. 3.4.1 has no PLAYER_BIOS global; core resolves
@@ -10517,7 +10631,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('getPlayerAppearanceEmbedding', $e); }
 
         // Generate new embedding
         if (!function_exists('getEmbedding')) {
@@ -10700,7 +10814,7 @@ class RelationshipDynamics
                     if (!empty($keywords) && function_exists('getEmbedding')) {
                         try {
                             $npcEmbed = getEmbedding(implode(', ', $keywords));
-                        } catch (\Throwable $e) {}
+                        } catch (\Throwable $e) { self::logError('scoreAttractionPillar embedding', $e); }
                     }
                 }
                 if (empty($npcEmbed)) return 0.5 * $weight;
@@ -11243,7 +11357,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('getDutyOverrideFactor', $e); }
 
         // Check request type for quest indicators
         $gameRequest = $GLOBALS['gameRequest'] ?? [];
@@ -11563,7 +11677,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('getFactionInterestFloors', $e); }
 
         return $floors;
     }
@@ -11804,7 +11918,7 @@ class RelationshipDynamics
                     }
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) { self::logError('detectCreatureType', $e); }
 
         return null;
     }
@@ -13465,7 +13579,7 @@ class RelationshipDynamics
             return true;
 
         } catch (\Throwable $e) {
-            self::log("[WALKAWAY] Error dismissing {$npcName}: " . $e->getMessage());
+            self::logError("walkaway dismiss {$npcName}", $e);
             return false;
         }
     }
@@ -13505,7 +13619,7 @@ class RelationshipDynamics
             return true;
 
         } catch (\Throwable $e) {
-            self::log("[WALKAWAY] Error returning {$npcName}: " . $e->getMessage());
+            self::logError("walkaway return {$npcName}", $e);
             return false;
         }
     }
