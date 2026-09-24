@@ -7,7 +7,7 @@ require_once __DIR__ . '/../../lib/core/npc_master.class.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 
 /** `sql`-compatible adapter over one pg connection (lib/postgresql.class.php conventions). */
-final class RelDynFacetPgDb
+final class RelDynClassifierPgDb
 {
     public $link;
 
@@ -101,7 +101,7 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
 
     private string $dsn;
     private string $schema;
-    private RelDynFacetPgDb $db;
+    private RelDynClassifierPgDb $db;
     private bool $pgvector = false;
     private array $savedGlobals = [];
     private array $embedCalls = [];
@@ -145,7 +145,7 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
         pg_query($admin, 'CREATE TABLE moods_issued (speaker text, mood text, localts bigint)');
         pg_close($admin);
 
-        $this->db = new RelDynFacetPgDb($dsn, $this->schema);
+        $this->db = new RelDynClassifierPgDb($dsn, $this->schema);
         foreach (self::OGHMA as [$topic, $kc, $cat, $aliases, $tags, $desc]) {
             pg_query_params($this->db->link,
                 'INSERT INTO oghma (topic, knowledge_class, category, aliases, tags, topic_desc) VALUES ($1, $2, $3, $4, $5, $6)',

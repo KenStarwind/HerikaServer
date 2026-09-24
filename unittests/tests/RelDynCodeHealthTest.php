@@ -68,6 +68,26 @@ final class RelDynCodeHealthTest extends TestCase
     // Caught errors are logged
     // ------------------------------------------------------------------
 
+    /**
+     * The suite runs every tests/*.php in one PHP process (phpunit.xml, run_tests), so two
+     * RelDyn test files declaring the same class is a fatal error for the whole run.
+     */
+    public function testRelDynTestFilesDeclareDistinctClasses(): void
+    {
+        $seen = [];
+        $dupes = [];
+        foreach (glob(__DIR__ . '/*.php') as $file) {
+            preg_match_all('/^\s*(?:final\s+|abstract\s+)?(?:class|interface|trait)\s+(\w+)/m', (string) file_get_contents($file), $m);
+            foreach ($m[1] as $class) {
+                if (isset($seen[$class])) {
+                    $dupes[] = "{$class}: " . basename($seen[$class]) . ' and ' . basename($file);
+                }
+                $seen[$class] = $file;
+            }
+        }
+        $this->assertSame([], $dupes, 'classes declared in more than one test file');
+    }
+
     /** Every catch block in the RelDyn PHP (not the debug scripts) logs what it caught. */
     public function testEveryCatchBlockLogs(): void
     {
