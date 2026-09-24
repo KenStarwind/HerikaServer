@@ -272,6 +272,13 @@ if (!RelationshipDynamics::isEnabled()) {
 $dynamics = RelationshipDynamics::getDynamics($npcName);
 $reldynCfg = RelationshipDynamics::getConfig();
 
+// ── EVAL PRODUCER (assessment Phase 2 option A) ──
+// Queue this exchange for RelDyn's own multi-signal eval (eval_producer.php). It decides
+// itself: never the Narrator, radiant / NPC-to-NPC only when the player is addressed,
+// config chance and cooldown. The worker runs outside this request and fills the eval inbox.
+require_once __DIR__ . '/eval_producer.php';
+RelDynEval::onPostrequest($npcName, $GLOBALS['gameRequest']);
+
 // ── NPC-TO-NPC FILTER ──
 // Radiant dialogue is NPC-to-NPC — player isn't involved.
 // Passion/affinity between those NPCs is handled by CHIM core's relationship_system.
