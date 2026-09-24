@@ -561,6 +561,25 @@ final class RelDynAffinityCoreTest extends TestCase
         $this->assertSame(60, $this->coreAff(), 'the paused days are not decayed afterwards');
     }
 
+    /** Decay reads core's Player.type through getRelationshipType(), not RelDyn's stage. */
+    public function testACoreEnemyDoesNotDecayAndIsNotBondedAfterTwoHundredTalks(): void
+    {
+        $start = 1000000.0;
+        $this->seedNpc(['Player' => ['aff' => 40, 'type' => 'enemy']], [
+            'stage' => 'deep',
+            'interaction_count' => 200,
+            '_decay_last_game_gamets' => $start,
+        ]);
+        $GLOBALS['gameRequest'][2] = $start + 3 * RelationshipDynamics::GAMETS_PER_DAY;
+
+        $this->runTurn();
+
+        $stored = $this->storedDynamics();
+        $this->assertSame('enemy', $stored['_core_rel_type'] ?? null, 'prerequest snapshots core Player.type');
+        $this->assertSame('hostile', RelationshipDynamics::getRelationshipType(self::NPC, $stored));
+        $this->assertSame(40, $this->coreAff(), 'hate is self-sustaining: a core enemy does not decay');
+    }
+
     public function testFractionalDeltasAccumulateInsteadOfRounding(): void
     {
         $this->seedNpc(['Player' => ['aff' => 0, 'type' => 'neutral']]);

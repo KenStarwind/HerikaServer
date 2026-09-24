@@ -5955,28 +5955,97 @@ class RelationshipDynamics
     ];
 
     /**
-     * Determine the current relationship type for an NPC bond.
+     * Core relationship type (relationships.Player.type, lib/relationship_manager.php TYPES)
+     * -> RelDyn bond key (RELATIONSHIP_TYPE_MODIFIERS / TIER_FLOOR_GATES). null = the core
+     * type names no flavour RelDyn distinguishes: the bond's depth then comes from core
+     * affinity (DEPTH_TYPE_BY_TIER). Custom types the player created are treated as null.
+     */
+    const CORE_TYPE_TO_RELDYN_TYPE = [
+        'romantic'      => 'bonded',       // draft: Romantic / Bonded share the trust gate
+        'crush'         => 'crush',
+        'ex'            => null,
+        'platonic'      => 'friend',
+        'familial'      => 'bonded',
+        'protective'    => 'friend',
+        'fanatical'     => 'sworn',        // blind loyalty (housecarl)
+        'servant'       => 'sworn',
+        'mentor'        => 'mentor',       // TIER_FLOOR_GATES respect + maturity
+        'student'       => 'student',
+        'professional'  => 'acquaintance',
+        'transactional' => 'mercenary',
+        'client'        => 'mercenary',
+        'patron'        => 'mercenary',
+        'rival'         => 'rival',
+        'jealous'       => 'rival',
+        'enemy'         => 'hostile',
+        'nemesis'       => 'hostile',
+        'betrayed'      => 'hostile',
+        'contempt'      => 'hostile',
+        'neutral'       => null,
+    ];
+
+    /** Mapped core types that outrank RelDyn's own overlays (parasite, friendzone). */
+    const CORE_HOSTILE_RELDYN_TYPES = ['hostile', 'rival'];
+
+    /** Bond depth by RelDyn tier (core affinity) when core's type carries no flavour. */
+    const DEPTH_TYPE_BY_TIER = [
+        'hostile'      => 'stranger',
+        'stranger'     => 'stranger',
+        'acquaintance' => 'acquaintance',
+        'friend'       => 'friend',
+        'close_friend' => 'friend',
+        'bonded'       => 'bonded',
+        'devoted'      => 'bonded',
+    ];
+
+    /**
+     * Record core's relationships.Player.type for this request (prerequest reads it with the
+     * affinity mirror). A missing Player entry is core's default, 'neutral'.
+     */
+    public static function setCoreRelationshipType(array &$dynamics, $coreType): void
+    {
+        $type = strtolower(trim((string) ($coreType ?? '')));
+        $dynamics['_core_rel_type'] = ($type === '') ? 'neutral' : $type;
+    }
+
+    /**
+     * Determine the current relationship type for an NPC bond: the one type every consumer
+     * reads (absence decay gates, per-bond modifiers, friendzone cap, breaking arc, parasite).
      *
      * Resolution order:
-     *   1. PR 12 override: $dynamics['_relationship_type_override'] (friendzone, parasite, etc.)
-     *   2. PR 12 friendzone: attraction matrix friendzoned flag + high affinity
-     *   3. Explicit type: $dynamics['relationship_type']
-     *   4. Stage-based default: map stage to type via STAGE_TO_TYPE_MAP
-     *   5. Fallback: 'stranger'
+     *   1. Core hostility: a core Player.type mapping to hostile/rival wins outright
+     *   2. PR 12 override: $dynamics['_relationship_type_override'] (parasite, etc.)
+     *   3. PR 12 friendzone: attraction matrix friendzoned flag + friend tier on core affinity
+     *   4. Core Player.type (source of truth), mapped by CORE_TYPE_TO_RELDYN_TYPE
+     *   5. Core type without flavour ('neutral', custom): depth from the core affinity tier
+     *   Fallback only when core's type is unknown (no core row read for this blob):
+     *   6. Explicit $dynamics['relationship_type'], then the interaction-count stage via
+     *      STAGE_TO_TYPE_MAP, then 'stranger'
      *
      * @param string     $npcName   NPC name (for future per-NPC overrides)
      * @param array|null $dynamics  NPC dynamics blob
-     * @return string    Relationship type key (lowercase, matches RELATIONSHIP_TYPE_MODIFIERS)
+     * @return string    Relationship type key (lowercase, RELATIONSHIP_TYPE_MODIFIERS / TIER_FLOOR_GATES)
      */
     public static function getRelationshipType($npcName, $dynamics = null)
     {
-        // 1. PR 12: Explicit type override (friendzone, parasite, etc.)
+        $dynamics = is_array($dynamics) ? $dynamics : [];
+        $coreType = $dynamics['_core_rel_type'] ?? null;
+        $coreMapped = null;
+        if (is_string($coreType) && $coreType !== '') {
+            $coreMapped = self::CORE_TYPE_TO_RELDYN_TYPE[$coreType] ?? null;
+            // 1. Core hostility outranks RelDyn overlays
+            if ($coreMapped !== null && in_array($coreMapped, self::CORE_HOSTILE_RELDYN_TYPES, true)) {
+                return $coreMapped;
+            }
+        }
+
+        // 2. PR 12: Explicit type override (friendzone, parasite, etc.)
         $override = $dynamics['_relationship_type_override'] ?? null;
         if ($override && isset(self::RELATIONSHIP_TYPE_MODIFIERS[$override])) {
             return $override;
         }
 
-        // 2. PR 12: Friendzone from Attraction Matrix
+        // 3. PR 12: Friendzone from Attraction Matrix
         // (friend tier or above on core affinity; the old "affinity > 40" was the draft 0..100 scale)
         if (!empty($dynamics['_attraction_friendzoned'])) {
             $tier = self::getCurrentTier(self::getCoreAffinity($dynamics));
@@ -5985,7 +6054,16 @@ class RelationshipDynamics
             }
         }
 
-        // 3. Explicit override
+        // 4. Core type is the source of truth
+        if ($coreMapped !== null) {
+            return $coreMapped;
+        }
+        // 5. Core type without a RelDyn flavour: depth from core affinity
+        if (is_string($coreType) && $coreType !== '') {
+            return self::DEPTH_TYPE_BY_TIER[self::getCurrentTier(self::getCoreAffinity($dynamics))] ?? 'stranger';
+        }
+
+        // 6. Fallback without core data: explicit RelDyn type, then stage
         if (!empty($dynamics['relationship_type'])) {
             $type = strtolower($dynamics['relationship_type']);
             if (isset(self::RELATIONSHIP_TYPE_MODIFIERS[$type])) {
@@ -5993,13 +6071,11 @@ class RelationshipDynamics
             }
         }
 
-        // 4. Stage-based default
         $stage = $dynamics['stage'] ?? null;
         if ($stage && isset(self::STAGE_TO_TYPE_MAP[$stage])) {
             return self::STAGE_TO_TYPE_MAP[$stage];
         }
 
-        // 5. Fallback
         return 'stranger';
     }
 
@@ -11369,6 +11445,7 @@ class RelationshipDynamics
                 // Record history
                 $dynamics['_relationship_type_history'][] = [
                     'from' => self::getRelationshipType($npcName, $dynamics),
+                    'from_override' => $currentOverride,   // restored on recovery (null = follow core)
                     'to' => 'parasite',
                     'at' => intval($dynamics['interaction_count'] ?? 0),
                     'reason' => 'gift_ratio=' . round($giftRatio, 2),
@@ -11399,8 +11476,11 @@ class RelationshipDynamics
             $history = $dynamics['_relationship_type_history'] ?? [];
             $lastEntry = !empty($history) ? end($history) : null;
             $previousType = ($lastEntry && isset($lastEntry['from'])) ? $lastEntry['from'] : null;
+            // Restore the override that was active before (usually none), not the type the bond
+            // had then: an override of a core-derived type would shadow core's type from now on.
+            $previousOverride = ($lastEntry && isset($lastEntry['from_override'])) ? $lastEntry['from_override'] : null;
 
-            $dynamics['_relationship_type_override'] = ($previousType !== 'parasite') ? $previousType : null;
+            $dynamics['_relationship_type_override'] = ($previousOverride !== 'parasite') ? $previousOverride : null;
             $dynamics['_relationship_type_history'][] = [
                 'from' => 'parasite',
                 'to' => $previousType ?? 'friend',
