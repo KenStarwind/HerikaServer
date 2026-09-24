@@ -257,13 +257,14 @@ if (!empty($parts)) {
 // Gated behind dimension_context_enabled — zero change to existing context when off.
 // Placed AFTER <emotional_dynamics> to extend, not replace.
 //
-// Tier 0 (Stranger)     : 0-25 affinity — bare minimum ("stranger, no established history")
-// Tier 1 (Acquaintance) : 26-40 affinity — band keywords only (cap 5 lines)
-// Tier 2 (Friend+)      : 41-70 affinity — keywords + maturity guidance + recent shifts (cap 8 lines)
-// Tier 3 (Bonded+)      : 71-100 affinity — full dimensional state + reasons + maturity + shifts (cap 10 lines)
+// Affinity = CORE relationships.Player.aff (-100..+100), via RelationshipDynamics::getContextTier():
+// Tier 0 (Stranger)     : core <= 5 — bare minimum ("stranger, no established history")
+// Tier 1 (Acquaintance) : core 6..30 — band keywords only (cap 5 lines)
+// Tier 2 (Friend+)      : core 31..75 — keywords + maturity guidance + recent shifts (cap 8 lines)
+// Tier 3 (Bonded+)      : core 76+ — full dimensional state + reasons + maturity + shifts (cap 10 lines)
 //
 // High water mark: once tier 2 is reached, it becomes the permanent floor.
-// Tier 3 requires active high affinity (71+) — drops back to tier 2 if bond breaks.
+// Tier 3 requires active high affinity (core 76+) — drops back to tier 2 if bond breaks.
 // "You don't forget who someone is because you hate them."
 // ==================================================
 
@@ -428,11 +429,20 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
             continue;
         }
 
-        $baseline = floatval($dimData['baseline'] ?? $def['default_baseline']);
-        $dist = abs($x - $baseline);
+        if ($dimId === 'affinity') {
+            // x is only the mirror of core aff: band and baseline distance in core units
+            // (-100..+100; the affinity baseline is core units, as in applyDelta)
+            $x = RelationshipDynamics::getCoreAffinity($dynamics);
+            $baseline = floatval($dimData['baseline'] ?? RelationshipDynamics::getTemperamentBaseline($temperament ?: null, 'affinity'));
+            $dist = abs($x - $baseline);
+            $band = RelationshipDynamics::getAffinityBand($dynamics);
+        } else {
+            $baseline = floatval($dimData['baseline'] ?? $def['default_baseline']);
+            $dist = abs($x - $baseline);
 
-        // Get the band
-        $band = RelationshipDynamics::getDimensionBand($dimId, $x);
+            // Get the band
+            $band = RelationshipDynamics::getDimensionBand($dimId, $x);
+        }
         if ($band === null) {
             $skippedDims[] = "{$dimId}(no_band)";
             continue;
@@ -450,8 +460,10 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
         if (!empty($allBands)) {
             $firstBand = $allBands[0];
             $lastBand = $allBands[count($allBands) - 1];
-            $isExtreme = ($x >= $firstBand['range'][0] && $x <= $firstBand['range'][1])
-                      || ($x >= $lastBand['range'][0] && $x <= $lastBand['range'][1]);
+            $isExtreme = ($dimId === 'affinity')
+                ? ($band === $firstBand || $band === $lastBand)   // core units: compare the band itself
+                : (($x >= $firstBand['range'][0] && $x <= $firstBand['range'][1])
+                   || ($x >= $lastBand['range'][0] && $x <= $lastBand['range'][1]));
         }
 
         // Priority filtering: skip if near baseline and not extreme

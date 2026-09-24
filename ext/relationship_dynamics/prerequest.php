@@ -121,6 +121,8 @@ try {
             $pRel = RelationshipDynamics::getPlayerRelationshipFromExtended($ext2);
             // No Player entry yet = core's default neutral stranger (aff 0)
             $GLOBALS['RELDYN_PRE_AFF'] = intval($pRel['aff'] ?? 0);
+            // Core Player.type is the one relationship type; getRelationshipType() maps it
+            RelationshipDynamics::setCoreRelationshipType($dynamics, $pRel['type'] ?? 'neutral');
         }
     }
 } catch (Throwable $e) {
@@ -395,25 +397,15 @@ if (!empty($reldynCfg['attachment_style_enabled'] ?? true)) {
 }
 
 // ========== AFFINITY DECAY WIRING (PR 10) ==========
-// PR 16: Pause affinity decay during walkaway (NPC chose to leave, not forgotten)
-if (!empty($reldynCfg['dimension_engine_enabled']) && empty($dynamics['_walkaway_affinity_decay_paused'])) {
+// Absence ticks on the game calendar since the last turn with this NPC (consumed here).
+// PR 16: Pause affinity decay during walkaway (NPC chose to leave, not forgotten): the
+// paused interval is dropped, not banked for after the walkaway resolves.
+if (!empty($reldynCfg['dimension_engine_enabled'])) {
     $decayTicks = RelationshipDynamics::calculateDecayTicks($dynamics);
-    if ($decayTicks > 0.001) {
+    if ($decayTicks > 0.001 && empty($dynamics['_walkaway_affinity_decay_paused'])) {
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
-        $relType = 'stranger';
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db) {
-                $escaped = $db->escape($npcName);
-                $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
-                if (is_array($row) && !empty($row['extended_data'])) {
-                    $ext = json_decode($row['extended_data'], true) ?: [];
-                    $relType = RelationshipDynamics::getPlayerRelationshipFromExtended($ext)['type'] ?? 'stranger';
-                }
-            }
-        } catch (\Throwable $e) {
-            error_log("[RelDyn-PRE] Relationship type read failed for {$npcName}: " . $e->getMessage());
-        }
+        // Same type every other consumer reads: core Player.type (snapshotted above), mapped
+        $relType = RelationshipDynamics::getRelationshipType($npcName, $dynamics);
 
         $decayResult = RelationshipDynamics::processAffinityDecay($dynamics, $npcName, $temperament, $relType, $decayTicks);
         if ($decayResult && !($decayResult['skipped'] ?? false)) {

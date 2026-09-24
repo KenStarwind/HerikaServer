@@ -267,7 +267,7 @@ final class RelDynAffinityCoreTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['db', 'gameRequest', 'HERIKA_NAME', 'PLAYER_NAME', 'CACHE_PEOPLE', 'CACHE_PARTY'] as $key) {
+        foreach (['db', 'gameRequest', 'HERIKA_NAME', 'PLAYER_NAME', 'CACHE_PEOPLE', 'CACHE_PARTY', 'contextDataFull'] as $key) {
             $this->savedGlobals[$key] = array_key_exists($key, $GLOBALS) ? [$GLOBALS[$key]] : null;
         }
         foreach (array_keys($GLOBALS) as $key) {
@@ -488,6 +488,120 @@ final class RelDynAffinityCoreTest extends TestCase
         $this->assertLessThan(60, $this->coreAff());
         $this->assertAllRelationshipWritesLocked();
         $this->assertEqualsWithDelta(($this->coreAff() + 100) / 2.0, $dynamics['dimensions']['affinity']['x'], 0.01);
+    }
+
+    /** Absence is measured on the game calendar: a game day of waiting/sleeping is absence. */
+    public function testAGameDayAwayOnTheCalendarDecaysAFriendThroughTheRealTurn(): void
+    {
+        $start = 1000000.0;
+        $this->seedNpc(['Player' => ['aff' => 60, 'type' => 'platonic']], [
+            'attachment_style' => 'secure',
+            '_decay_last_game_gamets' => $start,
+        ]);
+        // One game day later (7.2 decay ticks); no real play time accumulated in between
+        $GLOBALS['gameRequest'][2] = $start + RelationshipDynamics::GAMETS_PER_DAY;
+
+        $this->runTurn();
+
+        $aff = $this->coreAff();
+        $this->assertLessThan(60, $aff, 'a game day of absence fades a positive bond');
+        $this->assertGreaterThanOrEqual(56, $aff, 'Stoic: a day is a small fade, not a collapse');
+        $this->assertAllRelationshipWritesLocked();
+        $this->assertEqualsWithDelta($start + RelationshipDynamics::GAMETS_PER_DAY,
+            (float) $this->storedDynamics()['_decay_last_game_gamets'], 0.001, 'interval consumed');
+    }
+
+    public function testAStrangerStaysNeutralAfterAMonthAway(): void
+    {
+        $start = 1000000.0;
+        $this->seedNpc(['Player' => ['aff' => 0, 'type' => 'neutral']], ['_decay_last_game_gamets' => $start]);
+        $GLOBALS['gameRequest'][2] = $start + 30 * RelationshipDynamics::GAMETS_PER_DAY;
+
+        $this->runTurn();
+
+        $this->assertSame(0, $this->coreAff());
+        $this->assertSame([], $this->db->relationshipWrites, 'nothing to commit');
+    }
+
+    public function testWalkawayPauseDoesNotBankTheAbsenceForLater(): void
+    {
+        $start = 1000000.0;
+        $this->seedNpc(['Player' => ['aff' => 60, 'type' => 'platonic']], [
+            'attachment_style' => 'secure',
+            '_decay_last_game_gamets' => $start,
+            '_walkaway_affinity_decay_paused' => true,
+        ]);
+        $GLOBALS['gameRequest'][2] = $start + 3 * RelationshipDynamics::GAMETS_PER_DAY;
+
+        $this->runTurn();
+        $this->assertSame(60, $this->coreAff(), 'no decay while the NPC walked away');
+
+        // The walkaway resolves; the next turn is only minutes of game time later
+        $this->db->patchDynamics(self::NPC_ID, ['_walkaway_affinity_decay_paused' => false]);
+        $this->resetEngineCaches();
+        $GLOBALS['gameRequest'][2] += 10000;
+        $this->runTurn();
+
+        $this->assertSame(60, $this->coreAff(), 'the paused days are not decayed afterwards');
+    }
+
+    /** Decay reads core's Player.type through getRelationshipType(), not RelDyn's stage. */
+    public function testACoreEnemyDoesNotDecayAndIsNotBondedAfterTwoHundredTalks(): void
+    {
+        $start = 1000000.0;
+        $this->seedNpc(['Player' => ['aff' => 40, 'type' => 'enemy']], [
+            'stage' => 'deep',
+            'interaction_count' => 200,
+            '_decay_last_game_gamets' => $start,
+        ]);
+        $GLOBALS['gameRequest'][2] = $start + 3 * RelationshipDynamics::GAMETS_PER_DAY;
+
+        $this->runTurn();
+
+        $stored = $this->storedDynamics();
+        $this->assertSame('enemy', $stored['_core_rel_type'] ?? null, 'prerequest snapshots core Player.type');
+        $this->assertSame('hostile', RelationshipDynamics::getRelationshipType(self::NPC, $stored));
+        $this->assertSame(40, $this->coreAff(), 'hate is self-sustaining: a core enemy does not decay');
+    }
+
+    /** Runs prerequest then the context hook; returns the <relational_dimensions> block. */
+    private function relationalDimensionsBlock(): string
+    {
+        $GLOBALS['contextDataFull'] = [];
+        $this->runHook('prerequest');
+        $this->resetEngineCaches();
+        $this->runHook('context');
+        foreach ($GLOBALS['contextDataFull'] as $msg) {
+            if (strpos($msg['content'] ?? '', '<relational_dimensions>') !== false) {
+                return $msg['content'];
+            }
+        }
+        return '';
+    }
+
+    public function testANeutralStrangerGetsTierZeroContextAndNoHighWaterMark(): void
+    {
+        $this->setConfig(['dimension_context_enabled' => true]);
+        $this->seedNpc(['Player' => ['aff' => 0, 'type' => 'neutral']]);
+
+        $block = $this->relationalDimensionsBlock();
+
+        $this->assertStringContainsString('is a stranger to', $block);
+        $this->assertStringNotContainsString('Warm', $block);
+        $this->assertSame(0, intval($this->storedDynamics()['context_tier_hwm'] ?? 0));
+    }
+
+    public function testAcquaintanceAffinityLineUsesTheCoreBand(): void
+    {
+        $this->setConfig(['dimension_context_enabled' => true]);
+        // Core 28 = Acquaintance (tier 1). As a mirror (x = 64) it read as the 'Fond' band.
+        $this->seedNpc(['Player' => ['aff' => 28, 'type' => 'neutral']]);
+
+        $block = $this->relationalDimensionsBlock();
+
+        $this->assertSame(1, intval($this->storedDynamics()['context_tier_hwm'] ?? 0));
+        $this->assertStringContainsString('Affinity: Neutral —', $block, 'acquaintance = the draft band at the same step');
+        $this->assertStringNotContainsString('Affinity: Fond', $block);
     }
 
     public function testFractionalDeltasAccumulateInsteadOfRounding(): void
