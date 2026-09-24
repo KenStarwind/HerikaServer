@@ -374,7 +374,9 @@ final class RelDynAttractionPostgresTest extends TestCase
         // request, and no eval can push it past (MDD 6.2 hard cap)
         $raw = pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT plugin_extended_data FROM core_npc_master WHERE npc_name = $1', [self::AELA]));
         $ped = json_decode($raw['plugin_extended_data'], true);
-        RelationshipDynamics::setPassion($ped['reldyn']['dynamics'], 60.0);
+        // written raw, as an older save holds it (setPassion itself already respects the cap)
+        $ped['reldyn']['dynamics']['dimensions']['passion']['x'] = 60.0;
+        $ped['reldyn']['dynamics']['passion'] = 60.0;
         pg_query_params($this->db->link, 'UPDATE core_npc_master SET plugin_extended_data = $2::jsonb WHERE npc_name = $1',
             [self::AELA, json_encode($ped)]);
         for ($i = 0; $i < 4; $i++) {

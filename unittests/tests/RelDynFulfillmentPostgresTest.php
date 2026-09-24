@@ -414,6 +414,72 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $this->assertNoFailedStatements();
     }
 
+    /**
+     * Review 2026-09-24 (global-neglect): an absence shorter than the bond's grace is not
+     * "low fulfillment while present". Friend bond, one greeting, six game days away with the
+     * calendar scan once a game day: no unfulfilled raw resentment, no grievance, no low
+     * stretch toward the boundary. The same six days spent together with nothing given are.
+     */
+    public function testAbsenceInsideGraceIsNotChargedAsUnfulfilledPresence(): void
+    {
+        $friend = ['relationships' => ['Player' => ['aff' => 60, 'type' => 'platonic']]];
+        $this->seed('Aela', 80.0, 'Independent', 'secure', [], $friend);    // away
+        $this->seed('Serana', 80.0, 'Independent', 'secure', [], $friend);  // around, given nothing
+        $this->talkTo('Aela', self::T0);
+        $this->talkTo('Serana', self::T0);
+        $graceEnd = RelationshipDynamics::neglectGraceEndGamets($this->dynamics('Aela'));
+        $this->assertNotNull($graceEnd, 'a friend bond: its neglect matters');
+        $this->assertGreaterThan(self::T0 + 6 * self::DAY, $graceEnd, 'six game days are inside the grace');
+        for ($k = 1; $k <= 6; $k++) {
+            $GLOBALS['gameRequest'] = ['inputtext', '1727000000', (string) (int) (self::T0 + $k * self::DAY), 'Kaida: ...'];
+            RelationshipDynamics::runCalendarScan(null);
+            RelationshipDynamics::endRequest();
+            $this->talkTo('Serana', self::T0 + $k * self::DAY);
+        }
+        $d = $this->dynamics('Aela');
+        $this->assertLessThan(-0.25, RelDynFulfillment::bandAt($d['_fulfillment'], self::T0 + 6 * self::DAY), 'nothing delivered: the band sank');
+        $this->assertEquals(0.0, floatval($d['_calendar_neglect_raw'] ?? 0), 'away inside the grace: no neglect raw');
+        $unfulfilled = array_filter($d['dimensions']['resentment']['grievance_log'] ?? [], fn($g) => ($g['kind'] ?? null) === 'unfulfilled');
+        $this->assertSame([], array_values($unfulfilled), 'no "needs unmet" grievance for an excused absence');
+        $this->assertArrayNotHasKey('low_since_gamets', $d['_fulfillment'], 'the absence does not count toward the boundary');
+        $this->assertSame(0.0, $this->resentment('Aela'));
+
+        $s = $this->dynamics('Serana');
+        $this->assertGreaterThan(0.0, floatval($s['_calendar_neglect_raw'] ?? 0) + $this->resentment('Serana'), 'present and unfulfilled: neglect');
+        $this->assertArrayHasKey('low_since_gamets', $s['_fulfillment']);
+        $this->assertNotEmpty(array_filter($s['dimensions']['resentment']['grievance_log'] ?? [], fn($g) => ($g['kind'] ?? null) === 'unfulfilled'));
+
+        // Back on day 6: the low stretch starts with the return, not with the absence
+        $this->talkTo('Aela', self::T0 + 6 * self::DAY + self::HOUR);
+        $this->assertEqualsWithDelta(self::T0 + 6 * self::DAY + self::HOUR, $this->dynamics('Aela')['_fulfillment']['low_since_gamets'], 1.0);
+        $this->assertNoFailedStatements();
+    }
+
+    /**
+     * Review 2026-09-24 (global-neglect): the band a contact leaves behind (contact_band,
+     * which scales the next absence) is the band after the visit's deliveries, not the band
+     * the visit started with; the eval items land after the request's prerequest.
+     */
+    public function testAFulfillingVisitLeavesItsBandBehindForTheNextAbsence(): void
+    {
+        $this->seed('Aela', 50.0);
+        $this->talkTo('Aela', self::T0);
+        $this->talkTo('Aela', self::T0 + 4 * self::DAY);   // four days of nothing
+        $start = $this->dynamics('Aela')['_fulfillment']['contact_band'];
+        $this->assertLessThan(-0.5, $start, 'the visit starts low');
+
+        $this->attentiveDay('Aela', self::T0 + 4 * self::DAY);
+        $this->attentiveDay('Aela', self::T0 + 4 * self::DAY + 4 * self::HOUR);
+        $d = $this->dynamics('Aela');
+        $after = RelDynFulfillment::bandAt($d['_fulfillment'], self::T0 + 4 * self::DAY + 7 * self::HOUR);
+        $this->assertGreaterThan(0.5, $after, 'an attentive visit');
+        $this->assertEqualsWithDelta($after, $d['_fulfillment']['contact_band'], 0.02, 'the visit leaves its delivered band behind');
+        $f = RelationshipDynamics::absenceBandFactors($d);
+        $this->assertGreaterThan(1.3, $f['grace'], 'and the next absence is buffered, not sharpened');
+        $this->assertLessThan(0.8, $f['rate']);
+        $this->assertNoFailedStatements();
+    }
+
     // ------------------------------------------------------------------ mature-boundary-enforcement
 
     /** Talk to $name once a day from day $from to day $to (inclusive), giving nothing. */
@@ -443,6 +509,41 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $this->assertStringNotContainsString('has thought about this calmly', $next, 'stated once');
         $this->assertStringContainsString('quietly watching whether it really changes', $next);
         return $at;
+    }
+
+    /** The same request's context hook for an NPC-to-NPC round ($type radiant / rechat). */
+    private function npcRoundContext(string $name, float $gamets, string $type): string
+    {
+        $GLOBALS['gameRequest'] = [$type, '1727000000', (string) (int) $gamets, "Farkas: What do you think, {$name}?"];
+        $GLOBALS['HERIKA_NAME'] = $name;
+        $GLOBALS['contextDataFull'] = [];
+        (static function () { require $GLOBALS['ENGINE_PATH'] . 'ext/relationship_dynamics/context.php'; })();
+        RelationshipDynamics::endRequest();
+        return implode("\n", array_map(fn($m) => (string) ($m['content'] ?? ''), $GLOBALS['contextDataFull']));
+    }
+
+    /**
+     * Review 2026-09-24 (mature-boundary-enforcement): the boundary is said to the player. An
+     * NPC-to-NPC round (radiant, rechat) neither says nor consumes it, and its probation
+     * starts on the player's own next turn with her.
+     */
+    public function testTheBoundaryWaitsForThePlayersOwnTurn(): void
+    {
+        $this->seed('Aela', 80.0);
+        $this->politeDays('Aela', 0, 7);
+        $this->assertSame('pending', $this->dynamics('Aela')['_fulfillment']['boundary']['state']);
+        $at = self::T0 + 7 * self::DAY;
+        foreach (['radiant', 'rechat'] as $i => $type) {
+            $ctx = $this->npcRoundContext('Aela', $at + ($i + 1) * self::HOUR, $type);
+            $this->assertStringNotContainsString('has thought about this calmly', $ctx, "{$type}: not said over the player's head");
+            $this->assertSame('pending', $this->dynamics('Aela')['_fulfillment']['boundary']['state'], "{$type}: not consumed");
+        }
+        $ctx = $this->context('Aela', $at + 3 * self::HOUR);
+        $this->assertStringContainsString('<relationship_boundary>Aela has thought about this calmly', $ctx);
+        $b = $this->dynamics('Aela')['_fulfillment']['boundary'];
+        $this->assertSame('probation', $b['state']);
+        $this->assertEqualsWithDelta($at + 3 * self::HOUR, $b['started_gamets'], 1.0, 'the window starts when she said it to the player');
+        $this->assertNoFailedStatements();
     }
 
     public function testMatureNpcStepsBackDeliberatelyWhenTheChangeDoesNotHold(): void

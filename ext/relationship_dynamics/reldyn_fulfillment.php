@@ -373,7 +373,8 @@ class RelDynFulfillment
      * starts neutral at $now, a need that went away is dropped). Stored:
      *   'v', 'since' (gamets), 'gamets' (levels as of), 'w' (axis => need weight),
      *   'lv' (axis => units at 'gamets'), 'sampled_gamets' (last day-end sampled), 'days'
-     *   ([game day, band] day-end samples), 'low_since_gamets', 'contact_band', 'boundary'.
+     *   ([game day, band] day-end samples), 'low_since_gamets', 'contact_band', 'boundary',
+     *   'contact_days' (game days the player had contact, recordContactDay).
      * Returns true when it changed $dynamics.
      */
     public static function ensure(array &$dynamics, array $prefs, float $now): bool
@@ -438,8 +439,51 @@ class RelDynFulfillment
         }
         $state['lv'] = array_map(fn($v) => round($v, 4), $levels);
         $state['gamets'] = $stamp;
+        // Deliveries are what a visit gives: the band this contact leaves behind for the next
+        // absence (contact_band, absenceBandFactors) is the band after its latest delivery.
+        if ($applied !== [] && array_key_exists('contact_band', $state)) {
+            $state['contact_band'] = round(self::bandAt($state, $stamp, $cfg), 4);
+        }
         $dynamics[self::STATE_KEY] = $state;
         return $applied;
+    }
+
+    // =====================================================================
+    // PRESENCE (which game days the player was actually there)
+    // =====================================================================
+
+    /** Game-day number of a game time (raw gamets): the day $t falls in. */
+    public static function gameDayOf(float $t): int
+    {
+        return (int) floor($t / self::day());
+    }
+
+    /** Game-day number of the day that ends at day-end $t (tick's day-end samples). */
+    public static function gameDayEndedAt(float $t): int
+    {
+        return intval(round($t / self::day())) - 1;
+    }
+
+    /**
+     * Stamp the player's contact on game day of $now (state 'contact_days', newest last, as
+     * many as the band history keeps). Presence for "low fulfillment while present" is these
+     * days, not the absence grace after a contact. Returns true when it changed $dynamics.
+     */
+    public static function recordContactDay(array &$dynamics, float $now): bool
+    {
+        if ($now <= 0 || !is_array($dynamics[self::STATE_KEY]['lv'] ?? null)) return false;
+        $days = array_values(array_filter((array) ($dynamics[self::STATE_KEY]['contact_days'] ?? []), 'is_int'));
+        $day = self::gameDayOf($now);
+        if (in_array($day, $days, true)) return false;
+        $days[] = $day;
+        $dynamics[self::STATE_KEY]['contact_days'] = array_slice($days, -max(2, 2 * intval(self::config()['trend_game_days'])));
+        return true;
+    }
+
+    /** Did the player have contact with this NPC on game day $day? */
+    public static function wasPresentOn(array $state, int $day): bool
+    {
+        return in_array($day, array_values((array) ($state['contact_days'] ?? [])), true);
     }
 
     /**
@@ -554,6 +598,7 @@ class RelDynFulfillment
         $points[] = [$now, false];
 
         $days = array_values(array_filter((array) ($state['days'] ?? []), 'is_array'));
+        $graceEnd = RelationshipDynamics::neglectGraceEndGamets($dynamics);
         foreach ($points as [$t, $isDayEnd]) {
             $band = self::bandAt($state, max($t, floatval($state['gamets'] ?? 0)), $cfg);
             if ($isDayEnd) {
@@ -561,7 +606,11 @@ class RelDynFulfillment
                 $out['samples'][] = [$t, $band];
                 $state['sampled_gamets'] = $t;
             }
-            self::boundaryStep($state, $dynamics, $t, $band, $isDayEnd, $cfg, $out['events']);
+            // A low stretch starts only on a day that counts: the player was there, or the
+            // absence ran past its grace (neglect). An absence inside the grace is excused.
+            $counts = $graceEnd === null || $t > $graceEnd
+                || self::wasPresentOn($state, $isDayEnd ? self::gameDayEndedAt($t) : self::gameDayOf($t));
+            self::boundaryStep($state, $dynamics, $t, $band, $isDayEnd, $cfg, $out['events'], $counts);
         }
         $state['days'] = array_slice($days, -max(2, 2 * intval($cfg['trend_game_days'])));
         $out['changed'] = $out['samples'] !== [] || $out['events'] !== [] || $state != $dynamics[self::STATE_KEY];
@@ -573,11 +622,11 @@ class RelDynFulfillment
         return $out;
     }
 
-    private static function boundaryStep(array &$state, array $dynamics, float $t, float $band, bool $isDayEnd, array $cfg, array &$events): void
+    private static function boundaryStep(array &$state, array $dynamics, float $t, float $band, bool $isDayEnd, array $cfg, array &$events, bool $counts = true): void
     {
         $day = self::day();
         if ($band < floatval($cfg['low_band'])) {
-            $state['low_since_gamets'] = $state['low_since_gamets'] ?? $t;
+            if (!isset($state['low_since_gamets']) && $counts) $state['low_since_gamets'] = $t;
         } else {
             unset($state['low_since_gamets']);
         }
@@ -655,8 +704,13 @@ class RelDynFulfillment
      * decision; else the probation watchfulness while it lasts, else the unmet-needs line while
      * the band is low. Returns ['texts' => kind => text (boundary|resolved|step_back|probation|unmet),
      * 'changed' => bool].
+     *
+     * The one-shot lines are said TO the player, so they wait for a request where the player
+     * is speaking to this NPC ($playerAddressed: RelationshipDynamics::isPlayerInputRequest).
+     * An NPC-to-NPC round (radiant, rechat) or an NPC-initiated remark neither says nor
+     * consumes them, and the probation window only starts once the player has heard it.
      */
-    public static function takeFeltTexts(array &$dynamics, string $npcName, string $playerName, float $now): array
+    public static function takeFeltTexts(array &$dynamics, string $npcName, string $playerName, float $now, bool $playerAddressed = true): array
     {
         $out = ['texts' => [], 'changed' => false];
         $state = $dynamics[self::STATE_KEY] ?? null;
@@ -666,6 +720,9 @@ class RelDynFulfillment
         $vars = ['{NAME}' => $npcName, '{PLAYER}' => $playerName,
                  '{NEEDS}' => self::joinPhrases(self::unmetPhrases($state, $now, 2, $cfg))];
         $b = is_array($state['boundary'] ?? null) ? $state['boundary'] : ['state' => 'none'];
+        if (!$playerAddressed && (($b['state'] ?? 'none') === 'pending' || isset($b['say']))) {
+            return $out;   // said to the player's face, not over their head
+        }
 
         if (($b['state'] ?? 'none') === 'pending') {
             $out['texts']['boundary'] = self::fill((string) $felt['boundary'], $vars);

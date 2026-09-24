@@ -3060,10 +3060,17 @@ class RelationshipDynamics
     /**
      * The one writer for passion: sets dimensions.passion.x and derives the
      * legacy 'passion' mirror from it. Never assign $dynamics['passion'] directly.
+     * The Attraction Matrix's hard cap (MDD 6.2 friendzone / unattracted, the openness
+     * ceiling; _attraction.passion_cap from the last evaluation) holds here, so every
+     * passion writer (hoover snap, reunion, eval, decay floors) stays under it.
      */
     public static function setPassion(&$dynamics, $value)
     {
         $value = floatval($value);
+        $cap = $dynamics['_attraction']['passion_cap'] ?? null;
+        if (is_numeric($cap) && $value > floatval($cap)) {
+            $value = floatval($cap);
+        }
         if (!isset($dynamics['dimensions']) || !is_array($dynamics['dimensions'])) {
             $dynamics['dimensions'] = [];
         }
@@ -3332,6 +3339,20 @@ class RelationshipDynamics
         self::log("Reunion spike for NPC: +{$spike} passion (game_hours_apart={$hoursApart}, temp_mult={$tempMult})");
 
         return $spike;
+    }
+
+    /** CHIM request types in which the player speaks to the NPC (core's inputtext family). */
+    const PLAYER_INPUT_REQUEST_TYPES = ['inputtext', 'inputtext_s', 'ginputtext', 'ginputtext_s'];
+
+    /**
+     * True when this request is the player speaking to the NPC ($gameRequest[0] in
+     * PLAYER_INPUT_REQUEST_TYPES). Radiant / rechat rounds (NPC to NPC) and NPC-initiated
+     * remarks are not: whatever must be said to the player waits for the player's turn.
+     */
+    public static function isPlayerInputRequest($gameRequest): bool
+    {
+        $type = is_array($gameRequest) ? strtolower(trim((string) ($gameRequest[0] ?? ''))) : '';
+        return in_array($type, self::PLAYER_INPUT_REQUEST_TYPES, true);
     }
 
     /**
@@ -3651,10 +3672,27 @@ class RelationshipDynamics
     }
 
     /**
+     * Game time (raw gamets) at which this bond's absence grace runs out: the last contact +
+     * grace_game_days of its bond type x the NPC's grace_mult (getNeglectProfile) x the
+     * fulfillment band factor (absenceBandFactors). Null when there is no contact yet or the
+     * bond's neglect does not matter (neglectBond). Same grace as advanceCalendar's.
+     */
+    public static function neglectGraceEndGamets(array $dynamics): ?float
+    {
+        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);   // raw gamets
+        if ($lastContact <= 0) return null;
+        $bond = self::neglectBond($dynamics);
+        if ($bond === null) return null;
+        $graceDays = floatval($bond['grace_game_days'] ?? 0) * self::getNeglectProfile($dynamics)['grace_mult']
+            * self::absenceBandFactors($dynamics)['grace'];
+        return $lastContact + $graceDays * self::GAMETS_PER_DAY;
+    }
+
+    /**
      * Low fulfillment while the player is around is neglect (rulings §9). For each sampled
-     * game-day end [gamets, band] inside the present window (before this bond's absence grace
-     * runs out since the last contact; after it, advanceCalendar's absence neglect counts
-     * instead), raw resentment for that game day =
+     * game-day end [gamets, band] of a game day the player actually had contact with this NPC
+     * (RelDynFulfillment::recordContactDay; a day away is absence: inside the grace it is
+     * excused, past it advanceCalendar's absence neglect counts), raw resentment for that game day =
      *     bond resentment_per_game_day x unfulfilled_rate_mult x the NPC's neglect rate_mult
      *     x depth,   depth = clamp((low_band - band) / (low_band + 1), 0, 1)
      * through the neglect buffer, so it stops at the NPC's neglect ceiling (getNeglectProfile:
@@ -3674,11 +3712,11 @@ class RelationshipDynamics
 
         $cfg = RelDynFulfillment::config();
         $severity = self::getNeglectProfile($dynamics);
-        $graceDays = floatval($bond['grace_game_days'] ?? 0) * $severity['grace_mult'] * self::absenceBandFactors($dynamics)['grace'];
         $low = floatval($cfg['low_band']);
         $rate = floatval($bond['resentment_per_game_day'] ?? 0) * floatval($cfg['unfulfilled_rate_mult']) * $severity['rate_mult'];
+        $fstate = (array) ($dynamics[RelDynFulfillment::STATE_KEY] ?? []);
         foreach ($samples as [$t, $band]) {
-            if (floatval($t) > $lastContact + $graceDays * self::GAMETS_PER_DAY) continue;   // absence: advanceCalendar's
+            if (!RelDynFulfillment::wasPresentOn($fstate, RelDynFulfillment::gameDayEndedAt(floatval($t)))) continue;   // away that day
             $depth = max(0.0, min(1.0, ($low - floatval($band)) / max(0.001, $low + 1.0)));
             if ($depth <= 0.0) continue;
             $out['raw'] += $rate * $depth;   // raw resentment points for one game day
@@ -3740,6 +3778,10 @@ class RelationshipDynamics
             $out['changed'] = RelDynFulfillment::ensure($dynamics, RelDynFacets::preferences($dynamics, $npcName), $now);
         }
         if (!is_array($dynamics[RelDynFulfillment::STATE_KEY] ?? null)) return $out;
+        if ($contact) {
+            // Today counts as a day the player was there (unfulfilled neglect, the low stretch)
+            $out['changed'] = RelDynFulfillment::recordContactDay($dynamics, $now) || $out['changed'];
+        }
 
         $tick = RelDynFulfillment::tick($dynamics, $now);
         $out['events'] = $tick['events'];

@@ -677,8 +677,9 @@ if ($weather !== 'clear') {
 // ========== FULFILLMENT / MATURE BOUNDARY (rulings 2026-09-24 §9) ==========
 // Feelings only: what the NPC misses, the calm boundary (said once; its probation starts
 // now), the watchfulness while it lasts, the relief or the step-back decision (said once).
+// The one-shot lines wait for the player's own turn with this NPC (not radiant / rechat rounds).
 $fulfillmentFelt = RelDynFulfillment::takeFeltTexts($dynamics, $npcName, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'),
-    RelationshipDynamics::currentGamets());
+    RelationshipDynamics::currentGamets(), RelationshipDynamics::isPlayerInputRequest($GLOBALS['gameRequest'] ?? null));
 if ($fulfillmentFelt['changed']) {
     RelationshipDynamics::saveDynamics($npcName, $dynamics);
 }
