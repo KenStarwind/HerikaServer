@@ -1418,7 +1418,7 @@ class RelationshipDynamics
             '_last_gamets'              => 0,     // last seen gamets value from game clock
             '_last_real_ts'             => 0,     // real timestamp at last gamets sample
             '_accumulated_play_gamets'  => 0,     // filtered game time (excludes wait/sleep)
-            '_decay_last_play_gamets'   => 0,     // accumulated play gamets at last affinity decay
+            '_decay_last_game_gamets'   => 0,     // game-calendar gamets at the last absence-decay check
             '_resentment_last_play_gamets' => 0,  // accumulated play gamets at last resentment decay
 
             // ========== DIVINE INTERVENTION (PR 10) ==========
@@ -6529,7 +6529,7 @@ class RelationshipDynamics
      * @param string $npcName          NPC name (for logging)
      * @param string $temperament      NPC temperament
      * @param string $relationshipType Relationship type (romantic, friend, etc.)
-     * @param float  $ticksElapsed     Number of ticks elapsed (1 tick = 10 IRL min)
+     * @param float  $ticksElapsed     Absence ticks (1 tick = GAMETS_PER_DECAY_TICK of game calendar)
      * @return array ['decay_amount' => float, 'old_affinity' => float, 'new_affinity' => float,
      *               'old_tier' => string, 'new_tier' => string, 'tier_changed' => bool,
      *               'demotion_info' => array]
@@ -6670,9 +6670,7 @@ class RelationshipDynamics
 
         // --- Store tier on dynamics for other systems to read ---
         $dynamics['_current_tier'] = $result['new_tier'];
-        $dynamics['_decay_last_processed'] = time();
-        $dynamics['_decay_last_accumulated'] = intval($dynamics['_accumulated_time'] ?? 0);
-        $dynamics['_decay_last_play_gamets'] = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+        // (the absence checkpoint is moved by calculateDecayTicks, which consumed the ticks)
 
         // --- Log ---
         $tierStr = $result['tier_changed']
@@ -7305,37 +7303,40 @@ class RelationshipDynamics
     }
 
     /**
-     * Calculate ticks elapsed since last decay processing.
+     * Calculate absence ticks since the player last talked to this NPC, and consume them.
      *
-     * Uses gamets-based filtered play time (_accumulated_play_gamets) so that:
-     *   - Save+quit produces zero ticks (gamets doesn't advance offline)
-     *   - Wait/sleep produces zero ticks (filtered by updatePlayTime ratio check)
-     *   - 10 real minutes of actual gameplay = 1 tick
+     * Absence runs on the GAME CALENDAR (raw gamets, currentGamets()): waiting and sleeping
+     * are time passing in the world (decisions 2026-09-23 section 2, no wait-scumming).
+     * Save+quit adds nothing (the game clock doesn't run offline).
      *
-     * One tick = GAMETS_PER_DECAY_TICK (~1,389,000 gamets = ~10 real min at 20:1).
+     * One tick = GAMETS_PER_DECAY_TICK raw gamets (1,389,000 = 200 game minutes, i.e.
+     * ~10 real minutes of normal play at 20:1; 7.2 ticks per game day).
      *
-     * Returns 0 on first call (sets the marker for next time).
+     * The checkpoint (_decay_last_game_gamets) moves to "now" on every call that reads the
+     * clock, so the returned ticks are consumed and never counted twice; the caller must
+     * apply them (or deliberately drop them, e.g. while decay is paused).
+     * Returns 0 when the clock is unknown (checkpoint kept), on first contact or after an
+     * earlier save was loaded (checkpoint re-armed), and for a turn less than one tick after
+     * the previous one (still talking: conversation is not absence).
      *
-     * @param array &$dynamics  NPC dynamics blob (modified: sets _decay_last_play_gamets)
-     * @return float  Number of ticks elapsed (0 on first call)
+     * @param array &$dynamics  NPC dynamics blob (modified: sets _decay_last_game_gamets)
+     * @return float  Number of absence ticks elapsed
      */
     public static function calculateDecayTicks(&$dynamics)
     {
-        $accumulated = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
-        $lastDecayGamets = floatval($dynamics['_decay_last_play_gamets'] ?? 0);
+        $now = self::currentGamets();
+        if ($now <= 0) {
+            return 0.0;
+        }
+        $mark = floatval($dynamics['_decay_last_game_gamets'] ?? 0);
+        $dynamics['_decay_last_game_gamets'] = $now;
 
-        if ($lastDecayGamets <= 0 && $accumulated <= 0) {
-            // First call or no gamets data yet -- initialize, no decay this tick
-            $dynamics['_decay_last_play_gamets'] = $accumulated;
+        if ($mark <= 0 || $mark > $now) {
             return 0.0;
         }
 
-        $gametsSinceDecay = max(0, $accumulated - $lastDecayGamets);
-
-        // Absence, not conversation: a turn less than one tick after the previous one means
-        // the player is still with this NPC. Move the checkpoint on so such gaps never add up.
+        $gametsSinceDecay = $now - $mark;
         if ($gametsSinceDecay < self::GAMETS_PER_DECAY_TICK) {
-            $dynamics['_decay_last_play_gamets'] = $accumulated;
             return 0.0;
         }
 

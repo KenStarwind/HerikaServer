@@ -18,10 +18,12 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.p
 final class RelDynAffinityDecayTest extends TestCase
 {
     private $savedDb;
+    private $savedGameRequest;
 
     protected function setUp(): void
     {
         $this->savedDb = $GLOBALS['db'] ?? null;
+        $this->savedGameRequest = $GLOBALS['gameRequest'] ?? null;
         unset($GLOBALS['db']);
         RelationshipDynamics::clearConfigCache();
     }
@@ -30,6 +32,11 @@ final class RelDynAffinityDecayTest extends TestCase
     {
         if ($this->savedDb !== null) {
             $GLOBALS['db'] = $this->savedDb;
+        }
+        if ($this->savedGameRequest !== null) {
+            $GLOBALS['gameRequest'] = $this->savedGameRequest;
+        } else {
+            unset($GLOBALS['gameRequest']);
         }
         RelationshipDynamics::clearConfigCache();
     }
@@ -178,22 +185,51 @@ final class RelDynAffinityDecayTest extends TestCase
     {
         $tick = RelationshipDynamics::GAMETS_PER_DECAY_TICK;
         $d = $this->npc(60.0);
-        $d['_accumulated_play_gamets'] = 100.0 * $tick;
-        $d['_decay_last_play_gamets'] = 100.0 * $tick;
+        $GLOBALS['gameRequest'] = ['inputtext', time(), 100.0 * $tick, 'Hi'];
+        $d['_decay_last_game_gamets'] = 100.0 * $tick;
 
-        // Next turn three play-minutes later: still talking, no decay, checkpoint moves on.
-        $d['_accumulated_play_gamets'] += 0.3 * $tick;
+        // Next turn a few game minutes later: still talking, no decay, checkpoint moves on.
+        $GLOBALS['gameRequest'][2] += 0.3 * $tick;
         $this->assertSame(0.0, RelationshipDynamics::calculateDecayTicks($d));
-        $this->assertEqualsWithDelta(100.3 * $tick, (float) $d['_decay_last_play_gamets'], 0.001);
+        $this->assertEqualsWithDelta(100.3 * $tick, (float) $d['_decay_last_game_gamets'], 0.001);
 
         // A dozen such turns add up to more than a tick, and still are not absence.
         for ($i = 0; $i < 12; $i++) {
-            $d['_accumulated_play_gamets'] += 0.3 * $tick;
+            $GLOBALS['gameRequest'][2] += 0.3 * $tick;
             $this->assertSame(0.0, RelationshipDynamics::calculateDecayTicks($d));
         }
 
-        // Then the player leaves for two ticks' worth of play: that is absence.
-        $d['_accumulated_play_gamets'] += 2.0 * $tick;
+        // Then the player leaves for two ticks: that is absence, and it is consumed once.
+        $GLOBALS['gameRequest'][2] += 2.0 * $tick;
         $this->assertEqualsWithDelta(2.0, RelationshipDynamics::calculateDecayTicks($d), 0.0001);
+        $this->assertSame(0.0, RelationshipDynamics::calculateDecayTicks($d), 'not counted twice');
+    }
+
+    public function testAbsenceRunsOnTheGameCalendarSoSleepingCounts(): void
+    {
+        // Decisions 2026-09-23 section 2: waiting and sleeping are time passing in the world.
+        // No play time accumulates while sleeping; the calendar still moves 8 game hours.
+        $d = $this->npc(60.0);
+        $GLOBALS['gameRequest'] = ['inputtext', time(), 5.0 * RelationshipDynamics::GAMETS_PER_DAY, 'Hi'];
+        $this->assertSame(0.0, RelationshipDynamics::calculateDecayTicks($d), 'first contact arms the checkpoint');
+
+        $GLOBALS['gameRequest'][2] += RelationshipDynamics::GAMETS_PER_DAY / 3.0;   // 8 game hours
+        $expected = (RelationshipDynamics::GAMETS_PER_DAY / 3.0) / RelationshipDynamics::GAMETS_PER_DECAY_TICK;
+        $this->assertEqualsWithDelta($expected, RelationshipDynamics::calculateDecayTicks($d), 0.0001);
+    }
+
+    public function testUnknownClockOrALoadedEarlierSaveIsNotAbsence(): void
+    {
+        $d = $this->npc(60.0);
+        $d['_decay_last_game_gamets'] = 9.0 * RelationshipDynamics::GAMETS_PER_DAY;
+
+        unset($GLOBALS['gameRequest']);   // no game clock in this request (and no db)
+        $this->assertSame(0.0, RelationshipDynamics::calculateDecayTicks($d));
+        $this->assertSame(9.0 * RelationshipDynamics::GAMETS_PER_DAY, (float) $d['_decay_last_game_gamets'], 'kept');
+
+        // An earlier save: the clock is behind the checkpoint. Re-arm, no decay.
+        $GLOBALS['gameRequest'] = ['inputtext', time(), 4.0 * RelationshipDynamics::GAMETS_PER_DAY, 'Hi'];
+        $this->assertSame(0.0, RelationshipDynamics::calculateDecayTicks($d));
+        $this->assertSame(4.0 * RelationshipDynamics::GAMETS_PER_DAY, (float) $d['_decay_last_game_gamets']);
     }
 }
