@@ -41,99 +41,10 @@ $saveMsg = '';
 $saveOk = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_reldyn'])) {
-    $db = $GLOBALS['db'];
-
-    $newConfig = [
-        'enabled'                            => isset($_POST['enabled']),
-        'log_enabled'                        => isset($_POST['log_enabled']),
-        // Subsystem toggles
-        'passion_enabled'                    => isset($_POST['passion_enabled']),
-        'ambient_enabled'                    => isset($_POST['ambient_enabled']),
-        'combat_enabled'                     => isset($_POST['combat_enabled']),
-        'jealousy_enabled'                   => isset($_POST['jealousy_enabled']),
-        'reunion_enabled'                    => isset($_POST['reunion_enabled']),
-        'conflict_enabled'                   => isset($_POST['conflict_enabled']),
-        'topic_bonus_enabled'                => isset($_POST['topic_bonus_enabled']),
-        'flirt_bonus_enabled'                => isset($_POST['flirt_bonus_enabled']),
-        'type_filter_enabled'                => isset($_POST['type_filter_enabled']),
-        // Passion settings
-        'base_passion_gain'                  => max(0.1, min(10.0, floatval($_POST['base_passion_gain'] ?? 2.0))),
-        'passion_max'                        => max(10, min(200, floatval($_POST['passion_max'] ?? 100))),
-        'decay_max_hours'                    => max(0, min(168, floatval($_POST['decay_max_hours'] ?? 0))),
-        // Jealousy settings
-        'jealousy_max'                       => max(10, min(200, floatval($_POST['jealousy_max'] ?? 100))),
-        'jealousy_decay_per_hour'            => max(0.1, min(10.0, floatval($_POST['jealousy_decay_per_hour'] ?? 1.5))),
-        // Conflict settings
-        'conflict_threshold_affinity_drop'   => max(1, min(50, intval($_POST['conflict_threshold_affinity_drop'] ?? 10))),
-        'conflict_threshold_jealousy'        => max(5, min(100, intval($_POST['conflict_threshold_jealousy'] ?? 40))),
-        'conflict_resolution_positive_count' => max(1, min(20, intval($_POST['conflict_resolution_positive_count'] ?? 3))),
-        'conflict_repair_passion_burst'      => max(1.0, min(50.0, floatval($_POST['conflict_repair_passion_burst'] ?? 20.0))),
-        'conflict_repair_passion_mult'       => max(1.0, min(3.0, floatval($_POST['conflict_repair_passion_mult'] ?? 1.5))),
-        // Reunion settings
-        'reunion_min_hours'                  => max(1, min(48, intval($_POST['reunion_min_hours'] ?? 8))),
-        'reunion_min_affection'              => max(0, min(100, intval($_POST['reunion_min_affection'] ?? 40))),
-        // Stage thresholds
-        'stage_established_threshold'        => max(10, min(500, intval($_POST['stage_established_threshold'] ?? 50))),
-        'stage_deep_threshold'               => max(50, min(2000, intval($_POST['stage_deep_threshold'] ?? 200))),
-        // XYZ Dimension Engine
-        'dimension_engine_enabled'           => isset($_POST['dimension_engine_enabled']),
-        'dimension_context_enabled'          => isset($_POST['dimension_context_enabled']),
-        'dimension_debug_logging'            => isset($_POST['dimension_debug_logging']),
-        // Diary reflection mode
-        'diary_reflection_mode'              => in_array($_POST['diary_reflection_mode'] ?? 'baseline', ['baseline', 'trajectory']) ? $_POST['diary_reflection_mode'] : 'baseline',
-        // PR 10: Behavioral system toggles
-        'divine_intervention_enabled'        => isset($_POST['divine_intervention_enabled']),
-        'grief_system_enabled'               => isset($_POST['grief_system_enabled']),
-        'attachment_style_enabled'            => isset($_POST['attachment_style_enabled']),
-        // PR 11: Attraction Matrix
-        'attraction_matrix_enabled'          => isset($_POST['attraction_matrix_enabled']),
-        'attraction_eval_interval'           => intval($_POST['attraction_eval_interval'] ?? 10),
-        // PR 12: Affinity Network
-        'cascade_network_enabled'            => isset($_POST['cascade_network_enabled']),
-        'duty_override_enabled'              => isset($_POST['duty_override_enabled']),
-        'parasite_detection_enabled'         => isset($_POST['parasite_detection_enabled']),
-        // PR 13: Environmental Quirks
-        'significance_scaling_enabled'       => isset($_POST['significance_scaling_enabled']),
-        'baseline_drift_enabled'             => isset($_POST['baseline_drift_enabled']),
-        'internal_weather_enabled'           => isset($_POST['internal_weather_enabled']),
-        'creature_moodifications_enabled'    => isset($_POST['creature_moodifications_enabled']),
-        'emergent_emotions_enabled'          => isset($_POST['emergent_emotions_enabled']),
-        // PR 14: Social Masking + Autonomous Diary
-        'social_masking_enabled'             => isset($_POST['social_masking_enabled']),
-        'autonomous_diary_enabled'           => isset($_POST['autonomous_diary_enabled']),
-        'diary_interaction_gap'              => intval($_POST['diary_interaction_gap'] ?? 15),
-        'mask_maturity_cost'                 => floatval($_POST['mask_maturity_cost'] ?? 0.15),
-        // PR 15: Social Sensitivity
-        'social_sensitivity_enabled'         => isset($_POST['social_sensitivity_enabled']),
-        // PR 15: Ick / Desperation Tracker
-        'ick_system_enabled'                 => isset($_POST['ick_system_enabled']),
-        'ick_base_threshold'                 => floatval($_POST['ick_base_threshold'] ?? 0.5),
-        // PR 15: Charisma Archetypes
-        'charisma_detection_enabled'         => isset($_POST['charisma_detection_enabled']),
-        // PR 16: Autonomy Override + Walkaway + Hoover
-        'autonomy_enabled'                   => isset($_POST['autonomy_enabled']),
-        'walkaway_enabled'                   => isset($_POST['walkaway_enabled']),
-        'hoover_enabled'                     => isset($_POST['hoover_enabled']),
-        // PR 39: Director-Assigned Goals
-        'director_goals_enabled'             => isset($_POST['director_goals_enabled']),
-    ];
-
-    $jsonConfig = json_encode($newConfig, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    $escaped = $db->escape($jsonConfig);
-
-    // Upsert
-    $existing = $db->fetchOne("SELECT id FROM conf_opts WHERE id = 'relationship_dynamics_config' LIMIT 1");
-    if (!empty($existing)) {
-        $db->execQuery("UPDATE conf_opts SET value = '{$escaped}' WHERE id = 'relationship_dynamics_config'");
-    } else {
-        $db->execQuery("INSERT INTO conf_opts (id, value) VALUES ('relationship_dynamics_config', '{$escaped}')");
-    }
-
-    // Clear cached config so re-read picks up changes
-    RelationshipDynamics::clearConfigCache();
-
-    $saveMsg = 'Settings saved.';
-    $saveOk = true;
+    // Parsing, clamping and the known-key filter live in the engine (configFromForm):
+    // each checkbox follows a hidden "" input, so its value decides on/off, not isset().
+    $saveOk = RelationshipDynamics::saveConfigFromForm($_POST);
+    $saveMsg = $saveOk ? 'Settings saved.' : 'Settings could not be saved (see the server log).';
 }
 
 // Load current config
@@ -757,9 +668,9 @@ html, body {
         </div>
         <div class="rd-row">
             <label for="rd_rma">Minimum Affection</label>
-            <input type="number" step="1" min="0" max="100" id="rd_rma" name="reunion_min_affection"
+            <input type="number" step="1" min="-100" max="100" id="rd_rma" name="reunion_min_affection"
                    value="<?php echo htmlspecialchars($cfg['reunion_min_affection']); ?>">
-            <span class="rd-hint">MARAS affection required (default: 40)</span>
+            <span class="rd-hint">Core affinity required, -100..100 (default: 40)</span>
         </div>
         <p style="font-size:0.82em; color:#777; margin:8px 0 0;">
             8-16h = +5 | 16-24h = +8 | 24-48h = +12 | 48-72h = +18 | 72h+ = +25 passion.

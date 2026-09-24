@@ -958,42 +958,176 @@ class RelationshipDynamics
             return self::$config;
         }
 
-        $config = self::defaultConfig();
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db) {
-                $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = 'relationship_dynamics_config' LIMIT 1");
-                if (is_array($row) && !empty($row['value'])) {
-                    $config = json_decode($row['value'], true) ?: self::defaultConfig();
-                }
-            }
-        } catch (Throwable $e) {
-            error_log("[RelDyn] Config load error: " . $e->getMessage());
-            $config = self::defaultConfig();
-        }
+        // Stored row merged over the defaults: a key the row lacks (older settings page,
+        // key added since) takes its current default instead of disappearing.
+        $config = array_merge(self::defaultConfig(), self::loadStoredConfig());
 
         self::$config = $cacheable ? $config : null;
         return $config;
     }
 
+    const CONFIG_ROW_ID = 'relationship_dynamics_config';
+
+    /** The stored conf_opts row as saved ([] when absent or unreadable). */
+    public static function loadStoredConfig(): array
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return [];
+        try {
+            $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = '" . self::CONFIG_ROW_ID . "' LIMIT 1");
+        } catch (Throwable $e) {
+            self::logError('loadStoredConfig', $e);
+            return [];
+        }
+        if (!is_array($row) || !isset($row['value']) || $row['value'] === '') return [];
+        $stored = json_decode($row['value'], true);
+        if (!is_array($stored)) {
+            error_log("[RelDyn] ERROR loadStoredConfig: conf_opts " . self::CONFIG_ROW_ID . " is not a JSON object; using defaults");
+            return [];
+        }
+        return $stored;
+    }
+
+    /** Settings-page checkboxes (each rendered as a hidden "" input followed by the checkbox). */
+    const CONFIG_FORM_TOGGLES = [
+        'enabled', 'log_enabled',
+        'passion_enabled', 'ambient_enabled', 'combat_enabled', 'jealousy_enabled', 'reunion_enabled',
+        'conflict_enabled', 'topic_bonus_enabled', 'flirt_bonus_enabled', 'type_filter_enabled',
+        'dimension_engine_enabled', 'dimension_context_enabled', 'dimension_debug_logging',
+        'divine_intervention_enabled', 'grief_system_enabled', 'attachment_style_enabled',
+        'attraction_matrix_enabled',
+        'cascade_network_enabled', 'duty_override_enabled', 'parasite_detection_enabled',
+        'significance_scaling_enabled', 'baseline_drift_enabled', 'internal_weather_enabled',
+        'creature_moodifications_enabled', 'emergent_emotions_enabled',
+        'social_masking_enabled', 'autonomous_diary_enabled',
+        'social_sensitivity_enabled', 'ick_system_enabled', 'charisma_detection_enabled',
+        'autonomy_enabled', 'walkaway_enabled', 'hoover_enabled',
+        'director_goals_enabled',
+    ];
+
+    /** Settings-page number fields: key => [int|float, min, max] (units: see defaultConfig()). */
+    const CONFIG_FORM_NUMBERS = [
+        'base_passion_gain'                  => ['float', 0.1, 10.0],
+        'passion_max'                        => ['float', 10, 200],
+        'decay_max_hours'                    => ['float', 0, 168],
+        'jealousy_max'                       => ['float', 10, 200],
+        'jealousy_decay_per_hour'            => ['float', 0.1, 10.0],
+        'conflict_threshold_affinity_drop'   => ['int', 1, 50],
+        'conflict_threshold_jealousy'        => ['int', 5, 100],
+        'conflict_resolution_positive_count' => ['int', 1, 20],
+        'conflict_repair_passion_burst'      => ['float', 1.0, 50.0],
+        'conflict_repair_passion_mult'       => ['float', 1.0, 3.0],
+        'reunion_min_hours'                  => ['int', 1, 48],
+        'reunion_min_affection'              => ['int', -100, 100],
+        'stage_established_threshold'        => ['int', 10, 500],
+        'stage_deep_threshold'               => ['int', 50, 2000],
+        'attraction_eval_interval'           => ['int', 1, 50],
+        'diary_interaction_gap'              => ['int', 5, 50],
+        'mask_maturity_cost'                 => ['float', 0.0, 1.0],
+        'ick_base_threshold'                 => ['float', 0.2, 0.9],
+    ];
+
+    /**
+     * Config row to store from a settings-form POST.
+     *
+     * Each checkbox comes after a hidden input of the same name with value "", so PHP sees
+     * "" when unticked and the checkbox value ("on") when ticked: the value decides, not
+     * isset(). A field missing from the POST keeps its stored value. Only keys of
+     * defaultConfig() are kept, so a known key the form does not show and that was never
+     * stored stays absent and follows its default.
+     */
+    public static function configFromForm(array $post, array $stored): array
+    {
+        $known = self::defaultConfig();
+        $config = array_intersect_key($stored, $known);
+
+        foreach (self::CONFIG_FORM_TOGGLES as $key) {
+            if (array_key_exists($key, $post)) {
+                $v = is_array($post[$key]) ? end($post[$key]) : $post[$key];
+                $config[$key] = !in_array(strtolower(trim((string)$v)), ['', '0', 'off', 'false', 'no'], true);
+            }
+        }
+        foreach (self::CONFIG_FORM_NUMBERS as $key => [$type, $min, $max]) {
+            if (!array_key_exists($key, $post) || !is_scalar($post[$key]) || trim((string)$post[$key]) === ''
+                || !is_numeric(trim((string)$post[$key]))) {
+                continue;
+            }
+            $v = max($min, min($max, floatval($post[$key])));
+            $config[$key] = ($type === 'int') ? intval(round($v)) : floatval($v);
+        }
+        if (array_key_exists('diary_reflection_mode', $post)) {
+            $mode = (string)$post['diary_reflection_mode'];
+            $config['diary_reflection_mode'] = in_array($mode, ['baseline', 'trajectory'], true) ? $mode : 'baseline';
+        }
+
+        return array_intersect_key($config, $known);
+    }
+
+    /** Store a config row (known keys only) and drop the cached config. */
+    public static function saveConfig(array $config): bool
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return false;
+        $config = array_intersect_key($config, self::defaultConfig());
+        try {
+            $json = json_encode($config, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $row = $db->fetchOne(
+                'INSERT INTO conf_opts (id, value) VALUES ($1, $2)
+                 ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value
+                 RETURNING id',
+                [self::CONFIG_ROW_ID, $json]
+            );
+        } catch (Throwable $e) {
+            self::logError('saveConfig', $e);
+            return false;
+        }
+        self::clearConfigCache();
+        if (!isset($row['id'])) {
+            error_log("[RelDyn] ERROR saveConfig: conf_opts " . self::CONFIG_ROW_ID . " was not written");
+            return false;
+        }
+        return true;
+    }
+
+    /** Settings page save: merge the POSTed form onto the stored row and store it. */
+    public static function saveConfigFromForm(array $post): bool
+    {
+        return self::saveConfig(self::configFromForm($post, self::loadStoredConfig()));
+    }
+
+    /**
+     * Every config key RelDyn reads, with its default. Units are given per key; affinity
+     * thresholds are core affinity (extended_data.relationships.Player.aff, -100..100).
+     */
     public static function defaultConfig()
     {
         return [
             'enabled' => true,
-            'base_passion_gain' => 2.0,
-            'passion_max' => 100.0,
-            'jealousy_max' => 100.0,
-            'jealousy_decay_per_hour' => 1.5,
-            'conflict_threshold_affinity_drop' => 10,
-            'conflict_threshold_jealousy' => 40,
-            'conflict_resolution_positive_count' => 3,
-            'conflict_repair_passion_burst' => 20.0,
-            'conflict_repair_passion_mult' => 1.5,
-            'reunion_min_hours' => 8,
-            'reunion_min_affection' => 40,
-            'stage_established_threshold' => 50,
-            'stage_deep_threshold' => 200,
-            'log_enabled' => false,
+            'base_passion_gain' => 2.0,              // passion points (0..passion_max) per interaction
+            'passion_max' => 100.0,                  // passion points
+            'decay_max_hours' => 0,                  // real play hours of between-session passion decay; 0 = none
+            'jealousy_max' => 100.0,                 // jealousy points
+            'jealousy_decay_per_hour' => 1.5,        // jealousy points per real play hour
+            'conflict_threshold_affinity_drop' => 10, // core affinity points lost in one commit
+            'conflict_threshold_jealousy' => 40,     // jealousy points
+            'conflict_resolution_positive_count' => 3, // positive interactions
+            'conflict_repair_passion_burst' => 20.0, // passion points
+            'conflict_repair_passion_mult' => 1.5,   // multiplier
+            'reunion_min_hours' => 8,                // real play hours apart
+            'reunion_min_affection' => 40,           // core affinity (-100..100)
+            'stage_established_threshold' => 50,     // positive interactions
+            'stage_deep_threshold' => 200,           // positive interactions
+            'log_enabled' => false,                  // debug log (errors are always logged)
+            // Subsystem toggles (the hooks' former '?? true' fallbacks)
+            'passion_enabled'    => true,
+            'ambient_enabled'    => true,
+            'combat_enabled'     => true,
+            'jealousy_enabled'   => true,
+            'reunion_enabled'    => true,
+            'conflict_enabled'   => true,
+            'topic_bonus_enabled' => true,
+            'flirt_bonus_enabled' => true,
+            'type_filter_enabled' => true,           // not read by the engine yet (relationship-preference-type-filter)
             // XYZ Dimension Engine — on by default: the MDD section 15 eval signals,
             // modifier pipeline and resentment accumulator all run through it.
             'dimension_engine_enabled' => true,
@@ -1015,8 +1149,8 @@ class RelationshipDynamics
             'attraction_competence_weight' => 1.0,
             // PR 12: Affinity Network + Relationship Types
             'cascade_network_enabled' => true,
-            'cascade_threshold' => 15,
-            'cascade_decay' => 0.3,
+            'cascade_threshold' => 15,               // core affinity points (|delta| that ripples)
+            'cascade_decay' => 0.3,                  // fraction
             'duty_override_enabled' => true,
             'parasite_detection_enabled' => true,
             // PR 13: Environmental Quirks
@@ -1028,8 +1162,19 @@ class RelationshipDynamics
             // PR 14: Social Masking + Autonomous Diary
             'social_masking_enabled' => true,
             'autonomous_diary_enabled' => true,
-            'diary_interaction_gap' => 15,
-            'mask_maturity_cost' => 0.15,
+            'diary_interaction_gap' => 15,           // interactions
+            'mask_maturity_cost' => 0.15,            // maturity points per masked interaction
+            // PR 15: Social Sensitivity + Ick + Charisma
+            'social_sensitivity_enabled' => true,
+            'ick_system_enabled' => true,
+            'ick_base_threshold' => 0.5,             // fraction of romantic attempts in the window
+            'charisma_detection_enabled' => true,
+            // PR 16: Autonomy Override + Walkaway + Hoover
+            'autonomy_enabled' => true,
+            'walkaway_enabled' => true,              // not read by the engine yet (walkaway-boundary)
+            'hoover_enabled' => true,
+            // PR 39: Director-Assigned Goals (the hooks ran them unless switched off)
+            'director_goals_enabled' => true,
         ];
     }
 
@@ -3136,6 +3281,15 @@ class RelationshipDynamics
         if (!empty($cfg['log_enabled'])) {
             error_log("[RelDyn] " . $message);
         }
+    }
+
+    /**
+     * Log a caught error. Always on: not gated by log_enabled (that is the debug log),
+     * so a failure the code recovers from is still visible in the server log.
+     */
+    public static function logError(string $where, \Throwable $e): void
+    {
+        error_log("[RelDyn] ERROR {$where}: " . get_class($e) . ': ' . $e->getMessage());
     }
 
     /**
