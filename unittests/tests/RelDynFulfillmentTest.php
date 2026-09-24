@@ -343,7 +343,7 @@ final class RelDynFulfillmentTest extends TestCase
         $d = $this->npc();
         RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
         $felt = RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', self::T0 + 4 * self::DAY);
-        $this->assertStringContainsString('Aela feels something missing between them and Kaida', $felt['texts']['unmet']);
+        $this->assertStringContainsString('Aela keeps waiting on something from Kaida that does not come', $felt['texts']['unmet']);
         $this->assertDoesNotMatchRegularExpression('/\d/', $felt['texts']['unmet']);
         $this->assertSame([], RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', self::T0)['texts'], 'covered: nothing to say');
     }

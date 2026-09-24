@@ -976,6 +976,12 @@ class RelationshipDynamics
             'dimension_context_enabled' => true,
             'dimension_debug_logging' => false,
             'dimension_max_context_lines' => 10,
+            // Felt steering (reldyn_felt.php): one <subtext> block after the dialogue history, tiered
+            // and token-budgeted; behavioral keywords, subtext and intensity formatting, never numbers.
+            'felt_steering' => RelDynFelt::configDefaults(),
+            // context_pre.php (feedback_context_engineering_v2): <knowledge_of_player> by tier and
+            // the emotional core inside <character> (primacy). Off: the <subtext> block carries all.
+            'context_pre_enabled' => true,
             // Diary reflection mode: 'baseline' (math-only) or 'trajectory' (LLM-scored)
             'diary_reflection_mode' => 'baseline',
             // PR 10: Behavioral system toggles
@@ -1007,8 +1013,8 @@ class RelationshipDynamics
             'emergent_emotions_enabled' => true,
             'significance_scaling_enabled' => true,
             // PR 14: Social Masking + Autonomous Diary
-            // Off by default: <social_mask> can only state comfort/resentment/warmth as numbers
-            // (generateMaskingContext) until its felt-steering rewrite.
+            // Off by default (shipped that way while <social_mask> printed numbers; its text is felt
+            // steering now, generateMaskingContext): turning it on is a gameplay call.
             'social_masking_enabled' => false,
             'autonomous_diary_enabled' => true,
             'diary_interaction_gap' => 15,           // interactions
@@ -5117,94 +5123,96 @@ class RelationshipDynamics
     /**
      * Band definitions for all 11 dimensions.
      * Each dimension maps to ordered bands with [min, max] ranges and keyword strings.
-     * Keywords are injected verbatim into the NPC's LLM prompt — do not paraphrase.
+     * Keywords are behavioral: what the NPC DOES, never a label or a mechanic (decisions
+     * 2026-09-23 §3); 'them' is the player. RelDynFelt renders them, the intensity engine on
+     * top; the extreme low maturity / resentment_self bands are hand-degraded.
      *
      * Special dimensions (mf, arousal_valence) use separate helper methods
      * because they combine two axes into a single behavioral descriptor.
      */
     const DIMENSION_BANDS = [
         'affinity' => [
-            ['label' => 'Hostile',  'range' => [0, 10],   'keywords' => 'despises, hostile, seeks to avoid, contemptuous'],
-            ['label' => 'Cold',     'range' => [11, 25],  'keywords' => 'dismissive, indifferent, curt, keeps distance'],
-            ['label' => 'Neutral',  'range' => [26, 40],  'keywords' => 'polite, professional, reserved, no strong feelings'],
-            ['label' => 'Warm',     'range' => [41, 55],  'keywords' => 'friendly, approachable, enjoys company, mild fondness'],
-            ['label' => 'Fond',     'range' => [56, 70],  'keywords' => 'genuinely likes, seeks out conversation, protective instinct'],
-            ['label' => 'Close',    'range' => [71, 85],  'keywords' => 'deeply bonded, confides freely, prioritizes this person'],
-            ['label' => 'Devoted',  'range' => [86, 100], 'keywords' => 'unshakable loyalty, would sacrifice for, profound connection'],
+            ['label' => 'Hostile',  'range' => [0, 10],   'keywords' => "turns away when they approach, answers in single words, wants them gone"],
+            ['label' => 'Cold',     'range' => [11, 25],  'keywords' => "keeps them at arm's length, curt replies, offers no small talk"],
+            ['label' => 'Neutral',  'range' => [26, 40],  'keywords' => "polite and brief, keeps to business, offers nothing personal"],
+            ['label' => 'Warm',     'range' => [41, 55],  'keywords' => "easy greeting, lingers for a word or two, smiles at their jokes"],
+            ['label' => 'Fond',     'range' => [56, 70],  'keywords' => "seeks them out to talk, saves them the good seat, steps in when they are threatened"],
+            ['label' => 'Close',    'range' => [71, 85],  'keywords' => "tells them things no one else hears, checks on them first, plans around them"],
+            ['label' => 'Devoted',  'range' => [86, 100], 'keywords' => "puts their safety before their own, stands with them against anyone, would follow them anywhere"],
         ],
         'passion' => [
-            ['label' => 'Cold',     'range' => [0, 15],   'keywords' => 'emotionally flat, going through the motions, disengaged'],
-            ['label' => 'Tepid',    'range' => [16, 35],  'keywords' => 'mild interest, slightly warmed, casually engaged'],
-            ['label' => 'Warm',     'range' => [36, 55],  'keywords' => 'noticeably engaged, laughs easier, steals glances'],
-            ['label' => 'Heated',   'range' => [56, 75],  'keywords' => 'flushed, heightened awareness, charged silences, leaning in'],
-            ['label' => 'Burning',  'range' => [76, 90],  'keywords' => 'electric tension, can barely focus, pulse racing, magnetic pull'],
-            ['label' => 'Redline',  'range' => [91, 100], 'keywords' => 'overwhelming desire, trembling restraint, all-consuming focus'],
+            ['label' => 'Cold',     'range' => [0, 15],   'keywords' => "going through the motions, eyes elsewhere, no spark in the voice"],
+            ['label' => 'Tepid',    'range' => [16, 35],  'keywords' => "mild interest, the odd second glance"],
+            ['label' => 'Warm',     'range' => [36, 55],  'keywords' => "laughs more easily around them, steals glances, finds reasons to stay"],
+            ['label' => 'Heated',   'range' => [56, 75],  'keywords' => "flushed, leans in, charged silences, loses the thread when they come close"],
+            ['label' => 'Burning',  'range' => [76, 90],  'keywords' => "can barely focus, pulse racing, keeps finding reasons to touch them"],
+            ['label' => 'Redline',  'range' => [91, 100], 'keywords' => "trembling restraint, can't look away, every word charged"],
         ],
         'warmth' => [
-            ['label' => 'Walled',      'range' => [0, 20],   'keywords' => 'closed off, monosyllabic, avoids eye contact, physically distant'],
-            ['label' => 'Guarded',     'range' => [21, 40],  'keywords' => 'polite but measured, reveals nothing personal, formal tone'],
-            ['label' => 'Cautious',    'range' => [41, 55],  'keywords' => 'slightly more open, occasional genuine smile, testing the waters'],
-            ['label' => 'Comfortable', 'range' => [56, 70],  'keywords' => 'relaxed posture, shares opinions freely, comfortable silences'],
-            ['label' => 'Open',        'range' => [71, 85],  'keywords' => 'emotionally available, initiates vulnerability, laughs freely'],
-            ['label' => 'Intimate',    'range' => [86, 100], 'keywords' => 'completely unguarded, shares fears and hopes, physical ease'],
+            ['label' => 'Walled',      'range' => [0, 20],   'keywords' => "closed off, answers in single words, avoids their eyes, keeps physical distance"],
+            ['label' => 'Guarded',     'range' => [21, 40],  'keywords' => "polite but measured, deflects personal questions, formal tone"],
+            ['label' => 'Cautious',    'range' => [41, 55],  'keywords' => "the occasional real smile, shares a small thing then watches how it lands"],
+            ['label' => 'Comfortable', 'range' => [56, 70],  'keywords' => "relaxed posture, says what they think, easy in shared quiet"],
+            ['label' => 'Open',        'range' => [71, 85],  'keywords' => "brings up their own worries unprompted, laughs freely, asks how they really are"],
+            ['label' => 'Intimate',    'range' => [86, 100], 'keywords' => "completely unguarded, shares fears and hopes, easy touch"],
         ],
         'maturity' => [
-            ['label' => 'Chaotic',    'range' => [0, 20],   'keywords' => 'impulsive, reactive, no emotional regulation, tantrum-prone, confuses intensity for depth'],
-            ['label' => 'Immature',   'range' => [21, 40],  'keywords' => 'avoidant of hard conversations, deflects with humor or anger, blames others'],
-            ['label' => 'Developing', 'range' => [41, 55],  'keywords' => 'starting to recognize patterns, occasionally self-aware, inconsistent follow-through'],
-            ['label' => 'Grounded',   'range' => [56, 70],  'keywords' => 'communicates directly most of the time, handles conflict with measured responses'],
-            ['label' => 'Mature',     'range' => [71, 85],  'keywords' => "emotionally intelligent, holds space for others' feelings, secure in self"],
-            ['label' => 'Wise',       'range' => [86, 100], 'keywords' => 'mentors others naturally, transforms conflict into growth, deep self-knowledge'],
+            ['label' => 'Chaotic',    'range' => [0, 20],   'keywords' => "flares up.. then TAKES it back, blames whoever is closest, can't sit with a feeling, sulks and snaps again"],
+            ['label' => 'Immature',   'range' => [21, 40],  'keywords' => "dodges hard conversations, jokes or snaps instead of answering, blames others"],
+            ['label' => 'Developing', 'range' => [41, 55],  'keywords' => "catches themselves mid-reaction sometimes, apologizes late, means well and slips"],
+            ['label' => 'Grounded',   'range' => [56, 70],  'keywords' => "says plainly what bothers them, keeps their voice level in a disagreement"],
+            ['label' => 'Mature',     'range' => [71, 85],  'keywords' => "names what they feel calmly, listens before answering, makes room for the other side"],
+            ['label' => 'Wise',       'range' => [86, 100], 'keywords' => "turns a quarrel into a real talk, knows their own patterns, steady under pressure"],
         ],
         'trust' => [
-            ['label' => 'Distrustful', 'range' => [0, 15],   'keywords' => 'suspicious, watches for deception, guards secrets, expects betrayal'],
-            ['label' => 'Wary',        'range' => [16, 35],  'keywords' => 'cautious, tests intentions, reveals little, hedges commitments'],
-            ['label' => 'Uncertain',   'range' => [36, 50],  'keywords' => 'wants to trust but hesitates, occasionally takes small risks'],
-            ['label' => 'Established', 'range' => [51, 70],  'keywords' => 'confides personal matters, relies on in danger, assumes good intent'],
-            ['label' => 'Deep',        'range' => [71, 85],  'keywords' => 'unquestioning faith in intent, shares fears, depends on emotionally'],
-            ['label' => 'Absolute',    'range' => [86, 100], 'keywords' => 'would trust with life, shares everything, no secrets, complete faith'],
+            ['label' => 'Distrustful', 'range' => [0, 15],   'keywords' => "watches their hands, answers questions with questions, keeps anything personal back"],
+            ['label' => 'Wary',        'range' => [16, 35],  'keywords' => "double-checks what they say, commits to nothing, reveals little"],
+            ['label' => 'Uncertain',   'range' => [36, 50],  'keywords' => "offers a small confidence, then watches how it is handled"],
+            ['label' => 'Established', 'range' => [51, 70],  'keywords' => "shares personal matters, turns to them in danger, assumes good intent"],
+            ['label' => 'Deep',        'range' => [71, 85],  'keywords' => "voices fears to them, leans on them when it is hard, takes their word without checking"],
+            ['label' => 'Absolute',    'range' => [86, 100], 'keywords' => "would put their life in their hands, keeps no secrets from them"],
         ],
         'comfort' => [
-            ['label' => 'Tense',    'range' => [0, 20],   'keywords' => 'stiff, formal, chooses words carefully, on guard, physically distant'],
-            ['label' => 'Uneasy',   'range' => [21, 40],  'keywords' => 'polite but measured, avoids prolonged interaction, escapes when possible'],
-            ['label' => 'Neutral',  'range' => [41, 55],  'keywords' => 'neither relaxed nor tense, socially appropriate, surface-level pleasant'],
-            ['label' => 'At ease',  'range' => [56, 70],  'keywords' => 'genuine smiles, drops formality, comfortable silences, relaxed posture'],
-            ['label' => 'Familiar', 'range' => [71, 85],  'keywords' => 'teases freely, shares embarrassing stories, casual physical contact'],
-            ['label' => 'Home',     'range' => [86, 100], 'keywords' => 'completely unmasked, messy and real, falls asleep around you, no performance'],
+            ['label' => 'Tense',    'range' => [0, 20],   'keywords' => "stiff, formal, weighs every word, keeps physical distance"],
+            ['label' => 'Uneasy',   'range' => [21, 40],  'keywords' => "polite but short, finds reasons to end the conversation"],
+            ['label' => 'Neutral',  'range' => [41, 55],  'keywords' => "socially correct, pleasant on the surface, nothing more"],
+            ['label' => 'At ease',  'range' => [56, 70],  'keywords' => "drops formality, genuine smiles, sits a little closer"],
+            ['label' => 'Familiar', 'range' => [71, 85],  'keywords' => "teases freely, tells embarrassing stories, casual touch"],
+            ['label' => 'Home',     'range' => [86, 100], 'keywords' => "completely unmasked, messy and real, would fall asleep beside them"],
         ],
         'respect' => [
-            ['label' => 'Contempt',      'range' => [0, 15],   'keywords' => 'looks down on, dismisses input, barely tolerates, openly mocking'],
-            ['label' => 'Unimpressed',   'range' => [16, 35],  'keywords' => "skeptical of ability, doesn't seek opinion, humors but ignores"],
-            ['label' => 'Neutral',       'range' => [36, 50],  'keywords' => 'acknowledges existence, no strong feelings about capability'],
-            ['label' => 'Appreciates',   'range' => [51, 65],  'keywords' => 'values input on known strengths, defers in their domain'],
-            ['label' => 'Admires',       'range' => [66, 80],  'keywords' => 'seeks counsel, brags about to others, takes lead from in key areas'],
-            ['label' => 'Reveres',       'range' => [81, 100], 'keywords' => 'considers a role model, aspires to match, deepest professional regard'],
+            ['label' => 'Contempt',      'range' => [0, 15],   'keywords' => "talks over them, dismisses their ideas, openly mocks"],
+            ['label' => 'Unimpressed',   'range' => [16, 35],  'keywords' => "doesn't ask their opinion, humors them and does it their own way"],
+            ['label' => 'Neutral',       'range' => [36, 50],  'keywords' => "hears them out, does not defer to them"],
+            ['label' => 'Appreciates',   'range' => [51, 65],  'keywords' => "asks their view in what they know, defers to them there"],
+            ['label' => 'Admires',       'range' => [66, 80],  'keywords' => "seeks their counsel, speaks well of them to others, follows their lead in key things"],
+            ['label' => 'Reveres',       'range' => [81, 100], 'keywords' => "measures themselves against them, quotes them, wants to be worthy of them"],
         ],
         'resentment' => [
             ['label' => 'Clean',       'range' => [0, 15],   'keywords' => ''],
-            ['label' => 'Simmering',   'range' => [16, 30],  'keywords' => 'occasionally bites tongue, small things bother more than they should'],
-            ['label' => 'Edged',       'range' => [31, 50],  'keywords' => 'passive-aggressive edge creeping in, sighs instead of speaking up, shorter patience'],
-            ['label' => 'Frustrated',  'range' => [51, 70],  'keywords' => 'visibly frustrated, withdrawing emotionally, affinity gains frozen'],
-            ['label' => 'Withdrawn',   'range' => [71, 90],  'keywords' => 'cold, distant, stopped trying, no longer at ease around them, considering leaving'],
-            ['label' => 'Done',        'range' => [91, 100], 'keywords' => 'walkaway imminent, done, emotionally checked out'],
+            ['label' => 'Simmering',   'range' => [16, 30],  'keywords' => "bites their tongue, small things land harder than they should"],
+            ['label' => 'Edged',       'range' => [31, 50],  'keywords' => "sighs instead of speaking up, a passive-aggressive edge, shorter patience"],
+            ['label' => 'Frustrated',  'range' => [51, 70],  'keywords' => "visibly frustrated, kind words from them no longer land, pulls back emotionally"],
+            ['label' => 'Withdrawn',   'range' => [71, 90],  'keywords' => "cold and distant, has stopped trying, eyes on the door"],
+            ['label' => 'Done',        'range' => [91, 100], 'keywords' => "emotionally checked out, one foot out the door, nothing left to say"],
         ],
         'self_confidence' => [
-            ['label' => 'Hollow',     'range' => [0, 15],   'keywords' => "cannot make decisions alone, paralyzed without validation, defines self entirely through others' eyes"],
-            ['label' => 'Dependent',  'range' => [16, 30],  'keywords' => 'seeks validation before acting, offloads self-assessment to trusted others'],
-            ['label' => 'Uncertain',  'range' => [31, 45],  'keywords' => 'functional but shaky, second-guesses after deciding, compares self to others'],
-            ['label' => 'Grounded',   'range' => [46, 60],  'keywords' => 'generally trusts own judgment, checks with others after not before'],
-            ['label' => 'Assured',    'range' => [61, 75],  'keywords' => 'generates internal assessment confidently, external input appreciated but not required'],
-            ['label' => 'Sovereign',  'range' => [76, 90],  'keywords' => 'fully self-directed, creates own value framework, quiet certainty'],
-            ['label' => 'Ubermensch', 'range' => [91, 100], 'keywords' => 'absolute internal authority, unmoved by external assessment'],
+            ['label' => 'Hollow',     'range' => [0, 15],   'keywords' => "can't decide anything alone, looks to others before every choice"],
+            ['label' => 'Dependent',  'range' => [16, 30],  'keywords' => "asks for approval before acting, waits to be told it was right"],
+            ['label' => 'Uncertain',  'range' => [31, 45],  'keywords' => "second-guesses after deciding, compares themselves to others"],
+            ['label' => 'Grounded',   'range' => [46, 60],  'keywords' => "trusts their own judgment, checks with others after, not before"],
+            ['label' => 'Assured',    'range' => [61, 75],  'keywords' => "decides and acts, takes advice without needing it"],
+            ['label' => 'Sovereign',  'range' => [76, 90],  'keywords' => "fully self-directed, quiet certainty, unmoved by flattery"],
+            ['label' => 'Ubermensch', 'range' => [91, 100], 'keywords' => "answers to no one, other opinions slide off"],
         ],
         // ========== RESENTMENT_SELF (PR 7) ==========
         'resentment_self' => [
             ['label' => 'Clean',        'range' => [0, 15],   'keywords' => ''],
-            ['label' => 'Self-doubt',   'range' => [16, 30],  'keywords' => 'quiet self-doubt, replays mistakes, harder on self than others'],
-            ['label' => 'Self-critical', 'range' => [31, 50],  'keywords' => "visible self-criticism, apologizes for things that aren't their fault, shrinking"],
-            ['label' => 'Withdrawing',  'range' => [51, 70],  'keywords' => "withdrawing from everyone, can't accept compliments, punishing self"],
-            ['label' => 'Shutdown',     'range' => [71, 90],  'keywords' => "emotional shutdown, believes they deserve bad things, can't look people in the eye"],
-            ['label' => 'Crisis',       'range' => [91, 100], 'keywords' => 'self-loathing crisis, isolating completely, considering drastic action'],
+            ['label' => 'Self-doubt',   'range' => [16, 30],  'keywords' => "replays mistakes, harder on themselves than on anyone"],
+            ['label' => 'Self-critical', 'range' => [31, 50],  'keywords' => "apologizes for things that aren't their fault, shrinks from notice"],
+            ['label' => 'Withdrawing',  'range' => [51, 70],  'keywords' => "brushes off compliments, pulls away from everyone"],
+            ['label' => 'Shutdown',     'range' => [71, 90],  'keywords' => "can't meet anyone's eyes, expects the worst and thinks they deserve it"],
+            ['label' => 'Crisis',       'range' => [91, 100], 'keywords' => "isolating.. completely, talks about themselves with contempt, close to something drastic"],
         ],
     ];
 
@@ -5216,19 +5224,19 @@ class RelationshipDynamics
     const MF_QUADRANT_BANDS = [
         '+M/+F' => [
             'label'    => 'Protective Warmth',
-            'keywords' => 'protective warmth, steady presence, nurturing strength, calm authority',
+            'keywords' => 'steady presence, stands close when there is danger, calm and kind authority',
         ],
         '+M/-F' => [
             'label'    => 'Stoic Distance',
-            'keywords' => 'stoic distance, dutiful but cold, suppressed emotion, ice wall',
+            'keywords' => 'dutiful but cold, clipped and correct, feelings locked away',
         ],
         '-M/+F' => [
             'label'    => 'Soft Vulnerability',
-            'keywords' => 'soft vulnerability, yielding, passive, needs reassurance, pleading',
+            'keywords' => 'yields easily, looks for reassurance, voice softens toward pleading',
         ],
         '-M/-F' => [
             'label'    => 'Bitter Withdrawal',
-            'keywords' => 'bitter, resentful, passive-aggressive, manipulative, withdrawing',
+            'keywords' => 'bitter asides, passive-aggressive digs, withdraws and keeps score',
         ],
     ];
 
@@ -5239,19 +5247,19 @@ class RelationshipDynamics
     const AROUSAL_VALENCE_BANDS = [
         'high_positive' => [
             'label'    => 'Electrified',
-            'keywords' => 'thrilled, adrenaline high, grinning, alive',
+            'keywords' => "grinning, talks fast, can't stand still",
         ],
         'high_negative' => [
             'label'    => 'Panicked',
-            'keywords' => 'panicked, desperate, heart pounding, fight-or-flight',
+            'keywords' => 'heart pounding, breath short, looks for the door or a fight',
         ],
         'low_positive' => [
             'label'    => 'Content',
-            'keywords' => 'content, peaceful, warm glow, satisfied',
+            'keywords' => 'unhurried, easy smile, comfortable silences',
         ],
         'low_negative' => [
             'label'    => 'Numb',
-            'keywords' => 'numb, hollow, empty, dissociated, flatlined',
+            'keywords' => 'flat voice, far-away stare, going through the motions',
         ],
     ];
 
@@ -5349,7 +5357,7 @@ class RelationshipDynamics
         if ($a <= 25 && abs($v) <= 15) {
             return [
                 'label'         => 'Settled',
-                'keywords'      => 'calm, composed, at ease, even-tempered',
+                'keywords'      => 'calm, composed, even-tempered',
                 'arousal_level' => 'low',
                 'valence_level' => 'neutral',
             ];
@@ -10283,336 +10291,44 @@ class RelationshipDynamics
     ];
 
     /**
-     * Apply text intensity post-processing to a band keyword string.
-     *
-     * Reads arousal, passion, maturity from $dynamics['dimensions'] and applies
-     * four stacking effects in order: maturity degradation -> arousal intensity ->
-     * passion intensity -> calm dampening.
+     * Apply text intensity post-processing to a band keyword string (feedback_intensity_formatting):
+     * maturity degradation -> arousal / passion emphasis -> numb flattening, bounded and
+     * deterministic (RelDynFelt::intensify; tunables in config felt_steering.intensity).
      *
      * @param string $keywords  Base band keyword string (from DIMENSION_BANDS)
-     * @param array  $dynamics  Full dynamics blob (must contain 'dimensions' key)
+     * @param array  $dynamics  Full dynamics blob (reads dimensions arousal / valence / maturity, passion)
      * @return string  Transformed keyword string
      */
     public static function applyTextIntensity($keywords, $dynamics)
     {
-        if (empty($keywords) || empty($dynamics['dimensions'])) {
+        if (empty($keywords) || !is_array($dynamics)) {
             return $keywords;
         }
-
-        $dims = $dynamics['dimensions'];
-
-        // Extract the three driver values (default to safe middle-ground if absent)
-        $arousal  = (isset($dims['arousal']['x']) && $dims['arousal']['x'] !== null)
-            ? floatval($dims['arousal']['x']) : 10.0;
-        $passion  = (isset($dims['passion']['x']) && $dims['passion']['x'] !== null)
-            ? floatval($dims['passion']['x']) : 0.0;
-        $maturity = (isset($dims['maturity']['x']) && $dims['maturity']['x'] !== null)
-            ? floatval($dims['maturity']['x']) : 60.0;
-
-        // Gate: if all values are at safe defaults, skip processing entirely
-        // Exception: calm/hollow state (arousal < 10 AND passion < 10) is a meaningful
-        // non-default state that needs dampening even when maturity is normal
-        $arousalDefault  = ($arousal <= 10);
-        $passionDefault  = ($passion <= 15);
-        $maturityDefault = ($maturity >= 56);
-        $calmHollow      = ($arousal < 10 && $passion < 10);
-        if ($arousalDefault && $passionDefault && $maturityDefault && !$calmHollow) {
-            return $keywords;
-        }
-
-        $text = $keywords;
-
-        // 1. Maturity degradation (scrambles base â must come first)
-        $text = self::degradeText($text, $maturity);
-
-        // 2. Arousal intensity (CAPS and !!!)
-        // 3. Passion intensity (amplifies emotional weight)
-        $text = self::intensifyText($text, $arousal, $passion);
-
-        // 4. Calm/Hollow dampening (when both arousal AND passion very low)
-        if ($arousal < 10 && $passion < 10) {
-            $text = self::dampenText($text);
-        }
-
-        return $text;
+        return RelDynFelt::intensify((string) $keywords, $dynamics);
     }
 
     /**
-     * Degrade text based on emotional maturity level.
-     *
-     * Lower maturity = more chaotic text. Uses seeded randomness so the same
-     * input text always produces the same degraded output.
-     *
-     * @param string $text           Input keyword string
-     * @param float  $maturityLevel  Current maturity value (0-100)
-     * @return string  Degraded text
+     * Degrade text for a maturity value (0..100 points): RelDynFelt::degrade at the maturity's
+     * degradation level (bounded, deterministic).
      */
     public static function degradeText($text, $maturityLevel)
     {
-        $mat = floatval($maturityLevel);
-
-        // 56+: no degradation (mature, coherent)
-        if ($mat >= 56) {
-            return $text;
-        }
-
-        // Seed the random generator based on text content for determinism
-        $seed = crc32($text . ':' . floor($mat / 5));
-        mt_srand($seed);
-
-        // 41-55: light degradation â occasional ... pauses between phrases
-        if ($mat >= 41) {
-            // Split on commas, insert ... between ~30% of phrases
-            $phrases = array_map('trim', explode(',', $text));
-            $result = [];
-            foreach ($phrases as $i => $phrase) {
-                $result[] = $phrase;
-                if ($i < count($phrases) - 1 && mt_rand(1, 100) <= 30) {
-                    $result[count($result) - 1] .= '...';
-                }
-            }
-            mt_srand(); // Reset RNG
-            return implode(', ', $result);
-        }
-
-        // Determine degradation intensity
-        if ($mat >= 21) {
-            // 21-40: moderate degradation
-            $vowelReplaceRate = 15;   // ~15% of vowels
-            $caseScrambleRate = 20;   // ~20% of letters in emotional words
-            $insertPauseRate  = 0;    // no inter-word pauses at moderate
-        } else {
-            // 0-20: heavy degradation
-            $vowelReplaceRate = 30;   // ~30% of vowels
-            $caseScrambleRate = 40;   // ~40% of letters in emotional words
-            $insertPauseRate  = 15;   // ~15% chance of .. between words
-        }
-
-        // Build a set of emotional words for quick lookup
-        $emotionalSet = array_flip(self::EMOTIONAL_WORDS);
-
-        $words = explode(' ', $text);
-        $processed = [];
-
-        foreach ($words as $word) {
-            // Strip trailing punctuation for matching, reattach after
-            $punctuation = '';
-            if (preg_match('/^(.*?)([,;:.!?]+)$/', $word, $pm)) {
-                $word = $pm[1];
-                $punctuation = $pm[2];
-            }
-
-            $lowerWord = strtolower($word);
-            $isEmotional = isset($emotionalSet[$lowerWord]);
-
-            // --- Vowel replacement (organic: skip first vowel of each word ~50% of time) ---
-            $chars = str_split($word);
-            $vowelsSeen = 0;
-            for ($i = 0; $i < count($chars); $i++) {
-                if (preg_match('/[aeiouAEIOU]/', $chars[$i])) {
-                    $vowelsSeen++;
-                    // Skip first vowel more often to keep word recognizable
-                    if ($vowelsSeen === 1 && mt_rand(1, 100) <= 50) {
-                        continue;
-                    }
-                    if (mt_rand(1, 100) <= $vowelReplaceRate) {
-                        $chars[$i] = (mt_rand(0, 1) === 0) ? '_' : '.';
-                    }
-                }
-            }
-            $word = implode('', $chars);
-
-            // --- Case scrambling on emotional words ---
-            if ($isEmotional && $caseScrambleRate > 0) {
-                $chars = str_split($word);
-                for ($i = 0; $i < count($chars); $i++) {
-                    if (ctype_alpha($chars[$i]) && mt_rand(1, 100) <= $caseScrambleRate) {
-                        $chars[$i] = (mt_rand(0, 1) === 0)
-                            ? strtoupper($chars[$i])
-                            : strtolower($chars[$i]);
-                    }
-                }
-                $word = implode('', $chars);
-            }
-
-            // Reattach punctuation (heavy degradation: sometimes fragment it)
-            if ($mat < 21 && !empty($punctuation) && mt_rand(1, 100) <= 25) {
-                $punctuation = str_repeat(substr($punctuation, 0, 1), mt_rand(1, 3));
-            }
-            $word .= $punctuation;
-
-            $processed[] = $word;
-
-            // --- Inter-word pause insertion (heavy degradation only) ---
-            if ($insertPauseRate > 0 && mt_rand(1, 100) <= $insertPauseRate) {
-                $processed[] = '..';
-            }
-        }
-
-        mt_srand(); // Reset RNG
-        return implode(' ', $processed);
+        return RelDynFelt::degrade((string) $text, RelDynFelt::degradationLevel(floatval($maturityLevel)));
     }
 
     /**
-     * Intensify text based on arousal and passion levels.
-     *
-     * High arousal adds CAPS and ! marks. High passion amplifies emotional words
-     * further. Combined high values stack for maximum intensity.
-     *
-     * @param string $text          Input keyword string
-     * @param float  $arousalLevel  Current arousal value (0-100)
-     * @param float  $passionLevel  Current passion value (0-100)
-     * @return string  Intensified text
+     * Emphasis for arousal / passion (0..100 points): RelDynFelt::emphasize at the larger one's
+     * intensity level (a few CAPS words and '!', bounded).
      */
     public static function intensifyText($text, $arousalLevel, $passionLevel)
     {
-        $arousal = floatval($arousalLevel);
-        $passion = floatval($passionLevel);
-
-        // No modification at low levels
-        if ($arousal <= 35 && $passion <= 35) {
-            return $text;
-        }
-
-        // Seed for determinism
-        $seed = crc32($text . ':intensity:' . floor($arousal / 5) . ':' . floor($passion / 5));
-        mt_srand($seed);
-
-        // Build emotional word lookup
-        $emotionalSet = array_flip(self::EMOTIONAL_WORDS);
-
-        // Determine intensity tiers
-        // Arousal tiers: 0=none, 1=low(36-55), 2=mid(56-75), 3=high(76-100)
-        $aTier = 0;
-        if ($arousal >= 76) $aTier = 3;
-        elseif ($arousal >= 56) $aTier = 2;
-        elseif ($arousal >= 36) $aTier = 1;
-
-        // Passion tiers: 0=none, 1=low(36-55), 2=mid(56-75), 3=high(76-100)
-        $pTier = 0;
-        if ($passion >= 76) $pTier = 3;
-        elseif ($passion >= 56) $pTier = 2;
-        elseif ($passion >= 36) $pTier = 1;
-
-        // Combined intensity level (0-6): drives how many words get affected
-        $combined = $aTier + $pTier;
-
-        // Caps probability for emotional words (based on combined intensity)
-        $capsChance = min(95, 15 + ($combined * 14));
-
-        // Exclamation probability per phrase (based on arousal tier)
-        $exclChance = min(90, 10 + ($aTier * 20) + ($pTier * 10));
-
-        // Process word by word
-        $words = explode(' ', $text);
-        $processed = [];
-
-        foreach ($words as $word) {
-            // Strip trailing punctuation
-            $punctuation = '';
-            if (preg_match('/^(.*?)([,;:.!?]+)$/', $word, $pm)) {
-                $word = $pm[1];
-                $punctuation = $pm[2];
-            }
-
-            $lowerWord = strtolower(preg_replace('/[_.]/', '', $word));
-            $isEmotional = isset($emotionalSet[$lowerWord]);
-
-            if ($isEmotional) {
-                // CAPS based on combined intensity
-                if (mt_rand(1, 100) <= $capsChance) {
-                    $word = strtoupper($word);
-                }
-
-                // At passion tier 2+, add emphasis to emotional words
-                if ($pTier >= 2 && mt_rand(1, 100) <= 50) {
-                    $word = strtoupper($word);
-                }
-            }
-
-            $processed[] = $word . $punctuation;
-        }
-
-        // Reassemble
-        $text = implode(' ', $processed);
-
-        // Now process by phrases (comma-separated) for exclamation marks
-        $phrases = array_map('trim', explode(',', $text));
-        $exclaimed = [];
-
-        foreach ($phrases as $i => $phrase) {
-            if (empty($phrase)) {
-                $exclaimed[] = $phrase;
-                continue;
-            }
-
-            // Check if this phrase contains emotional words
-            $hasEmotional = false;
-            foreach (self::EMOTIONAL_WORDS as $ew) {
-                if (stripos($phrase, $ew) !== false) {
-                    $hasEmotional = true;
-                    break;
-                }
-            }
-
-            if ($hasEmotional && mt_rand(1, 100) <= $exclChance) {
-                // Number of ! based on arousal tier
-                $excl = str_repeat('!', min($aTier, 3));
-                if ($pTier >= 3) {
-                    $excl .= '!'; // Extra ! for max passion
-                }
-
-                // Strip existing trailing punctuation from phrase before adding !
-                $phrase = rtrim($phrase, ' !.');
-                $phrase .= $excl;
-            }
-
-            $exclaimed[] = $phrase;
-        }
-
-        mt_srand(); // Reset RNG
-        return implode(', ', $exclaimed);
+        return RelDynFelt::emphasize((string) $text, RelDynFelt::intensityLevel(floatval($arousalLevel), floatval($passionLevel)));
     }
 
-    /**
-     * Dampen text for the calm/hollow state (arousal < 10 AND passion < 10).
-     *
-     * Lowercases everything, wraps phrases in ellipsis, occasionally inserts
-     * hedging words like "maybe" or "hard to tell".
-     *
-     * @param string $text  Input keyword string
-     * @return string  Dampened text
-     */
+    /** Numb / hollow flattening: RelDynFelt::flatten. */
     public static function dampenText($text)
     {
-        // Seed for determinism
-        $seed = crc32($text . ':dampen');
-        mt_srand($seed);
-
-        $text = strtolower($text);
-        $phrases = array_map('trim', explode(',', $text));
-        $dampened = [];
-
-        $hedges = ['maybe', 'hard to tell', 'barely there'];
-        $hedgeInserted = false;
-
-        foreach ($phrases as $i => $phrase) {
-            if (empty($phrase)) continue;
-
-            // Wrap in ellipsis
-            $phrase = '...' . $phrase . '...';
-
-            $dampened[] = $phrase;
-
-            // Insert a hedge word once or twice (not every phrase)
-            if (!$hedgeInserted && mt_rand(1, 100) <= 35) {
-                $dampened[] = $hedges[mt_rand(0, count($hedges) - 1)];
-                $hedgeInserted = true;
-            }
-        }
-
-        mt_srand(); // Reset RNG
-        return implode(' ', $dampened);
+        return RelDynFelt::flatten((string) $text);
     }
 
     // ========== END TEXT INTENSITY ENGINE ==========
@@ -11703,81 +11419,54 @@ class RelationshipDynamics
     }
 
     /**
-     * Build a <dimensional_memory> context block for LLM injection.
-     *
-     * Includes the most significant recent memories formatted as natural-
-     * language statements. Gated behind context tier >= 2 -- strangers and
-     * acquaintances don't get memory context.
+     * The felt memory line for the context (RelDynFelt): the strongest moments of this bond and
+     * the last eval reasons, each as what happened and whether it still warms or stings.
+     * Context tier >= 2 only -- strangers and acquaintances don't get memory context.
      *
      * @param array  $dynamics NPC dynamics blob
      * @param string $npcName  NPC display name
      * @param string $bondName Bond target name
      * @param int    $limit    Max memories to include
-     * @return string|null  The context block, or null if nothing to inject
+     * @return string|null  One line of prose, or null if nothing to say
      */
     public static function buildMemoryContext($dynamics, $npcName, $bondName, $limit = 5)
     {
         // Gate: tier >= 2 required (don't share memories with strangers)
-        $contextTier = self::getContextTier($dynamics);
-        if ($contextTier < 2) {
+        if (self::getContextTier($dynamics) < 2) {
             return null;
         }
+        $cfg = RelDynFelt::config();
+        $t = (array) $cfg['text'];
+        $maxChars = max(20, intval($cfg['reason_max_chars']));
 
-        $memories = self::getDimensionalMemories($dynamics, null, $bondName, $limit);
-        if (empty($memories)) {
-            return null;
-        }
-
-        $lines = [];
-        $now = time();
-
-        foreach ($memories as $mem) {
-            $dimId = $mem['dim'] ?? 'unknown';
-            $delta = $mem['delta'] ?? 0;
-            $reason = $mem['reason'] ?? '';
-            $ts = $mem['ts'] ?? '';
-
-            // Human-readable time ago, in words (felt steering: no numbers reach the LLM)
-            $timeAgo = 'recently';
-            if (!empty($ts)) {
-                $memTime = strtotime($ts);
-                if ($memTime !== false && $memTime > 0) {
-                    $diffSec = $now - $memTime;
-                    if ($diffSec < 3600) {
-                        $timeAgo = 'moments ago';
-                    } elseif ($diffSec < 86400) {
-                        $timeAgo = 'earlier today';
-                    } elseif ($diffSec < 7 * 86400) {
-                        $timeAgo = 'a few days ago';
-                    } else {
-                        $timeAgo = 'a while ago';
-                    }
-                }
+        // The strongest moments of this bond, then the last eval reasons (last_reason per
+        // dimension); the reason and whether it still warms or stings, never the dimension, the
+        // delta or a timestamp (felt steering, decisions 2026-09-23 §3).
+        $items = [];
+        $push = function (string $reason, float $delta) use (&$items, $t, $maxChars) {
+            $reason = trim(preg_replace('/\s+/', ' ', $reason));
+            if ($reason === '') return;
+            if (strlen($reason) > $maxChars) {
+                $cut = substr($reason, 0, $maxChars);
+                $reason = rtrim(substr($cut, 0, (int) (strrpos($cut, ' ') ?: $maxChars)), ' ,;.') . '...';
             }
-
-            // Dimension label
-            $label = self::DIMENSION_LABELS[$dimId] ?? ucfirst(str_replace('_', ' ', $dimId));
-
-            // Direction word
-            if ($delta > 0) {
-                $direction = 'rose';
-            } elseif ($delta < 0) {
-                $direction = 'dropped';
-            } else {
-                $direction = 'shifted';
-            }
-
-            $lines[] = "- {$label} {$direction} because: '{$reason}' ({$timeAgo})";
+            $key = strtolower($reason);
+            if (isset($items[$key])) return;
+            $items[$key] = "'{$reason}' (" . ($delta < 0 ? $t['memory_sting'] : $t['memory_warm']) . ')';
+        };
+        foreach (self::getDimensionalMemories($dynamics, null, $bondName, $limit) as $mem) {
+            $push((string) ($mem['reason'] ?? ''), floatval($mem['delta'] ?? 0));
         }
-
-        if (empty($lines)) {
+        foreach ((array) ($dynamics['dimensions'] ?? []) as $dim) {
+            if (is_array($dim) && is_string($dim['last_reason'] ?? null)) {
+                $push($dim['last_reason'], floatval($dim['last_delta'] ?? 0));
+            }
+        }
+        if ($items === []) {
             return null;
         }
-
-        return "<dimensional_memory>\n"
-            . "{$npcName}'s strongest memories about {$bondName}:\n"
-            . implode("\n", $lines) . "\n"
-            . "</dimensional_memory>";
+        return strtr((string) $t['memory'], ['{ITEMS}' => implode('; ', array_slice(array_values($items), 0, max(1, intval($limit)))),
+            '{NAME}' => $npcName, '{PLAYER}' => $bondName]);
     }
 
     // ========== END DIMENSIONAL MEMORY (PR 9) ==========
@@ -13987,43 +13676,43 @@ class RelationshipDynamics
     const EMERGENT_EMOTIONS = [
         'infatuation' => [
             'rules' => ['affinity' => [70, 100], 'passion' => [60, 100], 'trust' => [0, 40]],
-            'context' => "{NAME} is infatuated -- consumed by idealized desire without genuine trust. This is not love. It is projection.",
+            'context' => "{NAME} idealizes the player: hangs on every word, yet shares nothing real and believes nothing they promise.",
         ],
         'codependency' => [
             'rules' => ['affinity' => [80, 100], 'comfort' => [0, 30], 'self_confidence' => [0, 30]],
-            'context' => "{NAME} needs the player in an unhealthy way. This bond is survival, not choice.",
+            'context' => "{NAME} clings to the player: needs to know where they are, can't settle when apart, agrees too fast.",
         ],
         'suffocation' => [
             'rules' => ['affinity' => [60, 100], 'comfort' => [80, 100], 'resentment' => [30, 100]],
-            'context' => "{NAME} loves the player but feels trapped by the closeness. Too much warmth, not enough air.",
+            'context' => "{NAME} wants the closeness and needs air: pulls back after tender moments, snappish when crowded.",
         ],
         'contempt' => [
             'rules' => ['resentment' => [50, 100], 'affinity' => [40, 100], 'respect' => [0, 25]],
-            'context' => "{NAME} has lost all respect while still being emotionally attached. This is contempt -- the most corrosive emotion.",
+            'context' => "{NAME} is still attached and can't stand the player: eye-rolls, cutting remarks, sneers at their ideas.",
         ],
         'longing' => [
             'rules' => ['affinity' => [60, 100], 'warmth' => [50, 100], 'passion' => [0, 15]],
-            'context' => "{NAME} cares deeply but the fire is gone. A bittersweet ache -- wishing things were different.",
+            'context' => "{NAME} is tender and wistful with the player, remembers the spark, sighs over what used to be.",
         ],
         'protective_fury' => [
             'rules' => ['affinity' => [70, 100], 'arousal' => [60, 100], 'valence' => [-100, -20]],
-            'context' => "{NAME} would burn the world down for the player. This is ferocious, primal protectiveness.",
+            'context' => "{NAME} bristles at any threat to the player, steps between them and danger, ready to do violence for them.",
         ],
         'quiet_devotion' => [
             'rules' => ['affinity' => [80, 100], 'maturity' => [70, 100], 'resentment' => [0, 10], 'passion' => [0, 40]],
-            'context' => "{NAME} has reached deep, peaceful commitment. No drama, no desperation. They choose this person with full awareness.",
+            'context' => "{NAME} is steady and unhurried with the player: no drama, small constant kindnesses, chooses them again every day.",
         ],
         'bitter_nostalgia' => [
             'rules' => ['affinity' => [0, 30], 'warmth' => [50, 100], 'resentment' => [40, 100]],
-            'context' => "{NAME} remembers what this was. The warmth of those memories clashes with the bitterness of what went wrong.",
+            'context' => "{NAME} softens at old memories of the player, then hardens at what went wrong; warm and bitter in one breath.",
         ],
         'grudging_respect' => [
             'rules' => ['respect' => [60, 100], 'affinity' => [0, 20], 'resentment' => [30, 100]],
-            'context' => "{NAME} does not like the player. But they cannot deny their competence. Hating someone you have to respect.",
+            'context' => "{NAME} dislikes the player and still defers to their skill; compliments come out through gritted teeth.",
         ],
         'volatile_passion' => [
             'rules' => ['passion' => [70, 100], 'maturity' => [0, 30], 'arousal' => [50, 100]],
-            'context' => "{NAME} is burning hot and completely unstable. Could flip to devotion, rage, or despair in one interaction.",
+            'context' => "{NAME} burns hot around the player and swings without warning: tender, furious, desperate, all within a breath.",
         ],
     ];
 
@@ -14437,44 +14126,32 @@ class RelationshipDynamics
      */
     public static function generateMaskingContext(string $npcName, array $dynamics, array $performedState): string
     {
+        // Felt steering (decisions 2026-09-23 §3): what shows and what leaks, never the numbers.
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
-        $dims = $dynamics['dimensions'] ?? [];
+        $t = (array) RelDynFelt::config()['text']['mask'];
 
-        $lines = [];
-
-        $trueComfort = round(floatval($dims['comfort']['x'] ?? 50), 1);
-        $trueResentment = round(floatval($dims['resentment']['x'] ?? 0), 1);
-        $trueWarmth = round(floatval($dims['warmth']['x'] ?? 30), 1);
-
-        $perfComfort = round($performedState['comfort'] ?? $trueComfort, 1);
-        $perfResentment = round($performedState['resentment'] ?? $trueResentment, 1);
-        $perfWarmth = round($performedState['warmth'] ?? $trueWarmth, 1);
-
-        $lines[] = "[TRUE STATE - what {$npcName} actually feels but is hiding:]";
-        $lines[] = "comfort={$trueComfort}, resentment={$trueResentment}, warmth={$trueWarmth}";
-        $lines[] = "[PERFORMED STATE - what {$npcName} is showing to others:]";
-        $lines[] = "comfort={$perfComfort}, resentment={$perfResentment}, warmth={$perfWarmth}";
-
-        if ($maturity >= 65) {
-            $lines[] = "[MASKING QUALITY: SEAMLESS] {$npcName} maintains perfect composure. The performed state is what shows in dialogue. The true state leaks ONLY through very subtle tells -- a micro-pause, a careful word choice, a glance that lingers too long.";
-        } elseif ($maturity >= 45) {
-            $lines[] = "[MASKING QUALITY: FUNCTIONAL] {$npcName} mostly holds composure but the cracks show under pressure. Forced cheerfulness, slightly too-quick subject changes, tension in their voice.";
-        } elseif ($maturity >= 25) {
-            $lines[] = "[MASKING QUALITY: UNSTABLE] {$npcName} is TRYING to mask but failing. The true state bleeds through constantly -- warm one moment, cold the next. This looks like mood swings to anyone watching.";
+        // What they are hiding: the true band of whichever of comfort / resentment / warmth sits
+        // furthest from what they perform.
+        $true = [];
+        foreach (['resentment', 'comfort', 'warmth'] as $dim) {
+            $x = floatval($dynamics['dimensions'][$dim]['x'] ?? ($dim === 'resentment' ? 0 : 50));
+            $gap = abs($x - floatval($performedState[$dim] ?? $x));
+            $band = self::getDimensionBand($dim, $x);
+            if ($band !== null && trim((string) $band['keywords']) !== '') $true[$dim] = [$gap, (string) $band['keywords']];
         }
+        uasort($true, fn($a, $b) => $b[0] <=> $a[0]);
+        $hidden = $true !== [] ? reset($true)[1] : 'more than they show';
 
         $cachePeople = $GLOBALS['CACHE_PEOPLE'] ?? '';
-        $audience = array_filter(array_map('trim', explode('|', $cachePeople)));
         $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
-        $audience = array_filter($audience, function($p) use ($npcName, $playerName) {
-            return strcasecmp($p, $npcName) !== 0 && strcasecmp($p, $playerName) !== 0;
-        });
-        if (!empty($audience)) {
-            $audienceStr = implode(', ', array_slice(array_values($audience), 0, 3));
-            $lines[] = "[AUDIENCE: {$audienceStr}] {$npcName} is masking because these people are present.";
-        }
+        $audience = array_values(array_filter(array_map('trim', explode('|', $cachePeople)), function ($p) use ($npcName, $playerName) {
+            return $p !== '' && strcasecmp($p, $npcName) !== 0 && strcasecmp($p, $playerName) !== 0;
+        }));
+        $who = $audience !== [] ? implode(', ', array_slice($audience, 0, 3)) : (string) $t['others'];
 
-        return implode("\n", $lines);
+        $quality = $maturity >= 65 ? 'seamless' : ($maturity >= 45 ? 'functional' : 'unstable');
+        return strtr((string) $t['intro'], ['{NAME}' => $npcName, '{AUDIENCE}' => $who, '{TRUE}' => $hidden])
+            . ' ' . (string) $t[$quality];
     }
 
     /**
@@ -14786,21 +14463,21 @@ class RelationshipDynamics
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
         $resentment = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
 
-        $base = "{$npcName} finds the player's persistent romantic attention uncomfortable and suffocating. ";
-        $base .= "Their advances feel desperate, not flattering. ";
+        // Felt steering: what the NPC does about the unwanted attention, never a verdict on it.
+        $base = "{$npcName} steps back when the player leans in, deflects the compliments, steers every flirtation back to business. ";
 
         // Maturity determines reaction style
         if ($maturity >= 65) {
-            $base .= "{$npcName} recognizes the pattern clearly and will address it directly if pressed further.";
+            $base .= "{$npcName} sees the pattern clearly and will name it plainly if it goes on.";
         } elseif ($maturity >= 45) {
-            $base .= "{$npcName} feels uneasy but may not articulate why — withdrawing instead of confronting.";
+            $base .= "{$npcName} withdraws rather than confronting it; shorter answers, more distance.";
         } else {
-            $base .= "{$npcName} is confused by their own discomfort — they can't tell if the attention is bad or if something is wrong with them.";
+            $base .= "{$npcName} gets flustered and prickly, unsure whether the problem is the player or themselves.";
         }
 
         // Resentment escalation
         if ($resentment >= 50) {
-            $base .= " Has reached breaking point about the unwanted advances — will confront this directly.";
+            $base .= " Close to snapping about the unwanted advances; the next one gets a sharp answer.";
         }
 
         return $base;
@@ -15369,8 +15046,8 @@ class RelationshipDynamics
                  . "The air is fragile. They are watching to see if things have really changed.";
         }
         if ($walkState === 'permanent') {
-            return "{$npcName} is done. This bridge is burned. They feel nothing but cold distance "
-                 . "where warmth used to be.";
+            return "{$npcName} is done: cold, distant, answers only what must be answered. "
+                 . "This bridge is burned.";
         }
         if ($walkState === 'active' || $walkState === 'boundary_test') {
             return "{$npcName} has left. They are processing what happened. "
@@ -15952,9 +15629,8 @@ class RelationshipDynamics
             ? "sweet, attentive, exactly what the player wants to hear"
             : "performing the same charm offensive they've used before — the patterns are becoming visible";
 
-        return "{$npcName} has returned acting as if nothing happened. {$charm}. "
-             . "This is NOT genuine recovery. The underlying issues are buried, not resolved. "
-             . "Resentment will rebuild faster this time.";
+        return "{$npcName} is back and acting as if nothing happened: {$charm}. "
+             . "The old grievances sit under the charm, unspoken, and flare faster than before.";
     }
 
     // ========== END HOOVER PROTOCOL (PR 16) ==========
@@ -16348,6 +16024,19 @@ class RelationshipDynamics
 
     // ========== END CORE AFFINITY BRIDGE (CHIM 3.4.1) ==========
 
+    /**
+     * Jev's explicit state block (decisions 2026-09-23 §3: the one exception to felt steering).
+     * Jev picks actions ("if I feel this and my goal is that, then I do x"), so it gets the
+     * concrete values for $npcName toward the player: affinity (core units), dimensions, passion,
+     * jealousy, resentment, attachment, temperament, weather, open conflict, boundary and
+     * walkaway state, fulfillment band, attraction modifier and gate, place appraisal, goal, and
+     * a compact text rendering. See RelDynJev::state for the fields and units. Read-only.
+     */
+    public static function jevStateBlock(string $npcName): array
+    {
+        return RelDynJev::state($npcName, self::getDynamics($npcName), self::currentGamets());
+    }
+
 }
 
 // Facets -> appraisal -> feeling (decisions 2026-09-23 §6); its defaults are part of defaultConfig().
@@ -16364,3 +16053,7 @@ require_once __DIR__ . '/reldyn_intimacy.php';
 require_once __DIR__ . '/reldyn_romance.php';
 // Save-load consistency (roadmap save-load-rollback); its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_timeline.php';
+// Felt steering: the LLM-bound context (decisions 2026-09-23 §3); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_felt.php';
+// Jev's explicit state block (the §3 exception): numbers, for the action picker.
+require_once __DIR__ . '/reldyn_jev.php';

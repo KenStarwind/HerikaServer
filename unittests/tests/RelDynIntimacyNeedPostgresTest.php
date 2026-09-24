@@ -102,8 +102,8 @@ final class RelDynIntimacyNeedPgDb
  *   - an Ashe-like scholar-mage and an Aela-like Nord huntress of the Companions' Circle, both
  *     in a romance with the player, both given connection every day (quality time, a
  *     confiding talk) and no sex;
- *   - the Ashe-like NPC is fulfilled on intimacy (no <intimacy_state>, no intimacy weather
- *     deprivation); the Aela-like one is not (<intimacy_state> with the physical feeling, the
+ *   - the Ashe-like NPC is fulfilled on intimacy (no intimacy line, no intimacy weather
+ *     deprivation); the Aela-like one is not (an intimacy line with the physical feeling, the
  *     weather reads it) until a night together.
  *
  * Opt-in: RELDYN_TEST_PG_DSN pointing at a THROWAWAY database (never dbname=dwemer).
@@ -321,7 +321,9 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
 
     private function intimacyState(string $ctx): ?string
     {
-        return preg_match('~<intimacy_state>(.*?)</intimacy_state>~s', $ctx, $m) ? $m[1] : null;
+        $text = RelDynFelt::lastRendered()['intimacy'] ?? null;
+        if ($text !== null) $this->assertStringContainsString($text, $ctx, 'the intimacy line is in the context');
+        return $text;
     }
 
     // ------------------------------------------------------------------ tests
@@ -384,7 +386,7 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
      * PR 13: "OStim/Sharmat events -> fully satisfied". Aela in a romance, the eval not scoring
      * anything (no connector): a week of intimacy the plugin reports (VR touches twice a day, then
      * a Sharmat scene every day) keeps her physical need covered, through the real hooks; she is
-     * never deprived and no <intimacy_state> speaks.
+     * never deprived and no intimacy line speaks.
      */
     public function testIntimacyThePluginReportsKeepsHerCoveredWithoutTheEval(): void
     {

@@ -154,12 +154,12 @@ class RelDynFulfillment
 
             // --- felt text (feelings, never numbers) ---
             'felt_text' => [
-                'unmet'     => "{NAME} feels something missing between them and {PLAYER} lately: {NEEDS}.",
+                'unmet'     => "{NAME} keeps waiting on something from {PLAYER} that does not come ({NEEDS}); it shows in small sighs and shorter answers.",
                 'boundary'  => "{NAME} has thought about this calmly and is ready to say it plainly: they need {NEEDS} from {PLAYER}, "
                     . "and it has not been there. They understand life gets in the way, but this is not what they want from the two of them. "
                     . "No anger, no ultimatum shouted: if it is going to change, it has to change consistently, not for a day.",
                 'probation' => "{NAME} said what they need from {PLAYER}. Now they are quietly watching whether it really changes, day after day.",
-                'resolved'  => "{NAME} has noticed the change in {PLAYER} and it has held. The worry they carried has eased.",
+                'resolved'  => "{NAME} has noticed the change in {PLAYER} and it has held; the watchfulness eases out of their shoulders.",
                 'step_back' => "{NAME} has made a decision and is at peace with it: what they asked of {PLAYER} did not change, "
                     . "so they are stepping back from {FROM} to {TO}. No scene, no bitterness; they will be kind, but that closeness is over.",
             ],

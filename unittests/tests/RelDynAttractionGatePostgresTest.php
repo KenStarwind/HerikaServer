@@ -374,8 +374,11 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         }
 
         // Felt, never numbers (decisions §3): the pull grows in the words too
-        $this->assertStringContainsString('only faintly', $felt[0]);
-        $this->assertStringContainsString('is strongly drawn', $felt[5]);
+        // (as behavior, never a verdict: passing glances for the sellsword, lingering looks and
+        // eager answers for the Companion; the felt lane's wording)
+        $this->assertMatchesRegularExpression('/passing glance|flirts back lightly/', $felt[0]);
+        $this->assertMatchesRegularExpression('/linger there|flirts back boldly/', $felt[5]);
+        foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\bis (only faintly |strongly )?drawn to\b/', $text, "step {$k}");
         foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\d/', $text, "step {$k}");
 
         // No bar anywhere: one more sabre cat moves the multiplier a little, never a jump

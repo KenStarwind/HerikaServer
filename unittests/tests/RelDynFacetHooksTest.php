@@ -136,7 +136,8 @@ final class RelDynFacetHooksTest extends TestCase
         $state['_place_discomfort'] = ['place' => 'The Arcanaeum', 'points' => 70.0, 'gamets' => self::T0];
 
         $blocks = $this->runContext($db, $state);
-        $feeling = implode("\n", array_filter($blocks, fn($b) => str_contains($b, '<place_feeling>')));
+        $feeling = (string) (RelDynFelt::lastRendered()['place'] ?? '');
+        $this->assertStringContainsString($feeling, implode("\n", $blocks), 'the place line is in the context');
         $this->assertStringContainsString('restless', $feeling);
         $this->assertStringContainsString('wearing on them', $feeling);
         foreach ($blocks as $b) {
@@ -147,7 +148,7 @@ final class RelDynFacetHooksTest extends TestCase
 
         $GLOBALS['gameRequest'][2] = (string) (self::T0 + 3 * self::HOUR);
         $blocks = $this->runContext($db, $state);
-        $this->assertSame([], array_values(array_filter($blocks, fn($b) => str_contains($b, '<place_feeling>'))), 'stale read says nothing');
+        $this->assertArrayNotHasKey('place', RelDynFelt::lastRendered(), 'stale read says nothing');
     }
 
     private function runContext(RelDynContextFakeDb $db, array $state): array

@@ -96,6 +96,8 @@ final class RelDynAttractionPostgresTest extends TestCase
     private int $realTs = 1727000000;
     private float $gamets = 200 * self::DAY;
     private array $contexts = [];
+    /** RelDynFelt::lastRendered() of each turn: key => the line the LLM got. */
+    private array $rendered = [];
 
     protected function setUp(): void
     {
@@ -239,6 +241,7 @@ final class RelDynAttractionPostgresTest extends TestCase
         $this->clearReldynGlobals();
         $run('context.php');
         $context = implode("\n", array_map(fn($m) => (string) ($m['content'] ?? ''), $GLOBALS['contextDataFull'] ?? []));
+        $this->rendered[] = RelDynFelt::lastRendered();
         $this->clearReldynGlobals();
         $run('postrequest.php');
         $this->clearReldynGlobals();
@@ -299,8 +302,8 @@ final class RelDynAttractionPostgresTest extends TestCase
         }
         $d = $this->dynamics();
         $this->assertGreaterThan($p0, RelationshipDynamics::getPassion($d), 'legacy passion path: a flirty answer stirs passion');
-        $this->assertStringContainsString('drawn to the player', end($this->contexts));
-        $this->assertDoesNotMatchRegularExpression('/<attraction_context>[^<]*\d/', end($this->contexts), 'feelings, not numbers');
+        $this->assertStringContainsString('eyes keep finding the player', end($this->contexts));
+        $this->assertDoesNotMatchRegularExpression('/\d/', end($this->contexts), 'feelings, not numbers');
 
         // The eval scores defining moments (significance 0.8, positive): the lifted ceiling is reached
         $need = $d['_attraction_state']['pending']['need'];
@@ -333,6 +336,7 @@ final class RelDynAttractionPostgresTest extends TestCase
             extended_data = jsonb_set(extended_data, '{relationships}', $2::jsonb) WHERE npc_name = $1",
             [self::AELA, json_encode([self::PLAYER => ['aff' => 10, 'type' => 'platonic']])]);
         $this->contexts = [];
+        $this->rendered = [];
     }
 
     private function setMatrix(bool $on): void
@@ -354,7 +358,7 @@ final class RelDynAttractionPostgresTest extends TestCase
         $this->bardEvening();
         $ungated = RelationshipDynamics::getPassion($this->dynamics());
         $this->assertFalse($this->dynamics()['_attraction']['enabled']);
-        $this->assertStringNotContainsString('<attraction_context>', end($this->contexts));
+        $this->assertArrayNotHasKey('attraction', $this->rendered[count($this->contexts) - 1], 'Matrix off: no attraction line');
 
         // Aela as she is
         $this->resetAela();
@@ -367,8 +371,9 @@ final class RelDynAttractionPostgresTest extends TestCase
         $this->assertGreaterThan(3.0 * $gated, $ungated, "the same evening, ungated {$ungated} vs gated {$gated}: no passion for a bard");
         $this->assertSame(['crush', 'romantic'], $d['_attraction']['blocked_types']);
         $this->assertGreaterThan($aff0, $this->coreAff(), 'affinity can still grow');
-        $this->assertStringContainsString('<attraction_context>', end($this->contexts));
-        $this->assertStringNotContainsString('drawn to the player', end($this->contexts));
+        $this->assertArrayHasKey('attraction', $this->rendered[count($this->contexts) - 1], 'the attraction line speaks');
+        $this->assertStringContainsString($this->rendered[count($this->contexts) - 1]['attraction'], end($this->contexts));
+        $this->assertStringNotContainsString('eyes keep finding the player', end($this->contexts));
 
         // Passion she had before (the Matrix was off, or an old save) drops to the cap on the next
         // request, and no eval can push it past (MDD 6.2 hard cap)

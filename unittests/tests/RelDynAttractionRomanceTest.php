@@ -436,8 +436,8 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->assertSame('drawn', $a['outcome'], 'visceral and sociological pillars pass');
         $this->assertContains($a['valued'], ['warrior', 'hunter', 'druid'], 'what she values in him');
         $this->assertContains('crush', $a['blocked_types'], 'the ceiling lifted; a crush is not yet earned');
-        $this->assertStringContainsString('drawn to the player', $ctx);
-        $this->assertDoesNotMatchRegularExpression('/<attraction_context>[^<]*\d/', $ctx, 'feelings, never numbers');
+        $this->assertStringContainsString('eyes keep finding the player', $ctx);
+        $this->assertDoesNotMatchRegularExpression('/\d/', $ctx, 'feelings, never numbers');
         $passion0 = $this->passion();
         $aff0 = intval($this->core()['aff']);
 
@@ -488,15 +488,15 @@ final class RelDynAttractionRomanceTest extends TestCase
         $boundaryText = '';
         for ($k = 1; $k <= 14 && $stated === null; $k++) {
             $ctx = $this->turn('Morning.', 'neutral', self::T0 + ($romanceDay + $k) * self::DAY);
-            if (str_contains($ctx, '<relationship_boundary>')) {
+            if (preg_match('/^- .*has thought about this calmly.*$/m', $ctx, $m)) {
                 $stated = $this->gamets;
-                $boundaryText = $ctx;
+                $boundaryText = $m[0];   // the boundary line itself
             }
         }
         $this->assertNotNull($stated, 'a boundary was stated within two game weeks of low fulfillment: '
             . json_encode($this->dynamics()['_fulfillment']['boundary'] ?? null));
         $this->assertStringContainsString('has thought about this calmly', $boundaryText);
-        $this->assertDoesNotMatchRegularExpression('/<relationship_boundary>[^<]*\d/', $boundaryText, 'a feeling, never a number');
+        $this->assertDoesNotMatchRegularExpression('/\d/', $boundaryText, 'a feeling, never a number');
         $f = RelationshipDynamics::fulfillment(self::AELA, $this->dynamics(), $stated);
         $this->assertLessThan(-0.25, $f['band'], 'low fulfillment is what she is answering');
         $this->assertSame('probation', $this->dynamics()['_fulfillment']['boundary']['state']);
@@ -527,7 +527,9 @@ final class RelDynAttractionRomanceTest extends TestCase
         // The turn whose prerequest stepped back is the one whose context says it, once
         $said = (string) end($this->contexts);
         $this->assertStringContainsString('stepping back from a romance to friendship', $said);
-        $this->assertDoesNotMatchRegularExpression('/<relationship_boundary>[^<]*\d/', $said, 'a feeling, never a number');
+        $this->assertMatchesRegularExpression('/^- .*stepping back.*$/m', $said);
+        preg_match('/^- .*stepping back.*$/m', $said, $m);
+        $this->assertDoesNotMatchRegularExpression('/\d/', $m[0], 'a feeling, never a number');
         $this->assertStringNotContainsString('stepping back', $this->turn('Aela?', 'neutral'), 'said once');
         $this->assertNoDbFailures();
     }
@@ -542,7 +544,7 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->assertFalse($a['passes'], json_encode($a));
         $this->assertTrue($a['friendzoned'], 'tolerated, valued - no pull');
         $this->assertSame(20.0, floatval($a['passion_cap']), 'MDD 6.2: passion hard-capped at 20');
-        $this->assertStringContainsString('warm deflection', $ctx);
+        $this->assertStringContainsString('kind deflection', $ctx);
         $aff0 = intval($this->core()['aff']);
 
         // The same days the warrior gets (significant evenings, passion in the eval, a
@@ -571,7 +573,7 @@ final class RelDynAttractionRomanceTest extends TestCase
         $state = $this->reldyn()['romance'];
         $this->assertTrue($state['friendzoned']);
         $this->assertTrue($state['consent_block'], 'the Sharmat handoff state says no');
-        $this->assertStringContainsString('warm deflection', (string) end($this->contexts));
+        $this->assertStringContainsString('kind deflection', (string) end($this->contexts));
         $this->assertNoDbFailures();
     }
 }

@@ -241,7 +241,8 @@ final class RelDynFacetPostgresTest extends TestCase
         $this->assertEqualsWithDelta(1.0, $d['_facet_prefs']['prefs']['nature'], 0.1, 'derived from the core row in PostgreSQL');
         $this->assertEqualsWithDelta(-0.6, $d['_facet_prefs']['prefs']['scholarly'], 0.1);
         $feeling = implode("\n", array_map(fn($m) => (string) $m['content'], $GLOBALS['contextDataFull']));
-        $this->assertStringContainsString('<place_feeling>', $feeling);
+        $this->assertArrayHasKey('place', RelDynFelt::lastRendered(), 'the place read reached the felt steering');
+        $this->assertStringContainsString(RelDynFelt::lastRendered()['place'], $feeling);
         $this->assertStringContainsString('restless', $feeling);
     }
 

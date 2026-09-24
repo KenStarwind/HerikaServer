@@ -113,8 +113,9 @@ final class RelDynContextDefaultsTest extends TestCase
     {
         $this->assertTrue(RelationshipDynamics::defaultConfig()['dimension_context_enabled']);
         $blocks = $this->contextFor($this->baseState(55.0, ['trust' => 5.0]));
-        $this->assertNotEmpty(array_filter($blocks, fn($b) => str_contains($b, '<relational_dimensions>')),
+        $this->assertStringContainsString('watches their hands', (string) (RelDynFelt::lastRendered()['trust'] ?? ''),
             'band keywords reach the context with the shipped defaults');
+        $this->assertStringContainsString(RelDynFelt::lastRendered()['trust'], implode("\n", $blocks));
     }
 
     public function testNoBandOfAnyDimensionPrintsANumber(): void
@@ -168,17 +169,31 @@ final class RelDynContextDefaultsTest extends TestCase
         $state['dimensions']['trust']['last_delta'] = 4.0;
 
         $blocks = $this->contextFor($state);
-        $joined = implode("\n", $blocks);
-        $this->assertStringContainsString('<maturity_guidance>', $joined);
-        $this->assertStringContainsString('<dimensional_memory>', $joined);
-        $this->assertStringContainsString('<recent_emotional_shifts>', $joined);
+        $this->assertCount(1, $blocks, 'one <subtext> block');
+        $this->assertArrayHasKey('maturity', RelDynFelt::lastRendered(), 'tier 3: how they handle it always speaks');
         $this->assertNoNumbers($blocks, 'combined extreme state');
+
+        // The memories and the last eval reason, when the moment is not crowded by extremes
+        $calm = $this->baseState(90.0, [], ['dimensional_memory' => $state['dimensional_memory']]);
+        $calm['dimensions']['trust']['last_reason'] = 'kept the promise at Castle Volkihar';
+        $calm['dimensions']['trust']['last_delta'] = 4.0;
+        $blocks = $this->contextFor($calm);
+        $joined = implode("\n", $blocks);
+        $this->assertStringContainsString("'caught lying about the Dawnguard' (still stings)", $joined);
+        $this->assertStringContainsString("'shared a quiet night by the fire' (still warm)", $joined);
+        $this->assertStringContainsString("'kept the promise at Castle Volkihar' (still warm)", $joined);
+        $this->assertDoesNotMatchRegularExpression('/\b(Trust|Comfort) (rose|dropped)|\bago\b/', $joined, 'no dimension, no timestamp');
+        $this->assertNoNumbers($blocks, 'memories');
     }
 
-    public function testNumericSocialMaskBlockIsOffByDefault(): void
+    public function testSocialMaskingShipsOffAndItsTextIsFeltWhenOn(): void
     {
-        // <social_mask> can only state comfort/resentment/warmth as numbers, so masking ships off
-        // until its felt-steering rewrite.
-        $this->assertFalse(RelationshipDynamics::defaultConfig()['social_masking_enabled']);
+        $this->assertFalse(RelationshipDynamics::defaultConfig()['social_masking_enabled'], 'a gameplay call, unchanged');
+        $state = $this->baseState(80.0, ['resentment' => 70.0, 'comfort' => 20.0, 'maturity' => 70.0]);
+        $GLOBALS['RELDYN_MASKING_ACTIVE'] = true;
+        $GLOBALS['CACHE_PEOPLE'] = '|Serana|Kaida|Isran|';
+        $blocks = $this->contextFor($state);
+        $this->assertStringContainsString('In front of Isran, Serana performs ease', implode("\n", $blocks));
+        $this->assertNoNumbers($blocks, 'social masking');
     }
 }

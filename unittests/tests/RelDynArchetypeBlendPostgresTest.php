@@ -500,7 +500,7 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
             $this->assertTrue($seen[$kind]['a']['passes'], $why($kind));
             $this->assertNull($seen[$kind]['a']['passion_cap'], $why($kind));
             $this->assertSame($valued, $seen[$kind]['a']['valued'], $why($kind));
-            $this->assertStringContainsString('drawn to the player', $seen[$kind]['ctx']);
+            $this->assertStringContainsString('eyes keep finding the player', $seen[$kind]['ctx']);
         }
         $this->assertEqualsWithDelta(1.0, $seen['druid']['p']['archetypes']['druid'], 1e-9, 'the druid is a druid first');
         $this->assertStringContainsString('bond with the wild', $seen['druid']['ctx']);
@@ -515,7 +515,7 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
         $this->assertNull($nb['a']['passion_cap'], $why('nature_bard'));
         $this->assertSame('druid', $nb['a']['valued'], $why('nature_bard'));
         $this->assertArrayHasKey('druid', $nb['a']['pillars']['strength']['mix']);
-        $this->assertStringContainsString('drawn to the player', $nb['ctx']);
+        $this->assertStringContainsString('eyes keep finding the player', $nb['ctx']);
         $this->assertStringContainsString('bond with the wild', $nb['ctx']);
 
         // (d) the same bard without the wild, and a scholar: tolerated, no passion
@@ -525,7 +525,7 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
             $this->assertSame(20.0, floatval($seen[$kind]['a']['passion_cap']), $why($kind));
             $this->assertSame(0, $seen[$kind]['a']['romance']['allowed'], $why($kind));
             $this->assertNotSame('druid', $seen[$kind]['a']['valued'], $why($kind));
-            $this->assertStringNotContainsString('drawn to the player', $seen[$kind]['ctx']);
+            $this->assertStringNotContainsString('eyes keep finding the player', $seen[$kind]['ctx']);
             $this->assertLessThan(0.1, $seen[$kind]['p']['archetype_raw']['druid'], $why($kind));
         }
         // Everything but the nature magic and the harvesting is the same between (c) and (d)
@@ -578,7 +578,7 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
             if ($kind !== 'herbalist') {   // the bard and the conjurer-scholar stay tolerated, no passion
                 $this->assertFalse($a['passes'], $why);
                 $this->assertSame(20.0, floatval($a['passion_cap']), $why);
-                $this->assertStringNotContainsString('drawn to the player', $ctx, $why);
+                $this->assertStringNotContainsString('eyes keep finding the player', $ctx, $why);
             }
         }
 

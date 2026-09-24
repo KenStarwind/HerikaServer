@@ -176,7 +176,7 @@ class RelDynIntimacy
                     'high_m'       => "{NAME} is restless. The tension is physical and they are not the type to suffer in silence. They are considering their options.",
                     'high_f'       => "Something aches quietly beneath the surface for {NAME}. The longing is there but they will not chase -- they will withdraw instead.",
                     'low_maturity' => "The frustration is bleeding into everything for {NAME}. They are snapping at people, picking fights, making impulsive choices.",
-                    'balanced'     => "{NAME} has unmet physical needs. It is not urgent yet, but it is there -- a low hum of dissatisfaction that colors their mood.",
+                    'balanced'     => "{NAME} is restless in a low, constant way: lingers close, a touch that stays a moment too long, irritable when it goes nowhere.",
                 ],
                 // Emotional, by attachment style
                 'emotional' => [

@@ -43,7 +43,7 @@ final class RelDynIntimacyNeedCoreDb
  * languages, the attraction gate, maturity), deterministic, with per-NPC overrides; they are
  * axes of the fulfillment needs vector (physical only while in play with the player), fed by
  * the eval tags on the game calendar, and the deprived axis the NPC needs most is what
- * <intimacy_state> and the internal weather feel.
+ * the intimacy line (felt steering) and the internal weather feel.
  *
  * NPCs are auto-derived from core_npc_master-shaped rows through the real profile
  * auto-generation (ensureLoveLanguage -> ensureTemperamentProfile) and RelDynIntimacy::ensureNeed;
@@ -372,7 +372,7 @@ final class RelDynIntimacyNeedTest extends TestCase
         $this->assertStringContainsString('restless', $text(80, 20, 50), 'high M: not the type to suffer in silence');
         $this->assertStringContainsString('aches', $text(20, 80, 50), 'high F: withdraws instead of chasing');
         $this->assertStringContainsString('snapping at people', $text(80, 20, 20), 'low maturity: it bleeds into everything');
-        $this->assertStringContainsString('low hum', $text(50, 50, 50));
+        $this->assertStringContainsString('lingers close', $text(50, 50, 50), 'balanced: restless in a low, constant way');
     }
 
     public function testAHugRequestTheEvalDidNotScoreFeedsTheIntimacyAxes(): void
@@ -491,7 +491,7 @@ final class RelDynIntimacyNeedTest extends TestCase
     }
 
     /**
-     * <intimacy_state> is the romance's feeling: it speaks only while intimacy is in play with
+     * The intimacy line is the romance's feeling: it speaks only while intimacy is in play with
      * the player (a romance core type, or passion held at its threshold; never friendzoned) and
      * the bond is one whose neglect weighs (like the weather). A housecarl, a sister or a friend
      * who misses the closeness says so through the fulfillment text, not a romance-coded one;

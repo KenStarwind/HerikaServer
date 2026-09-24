@@ -470,14 +470,14 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
             $this->assertFalse($seen[$kind]['tolerated'], $why($kind));
             $this->assertNull($seen[$kind]['passion_cap'], $why($kind));
             $this->assertSame($valued, $seen[$kind]['valued'], $why($kind));
-            $this->assertStringContainsString('drawn to the player', $seen[$kind]['ctx']);
+            $this->assertStringContainsString('eyes keep finding the player', $seen[$kind]['ctx']);
         }
         // "a bard or a scholar she could tolerate but probably wouldn't feel passion towards"
         foreach (['scholar', 'bard', 'prisoner'] as $kind) {
             $this->assertFalse($seen[$kind]['passes'], $why($kind));
             $this->assertSame(20.0, floatval($seen[$kind]['passion_cap']), $why($kind));
             $this->assertSame(0, $seen[$kind]['romance']['allowed'], $why($kind));
-            $this->assertStringNotContainsString('drawn to the player', $seen[$kind]['ctx']);
+            $this->assertStringNotContainsString('eyes keep finding the player', $seen[$kind]['ctx']);
             $this->assertStringNotContainsString('exactly what', $seen[$kind]['ctx'], 'no "bond with the wild" for a scholar');
         }
         // A weak warrior is still weak: the lens reads magnitude, not what kind of fighter

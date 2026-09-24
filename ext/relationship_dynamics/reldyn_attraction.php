@@ -270,8 +270,8 @@ class RelDynAttraction
             // respect gain rate (memory: competence -> respect). While on, the eval respect
             // signal's GAINS are multiplied by it (losses are not). false = respect ignores it.
             'respect_mult_enabled' => true,
-            // Felt text (decisions §3, feelings not numbers): the pull = modifier x gates reads
-            // "only faintly drawn" below faint_below, "strongly drawn" from strong_from
+            // Felt text (decisions §3, feelings not numbers): the pull = modifier x gates reads as
+            // passing glances below faint_below, lingering looks and eager answers from strong_from
             'felt_pull' => ['faint_below' => 0.2, 'strong_from' => 0.8],
             // Bond gate (plan §7): passion opens at this RelDyn tier on core affinity
             'bond_gate_tier' => 'bonded',
@@ -1361,48 +1361,53 @@ class RelDynAttraction
             'noble' => 'the player\'s bearing',
         ];
         $valued = $valuedWords[$summary['valued'] ?? ''] ?? null;
-        // How strong the pull is (rulings §11: modifier x gates, felt, never the number)
+        // How strong the pull is (rulings §11: modifier x gates), shown as behavior, never the
+        // number and never a verdict ("is drawn to", "feels no pull"): decisions 2026-09-23 §3.
         $pull = is_array($summary['passion'] ?? null)
             ? floatval($summary['passion']['modifier'] ?? 1.0) * floatval($summary['passion']['gate_product'] ?? 1.0) : null;
         $fp = array_replace(self::defaults()['felt_pull'], (array) (self::config()['felt_pull'] ?? []));
-        $how = '';
+        $strength = 'plain';
         if ($pull !== null && $pull < floatval($fp['faint_below'])) {
-            $how = 'only faintly ';
+            $strength = 'faint';
         } elseif ($pull !== null && $pull >= floatval($fp['strong_from'])) {
-            $how = 'strongly ';
+            $strength = 'strong';
         }
         switch ($summary['outcome'] ?? null) {
             case 'drawn':
-                $lines[] = "{$npcName} is {$how}drawn to the player" . ($valued ? ", and {$valued} is exactly what {$npcName} finds compelling." : '.');
+                $glance = ['faint' => ', now and then, in a passing glance', 'plain' => '', 'strong' => ' and linger there'][$strength];
+                $answer = ['faint' => 'a warm but light answer', 'plain' => 'a warm answer', 'strong' => 'an eager answer'][$strength];
+                $lines[] = "{$npcName}'s eyes keep finding the player{$glance}" . ($valued ? "; {$valued} holds {$npcName}'s attention" : '')
+                    . ", and flirtation gets {$answer}.";
                 break;
             case 'hookup':
-                $lines[] = "{$npcName} is {$how}physically drawn to the player" . ($valued ? " ({$valued} stirs something)" : '')
-                    . ", but the player has not yet proven themselves worth more than a flirtation. Commitment is not on the table yet.";
+                $flirt = ['faint' => 'flirts back lightly', 'plain' => 'flirts back', 'strong' => 'flirts back boldly'][$strength];
+                $lines[] = "{$npcName} {$flirt} and lets the player close" . ($valued ? " ({$valued} holds {$npcName}'s eye)" : '')
+                    . ", but turns any talk of commitment aside.";
                 break;
             case 'prebond':
-                $lines[] = "{$npcName} is not moved by looks or deeds alone; any romantic feeling can only grow out of a deep, proven bond.";
+                $lines[] = "{$npcName} is not swayed by looks or deeds alone; warms slowly, and anything romantic waits on a deep, proven bond.";
                 break;
             case 'friendzone':
-                $lines[] = "{$npcName} values the player as a trusted friend but feels no romantic pull toward them. Flirtation is met with warm deflection, never cruelty.";
+                $lines[] = "{$npcName} treats the player as a trusted friend and meets flirtation with warm, kind deflection, never cruelty.";
                 break;
             default:
-                $lines[] = "{$npcName} feels no particular pull toward the player and keeps a polite distance.";
+                $lines[] = "{$npcName} keeps a polite distance from the player; flirtation is let pass without an answer.";
         }
         if (!empty($summary['tolerated'])) {
-            $lines[] = "Something about the player falls short of what {$npcName} usually wants, but {$npcName} is willing to look past it.";
+            $lines[] = "Something about the player falls short of what {$npcName} usually wants; {$npcName} chooses to look past it.";
         }
         $prefLines = [
-            'demisexual' => "{$npcName} forms deep bonds slowly; romantic feeling needs genuine trust built over time, and physical intimacy without that foundation feels wrong.",
-            'asexual' => "{$npcName} does not experience sexual attraction. Deep emotional bonds are possible, but physical intimacy is not something they seek.",
-            'aromantic' => "{$npcName} does not experience romantic attraction. Deep, loyal friendship is possible; romantic framing feels foreign and uncomfortable.",
-            'not_interested' => "{$npcName} is not looking for romance with anyone right now.",
-            'uncommitted' => "{$npcName} enjoys closeness but shies away from anything that sounds like commitment.",
+            'demisexual' => "{$npcName} bonds slowly; romance waits on trust built over time, and physical closeness before that is turned aside.",
+            'asexual' => "{$npcName} steers away from anything physical; closeness, for {$npcName}, is talk, time and loyalty.",
+            'aromantic' => "{$npcName} deflects romantic framing, uneasy with it, and offers deep, loyal friendship instead.",
+            'not_interested' => "{$npcName} brushes off romance with anyone right now.",
+            'uncommitted' => "{$npcName} enjoys closeness but changes the subject when talk turns to commitment.",
         ];
         if (isset($prefLines[$summary['preference'] ?? ''])) {
             $lines[] = $prefLines[$summary['preference']];
         }
         if (!empty($summary['pending'])) {
-            $lines[] = "{$npcName} has begun to see the player differently; only a truly meaningful moment together could change what they are to each other.";
+            $lines[] = "{$npcName} has started looking at the player differently; one truly meaningful moment together could change what they are to each other.";
         }
         return implode(' ', $lines);
     }
