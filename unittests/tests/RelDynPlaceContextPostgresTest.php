@@ -231,6 +231,25 @@ final class RelDynPlaceContextPostgresTest extends TestCase
         $this->assertSame(0.9, RelDynFacets::placeFacets($house)['domestic']);
     }
 
+    /** Internal weather's interest satisfaction reads the core place in prerequest (no CACHE_LOCATION). */
+    public function testPlaceFeedsInterestSatisfactionWithoutCacheLocation(): void
+    {
+        pg_query($this->db->link, "CREATE TABLE core_npc_master (id serial PRIMARY KEY, npc_name text, extended_data text)");
+        pg_query($this->db->link, "INSERT INTO core_npc_master (npc_name, extended_data) VALUES ('Ashe', '{}')");
+        $this->location('Mzinchaleft', 'The Pale', 'Dungeon,Dwarven Ruin,', 5, 'Skyrim');
+        $this->event('infoloc', 4000000, '(Context location: Mzinchaleft ,Hold: The Pale, Buildings to go:, Current Date in Skyrim World: ...)');
+        unset($GLOBALS['CACHE_LOCATION']);
+
+        $dyn = ['interaction_count' => 7, 'interests' => array_fill_keys(RelDynFacets::INTERESTS, 1.0)];
+        $sat = RelationshipDynamics::calculateInterestSatisfaction('Ashe', $dyn, null);
+        foreach (['adventure', 'scholarly', 'combat'] as $fed) {
+            $this->assertSame(0.5, $sat[$fed] ?? null, $fed);
+            $this->assertSame(7, $dyn['_interest_last_satisfied'][$fed] ?? null, $fed);
+        }
+        $this->assertArrayNotHasKey('crafting', $sat, 'crafting 0.4 is below satisfies_interest_min 0.5');
+        $this->assertArrayNotHasKey('nature', $sat);
+    }
+
     public function testWildernessHasNoNameAndIsOutside(): void
     {
         $this->event('infoloc', 4000000, '(Context location: , Buildings to go:, Current Date in Skyrim World: ...)');

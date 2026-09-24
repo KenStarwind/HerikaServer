@@ -219,10 +219,10 @@ if ($combatCtx) {
     if (!empty($combatCtx['bleeding_out'])) {
         $parts[] = "{$npcName} is critically wounded and barely conscious. The pain is overwhelming — every breath is a fight to stay awake.";
     } elseif ($combatCtx['in_combat']) {
-        $hpPct = $combatCtx['health_pct'];
-        if ($hpPct < 0.3) {
+        $hpPct = $combatCtx['health_pct'];   // null: core does not report NPC health
+        if ($hpPct !== null && $hpPct < 0.3) {
             $parts[] = "{$npcName} is badly hurt but still fighting alongside {$player}. The shared danger sharpens every sense.";
-        } elseif ($hpPct < 0.6) {
+        } elseif ($hpPct !== null && $hpPct < 0.6) {
             $parts[] = "{$npcName} is wounded but holding the line with {$player}. The adrenaline of shared combat bonds them.";
         } else {
             $parts[] = "{$npcName} fights alongside {$player}. The rhythm of shared combat — watching each other's backs, coordinating strikes — builds unspoken trust.";

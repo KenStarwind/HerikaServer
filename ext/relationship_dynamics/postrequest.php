@@ -26,9 +26,9 @@ $npcName = $GLOBALS['RELDYN_NPC_NAME']
     ?? '';
 // === COMBAT EVENT ROUTING ===
 // Combat events must ALWAYS go through the combat handler, even when
-// RELDYN_NPC_NAME is set to a real NPC (e.g. minai_bleedoutself sends npcName="Ashe").
-$combatNarratorTypes = ['radiantcombatfriend', 'death', 'bleedout', 'combatend', 'combatendmighty',
-    'minai_bleedoutself', 'info_minai_bleedoutself', 'minai_combatendvictory', 'minai_combatenddefeat'];
+// RELDYN_NPC_NAME is set to a real NPC. CHIM 3.4.1 core combat event types only (no MinAI).
+// (Same list as RelationshipDynamics::CORE_COMBAT_REQUEST_TYPES; the class is not loaded yet.)
+$combatNarratorTypes = ['radiantcombatfriend', 'death', 'bleedout', 'combatend', 'combatendmighty'];
 $isCombatEvent = in_array($reqType, $combatNarratorTypes);
 
 if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
@@ -134,11 +134,11 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
             // Determine combat classification
             $isWitness = in_array(strtolower($combatNpc), $witnessSet);
             $combatLL = RelationshipDynamics::LL_SERVICE; // default: positive combat
-            if ($reqType === 'bleedout' || $reqType === 'minai_bleedoutself') {
+            if ($reqType === 'bleedout') {
                 $combatLL = 'combat_bleedout';
             }
 
-            // Get enriched combat context (MinAI vitals if available)
+            // Combat context from core eventlog (health is unknown on 3.4.1: null)
             $combatCtx = RelationshipDynamics::getCombatContext($combatNpc);
 
             // Calculate passion change -- bleedout is a DRAIN, positive combat is a GAIN
@@ -164,11 +164,11 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
                     RelationshipDynamics::log("Kill streak bonus: +{$streakBonus} ({$combatCtx['recent_kills']} kills)");
                 }
 
-                // MinAI shared danger bonus: low HP while fighting together
+                // Shared danger bonus: low HP while fighting together (needs a known HP)
                 if ($combatCtx && $combatCtx['in_combat'] && $gain > 0) {
                     $combatInterest = floatval($dynamics['interests']['combat'] ?? 1.0);
                     $dangerThreshold = max(0.0, 0.30 - ($combatInterest * 0.15));
-                    if ($combatCtx['health_pct'] <= $dangerThreshold && $combatCtx['health_pct'] > 0) {
+                    if ($combatCtx['health_pct'] !== null && $combatCtx['health_pct'] <= $dangerThreshold && $combatCtx['health_pct'] > 0) {
                         $gain *= 1.5; // shared danger intensity boost
                         RelationshipDynamics::log("Shared danger boost: HP={$combatCtx['health_pct']} threshold={$dangerThreshold}");
                     }
@@ -724,7 +724,7 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
 
     // ========== ITEM DIMENSION MODIFIERS (PR 8) ==========
     // Detect and process consumable, gift, and equip events from this interaction.
-    // Uses MinAI flags (isDrunk, isOnSkooma), eventlog patterns, and ExtCmdGiveItem.
+    // Uses eventlog patterns and ExtCmdGiveItem (core data).
     $playerName = $GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player';
     $temperament = $dynamics['inferred_temperament'] ?? null;
     $itemResults = RelationshipDynamics::processItemEvents(

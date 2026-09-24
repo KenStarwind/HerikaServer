@@ -89,6 +89,12 @@ final class RelDynTemperamentPostgresTest extends TestCase
             gamets_last_updated numeric,
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'))");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
+        // Core 3.4.1 eventlog / locations (empty): RelDyn reads the current place from them.
+        pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
+            localts bigint NOT NULL, ts bigint, rowid bigint NOT NULL, people text, location text, party text)");
+        pg_query($admin, "CREATE TABLE locations (name text, formid bigint, region text, hold text, tags text,
+            factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,
+            updated_at timestamp, world text, chim_added integer)");
         pg_close($admin);
 
         $this->db = new RelDynTemperamentPgDb($dsn, $this->schema);

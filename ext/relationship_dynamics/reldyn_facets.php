@@ -428,6 +428,9 @@ final class RelDynFacets
             'time_of_day_hours' => ['dawn' => [5, 8], 'day' => [8, 17], 'dusk' => [17, 20], 'night' => [20, 5]],
             // detectCurrentInterest() names the place's strongest interest facet from this weight.
             'dominant_interest_min' => 0.3,
+            // Interest satisfaction (internal weather, calculateInterestSatisfaction): being in a
+            // place whose interest facet is at least this strong feeds that interest.
+            'satisfies_interest_min' => 0.5,
         ];
     }
 }

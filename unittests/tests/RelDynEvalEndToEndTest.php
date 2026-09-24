@@ -143,6 +143,10 @@ final class RelDynEvalEndToEndTest extends TestCase
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,
             utterance_id text, delivery_state text)");
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
+        // Core 3.4.1 locations (debug/db_updates.php columns): RelDyn reads the current place.
+        pg_query($admin, "CREATE TABLE locations (name text, formid bigint, region text, hold text, tags text,
+            factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,
+            updated_at timestamp, world text, chim_added integer)");
         pg_query($admin, "CREATE TABLE moods_issued (speaker text, mood text, localts bigint)");
         pg_close($admin);
 
