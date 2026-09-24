@@ -56,6 +56,36 @@ final class RelDynSpellSubjectTest extends TestCase
             'tags' => 'Restoration, healing, potions, Blue Mountain Flower, Blue Dartwing, Butterfly Wing, Charred Skeever Hide, Daedra Heart, Eye of Sabre Cat, Imp Stool, Wheat, Swamp Fungal Pod'],
         'the_red_year' => ['topic' => 'the_red_year', 'aliases' => '', 'knowledge_class' => 'scholar', 'category' => 'lore',
             'tags' => 'Red Mountain, Morrowind, Dunmer, Melis Ravel, Tear, Vivec City, Mournhold, eruption, survival, resilience, catastrophe'],
+        // Rows outside the magic category whose NAME carries a magic word ('scroll', 'magic', 'staff') or a school
+        'the_art_of_war_magic' => ['topic' => 'the_art_of_war_magic', 'aliases' => '', 'knowledge_class' => 'scholar', 'category' => 'lore',
+            'tags' => 'Zurin Arctus, battlemages, warfare, military strategy, Destruction, magic, philosophy, preparation'],
+        'an_accounting_of_the_scrolls' => ['topic' => 'an_accounting_of_the_scrolls', 'aliases' => '', 'knowledge_class' => 'scholar', 'category' => 'lore',
+            'tags' => 'Elder Scrolls, Cult of the Ancestor Moth, Quintus Nerevelus, Imperial Library, prophecy, fate, forbidden knowledge, metaphysics'],
+        'magicka' => ['topic' => 'magicka', 'aliases' => 'Magic', 'knowledge_class' => 'mage, scholar', 'category' => 'lore',
+            'tags' => 'Aetherius, Mundus, Magnus, Magna Ge, spellcasting, enchanting, souls, arcane energy, sun and stars'],
+        'conjuration' => ['topic' => 'conjuration', 'aliases' => '', 'knowledge_class' => 'mage, scholar, college_of_winterhold', 'category' => 'lore',
+            'tags' => 'College of Winterhold, summoning, Daedra, undead, bound weapons, reanimation, Oblivion, banishment, magic'],
+        'staff_of_magnus' => ['topic' => 'staff_of_magnus', 'aliases' => '', 'knowledge_class' => 'college_of_winterhold, scholar, mage, priest',
+            'category' => 'artifacts', 'tags' => 'Magnus, Mundus, Tamriel, God of Magic, Mages Guild, metaphysical battery, magic, enchantment, drain, legend'],
+        'resistance_potions' => ['topic' => 'resistance_potions', 'knowledge_class' => 'alchemist', 'category' => 'items',
+            'aliases' => 'potion of resist fire, potion of resist cold, potion of resist magic, potion of resist shock, elixir of resist magic',
+            'tags' => 'Fire, Frost, Shock, Magic, Draughts, Philters, Elixirs, Elemental resistance'],
+        // Diseases: the tags name the carriers
+        'bone_break_fever' => ['topic' => 'bone_break_fever', 'aliases' => '', 'knowledge_class' => 'alchemist, healer', 'category' => 'spells',
+            'tags' => 'rats, bears, disease, stamina drain, strength loss, fever, wildlife disease'],
+        'rockjoint' => ['topic' => 'rockjoint', 'aliases' => '', 'knowledge_class' => 'alchemist, healer', 'category' => 'spells',
+            'tags' => 'disease, melee weapon damage, dexterity, swelling, wolves, zombies, alit, guar, Morrowind'],
+        'gutworm' => ['topic' => 'gutworm', 'aliases' => '', 'knowledge_class' => 'alchemist, healer', 'category' => 'spells',
+            'tags' => 'disease, Trolls, Skyrim, stamina, stamina regeneration, food, hunger'],
+        // Conjuring the dead and the daedra
+        'dead_thrall' => ['topic' => 'dead_thrall', 'aliases' => '', 'knowledge_class' => 'mage', 'category' => 'spells',
+            'tags' => 'Conjuration, Master skill, Reanimation, Undead, Necromancy, Permanent spells, Followers'],
+        'conjure_ash_spawn' => ['topic' => 'conjure_ash_spawn', 'aliases' => '', 'knowledge_class' => 'mage', 'category' => 'spells',
+            'tags' => 'Conjuration, Ash Spawn, Adept magic, summoning, conjured ally, combat magic'],
+        "summon_arniel's_shade" => ['topic' => "summon_arniel's_shade", 'aliases' => '', 'knowledge_class' => 'mage, college_of_winterhold',
+            'category' => 'spells', 'tags' => 'Conjuration, Arniel Gane, shade, summoning, Expert skill, College of Winterhold, undead, spells'],
+        'conjure' => ['topic' => 'conjure', 'aliases' => '', 'knowledge_class' => 'mage', 'category' => 'spells',
+            'tags' => 'Conjuration, Oblivion, Daedra, atronachs, summoning, protection, enchantment, combat magic'],
     ];
 
     /** Nature magic by Ken's list: animals, weather, shapeshifting, beast calls, a familiar. */
@@ -166,11 +196,12 @@ final class RelDynSpellSubjectTest extends TestCase
         $this->assertSame('destruction', RelDynFacetClassifier::spellReading('fireball', self::LIVE_ROWS['fireball']['tags'], 'spells')['school']);
     }
 
-    /** Conjuration of daedra is dangerous learning; of a familiar (a spectral wolf) it is nature. */
+    /** Conjuring daedra is danger and darkness (Oblivion's beings); a familiar (a spectral wolf) is nature. */
     public function testConjurationReadsByWhatIsConjured(): void
     {
         $daedra = self::prior('conjure_dremora_lord');
-        $this->assertSame(['danger', 'scholarly'], array_slice(array_keys($daedra), 0, 2), json_encode($daedra));
+        $this->assertSame(['danger', 'dark'], array_slice(array_keys($daedra), 0, 2), json_encode($daedra));
+        $this->assertLessThanOrEqual(0.2, $daedra['scholarly'] ?? 0.0, 'at most a trace of learning: ' . json_encode($daedra));
         $this->assertArrayNotHasKey('nature', $daedra);
         $familiar = self::prior('conjure_familiar');
         $this->assertSame('nature', array_key_first($familiar), json_encode($familiar));
@@ -189,7 +220,22 @@ final class RelDynSpellSubjectTest extends TestCase
     {
         $r = RelDynFacetClassifier::spellReading('ataxia', self::LIVE_ROWS['ataxia']['tags'], 'spells');
         $this->assertSame(['disease'], $r['subjects']);
+        $this->assertTrue($r['exclusive']);
         $this->assertArrayNotHasKey('nature', self::prior('ataxia'));
+        // Not in the subject reading, and not through the generic tag keywords either: rats, bears,
+        // wolves and trolls are carriers, not a breath of the wild or a fight
+        $aela = self::aelaPrefs();
+        foreach (['ataxia', 'bone_break_fever', 'rockjoint', 'gutworm'] as $topic) {
+            $f = self::prior($topic);
+            foreach (['nature', 'wild', 'combat'] as $carrier) {
+                $this->assertArrayNotHasKey($carrier, $f, "{$topic}: " . json_encode($f));
+            }
+            $this->assertContains(array_key_first($f), ['danger', 'alchemy', 'spiritual'], "{$topic}: " . json_encode($f));
+            $a = RelDynFacets::appraise($aela, $f);
+            $felt = (string) RelDynFacets::feltText('Aela', $a, 'topic', str_replace('_', ' ', $topic));
+            $this->assertDoesNotMatchRegularExpression('/wild|untamed|fighter/', $felt, "{$topic}: {$felt}");
+            $this->assertLessThan(0.2, $a['valence'], "{$topic}: a disease is nothing she warms to: " . json_encode($a));
+        }
         // ... but lycanthropy is the beast form, disease or not
         $l = RelDynFacetClassifier::spellReading('lycanthropy', self::LIVE_ROWS['lycanthropy']['tags'], 'spells');
         $this->assertSame('wild', array_key_first($l['facets']));
@@ -244,6 +290,51 @@ final class RelDynSpellSubjectTest extends TestCase
         $f = self::prior('the_red_year');
         $this->assertSame('scholarly', array_key_first($f));
         $this->assertNull(RelDynFacetClassifier::spellReading('the red year', self::LIVE_ROWS['the_red_year']['tags'], 'lore'));
+    }
+
+    /**
+     * An Oghma row outside the magic category is what its category says, whatever its name: the
+     * Elder Scrolls books ('scroll'), The Art of War Magic ('magic'), the lore of a school
+     * ('conjuration'), the Staff of Magnus (an artifact, 'staff'), potions of resist magic. Their
+     * prior is exactly the pre-§10 reading (category prior, audience, keywords).
+     */
+    public function testMagicWordsInANameDoNotMakeLoreArtifactsOrItemsSpells(): void
+    {
+        foreach (['the_art_of_war_magic', 'an_accounting_of_the_scrolls', 'magicka', 'conjuration', 'staff_of_magnus', 'resistance_potions'] as $topic) {
+            $row = self::LIVE_ROWS[$topic];
+            $name = str_replace('_', ' ', $row['topic']) . ' | ' . $row['aliases'];
+            $this->assertNull(RelDynFacetClassifier::spellReading($name, $row['tags'], $row['category']), $topic);
+            $this->assertSame(self::prior($topic, self::pre10Config()), self::prior($topic), "{$topic}: unchanged by §10");
+        }
+        $war = self::prior('the_art_of_war_magic');
+        $this->assertGreaterThanOrEqual(0.6, $war['scholarly'] ?? 0.0, 'a treatise by Zurin Arctus is a book: ' . json_encode($war));
+        $aela = self::aelaPrefs();
+        $this->assertLessThan(0.3, RelDynFacets::appraise($aela, $war)['valence'], 'she does not warm to a treatise: ' . json_encode($war));
+        $magnus = RelDynFacets::appraise($aela, self::prior('staff_of_magnus'));
+        $this->assertStringNotContainsString('bookish', (string) RelDynFacets::feltText('Aela', $magnus, 'topic', 'staff of magnus'));
+        $this->assertArrayHasKey('adventure', self::prior('staff_of_magnus'), 'the artifacts prior stays');
+        // Without an Oghma row a name still reads by its subject (a staff someone carries, a spell tome)
+        $this->assertSame('combat', array_key_first(RelDynFacets::thingFacets('item', 'Staff of Fireballs')));
+    }
+
+    /**
+     * Conjuring the dead is dark, conjuring daedra is danger (decisions §10: a spell's facets
+     * follow its subject): Aela reads raise zombie or a dremora lord by that, never as "too bookish".
+     */
+    public function testNecromancyAndDaedraAreNotBookishToAela(): void
+    {
+        $aela = self::aelaPrefs();
+        foreach (['raise_zombie', 'dead_thrall', "summon_arniel's_shade", 'conjure_dremora_lord', 'conjure_ash_spawn', 'conjure'] as $topic) {
+            $f = self::prior($topic);
+            $a = RelDynFacets::appraise($aela, $f);
+            $felt = (string) RelDynFacets::feltText('Aela', $a, 'topic', str_replace('_', ' ', $topic));
+            $this->assertStringNotContainsString('bookish', $felt, "{$topic}: " . json_encode($f) . ' ' . json_encode($a));
+            $this->assertContains($a['dominant'], ['dark', 'danger'], "{$topic}: " . json_encode($a));
+            $this->assertLessThanOrEqual(0.2, $f['scholarly'] ?? 0.0, "{$topic}: at most a trace of learning: " . json_encode($f));
+        }
+        foreach (['raise_zombie', 'dead_thrall', "summon_arniel's_shade"] as $topic) {
+            $this->assertSame('dark', array_key_first(self::prior($topic)), $topic);
+        }
     }
 
     /** The table is config (facet_classifier.spell_subjects): an edited subject changes the reading. */

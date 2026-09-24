@@ -117,7 +117,7 @@ class RelDynFulfillment
             // Level cap: full coverage, no banked surplus, so one binge carries a few days at most
             // (a probation needs consistent_game_days of change, not one good day).
             'max_units'           => 3.0,
-            'half_life_game_days' => 3.0,   // levels halve every this many game days without delivery
+            'half_life_game_days' => 3.0,   // levels halve every this many game days without delivery (/ the axis's decay rate)
 
             // --- band history, trend ---
             'trend_game_days'      => 7,    // daily samples the trend (least-squares slope) reads
@@ -278,19 +278,29 @@ class RelDynFulfillment
     // LEVELS, COVERAGE, BAND
     // =====================================================================
 
-    /** Axis levels (delivery units) at $at: the stored levels decayed on the game calendar. */
+    /**
+     * Axis levels (delivery units) at $at: the stored levels decayed on the game calendar, each
+     * at half_life_game_days / its decay rate (state 'r', axis => rate; 1 when absent: the
+     * intimacy axes wear off by attachment style, RelDynIntimacy::decayRates).
+     */
     public static function levelsAt(array $state, float $at, ?array $cfg = null): array
     {
         $cfg = $cfg ?? self::config();
         $from = floatval($state['gamets'] ?? 0);
         $days = max(0.0, $at - $from) / self::day();
-        $half = floatval($cfg['half_life_game_days']);
-        $f = ($half > 0 && $days > 0) ? pow(0.5, $days / $half) : 1.0;
+        $rates = (array) ($state['r'] ?? []);
         $out = [];
         foreach ((array) ($state['lv'] ?? []) as $axis => $level) {
-            $out[$axis] = floatval($level) * $f;
+            $out[$axis] = floatval($level) * self::decayFactor($days, $cfg, floatval($rates[$axis] ?? 1.0));
         }
         return $out;
+    }
+
+    /** What is left after $days game days at the half-life x $rate (0.5^(days x rate / half)). */
+    private static function decayFactor(float $days, array $cfg, float $rate = 1.0): float
+    {
+        $half = floatval($cfg['half_life_game_days']);
+        return ($half > 0 && $days > 0) ? pow(0.5, $days * max(0.0, $rate) / $half) : 1.0;
     }
 
     /** Coverage (-1..+1) of a level: 0 units = -1, target_units = +1, linear between. */
@@ -392,7 +402,8 @@ class RelDynFulfillment
      * Create the state on first contact, or bring its needs up to date (a need that appeared
      * starts neutral at $now, a need that went away is dropped). Stored:
      *   'v', 'since' (gamets), 'gamets' (levels as of), 'w' (axis => need weight),
-     *   'lv' (axis => units at 'gamets'), 'sampled_gamets' (last day-end sampled), 'days'
+     *   'lv' (axis => units at 'gamets'), 'r' (axis => decay rate, only rates other than 1:
+     *   RelDynIntimacy::decayRates), 'sampled_gamets' (last day-end sampled), 'days'
      *   ([game day, band] day-end samples), 'low_since_gamets', 'contact_band', 'boundary',
      *   'contact_days' (game days the player had contact, recordContactDay).
      * Returns true when it changed $dynamics.
@@ -402,19 +413,21 @@ class RelDynFulfillment
         if ($now <= 0 || !self::enabled()) return false;
         $cfg = self::config();
         $needs = self::needs($dynamics, $prefs, $cfg);
+        $rates = array_intersect_key(RelDynIntimacy::decayRates($dynamics), $needs);
         $state = $dynamics[self::STATE_KEY] ?? null;
         if (!is_array($state) || !is_array($state['lv'] ?? null)) {
             $start = floatval($cfg['start_units']);
             $dynamics[self::STATE_KEY] = [
                 'v' => self::VERSION, 'since' => $now, 'gamets' => $now,
-                'w' => $needs, 'lv' => array_map(fn() => $start, $needs),
+                'w' => $needs, 'lv' => array_map(fn() => $start, $needs), 'r' => $rates,
                 'sampled_gamets' => floor($now / self::day()) * self::day(),
                 'days' => [], 'boundary' => ['state' => 'none'],
             ];
             return true;
         }
         $stored = array_map('floatval', (array) ($state['w'] ?? []));
-        if ($stored == $needs && array_keys((array) $state['lv']) == array_keys($needs)) {
+        $storedRates = array_map('floatval', (array) ($state['r'] ?? []));
+        if ($stored == $needs && array_keys((array) $state['lv']) == array_keys($needs) && $storedRates == $rates) {
             return false;
         }
         self::tick($dynamics, $now);   // day-ends before the change are sampled with the old needs
@@ -426,6 +439,7 @@ class RelDynFulfillment
         }
         $state['w'] = $needs;
         $state['lv'] = $lv;
+        $state['r'] = $rates;   // levels up to now decayed at the old rates; from now at these
         $state['gamets'] = max($now, floatval($state['gamets'] ?? 0));
         $dynamics[self::STATE_KEY] = $state;
         return true;
@@ -447,13 +461,13 @@ class RelDynFulfillment
         $stamp = max($at, floatval($state['gamets'] ?? 0));
         $levels = self::levelsAt($state, $stamp, $cfg);
         $lag = max(0.0, $stamp - $at) / self::day();
-        $half = floatval($cfg['half_life_game_days']);
-        $late = ($half > 0 && $lag > 0) ? pow(0.5, $lag / $half) : 1.0;
+        $rates = (array) ($state['r'] ?? []);
         $max = floatval($cfg['max_units']);
         $applied = [];
         foreach ($amounts as $axis => $units) {
             if (!array_key_exists($axis, $levels) || abs(floatval($units)) < 1e-9) continue;
             $before = $levels[$axis];
+            $late = self::decayFactor($lag, $cfg, floatval($rates[$axis] ?? 1.0));
             $levels[$axis] = max(0.0, min($max, $before + floatval($units) * $late));
             $applied[$axis] = round($levels[$axis] - $before, 4);
         }

@@ -3867,17 +3867,19 @@ class RelationshipDynamics
 
     /**
      * An exchange the local classifier read as a love language (the eval did not score it):
-     * fulfillment.legacy_love_language_units to that axis, plus the intimacy axes of the tag the
-     * eval would have given (legacy_love_language_tag: a hug or a scene request is 'touch')
-     * x the same units. Returns the units applied.
+     * fulfillment.legacy_love_language_units to that axis, plus (with $intimacyAxes) the
+     * intimacy axes of the tag the eval would have given (legacy_love_language_tag: a hug is
+     * 'touch') x the same units. A request the plugin reports as intimacy (a scene, a VR touch)
+     * feeds the intimacy axes itself (RelDynIntimacy::recordRequest): pass false for it.
+     * Returns the units applied.
      */
-    public static function recordLoveLanguageFulfillment(array &$dynamics, ?string $loveLanguage, float $now): array
+    public static function recordLoveLanguageFulfillment(array &$dynamics, ?string $loveLanguage, float $now, bool $intimacyAxes = true): array
     {
         if ($loveLanguage === null) return [];
         $cfg = RelDynFulfillment::config();
         $units = floatval($cfg['legacy_love_language_units']);
         $amounts = [$loveLanguage => $units];
-        $tag = ((array) ($cfg['legacy_love_language_tag'] ?? []))[$loveLanguage] ?? null;
+        $tag = $intimacyAxes ? (((array) ($cfg['legacy_love_language_tag'] ?? []))[$loveLanguage] ?? null) : null;
         foreach ((array) (((array) $cfg['tag_delivery'])[$tag] ?? []) as $axis => $u) {
             if (RelDynIntimacy::isAxis((string) $axis) && is_numeric($u)) $amounts[$axis] = ($amounts[$axis] ?? 0.0) + floatval($u) * $units;
         }

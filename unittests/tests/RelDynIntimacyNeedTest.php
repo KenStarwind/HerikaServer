@@ -295,7 +295,7 @@ final class RelDynIntimacyNeedTest extends TestCase
 
     /**
      * Ken: "Ashe is less about the sex and more about the connection." Both get connection
-     * every day (quality time, a hand held, a confiding talk), neither gets sex: the Ashe-like
+     * every day (quality time, a confiding talk), neither gets sex: the Ashe-like
      * NPC is fulfilled on intimacy, the Aela-like one is not, and it weighs on her weather.
      */
     public function testConnectionWithoutSexFulfilsAsheButNotAela(): void
@@ -308,7 +308,7 @@ final class RelDynIntimacyNeedTest extends TestCase
             $this->assertTrue(RelDynFulfillment::ensure($d, $prefs, self::T0));
             for ($day = 0; $day < 6; $day++) {
                 $at = self::T0 + $day * self::DAY + 2 * self::HOUR;
-                RelationshipDynamics::processEvalContractItem($name, self::evalItem($name, $at, ['quality_time', 'touch']), $d);
+                RelationshipDynamics::processEvalContractItem($name, self::evalItem($name, $at, ['quality_time']), $d);
                 RelationshipDynamics::processEvalContractItem($name, self::evalItem($name, $at + 3 * self::HOUR, ['confiding']), $d);
             }
             $npcs[$name] = $d;
@@ -324,7 +324,7 @@ final class RelDynIntimacyNeedTest extends TestCase
 
         $aela = RelDynIntimacy::axesAt($npcs['Huntress'], $now);
         $this->assertGreaterThan(0.5, $aela[RelDynIntimacy::EMOTIONAL]['coverage'], 'the connection reaches her too');
-        $this->assertTrue($aela[RelDynIntimacy::PHYSICAL]['deprived'], 'hugs are not what she is missing');
+        $this->assertTrue($aela[RelDynIntimacy::PHYSICAL]['deprived'], 'talk is not what she is missing');
         $this->assertSame(RelDynIntimacy::PHYSICAL, RelDynIntimacy::deprivedAxis($npcs['Huntress'], $now));
         $text = RelDynIntimacy::feltText('Huntress', 'Kaida', $npcs['Huntress'], $now);
         $this->assertNotNull($text);
@@ -382,6 +382,148 @@ final class RelDynIntimacyNeedTest extends TestCase
         $ll = RelationshipDynamics::classifyInteraction(['inputtext', '1', (string) (int) self::T0, 'Kaida: ExtCmdHug']);
         $applied = RelationshipDynamics::recordLoveLanguageFulfillment($d, $ll, self::T0);
         $this->assertGreaterThan(0.0, $applied[RelDynIntimacy::EMOTIONAL] ?? 0.0, 'non-sexual touch is emotional closeness');
+    }
+
+    /**
+     * PR 13 (D:/docs/pr13-environmental-quirks-plan.md, "Intimacy as a Deprivation Category"):
+     * "Attachment style modifies deprivation rate: avoidant=0.5x, anxious=2.0x, toxic=1.5x".
+     * The intimacy axes wear off at the fulfillment half-life x that rate; the other axes do not.
+     */
+    public function testAttachmentSetsHowFastIntimacyWearsOff(): void
+    {
+        $prefs = RelDynFacets::neutralPreferences();
+        $levels = [];
+        foreach (['avoidant', 'secure', 'toxic', 'anxious'] as $style) {
+            $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['attachment_style' => $style]);
+            $this->assertSame($style, RelationshipDynamics::getAttachmentStyle($d));
+            $this->assertTrue(RelDynFulfillment::ensure($d, $prefs, self::T0));
+            $levels[$style] = RelDynFulfillment::levelsAt($d['_fulfillment'], self::T0 + 3 * self::DAY);
+        }
+        $half = RelDynFulfillment::config()['half_life_game_days'];
+        $start = RelDynFulfillment::config()['start_units'];
+        foreach (['avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.5, 'anxious' => 2.0] as $style => $rate) {
+            foreach (RelDynIntimacy::AXES as $axis) {
+                $this->assertEqualsWithDelta($start * 0.5 ** (3.0 * $rate / $half), $levels[$style][$axis], 1e-6, "{$style} {$axis}");
+            }
+            // every other axis wears off at the shared half-life whatever the attachment
+            foreach (array_diff(array_keys($levels[$style]), RelDynIntimacy::AXES) as $axis) {
+                $this->assertEqualsWithDelta($start * 0.5 ** (3.0 / $half), $levels[$style][$axis], 1e-6, "{$style} {$axis}");
+            }
+            $this->assertGreaterThan(2, count($levels[$style]), 'there are other axes');
+        }
+        $this->assertSame(RelDynIntimacy::configDefaults()['attachment_decay_rate'],
+            ['secure' => 1.0, 'avoidant' => 0.5, 'anxious' => 2.0, 'toxic' => 1.5], 'PR 13 values');
+
+        // A late delivery (an eval item applied after the fact) lands decayed at the axis's own rate
+        $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['attachment_style' => 'anxious']);
+        RelDynFulfillment::ensure($d, $prefs, self::T0);
+        RelDynFulfillment::deliver($d, [RelDynIntimacy::PHYSICAL => 0.0001], self::T0 + 3 * self::DAY);
+        $other = array_values(array_diff(array_keys($d['_fulfillment']['w']), RelDynIntimacy::AXES))[0];
+        $applied = RelDynFulfillment::deliver($d, [RelDynIntimacy::PHYSICAL => 1.0, $other => 1.0], self::T0);
+        $this->assertEqualsWithDelta(0.5 ** (3.0 * 2.0 / $half), $applied[RelDynIntimacy::PHYSICAL], 1e-3);
+        $this->assertEqualsWithDelta(0.5 ** (3.0 / $half), $applied[$other], 1e-3);
+    }
+
+    /**
+     * A request the plugin reports as intimacy is an observed fact, fed whether or not the eval
+     * scores the exchange: a Sharmat / OStim scene with the player in it covers the physical axis
+     * in full (PR 13: "OStim/Sharmat events -> fully satisfied"); a VR touch of the body
+     * (ext_nsfw_physics) is intimate touch, half a delivery; an NPC-only scene and a hug are not
+     * the player's intimacy (a hug is the legacy 'touch' love language: mostly emotional).
+     */
+    public function testIntimateRequestsFeedPhysicalIntimacy(): void
+    {
+        $t = (string) (int) self::T0;
+        $scene = ['ext_nsfw_sexcene', '1', $t, 'OStimScene/vaginal,romantic/Stage1_A1/Kaida^dom,vaginal/Huntress^sub,vaginal'];
+        $this->assertSame('scene', RelDynIntimacy::requestKind($scene, 'Kaida'));
+        $this->assertSame('scene', RelDynIntimacy::requestKind(['chatnf_sl_climax', '1', $t, 'Kaida and Huntress climax together'], 'Kaida'));
+        $this->assertSame('scene', RelDynIntimacy::requestKind(['info', '1', $t, 'Kaida: OStimSceneStart with Huntress'], 'Kaida'));
+        $this->assertSame('intimate_touch', RelDynIntimacy::requestKind(['ext_nsfw_physics', '1', $t, 'Huntress^breast^grab^0^^left^'], 'Kaida'));
+        $this->assertNull(RelDynIntimacy::requestKind(['ext_nsfw_sexcene', '1', $t, 'OStimScene/vaginal/Stage1/Ulfberth^dom/Huntress^sub'], 'Kaida'),
+            'a scene without the player is not the player\'s intimacy');
+        $this->assertNull(RelDynIntimacy::requestKind(['ext_nsfw_npc_scene', '1', $t, 'Kaida^Huntress^1^S^0^0'], 'Kaida'));
+        $this->assertNull(RelDynIntimacy::requestKind(['inputtext', '1', $t, 'Kaida: ExtCmdHug'], 'Kaida'));
+        $this->assertNull(RelDynIntimacy::requestKind(['inputtext', '1', $t, 'Kaida: hello'], 'Kaida'));
+
+        $d = $this->derived(['Huntress' => self::huntress()], 'Huntress');
+        RelDynFulfillment::ensure($d, RelDynFacets::neutralPreferences(), self::T0);
+        $applied = RelDynIntimacy::recordRequest($d, $scene, 'Kaida', self::T0);
+        $axes = RelDynIntimacy::axesAt($d, self::T0);
+        $this->assertEqualsWithDelta(1.0, $axes[RelDynIntimacy::PHYSICAL]['coverage'], 1e-9, 'fully satisfied: ' . json_encode($applied));
+        $this->assertLessThan(0.3, $applied[RelDynIntimacy::EMOTIONAL] ?? 0.0, 'sex is not what covers her need to be known');
+
+        $d = $this->derived(['Huntress' => self::huntress()], 'Huntress');
+        RelDynFulfillment::ensure($d, RelDynFacets::neutralPreferences(), self::T0);
+        $touch = RelDynIntimacy::recordRequest($d, ['ext_nsfw_physics', '1', $t, 'Huntress^breast^grab^0^^left^'], 'Kaida', self::T0);
+        $this->assertEqualsWithDelta(0.5, $touch[RelDynIntimacy::PHYSICAL], 1e-9);
+        $this->assertSame([], RelDynIntimacy::recordRequest($d, ['inputtext', '1', $t, 'Kaida: ExtCmdHug'], 'Kaida', self::T0));
+
+        // The legacy love-language delivery of the same scene leaves the intimacy axes to it
+        $ll = RelationshipDynamics::classifyInteraction($scene);
+        $this->assertSame(RelationshipDynamics::LL_TOUCH, $ll);
+        $copy = $d;
+        $hug = RelationshipDynamics::recordLoveLanguageFulfillment($copy, $ll, self::T0);
+        $this->assertArrayHasKey(RelDynIntimacy::EMOTIONAL, $hug, 'as a hug it would feed the intimacy axes');
+        $legacy = RelationshipDynamics::recordLoveLanguageFulfillment($d, $ll, self::T0, false);
+        $this->assertSame([], array_intersect(array_keys($legacy), RelDynIntimacy::AXES), 'the scene fed them itself');
+    }
+
+    /**
+     * Ken: "Ashe is less about the sex and more about the connection." That is the named NPC,
+     * whatever class core registered her with (a sellsword: Warrior): her attraction preset
+     * gates intimacy on the bond, so her need is emotional and physical is no axis of hers.
+     */
+    public function testNamedAsheIsBondGatedWhateverHerCoreClass(): void
+    {
+        foreach (['Warrior', 'Sorcerer', 'Spellsword', 'Thief'] as $class) {
+            $row = self::row('Ashe', 'BretonRace', $class, ['CurrentFollowerFaction', 'PotentialFollowerFaction'],
+                ['onehanded' => 60, 'block' => 45, 'lightarmor' => 50, 'archery' => 35, 'destruction' => 30]);
+            $d = $this->derived(['Ashe' => $row], 'Ashe');
+            $n = self::need($d);
+            $this->assertSame('bond', RelDynAttraction::gateOf('Ashe', $d), $class);
+            $this->assertContains('gate:bond', $d['_intimacy_need']['signals'], $class);
+            $this->assertLessThan(RelDynIntimacy::configDefaults()['axis_min'], $n['physical'], "{$class}: " . json_encode($n));
+            $this->assertGreaterThanOrEqual(0.6, $n['emotional'], $class);
+            $needs = RelDynFulfillment::needs($d, RelDynFacets::neutralPreferences());
+            $this->assertArrayNotHasKey(RelDynIntimacy::PHYSICAL, $needs, $class);
+            $this->assertArrayHasKey(RelDynIntimacy::EMOTIONAL, $needs, $class);
+        }
+    }
+
+    /**
+     * <intimacy_state> is the romance's feeling: it speaks only while intimacy is in play with
+     * the player (a romance core type, or passion held at its threshold; never friendzoned) and
+     * the bond is one whose neglect weighs (like the weather). A housecarl, a sister or a friend
+     * who misses the closeness says so through the fulfillment text, not a romance-coded one;
+     * an ended bond says nothing.
+     */
+    public function testIntimacyTextSpeaksOnlyWhileIntimacyIsInPlay(): void
+    {
+        $later = self::T0 + 6 * self::DAY;
+        foreach (['servant', 'familial', 'platonic'] as $type) {
+            $d = $this->derived(['Scholar' => self::scholar()], 'Scholar', ['_core_rel_type' => $type]);
+            RelDynFulfillment::ensure($d, RelDynFacets::neutralPreferences(), self::T0);
+            $this->assertNotNull(RelationshipDynamics::neglectBond($d), $type);
+            $this->assertSame(RelDynIntimacy::EMOTIONAL, RelDynIntimacy::deprivedAxis($d, $later), "{$type}: the need is still there");
+            $this->assertNull(RelDynIntimacy::feltText('Scholar', 'Kaida', $d, $later), "{$type}: no romance-coded text");
+            $this->assertContains('real closeness, being truly known', RelDynFulfillment::unmetPhrases($d['_fulfillment'], $later, 3),
+                "{$type}: missed through the fulfillment text");
+        }
+        // The romance: the text speaks; once it ends (professional: no bond) it stops, like the weather
+        $d = $this->derived(['Scholar' => self::scholar()], 'Scholar');
+        RelDynFulfillment::ensure($d, RelDynFacets::neutralPreferences(), self::T0);
+        $this->assertNotNull(RelDynIntimacy::feltText('Scholar', 'Kaida', $d, $later));
+        $d['_core_rel_type'] = 'professional';
+        RelDynIntimacy::ensureNeed('Scholar', $d);
+        $this->assertNull(RelationshipDynamics::neglectBond($d));
+        $this->assertSame(0.0, RelDynFulfillment::weatherDeprivation($d, $later));
+        $this->assertNull(RelDynIntimacy::feltText('Scholar', 'Kaida', $d, $later));
+        // Passion held at its threshold outside a romance puts intimacy in play
+        $friend = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['_core_rel_type' => 'platonic']);
+        RelationshipDynamics::setPassion($friend, 40.0);
+        RelDynIntimacy::ensureNeed('Huntress', $friend);
+        RelDynFulfillment::ensure($friend, RelDynFacets::neutralPreferences(), self::T0);
+        $this->assertNotNull(RelDynIntimacy::feltText('Huntress', 'Kaida', $friend, $later));
     }
 
     public function testTheRetiredSingleStampIsGone(): void

@@ -339,11 +339,18 @@ try {
 
 $interactionLL = RelationshipDynamics::classifyInteraction($GLOBALS['gameRequest'], $lastMood);
 $GLOBALS['RELDYN_LAST_INTERACTION_LL'] = $interactionLL;
-// The exchange as a love-language delivery to fulfillment (rulings §9; a touch request such as
-// a hug, a kiss or a scene also feeds the intimacy axes, rulings §10), unless the eval scores it
-// (its tags deliver then, in processEvalContractItem; the request's observed touch joins them).
+// Intimacy the plugin reports (a Sharmat / OStim scene with the player, a VR touch) is an
+// observed fact, not a judgment: it feeds the intimacy axes whether or not the eval scores the
+// exchange (rulings §10; PR 13: "OStim/Sharmat events -> fully satisfied").
+$reldynIntimate = RelDynIntimacy::requestKind($GLOBALS['gameRequest'], (string) ($GLOBALS['PLAYER_NAME'] ?? '')) !== null;
+if ($reldynIntimate) {
+    RelDynIntimacy::recordRequest($dynamics, $GLOBALS['gameRequest'], (string) ($GLOBALS['PLAYER_NAME'] ?? ''), RelationshipDynamics::currentGamets());
+}
+// The exchange as a love-language delivery to fulfillment (rulings §9; a hug or a kiss also
+// feeds the intimacy axes, rulings §10, unless the request fed them itself above), unless the
+// eval scores it (its tags deliver then, in processEvalContractItem).
 if (!$evalOwnsExchange) {
-    RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets());
+    RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets(), !$reldynIntimate);
 }
 RelationshipDynamics::log("POST classify: npc={$npcName} type={$reqType} mood={$lastMood} LL=" . ($interactionLL ?? 'NULL'));
 

@@ -280,6 +280,9 @@ class RelDynAttraction
                 // Memory (attraction design): "Aela is not high openness ... medium to medium-low"
                 // MDD 2.3: "Aela: only Companions rank"
                 'aela the huntress' => ['openness' => 'medium', 'status_share' => 1.0],
+                // Ken (rulings §10): "Ashe is less about the sex and more about the connection":
+                // commitment first, whatever class core registered her with
+                'ashe' => ['gate' => 'bond'],
             ],
         ];
     }

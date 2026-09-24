@@ -23,9 +23,13 @@
  * physical intimacy is in play with the player (a romance core type, or passion at
  * physical_in_play.min_passion, held down to release_passion; never while friendzoned).
  * Deliveries are the fulfillment tag rows (intimacy / touch feed physical; quality time,
- * reassurance, praise, touch, confiding feed emotional), decay is the fulfillment half-life
- * on the game calendar. The deprived axis the NPC needs most gives <intimacy_state> (feeling
- * text, never numbers) and internal weather deprivation (weatherDeprivation).
+ * reassurance, praise, touch, confiding feed emotional) and the intimacy the plugin reports
+ * (recordRequest: a Sharmat / OStim scene with the player covers physical in full, a VR touch
+ * is half a delivery; PR 13 "OStim/Sharmat events -> fully satisfied"). The axes decay at the
+ * fulfillment half-life on the game calendar x the attachment style's rate (decayRates; PR 13:
+ * avoidant 0.5x, anxious 2x, toxic 1.5x). The deprived axis the NPC needs most gives
+ * <intimacy_state> (feeling text, never numbers) while intimacy is in play with the player and
+ * the bond weighs (feltText), and internal weather deprivation (weatherDeprivation).
  *
  * State: $dynamics['_intimacy_need'] (ensureNeed): the core race / creature read once, the
  * stored derivation and the physical in-play latch. Units: need weights and coverage are
@@ -140,6 +144,27 @@ class RelDynIntimacy
             'physical_in_play' => ['core_types' => ['crush', 'romantic'], 'min_passion' => 30.0, 'release_passion' => 20.0],
             // Coverage (-1..+1) at or below which an axis is deprived (<intimacy_state>, the weather)
             'deprived_coverage' => -0.4,
+            // PR 13 (pr13-environmental-quirks-plan.md): "Attachment style modifies deprivation
+            // rate". x the fulfillment decay of the intimacy axes (the half-life / this).
+            'attachment_decay_rate' => ['secure' => 1.0, 'avoidant' => 0.5, 'anxious' => 2.0, 'toxic' => 1.5],
+            // Intimacy the plugin reports (an observed fact: fed whether or not the eval scores
+            // the exchange). kind => request types (exact), markers (case-insensitive, in the
+            // request type or its text), whether the player must be named in the text (the
+            // scene's actors: an NPC-only scene is not the player's intimacy), and the delivery
+            // units per request (fulfillment target_units = full coverage).
+            'requests' => [
+                // Sharmat scene stages (ext_nsfw_sexcene: "Scene/tags/Stage/Actor^roles/..."),
+                // orgasm events, legacy OStim / SexLab scene speech, any OStim event
+                'scene' => ['types' => ['ext_nsfw_sexcene', 'ext_nsfw_scene', 'ext_nsfw_orgasm', 'ext_nsfw_action',
+                                        'chatnf_sl', 'chatnf_sl_moan', 'chatnf_sl_climax', 'chatnf_sl_end'],
+                            'markers' => ['ostim'], 'requires_player_named' => true,
+                            // NPC-to-NPC scene routes (Sharmat canonicalizes a playerless scene to these)
+                            'exclude_types' => ['ext_nsfw_npc_scene', 'ext_nsfw_npc_orgasm', 'ext_nsfw_npc_invite'],
+                            'units' => [self::PHYSICAL => 3.0, self::EMOTIONAL => 0.25]],
+                // Sharmat VR touch / grab of the body (nsfw_physics.php: CBPC / HIGGS)
+                'intimate_touch' => ['types' => ['ext_nsfw_physics'], 'markers' => [], 'requires_player_named' => false,
+                                     'units' => [self::PHYSICAL => 0.5, self::EMOTIONAL => 0.1]],
+            ],
             // Internal weather deprivation of a deprived axis = need x clamp(-coverage, 0, 1) x this
             // (the weather takes the largest deprivation it has)
             'weather_scale' => 0.6,
@@ -425,6 +450,69 @@ class RelDynIntimacy
         return $out;
     }
 
+    /**
+     * Decay rate of each intimacy axis (config attachment_decay_rate by the attachment style;
+     * PR 13), axis => rate, only rates other than 1 (the fulfillment default). Empty when off.
+     */
+    public static function decayRates(array $dynamics, ?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        if (empty($cfg['enabled'])) return [];
+        $rate = ((array) ($cfg['attachment_decay_rate'] ?? []))[RelationshipDynamics::getAttachmentStyle($dynamics)] ?? 1.0;
+        $rate = is_numeric($rate) ? max(0.0, floatval($rate)) : 1.0;
+        return $rate == 1.0 ? [] : array_fill_keys(self::AXES, $rate);
+    }
+
+    // =====================================================================
+    // INTIMACY THE PLUGIN REPORTS (config requests)
+    // =====================================================================
+
+    /**
+     * The kind of intimacy a request reports ('scene', 'intimate_touch'; config requests), or
+     * null: its type is listed (or carries a marker, in the type or the text), it is not an
+     * excluded type, and when required the player is named in its text (whole word). Pure.
+     */
+    public static function requestKind(array $gameRequest, string $playerName, ?array $cfg = null): ?string
+    {
+        $cfg = $cfg ?? self::config();
+        $type = strtolower(trim((string) ($gameRequest[0] ?? '')));
+        $text = (string) ($gameRequest[3] ?? '');
+        if ($type === '') return null;
+        foreach ((array) ($cfg['requests'] ?? []) as $kind => $row) {
+            $row = (array) $row;
+            if (in_array($type, array_map('strtolower', (array) ($row['exclude_types'] ?? [])), true)) continue;
+            $hit = in_array($type, array_map('strtolower', (array) ($row['types'] ?? [])), true);
+            foreach ((array) ($row['markers'] ?? []) as $m) {
+                $m = strtolower(trim((string) $m));
+                if (!$hit && $m !== '' && (str_contains($type, $m) || stripos($text, $m) !== false)) $hit = true;
+            }
+            if (!$hit) continue;
+            if (!empty($row['requires_player_named'])) {
+                $player = trim($playerName);
+                if ($player === '' || preg_match('/(?<![\p{L}\p{N}])' . preg_quote($player, '/') . '(?![\p{L}\p{N}])/iu', $text) !== 1) continue;
+            }
+            return (string) $kind;
+        }
+        return null;
+    }
+
+    /**
+     * Deliver the intimacy a request reports (requestKind) to the fulfillment axes at $now:
+     * that kind's units. Returns axis => units applied ([] for none, or with no state).
+     */
+    public static function recordRequest(array &$dynamics, array $gameRequest, string $playerName, float $now): array
+    {
+        $cfg = self::config();
+        if (empty($cfg['enabled'])) return [];
+        $kind = self::requestKind($gameRequest, $playerName, $cfg);
+        if ($kind === null) return [];
+        $amounts = [];
+        foreach ((array) ($cfg['requests'][$kind]['units'] ?? []) as $axis => $u) {
+            if (self::isAxis((string) $axis) && is_numeric($u)) $amounts[(string) $axis] = floatval($u);
+        }
+        return RelDynFulfillment::deliver($dynamics, $amounts, $now);
+    }
+
     // =====================================================================
     // DEPRIVATION (from the fulfillment state)
     // =====================================================================
@@ -481,11 +569,15 @@ class RelDynIntimacy
     /**
      * <intimacy_state> text: the deprived axis the NPC needs most, as a feeling. Physical is
      * M/F-aware (coord_m / coord_f) with a low-maturity variant, emotional follows the
-     * attachment style. Null when nothing is deprived. Never numbers.
+     * attachment style. Null when nothing is deprived, when the bond is not one whose neglect
+     * weighs (neglectBond; the weather reads 0 then too), and while intimacy is not in play with
+     * the player (physicalInPlay: the texts are a romance's; a housecarl, a sister or a friend
+     * who misses the closeness says so through the fulfillment text). Never numbers.
      */
     public static function feltText(string $npcName, string $playerName, array $dynamics, float $now): ?string
     {
         $cfg = self::config();
+        if (RelationshipDynamics::neglectBond($dynamics) === null || !self::physicalInPlay($dynamics, $cfg)) return null;
         $axis = self::deprivedAxis($dynamics, $now, $cfg);
         if ($axis === null) return null;
         $felt = (array) $cfg['felt_text'];

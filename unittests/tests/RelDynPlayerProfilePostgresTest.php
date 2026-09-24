@@ -334,7 +334,11 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
         $this->assertNoSqlFailures();
     }
 
-    /** A formidable druid: alchemy + restoration + alteration, harvesting, Forsworn gear. */
+    /**
+     * A formidable druid: nature magic (a wolf spirit, beasts called to her side), alchemy +
+     * restoration + alteration, harvesting, Forsworn gear. The same character without the nature
+     * magic is an herbalist, not a druid (Ken: "Nature spells no, hence the druid").
+     */
     public function testDruidFromNatureMagicAndHarvesting(): void
     {
         $this->skills(['alchemy' => 85, 'restoration' => 70, 'alteration' => 65, 'conjuration' => 55]);
@@ -344,9 +348,15 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
         ]);
         $this->trackedStat('Ingredients Harvested', 400);
         $this->trackedStat('Nirnroots Found', 12);
+        $herbalist = $this->profile();
+        $this->assertLessThan(0.1, $herbalist['archetype_raw']['druid'], json_encode($herbalist['derivation']['archetypes']['druid']));
+        $this->assertSame(0.0, $herbalist['derivation']['archetypes']['druid']['anchor']['factor']);
 
+        for ($i = 0; $i < 12; $i++) $this->event('npcspellcast', 'Kaida casts Conjure Familiar ', self::NOW - 1000 + $i);
+        for ($i = 0; $i < 6; $i++) $this->event('npcspellcast', 'Kaida casts Animal Allegiance on Cave Bear', self::NOW - 900 + $i);
         $p = $this->profile();
         $this->assertEqualsWithDelta(1.0, $p['archetypes']['druid'], 1e-9);
+        $this->assertSame(1.0, $p['derivation']['archetypes']['druid']['anchor']['factor']);
         $this->assertLessThan(0.3, $p['archetypes']['warrior']);
         $this->assertLessThan(0.3, $p['archetypes']['bard']);
         $this->assertNoSqlFailures();
@@ -361,13 +371,14 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
     {
         $this->skills(['conjuration' => 85, 'alteration' => 60, 'destruction' => 40]);
         $this->stats(35);
-        $this->equipment(['right_hand' => ['name' => 'Raise Zombie', 'baseid' => '0007E8DF', 'keywords' => []]]);
+        $this->equipment([]);
+        for ($i = 0; $i < 10; $i++) $this->event('npcspellcast', 'Kaida casts Raise Zombie ', self::NOW - 1000 + $i);
         $this->trackedStat('Souls Trapped', 50);
         $necro = $this->profile();
         $this->assertEqualsWithDelta(1.0, $necro['archetypes']['mage'], 1e-9);
         $this->assertLessThan(0.1, $necro['archetypes']['druid'], 'a necromancer is not a druid');
 
-        pg_query($this->db->link, 'DELETE FROM core_player; DELETE FROM conf_opts');
+        pg_query($this->db->link, 'DELETE FROM core_player; DELETE FROM conf_opts; DELETE FROM eventlog');
         $this->skills(['enchanting' => 80, 'alteration' => 70, 'illusion' => 50]);
         $this->stats(30);
         $this->trackedStat('Books Read', 200);
@@ -377,11 +388,15 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
         pg_query($this->db->link, 'DELETE FROM core_player; DELETE FROM conf_opts');
         $this->skills(['conjuration' => 60, 'alchemy' => 55]);
         $this->stats(30);
-        $this->equipment(['left_hand' => ['name' => 'Conjure Familiar', 'baseid' => '000640B6', 'keywords' => []]]);
+        // the plugin reports the hands from the inventory (a staff, a torch), never a spell: the
+        // familiar at her side is known from her casts
+        $this->equipment(['left_hand' => ['name' => 'Torch', 'baseid' => '0001D4EC', 'keywords' => []]]);
+        for ($i = 0; $i < 12; $i++) $this->event('npcspellcast', 'Kaida casts Conjure Familiar ', self::NOW - 1000 + $i);
         $this->trackedStat('Ingredients Harvested', 150);
         $nature = $this->profile();
         $this->assertGreaterThan(0.8, $nature['archetypes']['druid'], 'a wolf spirit at her side and herbs in her pack');
-        $this->assertSame(['Conjure Familiar'], $nature['facts']['held_names']['value']);
+        $this->assertSame(['Torch'], $nature['facts']['held_names']['value']);
+        $this->assertSame(['Conjure Familiar'], array_keys($nature['facts']['spells']['value']), 'a torch is no spell');
         $this->assertNoSqlFailures();
     }
 

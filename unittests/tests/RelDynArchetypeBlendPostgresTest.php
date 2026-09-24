@@ -402,11 +402,15 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
 
     /**
      * The builds, as the plugin reports them (core_player skills / stats / equipment, tracked
-     * stats, the player's spell casts in the eventlog).
+     * stats, the player's spell casts in the eventlog). The hands hold what the plugin can
+     * report there: inventory items (Plugin.cpp fills left_hand / right_hand from
+     * GetInventory(), so a staff or a weapon, never a spell). Every build has harvested
+     * ingredients the way any mid-game character has (Ingredients Harvested counts every
+     * plant picked on the road): the druid must come from nature magic or beast blood, not
+     * from picking flowers.
      */
-    private function blendBuild(string $kind): void
+    private function blendBuild(string $kind, int $harvested = 0): void
     {
-        $familiar = ['name' => 'Conjure Familiar', 'baseid' => '000640B6', 'keywords' => []];
         switch ($kind) {
             case 'warrior':
                 $this->playerBuild(['onehanded' => 90, 'twohanded' => 85, 'heavyarmor' => 80, 'block' => 60], 45);
@@ -420,47 +424,48 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
                 $this->playerBuild(['alchemy' => 80, 'restoration' => 45, 'archery' => 40, 'lightarmor' => 40], 38);
                 $this->equipmentRow([
                     'armor' => ['name' => 'Forsworn Armor', 'baseid' => '000D8D50', 'keywords' => ['ArmorLight', 'ArmorMaterialForsworn']],
-                    'left_hand' => $familiar,
                 ]);
-                $this->trackedStat('Ingredients Harvested', 350);
+                $this->trackedStat('Ingredients Harvested', max(350, $harvested));
                 $this->trackedStat('Nirnroots Found', 10);
                 $this->trackedStat('Werewolf Transformations', 4);
                 $this->casts(["Kyne's Peace" => 6, 'Animal Allegiance' => 4, 'Conjure Familiar' => 10]);
                 break;
             case 'nature_bard':  // a bard who communes with animals: a silver tongue, and nature magic
                 $this->playerBuild(['speechcraft' => 90, 'illusion' => 55, 'archery' => 30, 'alchemy' => 35], 30);
-                $this->equipmentRow(['left_hand' => $familiar]);
+                $this->equipmentRow([]);
                 $this->trackedStat('Persuasions', 30);
-                $this->trackedStat('Ingredients Harvested', 150);
+                $this->trackedStat('Ingredients Harvested', max(150, $harvested));
                 $this->casts(["Kyne's Peace" => 8, 'Conjure Familiar' => 6]);
                 $this->casts(['Animal Allegiance' => 6], self::PLAYER, 'Cave Bear');
                 break;
             case 'ranger_bard':  // a bard who hunts and communes with animals: two sides Aela values
                 $this->playerBuild(['speechcraft' => 85, 'archery' => 65, 'sneak' => 50, 'alchemy' => 35], 30);
-                $this->equipmentRow(['left_hand' => $familiar]);
+                $this->equipmentRow([]);
                 $this->trackedStat('Persuasions', 30);
-                $this->trackedStat('Ingredients Harvested', 150);
+                $this->trackedStat('Ingredients Harvested', max(150, $harvested));
                 $this->casts(["Kyne's Peace" => 8, 'Animal Allegiance' => 6]);
                 break;
             case 'bard':         // the same bard without the wild: illusion and a silver tongue
                 $this->playerBuild(['speechcraft' => 90, 'illusion' => 55, 'archery' => 30, 'alchemy' => 35], 30);
-                $this->equipmentRow(['left_hand' => ['name' => 'Calm', 'baseid' => '0004DEEA', 'keywords' => []]]);
+                $this->equipmentRow(['right_hand' => ['name' => 'Steel Dagger', 'baseid' => '00013987', 'keywords' => ['WeapTypeDagger', 'WeapMaterialSteel']]]);
                 $this->trackedStat('Persuasions', 30);
+                $this->trackedStat('Ingredients Harvested', $harvested);
                 $this->casts(['Calm' => 8, 'Courage' => 6]);
                 break;
             case 'scholar':
                 $this->playerBuild(['enchanting' => 80, 'alteration' => 70, 'illusion' => 50], 30);
-                $this->equipmentRow(['left_hand' => ['name' => 'Candlelight', 'baseid' => '00043324', 'keywords' => []]]);
+                $this->equipmentRow([]);
                 $this->trackedStat('Books Read', 200);
+                $this->trackedStat('Ingredients Harvested', $harvested);
                 $this->casts(['Candlelight' => 12, 'Telekinesis' => 6]);
                 break;
             case 'conjurer':     // a conjurer-scholar: daedra, souls and the dead (and the novice familiar)
                 $this->playerBuild(['conjuration' => 85, 'enchanting' => 60, 'alteration' => 55, 'destruction' => 40], 35);
                 $this->equipmentRow([
-                    'left_hand' => ['name' => 'Conjure Dremora Lord', 'baseid' => '0010DDEC', 'keywords' => []],
-                    'right_hand' => ['name' => 'Conjure Flame Atronach', 'baseid' => '000204C3', 'keywords' => []],
+                    'right_hand' => ['name' => 'Staff of the Flame Atronach', 'baseid' => '000BF9FB', 'keywords' => ['WeapTypeStaff']],
                 ]);
                 $this->trackedStat('Books Read', 150);
+                $this->trackedStat('Ingredients Harvested', $harvested);
                 $this->trackedStat('Souls Trapped', 40);
                 $this->casts(['Conjure Flame Atronach' => 20, 'Soul Trap' => 8, 'Raise Zombie' => 5, 'Conjure Familiar' => 2]);
                 break;
@@ -474,14 +479,15 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
     /**
      * Aela vs (a) a warrior, (b) a druid, (c) a bard who communes with animals, (d) a plain bard
      * and a scholar, (e) a conjurer-scholar, each built from core rows and read through
-     * RelDynPlayer::profile() and the real hooks.
+     * RelDynPlayer::profile() and the real hooks. The bard, the scholar and the conjurer have
+     * harvested ingredients on the road like any mid-game character.
      */
     public function testAelaReadsThePlayersBlendedMix(): void
     {
         $seen = [];
-        foreach (['warrior', 'druid', 'nature_bard', 'bard', 'scholar', 'conjurer'] as $kind) {
+        foreach (['warrior' => 0, 'druid' => 0, 'nature_bard' => 0, 'bard' => 300, 'scholar' => 150, 'conjurer' => 300] as $kind => $harvested) {
             $this->freshMeeting();
-            $this->blendBuild($kind);
+            $this->blendBuild($kind, $harvested);
             $ctx = $this->turn('Good hunting today.');
             $a = RelationshipDynamics::attractionFor(self::AELA, $this->dynamics());
             $seen[$kind] = ['a' => $a, 'p' => RelDynPlayer::profile(), 'ctx' => $ctx, 'sum' => $this->dynamics()['_attraction']];
@@ -503,7 +509,8 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
         $nb = $seen['nature_bard'];
         $this->assertEqualsWithDelta(1.0, $nb['p']['archetypes']['bard'], 1e-9, 'a bard first: ' . json_encode($nb['p']['archetypes']));
         $this->assertLessThan(1.0, $nb['p']['archetypes']['druid']);
-        $this->assertGreaterThan(0.3, $nb['p']['archetype_raw']['druid'], $why('nature_bard'));
+        $this->assertGreaterThan(RelDynPlayer::config()['archetype_identity_floor'], $nb['p']['archetype_raw']['druid'],
+            'a formed druid side: ' . $why('nature_bard'));
         $this->assertTrue($nb['a']['passes'], $why('nature_bard'));
         $this->assertNull($nb['a']['passion_cap'], $why('nature_bard'));
         $this->assertSame('druid', $nb['a']['valued'], $why('nature_bard'));
@@ -522,8 +529,9 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
             $this->assertLessThan(0.1, $seen[$kind]['p']['archetype_raw']['druid'], $why($kind));
         }
         // Everything but the nature magic and the harvesting is the same between (c) and (d)
-        $this->assertGreaterThan($seen['bard']['a']['pillars']['strength']['score'] + 0.2,
-            $nb['a']['pillars']['strength']['score'], 'the nature side is what she responds to');
+        // (the nature side is what lifts her strength read over her bar; the plain bard stays under it)
+        $this->assertGreaterThanOrEqual($nb['a']['pillars']['strength']['bar'], $nb['a']['pillars']['strength']['score'], $why('nature_bard'));
+        $this->assertLessThan($seen['bard']['a']['pillars']['strength']['bar'], $seen['bard']['a']['pillars']['strength']['score'], $why('bard'));
 
         // (e) the conjurer-scholar is a scholar and a mage, not a druid, and she tolerates him
         $c = $seen['conjurer'];
@@ -535,6 +543,54 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
         $this->assertSame(20.0, floatval($c['a']['passion_cap']), $why('conjurer'));
         $this->assertNotSame('druid', $c['a']['valued'], $why('conjurer'));
         $this->assertStringNotContainsString('bond with the wild', $c['ctx']);
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * Ken: "Nature spells no, hence the druid or a bard who communes with animals." Herb lore and
+     * a full satchel only support a druid; without nature magic or beast blood the player is an
+     * herbalist, and Aela is not drawn to one. Realistic harvest counts (150-500), through the
+     * real hooks.
+     */
+    public function testHarvestingWithoutNatureMagicNeverMakesADruid(): void
+    {
+        $cases = [['bard', 150], ['bard', 300], ['bard', 500], ['conjurer', 300], ['conjurer', 500], ['herbalist', 500]];
+        foreach ($cases as [$kind, $harvested]) {
+            $this->freshMeeting();
+            if ($kind === 'herbalist') {
+                // herb lore at its fullest, no magic, no beast blood
+                $this->playerBuild(['alchemy' => 85, 'archery' => 35, 'sneak' => 30], 30);
+                $this->equipmentRow([]);
+                $this->trackedStat('Nirnroots Found', 12);
+                $this->trackedStat('Wings Plucked', 40);
+                $this->trackedStat('Ingredients Harvested', $harvested);
+            } else {
+                $this->blendBuild($kind, $harvested);
+            }
+            $ctx = $this->turn('Good hunting today.');
+            $a = RelationshipDynamics::attractionFor(self::AELA, $this->dynamics());
+            $p = RelDynPlayer::profile();
+            $why = "{$kind} harvested {$harvested}: {$a['reason']} raw " . json_encode($p['archetype_raw'])
+                . ' druid ' . json_encode($p['derivation']['archetypes']['druid']);
+            $this->assertLessThan(0.1, $p['archetype_raw']['druid'], $why);
+            $this->assertNotSame('druid', $a['valued'], $why);
+            $this->assertStringNotContainsString('bond with the wild', $ctx, $why);
+            if ($kind !== 'herbalist') {   // the bard and the conjurer-scholar stay tolerated, no passion
+                $this->assertFalse($a['passes'], $why);
+                $this->assertSame(20.0, floatval($a['passion_cap']), $why);
+                $this->assertStringNotContainsString('drawn to the player', $ctx, $why);
+            }
+        }
+
+        // Beast blood is the druid's without a single spell (werewolf transformations, beast form)
+        $this->freshMeeting();
+        $this->playerBuild(['alchemy' => 40, 'archery' => 40, 'twohanded' => 45], 30);
+        $this->equipmentRow([]);
+        $this->trackedStat('Ingredients Harvested', 300);
+        $this->trackedStat('Werewolf Transformations', 6);
+        $w = RelDynPlayer::profile();
+        $this->assertNull($w['facts']['spells']['value']);
+        $this->assertGreaterThan(0.2, $w['archetype_raw']['druid'], json_encode($w['derivation']['archetypes']['druid']));
         $this->assertNoDbFailures();
     }
 
@@ -582,16 +638,30 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
         $this->assertSame(1, $beast['evidence']['form:beast']);
         $this->assertGreaterThan($p['derivation']['archetypes']['druid']['deeds'], $beast['derivation']['archetypes']['druid']['deeds']);
 
-        // A conjurer of daedra with a staff: magic, but not nature magic; a sword is not magic at all
+        // A conjurer of daedra with a staff: magic, but not nature magic; a sword is not magic at
+        // all, and neither is anything else in a hand that is not a staff (the plugin fills the
+        // hands from the inventory: a torch, never a spell)
         $this->freshMeeting();
         $this->playerBuild(['conjuration' => 80, 'destruction' => 50], 30);
         $this->equipmentRow([
             'left_hand' => ['name' => 'Staff of Fireballs', 'baseid' => '0002AC6F', 'keywords' => ['WeapTypeStaff']],
-            'right_hand' => ['name' => 'Iron Sword', 'baseid' => '00012EB7', 'keywords' => ['WeapTypeSword', 'WeapMaterialIron']],
+            'right_hand' => ['name' => 'Torch', 'baseid' => '0001D4EC', 'keywords' => []],
         ]);
         $this->casts(['Conjure Dremora Lord' => 15, "Vaermina's Torpor" => 2]);
         $c = RelDynPlayer::profile();
         $this->assertSame(['Staff of Fireballs', 'Conjure Dremora Lord'], array_keys($c['facts']['spells']['value']));
+        $this->assertTrue($c['facts']['spells']['value']['Staff of Fireballs']['held']);
+        $this->equipmentRow([
+            'left_hand' => ['name' => 'Conjure Familiar', 'baseid' => '000640B6', 'keywords' => []],
+            'right_hand' => ['name' => 'Iron Sword', 'baseid' => '00012EB7', 'keywords' => ['WeapTypeSword', 'WeapMaterialIron']],
+        ]);
+        $this->assertSame(['Conjure Dremora Lord'], array_keys(RelDynPlayer::profile()['facts']['spells']['value']),
+            'a hand item without the staff keyword is no spell, whatever its name');
+        $this->equipmentRow([
+            'left_hand' => ['name' => 'Staff of Fireballs', 'baseid' => '0002AC6F', 'keywords' => ['WeapTypeStaff']],
+            'right_hand' => ['name' => 'Iron Sword', 'baseid' => '00012EB7', 'keywords' => ['WeapTypeSword', 'WeapMaterialIron']],
+        ]);
+        $c = RelDynPlayer::profile();
         $this->assertSame(["Vaermina's Torpor"], $c['facts']['spells']['unread'], 'a name nobody can read counts for nothing');
         $this->assertSame(0.0, $c['derivation']['archetypes']['druid']['spells']);
         $this->assertLessThan(0.05, $c['archetype_raw']['druid']);

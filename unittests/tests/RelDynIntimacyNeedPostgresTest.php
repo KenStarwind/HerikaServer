@@ -100,8 +100,8 @@ final class RelDynIntimacyNeedPgDb
  * only (no RelDyn state: temperament, attachment, love languages and the intimacy need are
  * all auto-derived):
  *   - an Ashe-like scholar-mage and an Aela-like Nord huntress of the Companions' Circle, both
- *     in a romance with the player, both given connection every day (quality time, a hand
- *     held, a confiding talk) and no sex;
+ *     in a romance with the player, both given connection every day (quality time, a
+ *     confiding talk) and no sex;
  *   - the Ashe-like NPC is fulfilled on intimacy (no <intimacy_state>, no intimacy weather
  *     deprivation); the Aela-like one is not (<intimacy_state> with the physical feeling, the
  *     weather reads it) until a night together.
@@ -167,6 +167,11 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
             name text, editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
             stage integer, briefing text, briefing2 text, localts bigint NOT NULL, gamets bigint NOT NULL, data text,
             status text, rowid bigserial PRIMARY KEY)");
+        // postrequest.php: the NPC's last mood (moods_issued), the Oghma facet build check (oghma)
+        pg_query($admin, "CREATE TABLE moods_issued (speaker text, mood text, localts bigint)");
+        pg_query($admin, "CREATE TABLE oghma (topic character varying NOT NULL, topic_desc character varying,
+            knowledge_class text, topic_desc_basic text, knowledge_class_basic text, tags text, category text, aliases text,
+            retrieval_phrases text, source_type text)");
         pg_close($admin);
 
         $this->db = new RelDynIntimacyNeedPgDb($dsn, $this->schema);
@@ -288,12 +293,30 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
         RelationshipDynamics::endRequest();
     }
 
-    /** A day of connection and no sex: a hand held over a long talk, and a confiding moment. */
+    /** A day of connection and no sex: a long talk, and a confiding moment. */
     private function connectedDay(string $name, float $t): void
     {
         $this->talkTo($name, $t);
-        $this->evalExchange($name, $t + self::HOUR, ['quality_time', 'touch']);
+        $this->evalExchange($name, $t + self::HOUR, ['quality_time']);
         $this->evalExchange($name, $t + 3 * self::HOUR, ['confiding']);
+    }
+
+    /**
+     * A request the plugin sends while the player is with $name (a Sharmat scene stage, a VR
+     * touch), through the real prerequest and postrequest hooks. No eval connector is set, so
+     * the eval does not score it and the local path runs (the reviewer's "eval off" case).
+     */
+    private function intimateRequest(string $name, float $gamets, string $type, string $data): void
+    {
+        $GLOBALS['gameRequest'] = [$type, '1727000000', (string) (int) $gamets, $data];
+        $GLOBALS['HERIKA_NAME'] = $name;
+        $GLOBALS['SCRIPTLINE_LISTENER_ATOMIC'] = 'Kaida';
+        (static function () { require $GLOBALS['ENGINE_PATH'] . 'ext/relationship_dynamics/prerequest.php'; })();
+        RelationshipDynamics::endRequest();
+        $GLOBALS['gameRequest'] = [$type, '1727000000', (string) (int) $gamets, $data];
+        (static function () { require $GLOBALS['ENGINE_PATH'] . 'ext/relationship_dynamics/postrequest.php'; })();
+        RelationshipDynamics::endRequest();
+        unset($GLOBALS['SCRIPTLINE_LISTENER_ATOMIC']);
     }
 
     private function intimacyState(string $ctx): ?string
@@ -328,7 +351,7 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
         $this->assertArrayHasKey(RelDynIntimacy::PHYSICAL, $aela['_fulfillment']['w']);
         $graph = array_column(RelationshipDynamics::fulfillmentGraph(self::AELA, $end)['axes'], null, 'axis');
         $this->assertSame('intimacy', $graph[RelDynIntimacy::PHYSICAL]['kind']);
-        $this->assertLessThan(-0.4, $graph[RelDynIntimacy::PHYSICAL]['coverage'], 'a week of hugs is not what she needs');
+        $this->assertLessThan(-0.4, $graph[RelDynIntimacy::PHYSICAL]['coverage'], 'a week of talks is not what she needs');
         $this->assertGreaterThan(0.5, $graph[RelDynIntimacy::EMOTIONAL]['coverage'], 'the connection reaches her too');
 
         // Context: the Ashe-like NPC is fulfilled on intimacy, the Aela-like one feels it, as a feeling
@@ -354,6 +377,41 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
         $this->assertSame(0.0, RelDynIntimacy::weatherDeprivation($this->dynamics(self::AELA), $end + 4 * self::HOUR));
         $this->assertLessThan($aela['_weather_state']['relationship_deprivation'],
             $this->dynamics(self::AELA)['_weather_state']['relationship_deprivation'], 'her weather lifts');
+        $this->assertSame([], $this->db->failures, 'the schema holds every table the production path touches');
+    }
+
+    /**
+     * PR 13: "OStim/Sharmat events -> fully satisfied". Aela in a romance, the eval not scoring
+     * anything (no connector): a week of intimacy the plugin reports (VR touches twice a day, then
+     * a Sharmat scene every day) keeps her physical need covered, through the real hooks; she is
+     * never deprived and no <intimacy_state> speaks.
+     */
+    public function testIntimacyThePluginReportsKeepsHerCoveredWithoutTheEval(): void
+    {
+        $this->talkTo(self::AELA, self::T0);
+        for ($k = 0; $k < 7; $k++) {
+            $day = self::T0 + $k * self::DAY;
+            $this->talkTo(self::AELA, $day + self::HOUR);
+            $this->intimateRequest(self::AELA, $day + 2 * self::HOUR, 'ext_nsfw_physics', self::AELA . '^breast^grab^0^^left^');
+            $this->intimateRequest(self::AELA, $day + 14 * self::HOUR, 'ext_nsfw_physics', self::AELA . '^butt^grab^0^^right^');
+            $aela = $this->dynamics(self::AELA);
+            $axes = RelDynIntimacy::axesAt($aela, $day + 14 * self::HOUR);
+            $this->assertArrayHasKey(RelDynIntimacy::PHYSICAL, $axes, 'a romance: physical is in play');
+            $this->assertFalse($axes[RelDynIntimacy::PHYSICAL]['deprived'], "day {$k}: " . json_encode($axes));
+        }
+        $end = self::T0 + 7 * self::DAY;
+        $this->talkTo(self::AELA, $end);
+        $this->assertNull($this->intimacyState($this->context(self::AELA, $end)));
+        $this->assertSame(0.0, RelDynIntimacy::weatherDeprivation($this->dynamics(self::AELA), $end));
+
+        // A Sharmat scene with the player in it covers the physical need in full
+        for ($k = 7; $k < 10; $k++) {
+            $this->intimateRequest(self::AELA, self::T0 + $k * self::DAY + 22 * self::HOUR, 'ext_nsfw_sexcene',
+                'OStimScene/vaginal,romantic/Stage1_A1/Kaida^dom,vaginal/' . self::AELA . '^sub,vaginal');
+        }
+        $night = self::T0 + 9 * self::DAY + 22 * self::HOUR;
+        $axes = RelDynIntimacy::axesAt($this->dynamics(self::AELA), $night);
+        $this->assertEqualsWithDelta(1.0, $axes[RelDynIntimacy::PHYSICAL]['coverage'], 1e-3, json_encode($axes));
         $this->assertSame([], $this->db->failures, 'the schema holds every table the production path touches');
     }
 

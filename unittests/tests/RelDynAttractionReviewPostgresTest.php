@@ -375,12 +375,15 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
             case 'warrior':    // accomplished: one-handed / two-handed / heavy armor, level 45
                 $this->playerBuild(['onehanded' => 90, 'twohanded' => 85, 'heavyarmor' => 80, 'block' => 60], 45);
                 break;
-            case 'druid':      // formidable: herb lore, nature magic in hand, Forsworn hide, harvesting
+            case 'druid':      // formidable: herb lore, nature magic cast, Forsworn hide, harvesting
                 $this->playerBuild(['alchemy' => 85, 'restoration' => 70, 'alteration' => 65, 'conjuration' => 70], 40);
+                // the plugin reports the hands from the inventory, never a spell: her nature
+                // magic is known from her casts (eventlog npcspellcast)
                 $this->equipmentRow([
                     'armor' => ['name' => 'Forsworn Armor', 'baseid' => '000D8D50', 'keywords' => ['ArmorLight', 'ArmorMaterialForsworn']],
-                    'left_hand' => ['name' => 'Conjure Familiar', 'baseid' => '000640B6', 'keywords' => []],
                 ]);
+                for ($i = 0; $i < 12; $i++) $this->eventRow('npcspellcast', self::PLAYER . ' casts Conjure Familiar ');
+                for ($i = 0; $i < 6; $i++) $this->eventRow('npcspellcast', self::PLAYER . ' casts Animal Allegiance on Cave Bear');
                 $this->trackedStat('Ingredients Harvested', 400);
                 $this->trackedStat('Nirnroots Found', 12);
                 break;

@@ -594,14 +594,19 @@ final class RelDynFacetClassifier
      * and topic names, and the player's held / cast spells (RelDynPlayer).
      *
      *   categories       Oghma categories whose rows are magic ('spells' also holds diseases
-     *                    and dragon shouts)
-     *   magic_markers    keywords that make a NAME magic (a spell tome, a staff; school words
-     *                    also do). Tags never do: a history book tagged 'Magic' is a book.
+     *                    and dragon shouts). An Oghma row in any OTHER category is what its
+     *                    category says, whatever its name: a lore book about the Elder Scrolls
+     *                    or war magic is a book, the Staff of Magnus an artifact, a potion of
+     *                    resist magic an item (lore stays scholarly).
+     *   magic_markers    keywords that make a NAME magic when nothing else says what it is (a
+     *                    spell tome or a staff named in dialogue or a gift, no Oghma row; school
+     *                    words also do). Tags never do: a history book tagged 'Magic' is a book.
      *   replaced_keywords  tag_keywords / item_keywords entries the spell reading replaces on a
-     *                    magic entry (the generic "magic = enchanting + scholarly" words)
-     *   ignore_knowledge_classes  audiences that say nothing about a magic entry (every spell
-     *                    lists 'mage', the lore of a school is 'scholar'-only; its school and
-     *                    subject say what it is)
+     *                    magic entry (the generic "magic = enchanting + scholarly" words, and the
+     *                    college that teaches it)
+     *   ignore_knowledge_classes  audiences that say nothing about a spell (every spell lists
+     *                    'mage', the college spells list the college; its school and subject say
+     *                    what it is)
      *   school_weight_with_subject  x the school's reading when a subject speaks (a familiar
      *                    is conjuration, but it is a wolf first)
      *   tag_subject_weight  x a subject matched only in an Oghma row's tags
@@ -611,7 +616,8 @@ final class RelDynFacetClassifier
      *                    the player signal of casting it)
      *   subjects         keyword => facets, archetypes; 'exclusive' => true: when any exclusive
      *                    subject matches, only exclusive subjects count (a disease's tags name
-     *                    its carriers: wolves, bears); 'ignore' => true: matches nothing, only
+     *                    its carriers: wolves, bears), and the prior skips the generic tag
+     *                    keywords of its tags for the same reason; 'ignore' => true: matches nothing, only
      *                    shadows the shorter keywords inside it (ingredients: Bear Claws,
      *                    Spriggan Sap, Fire Salts in potion-effect tags)
      * Keywords match whole words (a trailing s/es plural too); a keyword inside a longer matched
@@ -626,8 +632,10 @@ final class RelDynFacetClassifier
         $elemental = ['combat' => 0.7, 'danger' => 0.5];
         $heal = ['spiritual' => 0.6, 'sacred' => 0.3, 'alchemy' => 0.2];
         $holy = ['spiritual' => 0.6, 'sacred' => 0.7, 'combat' => 0.3];
-        $daedra = ['scholarly' => 0.5, 'danger' => 0.6, 'dark' => 0.3, 'enchanting' => 0.3];
-        $necro = ['dark' => 0.9, 'danger' => 0.5, 'scholarly' => 0.3];
+        // Daedra are Oblivion's beings: danger and darkness first, a trace of the binding craft;
+        // the dead are dark (decisions §10: no "it's magic, so scholar" trace on either)
+        $daedra = ['danger' => 0.7, 'dark' => 0.5, 'enchanting' => 0.4, 'scholarly' => 0.15];
+        $necro = ['dark' => 0.9, 'danger' => 0.5];
         $calm = ['social' => 0.6, 'quiet' => 0.5];
         $fear = ['danger' => 0.5, 'social' => 0.4, 'dark' => 0.3];
         $frenzy = ['danger' => 0.6, 'combat' => 0.4];
@@ -644,8 +652,9 @@ final class RelDynFacetClassifier
             'categories' => ['spells'],
             'magic_markers' => ['spell', 'spells', 'spell tome', 'scroll', 'staff', 'magic', 'arcane', 'shout', "thu'um"],
             'replaced_keywords' => ['spell', 'spell tome', 'scroll', 'staff', 'magic', 'arcane', 'conjuration', 'destruction',
-                'illusion', 'alteration', 'restoration'],
-            'ignore_knowledge_classes' => ['mage', 'scholar'],
+                'illusion', 'alteration', 'restoration', 'college'],
+            // the college teaches spells: where one is learned says nothing of what it does
+            'ignore_knowledge_classes' => ['mage', 'scholar', 'college_of_winterhold', 'collegeofwinterhold'],
             'school_weight_with_subject' => 0.35,
             // x a subject found only in the tags (tags also name targets and carriers: a holy
             // weapon's tags say 'vampires'); a subject in the name counts in full
@@ -655,7 +664,8 @@ final class RelDynFacetClassifier
                 'destruction' => ['keywords' => ['destruction'],
                     'facets' => ['combat' => 0.7, 'danger' => 0.5, 'enchanting' => 0.3], 'archetypes' => ['mage' => 0.9]],
                 'conjuration' => ['keywords' => ['conjuration', 'conjure', 'summon', 'summoning'],
-                    'facets' => ['enchanting' => 0.5, 'scholarly' => 0.5, 'danger' => 0.4], 'archetypes' => ['mage' => 0.9, 'scholar' => 0.3]],
+                    // binding what comes through: danger and the craft, a trace of learning
+                    'facets' => ['danger' => 0.5, 'enchanting' => 0.5, 'dark' => 0.3, 'scholarly' => 0.15], 'archetypes' => ['mage' => 0.9, 'scholar' => 0.3]],
                 'alteration'  => ['keywords' => ['alteration'],
                     'facets' => ['enchanting' => 0.5, 'scholarly' => 0.5], 'archetypes' => ['mage' => 0.7, 'scholar' => 0.5]],
                 'illusion'    => ['keywords' => ['illusion'],
@@ -719,7 +729,8 @@ final class RelDynFacetClassifier
                 'reanimate' => $s($necro, ['mage' => 0.7]), 'raise zombie' => $s($necro, ['mage' => 0.7]),
                 'zombie' => $s($necro, ['mage' => 0.7]), 'thrall' => $s($necro, ['mage' => 0.7]), 'revenant' => $s($necro, ['mage' => 0.7]),
                 'necromancy' => $s($necro, ['mage' => 0.7]), 'necromantic' => $s($necro, ['mage' => 0.7]),
-                'corpse' => $s($necro, ['mage' => 0.7]), 'mistman' => $s($necro, ['mage' => 0.7]),
+                'corpse' => $s($necro, ['mage' => 0.7]), 'mistman' => $s($necro, ['mage' => 0.7]), 'shade' => $s($necro, ['mage' => 0.7]),
+                'ash spawn' => $s($daedra, ['mage' => 0.9]), 'ash guardian' => $s($daedra, ['mage' => 0.9]),
                 'soul trap' => $s(['enchanting' => 1.0, 'dark' => 0.3], ['mage' => 0.5, 'scholar' => 0.3]),
                 // --- illusion: minds, not books
                 'calm' => $s($calm, ['bard' => 0.6, 'mage' => 0.3]), 'pacify' => $s($calm, ['bard' => 0.6, 'mage' => 0.3]),
@@ -946,7 +957,9 @@ final class RelDynFacetClassifier
      * name is known.
      *
      * An entry is magic when its Oghma category is a magic category, when $assumeMagic, or when
-     * its NAME carries a magic marker or a school keyword (tags never make an entry magic).
+     * it has no category and its NAME carries a magic marker or a school keyword (tags never make
+     * an entry magic; an Oghma row in another category is what that category says: the Elder
+     * Scrolls books, The Art of War Magic, the Staff of Magnus, a potion of resist magic).
      *   school    the school whose keyword comes first in the name, else first in the tags
      *   subjects  subject keywords in the name (x 1) and in the tags only (x tag_subject_weight);
      *             ignore rows only shadow; an exclusive row (a disease, lycanthropy) silences the
@@ -954,9 +967,10 @@ final class RelDynFacetClassifier
      *   facets    subjects' facets, plus the school's x school_weight_with_subject; no subject:
      *             the school's facets; neither: the default reading (per-facet maximum throughout)
      *   archetypes  the same composition over each row's player archetypes (0..1)
+     *   exclusive  an exclusive subject spoke (its tags name carriers, not what it is)
      *
      * @return array|null ['school' => ?string, 'subjects' => string[], 'facets' => facet => 0..1,
-     *                     'archetypes' => archetype => 0..1]
+     *                     'archetypes' => archetype => 0..1, 'exclusive' => bool]
      */
     public static function spellReading(string $name, string $tags = '', ?string $category = null, bool $assumeMagic = false, ?array $cfg = null): ?array
     {
@@ -971,7 +985,11 @@ final class RelDynFacetClassifier
         $schoolInName = self::firstSchool($nameText, $schools);
         $school = $schoolInName ?? self::firstSchool($tagText, $schools);
         $categories = array_map(fn($c) => strtolower(trim((string) $c)), (array) ($sc['categories'] ?? []));
-        $categoryMagic = $category !== null && in_array(strtolower(trim($category)), $categories, true);
+        $category = $category !== null ? strtolower(trim($category)) : '';
+        $categoryMagic = $category !== '' && in_array($category, $categories, true);
+        if ($category !== '' && !$categoryMagic) {
+            return null;   // an Oghma row of another category: a book, an artifact, an item
+        }
         $marked = self::keywordMatches($nameText, array_fill_keys((array) ($sc['magic_markers'] ?? []), [])) !== [];
         if (!$categoryMagic && !$assumeMagic && !$marked && $schoolInName === null) {
             return null;
@@ -1020,6 +1038,7 @@ final class RelDynFacetClassifier
             'subjects' => array_keys($weighted),
             'facets' => self::maxMerge($facets),
             'archetypes' => self::mergeWeights($archetypes),
+            'exclusive' => $exclusive !== [],
         ];
     }
 
@@ -1069,7 +1088,9 @@ final class RelDynFacetClassifier
      * knowledge_class_prior), category, the words of its name (topic, aliases) and of its tags
      * through the tables, each source x its prior_weights entry; per-facet maximum over the sources.
      * A magic entry (spellReading) takes its spell reading (x the name weight) in place of the
-     * category row, drops spell_subjects.ignore_knowledge_classes and the replaced_keywords.
+     * category row, drops spell_subjects.ignore_knowledge_classes and the replaced_keywords; one
+     * read by an exclusive subject (a disease) also skips the tag keywords of its tags (they
+     * name its carriers: rats, bears, wolves).
      */
     public static function priorFacets(array $row, ?array $cfg = null): array
     {
@@ -1108,7 +1129,9 @@ final class RelDynFacetClassifier
             $parts[] = self::scaled((array) $cfg['category_prior'][$cat], (float) $w['category']);
         }
         $parts[] = self::scaled(self::keywordFacets($name, (array) $cfg['tag_keywords'], $replaced), (float) $w['name']);
-        $parts[] = self::scaled(self::keywordFacets($tags, (array) $cfg['tag_keywords'], $replaced), (float) $w['tags']);
+        if (empty($spell['exclusive'])) {
+            $parts[] = self::scaled(self::keywordFacets($tags, (array) $cfg['tag_keywords'], $replaced), (float) $w['tags']);
+        }
         return self::maxMerge($parts);
     }
 
