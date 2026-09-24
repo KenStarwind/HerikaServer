@@ -592,6 +592,39 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
         $this->assertSame(1, $stats['queued']);
     }
 
+    /**
+     * A Playthrough Save restore waits (30 s) for every holder of the work lease; the worker
+     * checks for a pending switch between jobs and stops, so it never holds the lease for a
+     * whole drain. The jobs it did not reach stay queued for the next worker.
+     */
+    public function testTheWorkerStopsBetweenJobsWhenAPlaythroughSwitchIsPending(): void
+    {
+        $this->seedConversation();
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) self::T0, 'Kaida: pelt'], self::PLAYER);
+        $this->postrequest(self::NPC, ['inputtext', '1727000124', (string) (self::T0 + 10), 'Kaida: again'], self::PLAYER);
+
+        $calls = [];
+        $paused = false;
+        RelDynEval::$pauseCheck = function () use (&$paused): bool { return $paused; };
+        $llm = function (array $messages, array $params) use (&$calls, &$paused): string {
+            $calls[] = $messages;
+            $paused = true;   // the switch starts while the first job is being scored
+            return self::GOOD_REPLY;
+        };
+        try {
+            $stats = RelDynEval::runWorker($llm);
+        } finally {
+            RelDynEval::$pauseCheck = null;
+        }
+        $this->assertTrue($stats['paused'] ?? false, json_encode($stats));
+        $this->assertCount(1, $calls, 'no second LLM call once the switch is pending');
+        $this->assertCount(1, $this->inbox(), 'the job in flight finished');
+        $jobs = $this->jobs();
+        $this->assertCount(1, $jobs, 'the other job waits for the next worker');
+        $this->assertSame(['pending', '0'], [$jobs[0]['status'], $jobs[0]['attempts']]);
+        $this->assertStringContainsString('Playthrough Save switch pending', $this->log());
+    }
+
     public function testTheWorkerReadsFreshStateForEveryJob(): void
     {
         $this->seedConversation();

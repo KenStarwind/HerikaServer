@@ -127,6 +127,22 @@ final class RelDynEval
     /** Test seam: callable(): void replacing the worker process launch. */
     public static $launcher = null;
 
+    /** Test seam: callable(): bool replacing the pending-Playthrough-switch check. */
+    public static $pauseCheck = null;
+
+    /**
+     * True while a Playthrough Save switch is pending (core ptr_runtime_paused()). The worker
+     * holds the shared work lease (taken by the sql constructor); the switch waits 30 s for
+     * every holder, so the worker stops between jobs instead of draining on.
+     */
+    private static function switchPending(): bool
+    {
+        if (self::$pauseCheck !== null) {
+            return (bool) (self::$pauseCheck)();
+        }
+        return function_exists('ptr_runtime_paused') && ptr_runtime_paused();
+    }
+
     // =========================================================================
     // CONFIG
     // =========================================================================
@@ -428,7 +444,7 @@ final class RelDynEval
      */
     public static function runWorker(?callable $llm = null): array
     {
-        $total = ['processed' => 0, 'queued' => 0, 'dropped' => 0, 'failed' => 0, 'dead' => 0, 'locked' => false];
+        $total = ['processed' => 0, 'queued' => 0, 'dropped' => 0, 'failed' => 0, 'dead' => 0, 'locked' => false, 'paused' => false];
         $tried = [];
         $blockedNpcs = [];
         for ($pass = 0; $pass < 3; $pass++) {
@@ -439,6 +455,10 @@ final class RelDynEval
             if ($stats['locked']) {
                 $total['locked'] = true;
                 break;   // another drainer holds the lock; it re-checks after releasing
+            }
+            if ($stats['paused']) {
+                $total['paused'] = true;
+                break;   // a Playthrough Save switch is pending: exit and release the lease
             }
             if (self::pendingCount($tried, $blockedNpcs) === 0) {
                 break;
@@ -454,7 +474,7 @@ final class RelDynEval
      */
     public static function drain(?callable $llm = null, array &$tried = [], array &$blockedNpcs = []): array
     {
-        $stats = ['processed' => 0, 'queued' => 0, 'dropped' => 0, 'failed' => 0, 'dead' => 0, 'locked' => false];
+        $stats = ['processed' => 0, 'queued' => 0, 'dropped' => 0, 'failed' => 0, 'dead' => 0, 'locked' => false, 'paused' => false];
         self::ensureQueueTable();
         $db = self::db();
         $lock = $db->fetchOne('SELECT pg_try_advisory_lock($1::int, $2::int) AS got', [self::LOCK_CLASS, self::LOCK_DRAINER]);
@@ -465,6 +485,11 @@ final class RelDynEval
         try {
             $limit = max(1, intval(self::config()['jobs_per_run']));
             while ($stats['processed'] < $limit) {
+                if (self::switchPending()) {
+                    error_log('[RelDyn-EVAL] worker stops: a Playthrough Save switch pending; the remaining jobs wait for the next worker');
+                    $stats['paused'] = true;
+                    break;
+                }
                 $row = $db->fetchOne(
                     'SELECT id, npc_id, npc_name, job::text AS job, attempts FROM ' . self::QUEUE_TABLE . "
                      WHERE status = 'pending' AND NOT (id = ANY(\$1::bigint[])) AND NOT (npc_id = ANY(\$2::int[]))

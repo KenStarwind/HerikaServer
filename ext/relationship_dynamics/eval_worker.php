@@ -30,6 +30,8 @@ try {
     ]);
     // The sql constructor took the playthrough-switch lease (ptr_runtime_enter): while a save
     // is loading the process exits (75) there and the jobs stay queued for the next worker.
+    // A switch that starts during the drain stops it between jobs (RelDynEval::drain), and
+    // the lease goes when this process exits.
     require_once __DIR__ . '/eval_producer.php';
 
     $stats = RelDynEval::runWorker();
