@@ -338,7 +338,7 @@ class RelationshipDynamics
             'resentment_gain_mult'    => 1.0,
             'confrontation_threshold' => 70,
             'absence_comfort_delta'   => +0.5,
-            'affinity_absence_mult'   => 0.7,
+            'affinity_absence_mult'   => 0.5,   // decisions 2026-09-23 section 2: Avoidant x0.5
             'jealousy_mult'           => 0.5,
             'maturity_floor'          => null,
             'conflict_passion_gain'   => 0.0,
@@ -6506,11 +6506,18 @@ class RelationshipDynamics
     /**
      * Process affinity decay from absence, with tier demotion checks.
      *
-     * Decay formula: base_decay_rate * temperament_modifier * ticks_elapsed
-     * One tick = 10 accumulated minutes of actual play time.
+     * Decay formula (core affinity points):
+     *   temperament base rate x type decay_rate modifier x attachment absence mult
+     *   x ambient resist x ticks_elapsed
+     * One tick = GAMETS_PER_DECAY_TICK of absence (see calculateDecayTicks).
+     *
+     * Absence only fades the positive part of the bond: the number decays toward the NPC's
+     * affinity baseline (core units, never below core 0) and stops there. Affinity at or
+     * below that point is left alone: absence neither manufactures nor heals negative
+     * affinity (decisions 2026-09-23 section 2; negative states resolve through contact).
      *
      * This method:
-     * 1. Calculates decay amount from temperament and elapsed ticks
+     * 1. Calculates decay amount from temperament, type, attachment and elapsed ticks
      * 2. Applies decay to CORE affinity (-100..+100, via getCoreAffinity/setCoreAffinity)
      * 3. Checks tier demotion if affinity crossed a tier floor
      * 4. Returns detailed result for logging/debugging
@@ -6575,11 +6582,35 @@ class RelationshipDynamics
             return $result;
         }
 
+        // --- Relationship type decay modifier (design draft: type_decay_modifier) ---
+        // 1.0 for types without a row; hostile has 0.0 (hate doesn't fade passively)
+        $typeDecayMult = self::getTypeModifier($relTypeLower, 'decay_rate');
+        if ($typeDecayMult <= 0.0) {
+            $result['skipped'] = true;
+            $result['skip_reason'] = 'no_decay_type';
+            return $result;
+        }
+
+        // --- Where absence decay stops (core units) ---
+        // The NPC's affinity baseline (per-NPC override, else temperament "natural pull
+        // toward connection"; both core units, as in applyDelta), never below core 0.
+        $affBaseline = $dynamics['dimensions']['affinity']['baseline'] ?? null;
+        if (!is_numeric($affBaseline)) {
+            $affBaseline = self::getTemperamentBaseline($temperament, 'affinity');
+        }
+        $decayTarget = max(0.0, floatval($affBaseline));
+        $result['decay_target'] = $decayTarget;
+        if ($oldAffinity <= $decayTarget) {
+            $result['skipped'] = true;
+            $result['skip_reason'] = 'at_or_below_baseline';
+            return $result;
+        }
+
         // --- Calculate base decay ---
-        $baseDecayRate = self::TEMPERAMENT_DECAY_RATES[$temperament] ?? -0.5;
+        $baseDecayRate = self::TEMPERAMENT_DECAY_RATES[$temperament] ?? -0.5; // core points per tick
 
         // decay_per_tick is already negative; multiply by ticks
-        $totalDecay = $baseDecayRate * $ticksElapsed;
+        $totalDecay = $baseDecayRate * $typeDecayMult * $ticksElapsed;
 
         // Attachment style modifies absence decay
         $absenceMult = self::getAttachmentModifier($dynamics, 'affinity_absence_mult') ?? 1.0;
@@ -6591,8 +6622,8 @@ class RelationshipDynamics
             $totalDecay *= $ambientResist;
         }
 
-        // --- Apply decay to affinity ---
-        $newAffinity = max((float) self::CORE_AFFINITY_MIN, min((float) self::CORE_AFFINITY_MAX, $oldAffinity + $totalDecay));
+        // --- Apply decay to affinity, stopping at the baseline target ---
+        $newAffinity = max($decayTarget, min((float) self::CORE_AFFINITY_MAX, $oldAffinity + $totalDecay));
         $actualDecay = $newAffinity - $oldAffinity;
 
         // Attachment-driven comfort change during absence
