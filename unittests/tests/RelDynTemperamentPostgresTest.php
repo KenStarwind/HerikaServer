@@ -205,7 +205,7 @@ final class RelDynTemperamentPostgresTest extends TestCase
         // The attraction matrix can friendzone one of them (a different type modifier); keep
         // it out so the temperament is the only difference between the two NPCs.
         pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2)',
-            [RelationshipDynamics::CONFIG_ROW_ID, json_encode(['attraction_matrix_enabled' => false])]);
+            [RelationshipDynamics::CONFIG_ROW_ID, json_encode(['config_schema' => RelationshipDynamics::CONFIG_SCHEMA, 'attraction_matrix_enabled' => false])]);
         RelationshipDynamics::clearConfigCache();
 
         $drop = [];
