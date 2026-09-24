@@ -178,10 +178,12 @@ final class RelDynWalkawayAbsencePostgresTest extends TestCase
         return (int) json_decode($r['extended_data'], true)['relationships']['Player']['aff'];
     }
 
+    private const MINUTE = self::HOUR / 60;                              // raw gamets per game minute
+
     /** One player line to $name at game time $gamets, through the real prerequest hook. */
-    private function talkTo(string $name, float $gamets): void
+    private function talkTo(string $name, float $gamets, string $line = 'hello'): void
     {
-        $GLOBALS['gameRequest'] = ['inputtext', (string) time(), (string) (int) $gamets, 'Kaida: hello'];
+        $GLOBALS['gameRequest'] = ['inputtext', (string) time(), (string) (int) $gamets, "Kaida: {$line}"];
         $GLOBALS['HERIKA_NAME'] = $name;
         (static function () { require __DIR__ . '/../../ext/relationship_dynamics/prerequest.php'; })();
         RelationshipDynamics::endRequest();
@@ -252,5 +254,87 @@ final class RelDynWalkawayAbsencePostgresTest extends TestCase
         $this->talkTo('Serana', self::T0 + 3 * self::DAY);
 
         $this->assertSame(60, $this->coreAff('Serana'), 'she chose to leave: no absence decay while gone');
+    }
+
+    // ------------------------------------------------------------ rulings 2026-09-24 §8
+
+    /** The two spouses of the ruling, core type 'romantic' at aff 85, last seen at T0. */
+    private function seedSpouses(): void
+    {
+        $dims = ['trust' => 60.0, 'comfort' => 60.0, 'respect' => 60.0, 'self_confidence' => 60.0, 'resentment' => 0.0];
+        // The core type as the prerequest of the last visit (T0) snapshotted it.
+        $spouse = ['_core_rel_type' => 'romantic'];
+        // Mature, secure, independent.
+        $this->seed('Mjoll', 85, 'romantic', $dims + ['maturity' => 80.0],
+            $spouse + ['inferred_temperament' => 'Independent', 'attachment_style' => 'secure', 'traits' => []]);
+        // Immature, anxious, proud, codependent.
+        $this->seed('Serana', 85, 'romantic', $dims + ['maturity' => 20.0],
+            $spouse + ['inferred_temperament' => 'Proud', 'attachment_style' => 'anxious', 'traits' => ['egocentric', 'insecure']]);
+        $this->seed('Lydia', 0, 'neutral', $dims + ['maturity' => 50.0]);   // someone else to talk to
+    }
+
+    /**
+     * The 45-game-day spouse scenario end to end through the prerequest hook and the calendar
+     * scan. The mature, secure, independent spouse is cool but stays. The immature, anxious,
+     * proud, codependent one is furious and walks out on the return greeting; the player's
+     * greeting and pleas in that conversation are not pursuit, so leaving her alone resolves
+     * the boundary test and she comes back, still resentful. Before the ruling, the second
+     * line counted as following her and made the walkaway permanent.
+     */
+    public function testFortyFiveDaysAwayMatureSpouseStaysCodependentSpouseLeavesAndComesBack(): void
+    {
+        $this->config([]);
+        $this->seedSpouses();
+        $back = self::T0 + 45 * self::DAY;
+
+        $this->talkTo('Mjoll', $back);
+        $this->talkTo('Mjoll', $back + 2 * self::MINUTE, 'I missed you');
+        $mjoll = $this->dynamics('Mjoll');
+        $r = (float) $mjoll['dimensions']['resentment']['x'];   // 0..100
+        $this->assertGreaterThanOrEqual(10.0, $r, 'the absence is felt');
+        $this->assertLessThan(RelationshipDynamics::RESENTMENT_WITHDRAWAL_AT, $r, 'cool, not withdrawn');
+        $this->assertSame('normal', $mjoll['_walkaway_state'] ?? 'normal', 'not gone');
+        $this->assertCount(1, array_filter($mjoll['dimensions']['resentment']['grievance_log'],
+            fn($g) => ($g['tag'] ?? null) === 'neglect'));
+
+        $this->talkTo('Serana', $back);                                        // the first hello
+        $serana = $this->dynamics('Serana');
+        $this->assertGreaterThanOrEqual(RelationshipDynamics::RESENTMENT_WALKAWAY_AT,
+            (float) $serana['dimensions']['resentment']['x'], 'furious');
+        $this->assertSame('active', $serana['_walkaway_state'] ?? null, 'she walks out on the greeting');
+        $this->assertSame('resentment', $serana['_walkaway_reason']);
+
+        $this->talkTo('Serana', $back + 5 * self::MINUTE, 'wait, please');     // the parting conversation
+        $this->talkTo('Serana', $back + 20 * self::MINUTE, 'I am sorry');
+        $serana = $this->dynamics('Serana');
+        $this->assertEmpty($serana['_walkaway_player_followed'] ?? false, 'talking to her on the return is not pursuit');
+        $this->assertNotSame('permanent', $serana['_walkaway_state']);
+
+        // The player leaves her alone and talks to someone else two days later: the scan
+        // resolves her boundary test (24-48 game hours) and she comes back.
+        $this->talkTo('Lydia', $back + 2 * self::DAY);
+        $serana = $this->dynamics('Serana');
+        $this->assertSame('normal', $serana['_walkaway_state'], 'resolved, she returned');
+        $this->assertGreaterThanOrEqual(RelationshipDynamics::RESENTMENT_WALKAWAY_AT,
+            (float) $serana['dimensions']['resentment']['x'], 'resolving the walkaway does not clear the resentment');
+        $cmd = pg_fetch_all_columns(pg_query($this->db->link, "SELECT action FROM responselog WHERE action LIKE '%MoveToPlayer%'"));
+        $this->assertCount(1, $cmd, 'her autonomous return');
+    }
+
+    /** Pursuit still ends it: seeking her out after she left, while the walkaway lasts. */
+    public function testSeekingOutTheSpouseWhoLeftIsStillPursuit(): void
+    {
+        $this->config([]);
+        $this->seedSpouses();
+        $back = self::T0 + 45 * self::DAY;
+
+        $this->talkTo('Serana', $back);
+        $this->assertSame('active', $this->dynamics('Serana')['_walkaway_state'] ?? null);
+        $this->talkTo('Serana', $back + 3 * self::HOUR, 'I followed you home');   // past the parting window
+
+        $serana = $this->dynamics('Serana');
+        $this->assertTrue($serana['_walkaway_player_followed']);
+        $this->talkTo('Lydia', $back + 2 * self::DAY);
+        $this->assertSame('permanent', $this->dynamics('Serana')['_walkaway_state']);
     }
 }

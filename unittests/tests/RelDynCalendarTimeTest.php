@@ -302,25 +302,30 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->assertEqualsWithDelta((float) RelationshipDynamics::STAGE_PARAMS['deep']['floor'], RelationshipDynamics::getPassion($d), 1e-9);
     }
 
-    /** Decisions §2: positive states (passion spikes, warmth) fade with absence, by attachment. */
+    /**
+     * Decisions §2: positive states (passion spikes, warmth) fade with absence. Rulings §8:
+     * warmth's grace and rate scale per NPC like neglect (getNeglectProfile, covered in
+     * RelDynNeglectSeverityTest), so attachment still orders them: Anxious fastest, Avoidant slowest.
+     */
     public function testWarmthFadesWithAbsenceScaledByAttachment(): void
     {
         $cfg = RelationshipDynamics::defaultConfig();
         $rate = (float) $cfg['warmth_absence_fade_per_game_day'];     // warmth points (0..100) per game day
         $graceDays = (float) $cfg['warmth_absence_grace_game_hours'] / 24.0;
         $this->assertGreaterThan(0.0, $rate);
-        $absent = 5.0 - $graceDays;                                   // absent game days past the grace
 
         $fade = [];
-        foreach (['secure' => 1.0, 'anxious' => 2.0, 'avoidant' => 0.5] as $style => $mult) {
+        foreach (['secure', 'anxious', 'avoidant'] as $style) {
             $d = $this->npc(['attachment_style' => $style], ['warmth' => 80.0]);
+            $prof = RelationshipDynamics::getNeglectProfile($d);
+            $absent = 5.0 - $graceDays * $prof['grace_mult'];         // absent game days past the grace
             $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 5 * self::DAY);
             $fade[$style] = 80.0 - (float) $d['dimensions']['warmth']['x'];
-            $this->assertEqualsWithDelta($rate * $absent * $mult, $fade[$style], 1e-6, "{$style} x{$mult}");
+            $this->assertEqualsWithDelta($rate * $absent * $prof['rate_mult'], $fade[$style], 1e-6, $style);
             $this->assertEqualsWithDelta($fade[$style], $r['warmth_fade'], 1e-6);
         }
-        $this->assertEqualsWithDelta(2.0, $fade['anxious'] / $fade['secure'], 1e-9, 'Anxious x2');
-        $this->assertEqualsWithDelta(0.5, $fade['avoidant'] / $fade['secure'], 1e-9, 'Avoidant x0.5');
+        $this->assertGreaterThan($fade['secure'], $fade['anxious'], 'Anxious fades faster');
+        $this->assertLessThan($fade['secure'], $fade['avoidant'], 'Avoidant fades slower');
     }
 
     public function testWarmthFadeStopsAtItsBaselineAndNeverRaisesLowWarmth(): void
@@ -341,16 +346,18 @@ final class RelDynCalendarTimeTest extends TestCase
     {
         $bond = RelationshipDynamics::defaultConfig()['neglect_bond_types']['bonded'];
         $d = $this->npc(['relationship_type' => 'bonded']);
+        $prof = RelationshipDynamics::getNeglectProfile($d);       // this NPC's scaling (rulings §8)
+        $grace = $bond['grace_game_days'] * $prof['grace_mult'];   // game days
 
         // Inside the grace: nothing.
-        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + ($bond['grace_game_days'] - 0.5) * self::DAY);
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + ($grace - 0.5) * self::DAY);
         $this->assertSame(0.0, $r['neglect_days']);
         $this->assertSame(0.0, self::resentment($d));
 
         // A month: every day past the grace is neglect.
-        $r = RelationshipDynamics::advanceCalendar($d, self::T0 + ($bond['grace_game_days'] - 0.5) * self::DAY, self::T0 + 30 * self::DAY);
-        $this->assertEqualsWithDelta(30 - $bond['grace_game_days'], $r['neglect_days'], 1e-9);
-        $this->assertEqualsWithDelta((30 - $bond['grace_game_days']) * $bond['resentment_per_game_day'], $r['resentment_raw'], 1e-9);
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0 + ($grace - 0.5) * self::DAY, self::T0 + 30 * self::DAY);
+        $this->assertEqualsWithDelta(30 - $grace, $r['neglect_days'], 1e-9);
+        $this->assertEqualsWithDelta((30 - $grace) * $bond['resentment_per_game_day'] * $prof['rate_mult'], $r['resentment_raw'], 1e-9);
         $this->assertGreaterThan(0.0, self::resentment($d));
 
         $log = self::neglectEntries($d);
@@ -380,11 +387,12 @@ final class RelDynCalendarTimeTest extends TestCase
             $d = $this->npc(['relationship_type' => $type, 'attachment_style' => $style]);
             return RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + $days * self::DAY)['neglect_days'];
         };
-        $graceMult = $cfg['neglect_attachment_grace_mult'];
+        $graceMult = fn(string $style) => RelationshipDynamics::getNeglectProfile($this->npc(['attachment_style' => $style]))['grace_mult'];
 
-        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'], $neglect('bonded', 'secure'), 1e-9);
-        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult['anxious'], $neglect('bonded', 'anxious'), 1e-9);
-        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['friend']['grace_game_days'] * $graceMult['secure'], $neglect('friend', 'secure'), 1e-9);
+        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult('secure'), $neglect('bonded', 'secure'), 1e-9);
+        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult('anxious'), $neglect('bonded', 'anxious'), 1e-9);
+        $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['friend']['grace_game_days'] * $graceMult('secure'), $neglect('friend', 'secure'), 1e-9);
+        $this->assertGreaterThan($neglect('bonded', 'secure'), $neglect('bonded', 'anxious'), 'anxious feels it sooner');
         $this->assertLessThan($neglect('bonded', 'secure'), $neglect('bonded', 'avoidant'), 'avoidant waits longer');
         $this->assertSame(0.0, $neglect('acquaintance', 'anxious'), 'not a bond: no neglect');
     }
@@ -425,7 +433,8 @@ final class RelDynCalendarTimeTest extends TestCase
 
         $bond = RelationshipDynamics::defaultConfig()['neglect_bond_types']['bonded'];
         $this->assertSame('bonded', $r['bond_type']);
-        $this->assertEqualsWithDelta(10 - $bond['grace_game_days'], $r['neglect_days'], 1e-9);
+        $grace = $bond['grace_game_days'] * RelationshipDynamics::getNeglectProfile($d)['grace_mult'];   // game days
+        $this->assertEqualsWithDelta(10 - $grace, $r['neglect_days'], 1e-9);
         $this->assertGreaterThan(0.0, self::resentment($d));
     }
 

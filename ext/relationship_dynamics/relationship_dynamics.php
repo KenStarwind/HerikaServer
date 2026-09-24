@@ -1206,6 +1206,13 @@ class RelationshipDynamics
             // Contacts (this NPC's requests) an NPC back from a resolved boundary test
             // waits before walking away again while its resentment is still high.
             'walkaway_return_grace_contacts' => 5,
+            // Pursuit (MDD 6.4 "follow them", rulings §8): the player's lines in the first
+            // walkaway_parting_game_minutes game-calendar minutes after the NPC left are the
+            // parting conversation they walked out of (the return greeting that set off a
+            // neglect walkaway, a plea as they go), not following them. Talking to them after
+            // that, while the walkaway lasts, is seeking them out: the boundary test fails.
+            // 60 game minutes = 3 real minutes at the default timescale 20.
+            'walkaway_parting_game_minutes' => 60,
             // Reunion: reunion_min_hours is GAME-CALENDAR hours since the last contact; the
             // time apart must also hold this many real minutes of filtered play (no reunion
             // from a wait or sleep alone).
@@ -1226,17 +1233,20 @@ class RelationshipDynamics
             'passion_absence_grace_game_hours' => 24,
             'passion_absence_fade_per_game_day' => 3.0,
             'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
-            // Warmth fades with absence too (decisions §2): after warmth_absence_grace_game_hours
-            // without contact, warmth (0..100) above its baseline loses
-            // warmth_absence_fade_per_game_day per game-calendar day x attachment multiplier,
-            // down to the baseline (never below: absence does not deepen coldness either).
-            // Starting value 1.0: warmth is the slow, deep state, a third of passion's rate.
+            // Warmth fades with absence too (decisions §2, rulings §8): after
+            // warmth_absence_grace_game_hours x the NPC's neglect grace_mult without contact,
+            // warmth (0..100) above its baseline loses warmth_absence_fade_per_game_day x the
+            // NPC's neglect rate_mult per game-calendar day (getNeglectProfile, the same per-NPC
+            // scaling as neglect), down to the baseline (never below: absence does not deepen
+            // coldness either). Starting value 1.0: warmth is the slow, deep state, a third of
+            // passion's rate.
             'warmth_absence_grace_game_hours' => 24,
             'warmth_absence_fade_per_game_day' => 1.0,
-            'warmth_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
             // Global neglect (decisions §2): per RelDyn bond type (getRelationshipType), game days
             // without contact before neglect starts, and RAW resentment (0..100 points, through
             // applyDelta like fester) per game day after that. Types not listed never accrue.
+            // These are the rates of a typical NPC (neglect_severity multipliers 1.0); each NPC
+            // scales them by who it is (rulings §8, getNeglectProfile).
             'neglect_enabled' => true,
             'neglect_bond_types' => [
                 'bonded'     => ['grace_game_days' => 3, 'resentment_per_game_day' => 1.0],
@@ -1246,8 +1256,9 @@ class RelationshipDynamics
                 'friendzone' => ['grace_game_days' => 7, 'resentment_per_game_day' => 0.25],
                 'parasite'   => ['grace_game_days' => 2, 'resentment_per_game_day' => 0.5],
             ],
-            // Grace multiplier by attachment style: Anxious feels it sooner, Avoidant later.
-            'neglect_attachment_grace_mult' => ['anxious' => 0.5, 'avoidant' => 2.0, 'secure' => 1.0, 'toxic' => 0.75],
+            // Per-NPC severity of neglect and warmth fade (rulings 2026-09-24 §8), see
+            // neglectSeverityDefaults() / getNeglectProfile() for the formula.
+            'neglect_severity' => self::neglectSeverityDefaults(),
             // Calendar scan: NPCs whose calendar step is at least this many game hours old are
             // advanced on any request; at most calendar_scan_max_npcs per request.
             'calendar_scan_interval_game_hours' => 1,
@@ -1308,6 +1319,59 @@ class RelationshipDynamics
             // affinity points below the session's high opens a conflict.
             'conflict_session_gap_game_hours' => 6,
         ];
+    }
+
+    /**
+     * Rulings 2026-09-24 §8: neglect is per NPC. How hard an absence hits scales with who the
+     * NPC is; the same scaling applies to warmth fading with absence. getNeglectProfile():
+     *
+     *   codependence c (0..1) = clamp( w x A[attachment] + (1 - w) x T[temperament]
+     *                                  + sum of trait bumps, 0, 1 )
+     *       w = codependence_attachment_weight; A: Avoidant 0 .. Secure 0.5 .. Anxious/Toxic 1;
+     *       T: Independent 0, Anxious/Jealous 1, any other temperament codependence_temperament_default;
+     *       traits: insecure +0.2. Independent/avoidant NPCs barely mind absence, codependent
+     *       ones take it hard.
+     *   pride p (0..1) = clamp( P[temperament] + sum of trait bumps, 0, 1 )
+     *       Proud 0.5, egocentric +0.5 (Proud is egocentric by default, so a Proud NPC is 1.0).
+     *       Being ignored is a slight.
+     *   maturity term = (maturity - 50) / 50, maturity = dimensions.maturity.x (0..100), so
+     *       -1..+1. Mature NPCs understand "life happens".
+     *
+     *   grace_mult = 2 ^ ( g_c x (2c - 1) + g_m x maturity term + g_p x p )
+     *   rate_mult  = 2 ^ ( r_c x (2c - 1) + r_m x maturity term + r_p x p )
+     *   each clamped to [mult_min, mult_max] (unitless).
+     *
+     * A coefficient of 1 doubles (or halves) the multiplier at the end of its term's range.
+     * The typical NPC (c = 0.5, maturity 50, no pride) gets 1.0 and 1.0: the bond table rates.
+     * Neglect: grace = neglect_bond_types grace_game_days x grace_mult (game days), raw
+     * resentment per game day = resentment_per_game_day x rate_mult. Warmth fade: grace =
+     * warmth_absence_grace_game_hours x grace_mult, fade per game day =
+     * warmth_absence_fade_per_game_day x rate_mult.
+     */
+    public static function neglectSeverityDefaults(): array
+    {
+        return [
+            'codependence_attachment' => ['avoidant' => 0.0, 'secure' => 0.5, 'anxious' => 1.0, 'toxic' => 1.0],
+            'codependence_attachment_weight' => 0.6,
+            'codependence_temperament' => ['Independent' => 0.0, 'Anxious' => 1.0, 'Jealous' => 1.0],
+            'codependence_temperament_default' => 0.5,
+            'codependence_traits' => ['insecure' => 0.2],
+            'pride_temperament' => ['Proud' => 0.5],
+            'pride_traits' => ['egocentric' => 0.5],
+            // log2 coefficients: [codependence, maturity, pride]
+            'grace_log2' => ['codependence' => -1.0, 'maturity' => 1.0, 'pride' => -0.5],
+            'rate_log2' => ['codependence' => 1.0, 'maturity' => -1.0, 'pride' => 1.0],
+            'mult_min' => 0.125,
+            'mult_max' => 8.0,
+        ];
+    }
+
+    /** The neglect severity tables: stored config per key, defaults for the rest. */
+    public static function getNeglectSeverityConfig(): array
+    {
+        $defaults = self::neglectSeverityDefaults();
+        $stored = self::configValue('neglect_severity');
+        return is_array($stored) ? array_replace($defaults, $stored) : $defaults;
     }
 
     /**
@@ -2353,7 +2417,7 @@ class RelationshipDynamics
             // Named NPCs from the MDD are presets for those NPCs, not rules for their class.
             // Keyed by lower-case npc_name. A per-NPC override in RelDyn state beats these.
             'npc_overrides' => [
-                'ashe'   => ['temperament' => 'Stoic', 'maturity_type' => 'Resilient'],  // MDD 15.6
+                'ashe'   => ['temperament' => 'Guarded', 'maturity_type' => 'Resilient'],  // MDD 8.2/3.3, 15.6; rulings 2026-09-24 §8
                 'mikael' => ['maturity_type' => 'Volatile'],                            // MDD 15.6
                 'serana' => ['maturity_type' => 'Growth'],                              // MDD 15.6
                 'nazeem' => ['maturity_type' => 'Rigid'],                               // MDD 15.6
@@ -3402,14 +3466,62 @@ class RelationshipDynamics
     }
 
     /**
+     * Who this NPC is when the player stays away (rulings 2026-09-24 §8): codependence
+     * (0..1), pride (0..1), maturity (0..100) and the grace / rate multipliers they give.
+     * Formula and units: neglectSeverityDefaults(). Pure: reads only $dynamics and config.
+     *
+     * @return array ['codependence', 'pride', 'maturity', 'grace_mult', 'rate_mult']
+     */
+    public static function getNeglectProfile(array $dynamics): array
+    {
+        $cfg = self::getNeglectSeverityConfig();
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $attachment = self::getAttachmentStyle($dynamics);
+        $traits = self::getTraits($dynamics);
+        $clamp01 = fn(float $v): float => max(0.0, min(1.0, $v));
+
+        $w = $clamp01(floatval($cfg['codependence_attachment_weight']));
+        $a = floatval(((array) $cfg['codependence_attachment'])[$attachment] ?? 0.5);
+        $t = floatval(((array) $cfg['codependence_temperament'])[$temperament] ?? $cfg['codependence_temperament_default']);
+        $c = $w * $a + (1.0 - $w) * $t;
+        $p = floatval(((array) $cfg['pride_temperament'])[$temperament] ?? 0.0);
+        foreach ($traits as $trait) {
+            $c += floatval(((array) $cfg['codependence_traits'])[$trait] ?? 0.0);
+            $p += floatval(((array) $cfg['pride_traits'])[$trait] ?? 0.0);
+        }
+        $c = $clamp01($c);
+        $p = $clamp01($p);
+
+        $maturity = max(0.0, min(100.0, floatval($dynamics['dimensions']['maturity']['x'] ?? 50)));
+        $terms = ['codependence' => 2.0 * $c - 1.0, 'maturity' => ($maturity - 50.0) / 50.0, 'pride' => $p];
+        $mult = function (array $coef) use ($terms, $cfg): float {
+            $exp = 0.0;
+            foreach ($terms as $k => $v) {
+                $exp += floatval($coef[$k] ?? 0.0) * $v;
+            }
+            return max(floatval($cfg['mult_min']), min(floatval($cfg['mult_max']), 2.0 ** $exp));
+        };
+
+        return [
+            'codependence' => $c,
+            'pride' => $p,
+            'maturity' => $maturity,
+            'grace_mult' => $mult((array) $cfg['grace_log2']),
+            'rate_mult' => $mult((array) $cfg['rate_log2']),
+        ];
+    }
+
+    /**
      * Advance one NPC through game-calendar time [from, to] (raw gamets) with no contact:
      *  - fester: open conflict + maturity below fester_maturity_below -> raw resentment per day;
      *  - jealousy: jealousy above jealousy_resentment_above -> raw resentment per day (§5);
      *  - neglect: bonded NPC past its grace since _last_contact_gamets -> raw resentment per
-     *    day, logged as one 'neglect' grievance per absence;
+     *    day, logged as one 'neglect' grievance per absence; grace and rate scaled per NPC
+     *    (getNeglectProfile);
      *  - passion fade: past the absence grace, passion fades per day x attachment multiplier
      *    down to the stage floor;
-     *  - warmth fade: the same for warmth above its baseline, at its own rate.
+     *  - warmth fade: warmth above its baseline, at its own rate, grace and rate scaled per
+     *    NPC like neglect.
      * Nothing negative is ever reduced here. Neglect and fade are skipped while the NPC is
      * the one who left (walkaway). Pure: no database, no clock reads.
      *
@@ -3460,17 +3572,20 @@ class RelationshipDynamics
             $out['jealousy_resentment_raw'] = $jRaw;
         }
 
+        // Who this NPC is when left alone (rulings §8): scales neglect and warmth fade.
+        $severity = self::getNeglectProfile($dynamics);
+
         // Neglect: game days past the bond's grace since the player's last contact.
         if (!$away && $lastContact > 0 && self::configValue('neglect_enabled')) {
             $bondType = self::getRelationshipType('', $dynamics);
             $out['bond_type'] = $bondType;
             $bond = (self::configValue('neglect_bond_types') ?? [])[$bondType] ?? null;
             if (is_array($bond)) {
-                $graceMult = floatval((self::configValue('neglect_attachment_grace_mult') ?? [])[$attachment] ?? 1.0);
-                $graceDays = floatval($bond['grace_game_days'] ?? 0) * $graceMult;
+                $graceDays = floatval($bond['grace_game_days'] ?? 0) * $severity['grace_mult'];   // game days
                 $neglectDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceDays * self::GAMETS_PER_DAY);
                 if ($neglectDays > 0) {
-                    $neglectRaw = floatval($bond['resentment_per_game_day'] ?? 0) * $neglectDays;
+                    // raw resentment points per game day x game days
+                    $neglectRaw = floatval($bond['resentment_per_game_day'] ?? 0) * $severity['rate_mult'] * $neglectDays;
                     $raw += $neglectRaw;
                     $out['neglect_days'] = $neglectDays;
                     self::recordNeglectGrievance($dynamics, $lastContact, $toGamets, $neglectRaw);
@@ -3495,16 +3610,17 @@ class RelationshipDynamics
                 }
             }
 
-            // Warmth (0..100) above its baseline fades the same way, at its own rate.
+            // Warmth (0..100) above its baseline fades at its own rate, grace and rate scaled
+            // per NPC like neglect (rulings §8).
             $warmth = $dynamics['dimensions']['warmth']['x'] ?? null;
-            $graceGamets = floatval(self::configValue('warmth_absence_grace_game_hours')) * self::GAMETS_PER_DAY / 24.0;
+            $graceGamets = floatval(self::configValue('warmth_absence_grace_game_hours')) * $severity['grace_mult']
+                * self::GAMETS_PER_DAY / 24.0;
             $absentDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceGamets);
             if (is_numeric($warmth) && $absentDays > 0) {
                 $baseline = $dynamics['dimensions']['warmth']['baseline'] ?? null;
                 $baseline = is_numeric($baseline) ? floatval($baseline) : self::getTemperamentBaseline($temperament, 'warmth');
                 if (floatval($warmth) > $baseline) {
-                    $mult = floatval((self::configValue('warmth_absence_attachment_mult') ?? [])[$attachment] ?? 1.0);
-                    $fade = floatval(self::configValue('warmth_absence_fade_per_game_day')) * $absentDays * $mult;
+                    $fade = floatval(self::configValue('warmth_absence_fade_per_game_day')) * $absentDays * $severity['rate_mult'];
                     $new = max($baseline, floatval($warmth) - $fade);
                     $dynamics['dimensions']['warmth']['x'] = round($new, 6);
                     $out['warmth_fade'] = floatval($warmth) - $new;
@@ -15978,8 +16094,22 @@ class RelationshipDynamics
 
         $result = ['state' => $state, 'changed' => false];
 
-        // Check if player is pressuring (dialogue during walkaway)
-        if ($isDialogue && ($state === 'active' || $state === 'boundary_test')) {
+        // Pursuit (MDD 6.4 "follow them", rulings 2026-09-24 §8) is seeking them out after they
+        // left. The player's lines within walkaway_parting_game_minutes game-calendar minutes of
+        // the departure are the conversation they walked out of (for a neglect walkaway, the
+        // return greeting and what follows it): contact, not pursuit. Those ticks carry on
+        // like any other below.
+        $partingMinutes = floatval(self::configValue('walkaway_parting_game_minutes'));
+        $sinceLeftMinutes = (self::gameHoursSince($dynamics, '_walkaway_activated_calendar_gamets') ?? 0.0) * 60.0;
+        $isPursuit = $isDialogue && ($state === 'active' || $state === 'boundary_test')
+            && $sinceLeftMinutes >= $partingMinutes;
+        if ($isDialogue && !$isPursuit && ($state === 'active' || $state === 'boundary_test')) {
+            self::log("[WALKAWAY] {$npcName}: player spoke " . round($sinceLeftMinutes, 1)
+                . " game minutes after they left (parting window {$partingMinutes}): not pursuit");
+            $result['parting'] = true;
+        }
+
+        if ($isPursuit) {
             // Player followed and engaged — resentment escalation
             $dynamics['_walkaway_player_followed'] = true;
 
@@ -15997,10 +16127,17 @@ class RelationshipDynamics
             return $result;
         }
 
-        // Move to boundary test phase after activation
+        // Move to boundary test phase after activation. The test counts from when they left
+        // (the activation stamp, fixed above if missing), not from this tick: a player who
+        // stayed away the whole test is not caught by a first tick on their return.
         if ($state === 'active') {
             $dynamics['_walkaway_state'] = 'boundary_test';
-            self::markGameClock($dynamics, '_boundary_test_started_calendar_gamets');
+            $left = $dynamics['_walkaway_activated_calendar_gamets'] ?? null;   // raw gamets
+            if ($left !== null) {
+                $dynamics['_boundary_test_started_calendar_gamets'] = $left;
+            } else {
+                self::markGameClock($dynamics, '_boundary_test_started_calendar_gamets');   // no game clock yet
+            }
             $result['state'] = 'boundary_test';
             $result['changed'] = true;
         }
