@@ -115,6 +115,64 @@ final class RelDynWalkawayTimersTest extends TestCase
         $this->assertFalse($r['returned']);
     }
 
+    /**
+     * MDD 6.4 "Follow them -> penalty doubles, permanent damage": following ends in a permanent
+     * departure even when the resentment behind the walkaway was low (a walkaway reached from
+     * distrust or disrespect), not in the early-recovery return.
+     */
+    public function testFollowingALowResentmentWalkawayIsStillPermanent(): void
+    {
+        $d = $this->npc();
+        $d['attachment_style'] = 'secure';
+        $d['dimensions']['resentment']['x'] = 20.0;   // early-recovery range (< 50) ...
+        $d['dimensions']['comfort']['x'] = 50.0;      // ... with comfort > 30
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'autonomy');
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);   // pending -> active
+        $this->assertSame('active', $d['_walkaway_state']);
+
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', true);   // player follows
+        $this->assertTrue($d['_walkaway_player_followed']);
+        $this->calendarAdvance(1);
+        $r = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);
+
+        $this->assertFalse($r['returned'], 'followed: no early-recovery return');
+        $this->assertSame('permanent', $d['_walkaway_state']);
+    }
+
+    /** MDD 6.6: a Toxic sleeper vanishes until its 72-96 h hoover, whatever its resentment. */
+    public function testALowResentmentToxicSleeperWaitsForItsHoover(): void
+    {
+        $d = $this->npc();
+        $d['attachment_style'] = 'toxic';
+        $d['dimensions']['maturity']['x'] = 20.0;
+        $d['dimensions']['resentment']['x'] = 20.0;
+        $d['dimensions']['comfort']['x'] = 50.0;
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'autonomy');
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);   // pending -> active
+        $this->assertSame('active', $d['_walkaway_state']);
+
+        $r = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);   // 0 game hours later
+        $this->assertFalse($r['returned'], 'no return before the hoover');
+        $this->calendarAdvance(60);
+        $r = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);
+        $this->assertFalse($r['returned']);
+        $this->assertSame('boundary_test', $d['_walkaway_state'], 'still gone, waiting for the hoover');
+    }
+
+    /** Early recovery still returns a non-sleeper that was left alone. */
+    public function testALowResentmentWalkawayLeftAloneRecoversEarly(): void
+    {
+        $d = $this->npc();
+        $d['attachment_style'] = 'secure';
+        $d['dimensions']['resentment']['x'] = 20.0;
+        $d['dimensions']['comfort']['x'] = 50.0;
+        RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'autonomy');
+        RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);   // pending -> active
+        $r = RelationshipDynamics::resolveWalkawayTick($d, 'Lydia', 'Jealous', false);
+        $this->assertTrue($r['returned'], 'not followed, not a sleeper: early recovery');
+        $this->assertSame('normal', $d['_walkaway_state']);
+    }
+
     public function testReturnedNpcDoesNotWalkStraightOutAgain(): void
     {
         $d = $this->inBoundaryTest();

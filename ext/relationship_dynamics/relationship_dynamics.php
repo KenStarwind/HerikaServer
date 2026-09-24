@@ -14694,21 +14694,22 @@ class RelationshipDynamics
         $resentment = floatval($dims['resentment']['x'] ?? 0);
         $comfort = floatval($dims['comfort']['x'] ?? 50);
 
-        // Early recovery: resentment already below threshold AND comfort above minimum
-        if ($resentment < self::WALKAWAY_RECOVERY_RESENTMENT_MAX
-            && $comfort > self::WALKAWAY_RECOVERY_COMFORT_MIN) {
-            return 'recovery';
-        }
-
-        // Player followed → failed (MDD 6.4)
+        // Player followed → failed (MDD 6.4), whatever the resentment behind the walkaway.
         if (!empty($dynamics['_walkaway_player_followed'])) {
             return 'permanent';
         }
 
-        // A Toxic sleeper does not come back through the boundary test: it vanishes until
-        // its hoover (MDD 6.6, 72-96 game-calendar hours).
+        // A Toxic sleeper does not come back through the boundary test (early recovery
+        // included): it vanishes until its hoover (MDD 6.6, 72-96 game-calendar hours).
         if (self::isHooverSleeper($dynamics)) {
             return null;
+        }
+
+        // Early recovery: resentment (0..100) already below threshold AND comfort (0..100)
+        // above minimum
+        if ($resentment < self::WALKAWAY_RECOVERY_RESENTMENT_MAX
+            && $comfort > self::WALKAWAY_RECOVERY_COMFORT_MIN) {
+            return 'recovery';
         }
 
         // Left alone for the whole test → resolved. This clears the walkaway only; the
