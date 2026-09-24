@@ -295,6 +295,57 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->assertEqualsWithDelta($after, self::resentment($d), 1e-9, 'the neglect already felt stays');
     }
 
+    // ------------------------------------------------------------ neglect bond type from core (affinity lane seam)
+
+    /** Core affinity (-100..100) as prerequest leaves it: mirror x and its core snapshot agree. */
+    private static function withCoreAffinity(array $d, float $coreAff): array
+    {
+        $mirror = ($coreAff + 100.0) / 2.0;   // mirror scale 0..100
+        $d['dimensions']['affinity']['x'] = $mirror;
+        $d['_aff_mirror_x'] = $mirror;
+        return $d;
+    }
+
+    public function testCoreRomanticSpouseIsNeglectedAsABond(): void
+    {
+        // Core Player.type is the relationship type: a spouse with few RelDyn interactions
+        // (stage early, no explicit type) is still a bond that feels neglect.
+        $d = self::withCoreAffinity($this->npc(), 40.0);
+        RelationshipDynamics::setCoreRelationshipType($d, 'romantic');
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 10 * self::DAY);
+
+        $bond = RelationshipDynamics::defaultConfig()['neglect_bond_types']['bonded'];
+        $this->assertSame('bonded', $r['bond_type']);
+        $this->assertEqualsWithDelta(10 - $bond['grace_game_days'], $r['neglect_days'], 1e-9);
+        $this->assertGreaterThan(0.0, self::resentment($d));
+    }
+
+    public function testNeutralCoreTypeTakesItsNeglectBondFromTheCoreAffinityTier(): void
+    {
+        // Core aff 85 (-100..100) is the bonded tier; core aff 0 is a neutral stranger.
+        $close = self::withCoreAffinity($this->npc(), 85.0);
+        RelationshipDynamics::setCoreRelationshipType($close, 'neutral');
+        $r = RelationshipDynamics::advanceCalendar($close, self::T0, self::T0 + 10 * self::DAY);
+        $this->assertSame('bonded', $r['bond_type']);
+        $this->assertGreaterThan(0.0, $r['neglect_days']);
+
+        $stranger = self::withCoreAffinity($this->npc(), 0.0);
+        RelationshipDynamics::setCoreRelationshipType($stranger, 'neutral');
+        $r = RelationshipDynamics::advanceCalendar($stranger, self::T0, self::T0 + 30 * self::DAY);
+        $this->assertSame(0.0, $r['neglect_days'], 'a neutral stranger is not neglected');
+        $this->assertSame(0.0, self::resentment($stranger));
+    }
+
+    public function testCoreEnemyIsNotNeglected(): void
+    {
+        // Even with a stored RelDyn 'bonded' type, core hostility wins (decisions: core is the source).
+        $d = self::withCoreAffinity($this->npc(['relationship_type' => 'bonded']), -60.0);
+        RelationshipDynamics::setCoreRelationshipType($d, 'enemy');
+        $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 30 * self::DAY);
+        $this->assertSame('hostile', $r['bond_type']);
+        $this->assertSame(0.0, $r['neglect_days']);
+    }
+
     public function testNoNeglectOrFadeWhileTheyAreTheOneWhoLeft(): void
     {
         $d = $this->npc(['relationship_type' => 'bonded', '_walkaway_state' => 'boundary_test']);

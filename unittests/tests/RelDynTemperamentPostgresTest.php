@@ -86,15 +86,16 @@ final class RelDynTemperamentPostgresTest extends TestCase
             voiceid text, gender text, race text,
             metadata jsonb,
             extended_data jsonb,
+            gamets_last_updated numeric,
             plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'))");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
         pg_close($admin);
 
         $this->db = new RelDynTemperamentPgDb($dsn, $this->schema);
-        foreach (['db', 'PLAYER_NAME', 'gameRequest'] as $key) {
+        foreach (['db', 'PLAYER_NAME', 'gameRequest', 'HERIKA_NAME'] as $key) {
             $this->savedGlobals[$key] = array_key_exists($key, $GLOBALS) ? [$GLOBALS[$key]] : null;
         }
-        unset($GLOBALS['PLAYER_NAME'], $GLOBALS['gameRequest']);
+        unset($GLOBALS['PLAYER_NAME'], $GLOBALS['gameRequest'], $GLOBALS['HERIKA_NAME']);
         $GLOBALS['db'] = $this->db;
         RelationshipDynamics::clearConfigCache();
     }
@@ -115,12 +116,15 @@ final class RelDynTemperamentPostgresTest extends TestCase
     }
 
     /** Insert a vanilla-shaped NPC (processor/comm.php addnpc layout), optionally with stored RelDyn state. */
-    private function seedNpc(string $name, string $className, string $race, string $voice, ?array $dynamics = null, string $personality = ''): int
+    private function seedNpc(string $name, string $className, string $race, string $voice, ?array $dynamics = null, string $personality = '', ?array $playerRel = null): int
     {
         $meta = ['skills' => ['destruction' => '45', 'conjuration' => '40', 'speech' => '20', 'onehanded' => '15']];
         $ext = ['class' => ['name' => $className, 'formid' => '0x00013176'], 'factions' => [
             ['formid' => '0x0002816e', 'rank' => 0, 'name' => 'JobCourtWizardFaction'],
         ]];
+        if ($playerRel !== null) {
+            $ext['relationships'] = ['Player' => $playerRel];   // core relationships.Player (aff -100..100)
+        }
         $plugin = $dynamics === null ? '{}' : json_encode(['reldyn' => ['dynamics' => $dynamics]]);
         $row = pg_fetch_assoc(pg_query_params($this->db->link,
             'INSERT INTO core_npc_master (npc_name, personality, speechstyle, core, npc_static_bio, voiceid, gender, race, metadata, extended_data, plugin_extended_data)'
@@ -173,6 +177,54 @@ final class RelDynTemperamentPostgresTest extends TestCase
         pg_query_params($this->db->link, 'UPDATE core_npc_master SET personality = $1 WHERE id = $2',
             ['Arrogant, vain, haughty and pompous.', $id]);
         $this->assertSame('Guarded', RelationshipDynamics::getDynamics('Farengar Secret-Fire')['inferred_temperament']);
+    }
+
+    /** Runs the real prerequest hook for one NPC at $gamets (raw game-calendar gamets). */
+    private function prerequestAt(string $npc, float $gamets): void
+    {
+        $GLOBALS['PLAYER_NAME'] = 'Kaida';
+        $GLOBALS['HERIKA_NAME'] = $npc;
+        $GLOBALS['gameRequest'] = ['inputtext', '1727000000', (string) (int) $gamets, 'Kaida: hello'];
+        (static function () { require __DIR__ . '/../../ext/relationship_dynamics/prerequest.php'; })();
+        RelationshipDynamics::endRequest();
+    }
+
+    public function testAbsenceDecayUsesTheCoreDerivedTemperamentNotTheStoicFallback(): void
+    {
+        // Affinity lane seam: prerequest's absence decay reads inferred_temperament, which
+        // on vanilla 3.4.1 was null (every NPC decayed as Stoic). getDynamics now resolves
+        // it from core before the decay runs. Control NPC: same core data, stored Stoic.
+        $t0 = 400.0 * RelationshipDynamics::GAMETS_PER_DAY;         // raw gamets
+        $halfDay = 0.5 * RelationshipDynamics::GAMETS_PER_DAY;      // raw gamets
+        $rel = ['aff' => 60, 'type' => 'neutral'];                  // core aff (-100..100): close_friend tier
+        $this->seedNpc('Farengar Secret-Fire', 'Spell Vendor', 'Nord', 'sk_malecondescending',
+            ['_decay_last_game_gamets' => $t0], '', $rel);
+        $this->seedNpc('Wylandriah', 'Spell Vendor', 'Nord', 'sk_malecondescending',
+            ['_decay_last_game_gamets' => $t0, 'inferred_temperament' => 'Stoic', 'attachment_style' => 'avoidant'], '', $rel);
+
+        // The attraction matrix can friendzone one of them (a different type modifier); keep
+        // it out so the temperament is the only difference between the two NPCs.
+        pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2)',
+            [RelationshipDynamics::CONFIG_ROW_ID, json_encode(['attraction_matrix_enabled' => false])]);
+        RelationshipDynamics::clearConfigCache();
+
+        $drop = [];
+        foreach (['Farengar Secret-Fire', 'Wylandriah'] as $npc) {
+            $this->prerequestAt($npc, $t0 + $halfDay);
+            $d = RelationshipDynamics::loadStoredDynamics($npc);
+            $this->assertSame('friend', RelationshipDynamics::getRelationshipType($npc, $d));
+            // Core points lost: committed whole points plus the fraction still queued for core.
+            $drop[$npc] = 60.0 - (RelationshipDynamics::getCoreAffinity($d) + floatval($d['_pending_aff_delta'] ?? 0));
+        }
+        $derived = RelationshipDynamics::loadStoredDynamics('Farengar Secret-Fire');
+        $this->assertSame('Guarded', $derived['inferred_temperament']);
+        $this->assertSame('avoidant', $derived['attachment_style'], 'same attachment as the control');
+
+        $this->assertGreaterThan(0.0, $drop['Wylandriah'], 'the Stoic control decays too');
+        // Everything but the temperament rate is identical, so the drops keep the rate ratio.
+        $ratio = RelationshipDynamics::TEMPERAMENT_DECAY_RATES['Guarded'] / RelationshipDynamics::TEMPERAMENT_DECAY_RATES['Stoic'];
+        $this->assertEqualsWithDelta($ratio, $drop['Farengar Secret-Fire'] / $drop['Wylandriah'], 0.05,
+            'decay ran at the derived Guarded rate, not the Stoic fallback');
     }
 
     public function testStateStoredBeforeTheFixIsResolvedAndUntouchedStoicSeedsAreReplaced(): void

@@ -1856,6 +1856,8 @@ class RelationshipDynamics
     //      - the calendar step (advanceCalendar via runCalendarScan, checkpoint in
     //        plugin_extended_data.reldyn.calendar): fester, global neglect, passion
     //        absence fade;
+    //      - affinity absence decay (calculateDecayTicks, checkpoint _decay_last_game_gamets,
+    //        consumed each prerequest; floored at the baseline, never below core 0);
     //      - walkaway boundary test (24-48 h) and hoover sleeper (72-96 h);
     //      - consumable expiry, plasticity override (30 game days), night/moon.
     //    Rule: negative states never go DOWN on this clock (time does not heal); they
