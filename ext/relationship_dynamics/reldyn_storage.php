@@ -341,6 +341,43 @@ class RelDynStorage
         return array_map(fn($r) => ['id' => intval($r['id']), 'npc_name' => (string) $r['npc_name']], $rows);
     }
 
+    /**
+     * The whole 'reldyn' namespace for a compare-and-set replace (save-load reconcile).
+     * Returns null when the NPC row does not exist, otherwise
+     *   ['value' => assoc namespace or null when absent, 'expected' => its JSON or null].
+     */
+    public static function readNamespace(int $npcId): ?array
+    {
+        $row = self::db()->fetchOne(
+            'SELECT id, (plugin_extended_data -> $2::text)::text AS ns FROM core_npc_master WHERE id = $1',
+            [$npcId, self::PLUGIN_ID]
+        );
+        if (!isset($row['id'])) {
+            return null;
+        }
+        $ns = $row['ns'] ?? null;
+        if ($ns === null || $ns === '') {
+            return ['value' => null, 'expected' => null];
+        }
+        return ['value' => self::toAssoc(json_decode($ns, false, 512, JSON_THROW_ON_ERROR)), 'expected' => $ns];
+    }
+
+    /**
+     * Replace the whole 'reldyn' namespace only if it still holds $expected (from
+     * readNamespace(), null = absent). One statement. False when another writer got in first.
+     */
+    public static function replaceNamespaceIfUnchanged(int $npcId, ?string $expected, array $namespace): bool
+    {
+        $row = self::db()->fetchOne(
+            "UPDATE core_npc_master
+             SET plugin_extended_data = jsonb_set(plugin_extended_data, ARRAY[\$2::text], \$3::jsonb, true)
+             WHERE id = \$1 AND (plugin_extended_data -> \$2::text) IS NOT DISTINCT FROM \$4::jsonb
+             RETURNING id",
+            [$npcId, self::PLUGIN_ID, self::encode(empty($namespace) ? new stdClass() : $namespace), $expected]
+        );
+        return isset($row['id']);
+    }
+
     /** Read a list key without consuming it. */
     public static function peekItems(int $npcId, string $key): array
     {

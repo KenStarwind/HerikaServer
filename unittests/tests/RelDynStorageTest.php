@@ -74,6 +74,10 @@ final class RelDynStorageFakeDb
 
     private function run(string $sql, array $params)
     {
+        // ---- save-load generation (RelDynTimeline::freshLoadGeneration): no load in this eventlog ----
+        if ($sql === "SELECT max(rowid) AS r FROM eventlog WHERE type = 'init'") {
+            return ['r' => null];
+        }
         // ---- conf_opts ----
         if (preg_match("/FROM conf_opts WHERE id = '([^']+)'/", $sql, $m)) {
             if ($m[1] === 'relationship_dynamics_config') {

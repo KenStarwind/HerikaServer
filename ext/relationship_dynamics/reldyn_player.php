@@ -915,7 +915,10 @@ class RelDynPlayer
      * |change| since the last snapshot (gained / spent kept apart). The game clock going
      * backwards is a save reload: re-baseline without counting. An unchanged wallet writes
      * nothing. One atomic upsert, so concurrent requests cannot double count a change.
-     * Called once per request from prerequest.php.
+     * Each write appends a checkpoint [gamets, gold, moved, gained, spent] (the newest
+     * save_load.gold_ledger_checkpoints kept; checkpoints later than this snapshot's game time
+     * are from a discarded timeline and dropped), so a save load can rewind the ledger
+     * (rewindGoldLedger). Called once per request from prerequest.php.
      */
     public static function recordGoldSnapshot(): void
     {
@@ -939,24 +942,79 @@ class RelDynPlayer
         $old = "core_player.value::jsonb";
         $delta = "({$gold} - ({$old}->>'last_gold')::numeric)";
         $rewound = "({$t} < ({$old}->>'last_gamets')::numeric)";
+        $moved = "({$old}->>'moved')::numeric + CASE WHEN {$rewound} THEN 0 ELSE abs({$delta}) END";
+        $gained = "({$old}->>'gained')::numeric + CASE WHEN {$rewound} THEN 0 ELSE greatest({$delta}, 0) END";
+        $spent = "({$old}->>'spent')::numeric + CASE WHEN {$rewound} THEN 0 ELSE greatest(-{$delta}, 0) END";
+        $keep = max(1, intval(RelDynTimeline::config()['gold_ledger_checkpoints']));   // count
+        $checkpoints = "(SELECT COALESCE(jsonb_agg(c.e ORDER BY c.i), '[]'::jsonb) FROM ("
+            . "SELECT a.e, a.i FROM jsonb_array_elements("
+            . "(CASE WHEN jsonb_typeof({$old}->'checkpoints') = 'array' THEN {$old}->'checkpoints' ELSE '[]'::jsonb END) "
+            . "|| jsonb_build_array(jsonb_build_array({$t}, {$gold}, {$moved}, {$gained}, {$spent}))) WITH ORDINALITY AS a(e, i) "
+            . "WHERE (a.e->>0)::numeric <= {$t} ORDER BY a.i DESC LIMIT {$keep}) c)";
         // 'opening': the wallet RelDyn first saw, gold earned before it watched (footprint lower bound)
         $init = $db->escapeLiteral(json_encode(['last_gold' => $gold, 'last_gamets' => $t, 'moved' => 0, 'gained' => 0,
-            'spent' => 0, 'snapshots' => 1, 'rebaselines' => 0, 'since_gamets' => $t, 'opening' => $gold]));
+            'spent' => 0, 'snapshots' => 1, 'rebaselines' => 0, 'since_gamets' => $t, 'opening' => $gold,
+            'checkpoints' => [[$t, $gold, 0, 0, 0]]]));
         $key = $db->escapeLiteral(self::LEDGER_KEY);
         try {
             $db->fetchAll("INSERT INTO core_player (id, value) VALUES ({$key}, {$init}) "
                 . "ON CONFLICT (id) DO UPDATE SET value = jsonb_build_object("
                 . "'last_gold', {$gold}, 'last_gamets', {$t}, "
-                . "'moved', ({$old}->>'moved')::numeric + CASE WHEN {$rewound} THEN 0 ELSE abs({$delta}) END, "
-                . "'gained', ({$old}->>'gained')::numeric + CASE WHEN {$rewound} THEN 0 ELSE greatest({$delta}, 0) END, "
-                . "'spent', ({$old}->>'spent')::numeric + CASE WHEN {$rewound} THEN 0 ELSE greatest(-{$delta}, 0) END, "
+                . "'moved', {$moved}, 'gained', {$gained}, 'spent', {$spent}, "
                 . "'snapshots', ({$old}->>'snapshots')::int + 1, "
                 . "'rebaselines', ({$old}->>'rebaselines')::int + CASE WHEN {$rewound} THEN 1 ELSE 0 END, "
-                . "'since_gamets', {$old}->'since_gamets', 'opening', {$old}->'opening')::text "
+                . "'since_gamets', {$old}->'since_gamets', 'opening', {$old}->'opening', "
+                . "'checkpoints', {$checkpoints})::text "
                 . "WHERE ({$old}->>'last_gold')::numeric IS DISTINCT FROM {$gold} OR {$rewound} "
                 . "RETURNING value");
         } catch (\Throwable $e) {
             RelationshipDynamics::logError('RelDynPlayer gold ledger', $e);
         }
+    }
+
+    /**
+     * Save load (save-load-rollback): the ledger follows the game back to $loadGamets (raw
+     * gamets). Totals and the wallet return to the newest checkpoint at or before it, later
+     * checkpoints go. A ledger opened after that point is deleted (the next snapshot opens it
+     * again from the loaded wallet). Without a usable checkpoint (a ledger older than the
+     * checkpoints, or all of them trimmed away) the totals stay and the next snapshot
+     * re-baselines as a reload (logged). One compare-and-set write.
+     *
+     * @return string 'none' | 'current' | 'rewound' | 'reopened' | 'kept' | 'conflict'
+     */
+    public static function rewindGoldLedger(float $loadGamets): string
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return 'none';
+        $row = $db->fetchOne('SELECT value FROM core_player WHERE id = $1', [self::LEDGER_KEY]);
+        $raw = $row['value'] ?? null;
+        $ledger = is_string($raw) ? json_decode($raw, true) : null;
+        if (!is_array($ledger)) return 'none';
+        if (floatval($ledger['last_gamets'] ?? 0) <= $loadGamets) return 'current';
+
+        $checkpoints = array_values(array_filter((array) ($ledger['checkpoints'] ?? []),
+            static fn($c) => is_array($c) && count($c) >= 5 && is_numeric($c[0])));
+        $at = null;
+        foreach ($checkpoints as $c) {
+            if (floatval($c[0]) <= $loadGamets) $at = $c;
+        }
+        if ($at === null && is_numeric($ledger['since_gamets'] ?? null) && floatval($ledger['since_gamets']) > $loadGamets) {
+            $gone = $db->fetchOne('DELETE FROM core_player WHERE id = $1 AND value = $2 RETURNING id', [self::LEDGER_KEY, $raw]);
+            return isset($gone['id']) ? 'reopened' : 'conflict';
+        }
+        if ($at === null) {
+            error_log('[RelDyn-PLAYER] gold ledger has no checkpoint at or before gamets ' . $loadGamets . '; totals kept, the next snapshot re-baselines');
+            return 'kept';
+        }
+        $ledger['last_gamets'] = intval($at[0]);
+        $ledger['last_gold'] = intval($at[1]);
+        $ledger['moved'] = $at[2];
+        $ledger['gained'] = $at[3];
+        $ledger['spent'] = $at[4];
+        $ledger['rebaselines'] = intval($ledger['rebaselines'] ?? 0) + 1;
+        $ledger['checkpoints'] = array_values(array_filter($checkpoints, static fn($c) => floatval($c[0]) <= $loadGamets));
+        $won = $db->fetchOne('UPDATE core_player SET value = $2 WHERE id = $1 AND value = $3 RETURNING id',
+            [self::LEDGER_KEY, json_encode($ledger), $raw]);
+        return isset($won['id']) ? 'rewound' : 'conflict';
     }
 }
