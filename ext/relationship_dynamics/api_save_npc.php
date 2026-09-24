@@ -325,10 +325,10 @@ try {
             $dynamics = RelationshipDynamics::getDynamics($npcName);
 
             // Reset runtime state but keep configuration
-            $dynamics['passion'] = 0.0;
+            RelationshipDynamics::setPassion($dynamics, 0.0);
             $dynamics['passion_updated_at'] = 0;
             $dynamics['passion_sources'] = ['love_match' => 0, 'reunion' => 0, 'dramatic' => 0, 'repair' => 0];
-            $dynamics['jealousy_anger'] = 0.0;
+            RelationshipDynamics::setJealousy($dynamics, 0.0);
             $dynamics['jealousy_updated_at'] = 0;
             $dynamics['jealousy_trigger_npc'] = null;
             $dynamics['in_conflict'] = false;

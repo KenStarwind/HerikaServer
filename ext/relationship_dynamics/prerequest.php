@@ -181,14 +181,14 @@ if ($ambientInterest && $ambientResonance >= 0.15) {
         // Aela in wilderness (resonance 0.61): ceiling ≈ 19
         // Ashe in Dwemer ruin (resonance 0.65): ceiling ≈ 20
         $ambientCeiling = 10.0 * $ambientMult;
-        $currentPassion = floatval($dynamics['passion'] ?? 0);
+        $currentPassion = RelationshipDynamics::getPassion($dynamics);
 
         // TRICKLE — passive gain, ~0.3/min at high resonance, stops at ceiling
         $lastAmbient = intval($dynamics['_ambient_updated_at'] ?? 0);
         $minutesSince = $lastAmbient > 0 ? (time() - $lastAmbient) / 60.0 : 0;
         if ($minutesSince > 0.5 && $currentPassion < $ambientCeiling) {
             $trickle = min($ambientCeiling - $currentPassion, 0.3 * ($ambientMult - 1.0) * $minutesSince);
-            $dynamics['passion'] = $currentPassion + $trickle;
+            RelationshipDynamics::setPassion($dynamics, $currentPassion + $trickle);
             $dynamics['_ambient_updated_at'] = time();
             if ($trickle > 0.01) {
                 RelationshipDynamics::log("Ambient trickle: {$npcName} @ '{$ambientLocation}' ({$ambientSource}, resonance=" . round($ambientResonance, 3) . ", mult={$ambientMult}x) +{" . round($trickle, 2) . "} passion=" . round($dynamics['passion'], 1) . " (ceiling=" . round($ambientCeiling, 0) . ")");

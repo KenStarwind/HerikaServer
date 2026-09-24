@@ -184,7 +184,7 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
                     $dynamics['total_positive_interactions'] = intval($dynamics['total_positive_interactions'] ?? 0) + 1;
                 } else {
                     // Negative drain (bleedout): clamp at zero, don't use addPassion
-                    $dynamics['passion'] = max(0, floatval($dynamics['passion']) + $gain);
+                    RelationshipDynamics::setPassion($dynamics, max(0, RelationshipDynamics::getPassion($dynamics) + $gain));
                     $dynamics['passion_updated_at'] = time();
                 }
                 $dynamics['interaction_count'] = intval($dynamics['interaction_count'] ?? 0) + 1;
@@ -623,11 +623,8 @@ skip_conflict:
 // ========== FRIENDZONE PASSION CAP (PR 11) ==========
 if (!empty($GLOBALS['RELDYN_MATRIX_FRIENDZONED'])) {
     $friendzoneCap = 20;
-    if (isset($dynamics['passion']) && floatval($dynamics['passion']) > $friendzoneCap) {
-        $dynamics['passion'] = floatval($friendzoneCap);
-    }
-    if (isset($dynamics['dimensions']['passion']['x']) && floatval($dynamics['dimensions']['passion']['x']) > $friendzoneCap) {
-        $dynamics['dimensions']['passion']['x'] = floatval($friendzoneCap);
+    if (RelationshipDynamics::getPassion($dynamics) > $friendzoneCap) {
+        RelationshipDynamics::setPassion($dynamics, $friendzoneCap);
     }
 }
 
@@ -642,10 +639,14 @@ if (!empty($reldynCfg['parasite_detection_enabled'])) {
     RelationshipDynamics::checkParasiteRecovery($npcName, $dynamics);
 }
 
+// A5: the eval readers below must only see this request's pending eval. With the
+// dimension engine off nothing consumes it, so pendingEvalForRequest() drops it.
+$rdPendingEval = RelationshipDynamics::pendingEvalForRequest($dynamics);
+
 // ========== ICK TRACKER + CHARISMA DETECTION (PR 15) ==========
 if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
-    $evalPending = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? [];
+    $evalPending = $rdPendingEval;
     $isRomantic = RelationshipDynamics::isRomanticAttempt($classifiedLL, $lastMood, $evalPending);
     $temperament = $dynamics['inferred_temperament'] ?? null;
     $ickChanged = RelationshipDynamics::updateIckTracker($dynamics, $isRomantic, $temperament);
@@ -656,7 +657,7 @@ if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
 }
 
 if (!empty($reldynCfg['charisma_detection_enabled'] ?? true)) {
-    $evalPending = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? [];
+    $evalPending = $rdPendingEval;
     $romanticIntent = intval($evalPending['romantic_intent'] ?? 0);
     $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
     RelationshipDynamics::updateCharismaTracker($dynamics, $romanticIntent, $affinityDelta);
@@ -687,7 +688,7 @@ $rdCfg = $rdCfg ?? RelationshipDynamics::getConfig();
 if (!empty($rdCfg['director_goals_enabled'] ?? true)) {
     $activeGoal = RelationshipDynamics::getActiveDirectorGoal($dynamics);
     if ($activeGoal && !empty($activeGoal['text'])) {
-        $evalData = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? null;
+        $evalData = $rdPendingEval;
         if (is_array($evalData) && !empty($evalData['goal_addressed'])) {
             RelationshipDynamics::fulfillDirectorGoal($dynamics, 'eval_confirmed');
         }

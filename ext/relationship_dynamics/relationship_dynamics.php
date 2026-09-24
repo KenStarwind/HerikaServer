@@ -939,8 +939,9 @@ class RelationshipDynamics
             'stage_established_threshold' => 50,
             'stage_deep_threshold' => 200,
             'log_enabled' => false,
-            // XYZ Dimension Engine
-            'dimension_engine_enabled' => false,
+            // XYZ Dimension Engine — on by default: the MDD section 15 eval signals,
+            // modifier pipeline and resentment accumulator all run through it.
+            'dimension_engine_enabled' => true,
             'dimension_context_enabled' => false,
             'dimension_debug_logging' => false,
             'dimension_max_context_lines' => 10,
@@ -1646,8 +1647,38 @@ class RelationshipDynamics
         $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
         $floor = self::STAGE_PARAMS[$stage]['floor'] ?? 0;
 
-        $dynamics['passion'] = max($floor, floatval($dynamics['passion']) - $decay);
+        self::setPassion($dynamics, max($floor, self::getPassion($dynamics) - $decay));
         $dynamics['passion_updated_at'] = $now;
+    }
+
+    /**
+     * Current passion. dimensions.passion.x is the single source of truth;
+     * the flat 'passion' key is only a mirror for legacy readers.
+     */
+    public static function getPassion($dynamics)
+    {
+        $x = $dynamics['dimensions']['passion']['x'] ?? null;
+        if ($x !== null) {
+            return floatval($x);
+        }
+        return floatval($dynamics['passion'] ?? 0);
+    }
+
+    /**
+     * The one writer for passion: sets dimensions.passion.x and derives the
+     * legacy 'passion' mirror from it. Never assign $dynamics['passion'] directly.
+     */
+    public static function setPassion(&$dynamics, $value)
+    {
+        $value = floatval($value);
+        if (!isset($dynamics['dimensions']) || !is_array($dynamics['dimensions'])) {
+            $dynamics['dimensions'] = [];
+        }
+        if (!isset($dynamics['dimensions']['passion']) || !is_array($dynamics['dimensions']['passion'])) {
+            $dynamics['dimensions']['passion'] = ['x' => 0, 'baseline' => 0];
+        }
+        $dynamics['dimensions']['passion']['x'] = $value;
+        $dynamics['passion'] = $value;
     }
 
     /**
@@ -1672,8 +1703,17 @@ class RelationshipDynamics
         $decayRate = floatval($cfg['jealousy_decay_per_hour'] ?? 1.5);
         $decay = $decayRate * $hoursSince;
 
-        $dynamics['jealousy_anger'] = max(0.0, floatval($dynamics['jealousy_anger']) - $decay);
+        self::setJealousy($dynamics, max(0.0, floatval($dynamics['jealousy_anger']) - $decay));
         $dynamics['jealousy_updated_at'] = $now;
+    }
+
+    /**
+     * The one writer for jealousy. jealousy_anger is jealousy's single source of
+     * truth; it is NOT resentment (dimensions.resentment.x) and is never mirrored.
+     */
+    public static function setJealousy(&$dynamics, $value)
+    {
+        $dynamics['jealousy_anger'] = floatval($value);
     }
 
     /**
@@ -1731,7 +1771,7 @@ class RelationshipDynamics
         $cfg = self::getConfig();
         $max = min(floatval($cfg['passion_max'] ?? 100.0), $ceiling);
 
-        $dynamics['passion'] = min($max, floatval($dynamics['passion']) + $amount);
+        self::setPassion($dynamics, min($max, self::getPassion($dynamics) + $amount));
         $dynamics['passion_updated_at'] = self::getPlayGamets($dynamics);
 
         // Track source
@@ -1950,7 +1990,7 @@ class RelationshipDynamics
         $cfg = self::getConfig();
         $max = floatval($cfg['jealousy_max'] ?? 100.0);
 
-        $dynamics['jealousy_anger'] = min($max, floatval($dynamics['jealousy_anger']) + $amount);
+        self::setJealousy($dynamics, min($max, floatval($dynamics['jealousy_anger']) + $amount));
         $dynamics['jealousy_updated_at'] = self::getPlayGamets($dynamics);
         if ($triggerNpc) {
             $dynamics['jealousy_trigger_npc'] = $triggerNpc;
@@ -3052,11 +3092,22 @@ class RelationshipDynamics
             }
         }
 
-        // Sync legacy passion → dimensions.passion.x
-        $dynamics['dimensions']['passion']['x'] = floatval($dynamics['passion'] ?? 0);
+        // One source of truth per value: dimensions.passion.x is canonical for passion.
+        // Blobs saved before DIMENSION_STATE_VERSION re-copied legacy passion into
+        // dimensions on every load, so for those the legacy key is the truth.
+        if (intval($dynamics['_dimension_state_version'] ?? 0) < self::DIMENSION_STATE_VERSION) {
+            $dynamics['dimensions']['passion']['x'] = floatval($dynamics['passion'] ?? 0);
 
-        // Sync legacy jealousy_anger → dimensions.resentment.x (closest semantic match)
-        $dynamics['dimensions']['resentment']['x'] = floatval($dynamics['jealousy_anger'] ?? 0);
+            // Jealousy (MDD 6.5) and resentment (MDD 15.5, grievance accumulator) are
+            // separate values. The April engine overwrote resentment.x with jealousy_anger
+            // on every load, so no stored resentment.x is its own history: jealousy_anger
+            // stays jealousy, resentment starts from its baseline of 0.
+            $dynamics['dimensions']['resentment']['x'] = 0;
+
+            $dynamics['_dimension_state_version'] = self::DIMENSION_STATE_VERSION;
+        }
+        // Legacy mirror is derived from the canonical value, never the other way round.
+        $dynamics['passion'] = self::getPassion($dynamics);
 
         // Affinity: managed by core_npc_master.extended_data.relationships[player].aff
         // — intentionally NOT synced here; affinity.x stays at its current value
@@ -3370,6 +3421,13 @@ class RelationshipDynamics
     }
 
     /**
+     * Schema of the passion/jealousy/resentment state in the dynamics blob.
+     * < 2: April engine (legacy passion copied into dimensions on load,
+     *      resentment aliased to jealousy_anger). 2: one source of truth each.
+     */
+    const DIMENSION_STATE_VERSION = 2;
+
+    /**
      * Sync legacy flat keys FROM the dimensions sub-object.
      * Called on every saveDynamics() to keep legacy keys in sync when new
      * code writes to dimensions directly.
@@ -3388,15 +3446,15 @@ class RelationshipDynamics
 
         $dim = $dynamics['dimensions'];
 
-        // passion ↔ dimensions.passion.x
+        // passion mirror ← dimensions.passion.x (canonical, written only via setPassion)
         if (isset($dim['passion']['x']) && $dim['passion']['x'] !== null) {
             $dynamics['passion'] = floatval($dim['passion']['x']);
+            // Blob is now in canonical form: the next load must not re-migrate it.
+            $dynamics['_dimension_state_version'] = self::DIMENSION_STATE_VERSION;
         }
 
-        // jealousy_anger ↔ dimensions.resentment.x
-        if (isset($dim['resentment']['x']) && $dim['resentment']['x'] !== null) {
-            $dynamics['jealousy_anger'] = floatval($dim['resentment']['x']);
-        }
+        // jealousy_anger is its own value (written via setJealousy) and resentment lives
+        // only in dimensions.resentment.x — no mirror between them.
 
         // Future syncs (arousal, valence, etc.) will be added as those
         // dimensions become active in later PRs.
@@ -4894,7 +4952,11 @@ class RelationshipDynamics
         $actualDelta = $newX - $x;
 
         // --- Write back ---
-        $dimState['x'] = round($newX, 4);
+        if ($dimensionId === 'passion') {
+            self::setPassion($dynamics, round($newX, 4));
+        } else {
+            $dimState['x'] = round($newX, 4);
+        }
 
         // Debug logging
         error_log("[RelDyn-XYZ] applyDelta: dim={$dimensionId} X={$x}=>{$newX} "
@@ -5133,6 +5195,37 @@ class RelationshipDynamics
         unset($dynamics['_pending_xyz_eval']);
 
         return self::processEvalDeltas($npcName, $pending, $dynamics);
+    }
+
+    /**
+     * The pending eval that belongs to THIS request, for readers that run before
+     * processPendingEvalDeltas() (ick, charisma, director goal).
+     *
+     * Only processPendingEvalDeltas() consumes _pending_xyz_eval, and it runs only
+     * with the dimension engine enabled. With the engine off the same eval would be
+     * re-read on every request forever, so it is dropped here instead. The legacy
+     * '_pending_eval' key has no consumer at all and is always dropped.
+     *
+     * @param array &$dynamics NPC dynamics blob (by reference)
+     * @return array  The pending eval, or [] when there is none / engine is off
+     */
+    public static function pendingEvalForRequest(&$dynamics)
+    {
+        if (array_key_exists('_pending_eval', $dynamics)) {
+            unset($dynamics['_pending_eval']);
+        }
+
+        $config = self::getConfig();
+        if (empty($config['dimension_engine_enabled'])) {
+            if (array_key_exists('_pending_xyz_eval', $dynamics)) {
+                unset($dynamics['_pending_xyz_eval']);
+                self::log("Dimension engine disabled: dropped unprocessed _pending_xyz_eval");
+            }
+            return [];
+        }
+
+        $pending = $dynamics['_pending_xyz_eval'] ?? null;
+        return is_array($pending) ? $pending : [];
     }
 
 
@@ -13024,7 +13117,7 @@ class RelationshipDynamics
             $current = floatval($dynamics['dimensions'][$dim]['x'] ?? 50);
             $delta = $target - $current;
             if ($dim === 'passion') {
-                $dynamics['passion'] = floatval($target);
+                self::setPassion($dynamics, $target);
                 $results[$dim] = ['from' => $current, 'to' => $target];
             } else {
                 $dynamics['dimensions'][$dim]['x'] = floatval($target);
