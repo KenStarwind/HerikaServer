@@ -216,7 +216,9 @@ final class RelDynPlaceFacetsTest extends TestCase
     {
         $this->assertSame('adventure', RelDynFacets::dominantInterest(['danger' => 1.0, 'adventure' => 0.8, 'combat' => 0.6]));
         $this->assertSame('nature', RelDynFacets::dominantInterest(['nature' => 0.8, 'wild' => 0.8]));
-        $this->assertNull(RelDynFacets::dominantInterest(['confined' => 0.5, 'social' => 0.2]));
+        $this->assertSame('social', RelDynFacets::dominantInterest(['confined' => 0.5, 'social' => 0.2]));
+        $this->assertNull(RelDynFacets::dominantInterest(['confined' => 0.5, 'social' => 0.2], 0.3), 'below the asked minimum');
+        $this->assertNull(RelDynFacets::dominantInterest(['confined' => 0.5, 'dark' => 0.9]), 'situational facets are not interests');
     }
 
     /** The mapping is config: an edited tag row changes the vector without a code change. */

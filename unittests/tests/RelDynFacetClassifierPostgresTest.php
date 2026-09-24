@@ -430,7 +430,7 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
         $this->build();
         // ebony_mace: combat (equipment) vs crafting (blacksmith + the model) -- whatever the stored row says wins
         $f = $this->stored('ebony_mace')['facets'];
-        $this->assertSame(RelDynFacetClassifier::dominantInterest($f), RelationshipDynamics::classifyItemInterest('Ebony Mace'));
+        $this->assertSame(RelDynFacets::dominantInterest($f), RelationshipDynamics::classifyItemInterest('Ebony Mace'));
         $this->assertSame('enchanting', RelationshipDynamics::classifyItemInterest('Soul Gem'));
     }
 

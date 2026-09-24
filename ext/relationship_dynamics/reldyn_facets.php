@@ -270,12 +270,12 @@ class RelDynFacets
     }
 
     /**
-     * The strongest interest facet (one of the 11) of a facet vector, or null when none
-     * reaches place_facets.dominant_interest_min. Ties go to INTERESTS order.
+     * The strongest interest facet (one of the 11 MDD 1.2 interests; situational facets never
+     * count) of a facet vector, for the legacy interest-string callers; null when none is
+     * above 0 or reaches $min. Ties go to INTERESTS order.
      */
-    public static function dominantInterest(array $facets): ?string
+    public static function dominantInterest(array $facets, float $min = 0.0): ?string
     {
-        $min = floatval(self::placeFacetConfig()['dominant_interest_min'] ?? 0.0);
         $best = null;
         $bestW = 0.0;
         foreach (self::INTERESTS as $interest) {
@@ -442,11 +442,6 @@ class RelDynFacets
             'weather' => ['fog' => ['dark' => 0.3], 'snow' => ['wild' => 0.4], 'rain' => ['wild' => 0.3]],
             // Game hours [from, to), wrapping past midnight (the April TIME_MODIFIERS hours).
             'time_of_day_hours' => ['dawn' => [5, 8], 'day' => [8, 17], 'dusk' => [17, 20], 'night' => [20, 5]],
-            // detectCurrentInterest() names the place's strongest interest facet from this weight.
-            'dominant_interest_min' => 0.3,
-            // Interest satisfaction (internal weather, calculateInterestSatisfaction): being in a
-            // place whose interest facet is at least this strong feeds that interest.
-            'satisfies_interest_min' => 0.5,
         ];
     }
 

@@ -3748,7 +3748,7 @@ class RelationshipDynamics
     public static function classifyItemInterest($itemName)
     {
         if (!is_string($itemName) || trim($itemName) === '') return null;
-        return RelDynFacetClassifier::dominantInterest(RelDynFacets::thingFacets('item', $itemName));
+        return RelDynFacets::dominantInterest(RelDynFacets::thingFacets('item', $itemName));
     }
 
     /**

@@ -1347,19 +1347,4 @@ final class RelDynFacetClassifier
             'felt' => RelDynFacets::feltText($npcName, $a, 'item', $itemName),
         ];
     }
-
-    /** The strongest of the 11 MDD interests in a facet vector (legacy interest-string callers), or null. */
-    public static function dominantInterest(array $facets): ?string
-    {
-        $best = null;
-        $bestW = 0.0;
-        foreach (RelDynFacets::INTERESTS as $interest) {
-            $w = (float) ($facets[$interest] ?? 0.0);
-            if ($w > $bestW) {
-                $best = $interest;
-                $bestW = $w;
-            }
-        }
-        return $best;
-    }
 }
