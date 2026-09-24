@@ -12,7 +12,12 @@
  *      builds the eval prompt from a real eventlog window (prechat excluded, speakers parsed),
  *      calls the eval LLM, validates the JSON strictly into the shared eval contract and hands
  *      the item to the eval inbox in the same statement that deletes the job
- *      (RelDynStorage::appendItemConsumingRow). The next request of that NPC consumes the inbox.
+ *      (RelDynStorage::appendItemConsumingRow). Then it applies that NPC's inbox itself
+ *      (applyInboxInWorker -> RelationshipDynamics::applyEvalInbox: dimensions, feelings, a
+ *      locked delta on core Player.aff), like core's async worker did, so an exchange moves
+ *      affinity within seconds even when the NPC never has another request (radiant lines,
+ *      NPCs the player walks away from). What it cannot apply (another request holds the
+ *      inbox, or eval_producer.apply_in_worker off) the NPC's next postrequest applies.
  *   3. Failures: an LLM/transport error or a failed inbox write keeps the job (attempts+1,
  *      dead-lettered as status 'dead' after max_attempts, never deleted). Malformed LLM output
  *      is logged and dropped (not applied). A job whose exchange a save load rolled back
@@ -160,6 +165,7 @@ final class RelDynEval
             'max_tokens'       => 768,   // completion tokens (April core patch raised 512 -> 768)
             'jobs_per_run'     => 25,    // jobs one worker process handles before it exits
             'autostart_worker' => true,  // start the worker process after queueing
+            'apply_in_worker'  => true,  // the worker applies the NPC's eval inbox right after filling it; false = the NPC's next postrequest does
         ];
     }
 
@@ -187,6 +193,21 @@ final class RelDynEval
             return 'disabled';
         }
         return null;
+    }
+
+    /**
+     * Does RelDyn own core's relationships.<$target>.aff of this NPC? True for the Player
+     * while RelDyn, the dimension engine and this eval producer are all on and the eval has a
+     * connector (its own, or core's RELLLM_CONNECTOR): RelDyn's eval is then the one writer of
+     * the player's affinity from evaluations (M table, core lock), so core's relationship eval
+     * (REL LLM, or #REL tags when that is off) keeps type and notes but leaves the number
+     * (Ken's ruling 2026-09-24, CHIM fork hook chimRelationshipAffinityOwned). Any switch off,
+     * or no connector (RelDyn's eval cannot run), hands the number back to core on its next
+     * evaluation. Read fresh on every call.
+     */
+    public static function ownsCoreAffinity(int $npcId, string $target): bool
+    {
+        return $target === 'Player' && self::switchedOffReason() === null && self::connectorId(self::config()) > 0;
     }
 
     public static function connectorId(array $cfg): int
@@ -589,7 +610,6 @@ final class RelDynEval
             }
             error_log("[RelDyn-EVAL] job {$id} {$npc}: " . json_encode($result['item']['signals'])
                 . ' tags=' . implode(',', $result['item']['tags']) . ' positive=' . ($result['item']['positive_interaction'] ? 'yes' : 'no'));
-            return 'queued';
         } catch (\Throwable $e) {
             $attempts = intval($row['attempts']) + 1;
             $max = max(1, intval(self::config()['max_attempts']));
@@ -601,6 +621,41 @@ final class RelDynEval
             );
             error_log("[RelDyn-EVAL] ERROR job {$id} for {$npc} attempt {$attempts}/{$max}" . ($status === 'dead' ? ' (dead-lettered)' : '') . ": {$msg}");
             return $status === 'dead' ? 'dead' : 'failed';
+        }
+        // The job is done (its item is in the inbox): applying it can no longer fail the job.
+        if (!empty(self::config()['apply_in_worker'])) {
+            self::applyInboxInWorker((string) $job['npc']);
+        }
+        return 'queued';
+    }
+
+    /**
+     * Apply an NPC's eval inbox from the worker, right after the worker filled it, so the
+     * exchange lands within seconds instead of on the NPC's next request (which may never
+     * come, and which postrequest skips for radiant lines and bystanders). Its own request
+     * scope (fresh config); any affinity change still pending is committed first and the
+     * mirror is read from core, as a request's prerequest does. Never throws: an item not
+     * applied here stays in the inbox for the NPC's next postrequest (logged).
+     *
+     * @return array|null dimension => actual delta applied, or null when it failed
+     */
+    public static function applyInboxInWorker(string $npcName): ?array
+    {
+        RelationshipDynamics::beginRequest();
+        try {
+            $dynamics = RelationshipDynamics::getDynamics($npcName);
+            RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
+            $rel = RelationshipDynamics::getPlayerRelationship($npcName);
+            RelationshipDynamics::refreshAffinityMirror($dynamics, intval($rel['aff'] ?? 0));
+            $applied = RelationshipDynamics::applyEvalInbox($npcName, $dynamics);
+            error_log("[RelDyn-EVAL] worker applied the eval inbox of {$npcName}: " . json_encode($applied));
+            return $applied;
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-EVAL] ERROR worker applying the eval inbox of {$npcName} (left for its next request): "
+                . get_class($e) . ': ' . $e->getMessage());
+            return null;
+        } finally {
+            RelationshipDynamics::endRequest();
         }
     }
 

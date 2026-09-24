@@ -61,7 +61,9 @@ final class RelDynEvalPgDb
  *   - the worker turns it into a contract item in the eval inbox from a realistic eventlog
  *     (prechat duplicates excluded, speakers attributed, other conversations left out);
  *   - malformed LLM output is logged and dropped; an LLM failure keeps the job.
- * Only the LLM call is stubbed (canned JSON at the connector boundary).
+ * Only the LLM call is stubbed (canned JSON at the connector boundary). These tests look at
+ * the item the worker writes, so the worker's own apply step is off here
+ * (eval_producer.apply_in_worker false); RelDynEvalEndToEndTest runs it with it on.
  *
  * Opt-in: RELDYN_TEST_PG_DSN pointing at a THROWAWAY database (never dbname=dwemer).
  * Each test works in its own schema and drops it.
@@ -71,6 +73,8 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
     private const T0 = 5000000;        // raw gamets of the exchange under test
     private const NPC = 'Aela the Huntress';
     private const PLAYER = 'Kaida';
+    /** The worker only fills the inbox here (see the class comment). */
+    private const PRODUCER_ONLY = ['eval_producer' => ['apply_in_worker' => false]];
 
     private string $dsn;
     private string $schema;
@@ -129,7 +133,7 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
         $GLOBALS['db'] = $this->db;
         $GLOBALS['PLAYER_NAME'] = self::PLAYER;
         $GLOBALS['RELLLM_CONNECTOR'] = 5;   // an eval connector is configured (the call itself is stubbed)
-        RelationshipDynamics::clearConfigCache();
+        $this->setConfig([]);
         RelDynEval::$launcher = function (): void { $this->launches++; };
         $this->logFile = tempnam(sys_get_temp_dir(), 'rdevalpg');
         $this->prevLog = ini_set('error_log', $this->logFile);
@@ -309,10 +313,7 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
     public function testCooldownAndChanceComeFromConfig(): void
     {
         $this->seedConversation();
-        pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2)', [
-            RelationshipDynamics::CONFIG_ROW_ID,
-            json_encode(['config_schema' => RelationshipDynamics::CONFIG_SCHEMA, 'eval_producer' => ['cooldown_gamets' => 1000]]),
-        ]);
+        $this->setConfig(['eval_producer' => ['cooldown_gamets' => 1000]]);
         $req = fn(int $g) => ['inputtext', '1727000123', (string) $g, 'Kaida: hi (Talking to Aela the Huntress)'];
         $this->postrequest(self::NPC, $req(self::T0), self::PLAYER);
         $this->postrequest(self::NPC, $req(self::T0 + 999), self::PLAYER);   // inside 1000 raw gamets
@@ -322,10 +323,7 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
         $this->postrequest(self::NPC, $req(self::T0 - 5000), self::PLAYER);  // clock went back (save load)
         $this->assertCount(3, $this->jobs(), 'a clock that went back never blocks');
 
-        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [
-            RelationshipDynamics::CONFIG_ROW_ID,
-            json_encode(['config_schema' => RelationshipDynamics::CONFIG_SCHEMA, 'eval_producer' => ['chance' => 0]]),
-        ]);
+        $this->setConfig(['eval_producer' => ['chance' => 0]]);
         $this->postrequest(self::NPC, $req(self::T0 + 90000), self::PLAYER);
         $this->assertCount(3, $this->jobs(), 'chance 0 queues nothing');
     }
@@ -633,7 +631,7 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
     {
         pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value', [
             RelationshipDynamics::CONFIG_ROW_ID,
-            json_encode(['config_schema' => RelationshipDynamics::CONFIG_SCHEMA] + $overrides),
+            json_encode(['config_schema' => RelationshipDynamics::CONFIG_SCHEMA] + array_replace_recursive(self::PRODUCER_ONLY, $overrides)),
         ]);
         RelationshipDynamics::clearConfigCache();
     }

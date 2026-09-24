@@ -74,8 +74,9 @@ final class RelDynEvalE2ePgDb
  *   -> postrequest.php (request 1) queues a job in reldyn_eval_queue, anchored at the exchange
  *   -> RelDynEval::runWorker() reads the eventlog window and calls the eval LLM
  *      (STUBBED: canned contract JSON at the connector boundary, the only fake here)
- *   -> contract v1 item in plugin_extended_data.reldyn.eval_inbox
- *   -> postrequest.php (request 2) consumes it: signals through the MDD 15.4 pipeline with the
+ *   -> contract v1 item in plugin_extended_data.reldyn.eval_inbox, which the worker applies
+ *      right away (eval_producer.apply_in_worker; else the NPC's next postrequest.php does):
+ *      signals through the MDD 15.4 pipeline with the
  *      decisions §1 multipliers, grievance -> resentment (MDD 15.5), jealousy event (§5),
  *      affinity committed to core relationships.Player.aff under core's lock.
  *
@@ -365,22 +366,16 @@ final class RelDynEvalEndToEndTest extends TestCase
         $this->assertStringContainsString("[Kaida] (to Muiri): Lydia is twice the woman you'll ever be. Stop whining at me.", $current);
         $this->assertStringContainsString('[Muiri] (to Kaida): How could you say that? After everything... Go to her, then.', $current);
 
-        $inbox = $this->reldyn()['eval_inbox'] ?? [];
-        $this->assertCount(1, $inbox);
-        $item = $inbox[0]['eval'];
-        // The seam: what the producer wrote is what the consumer validates.
-        $this->assertNotNull(RelationshipDynamics::normalizeEvalContractItem($item), 'producer item passes the consumer');
-        $this->assertSame(['v' => 1, 'npc' => self::NPC, 'npc_id' => $this->npcId, 'source' => 'reldyn_eval'],
-            ['v' => $item['v'], 'npc' => $item['npc'], 'npc_id' => $item['npc_id'], 'source' => $item['source']]);
-        $this->assertEqualsCanonicalizing(['insult', 'jealousy_trigger'], $item['tags']);
-        $this->assertFalse($item['positive_interaction'], 'an insult is not a positive interaction (derived by code)');
-
-        // --- request 2 (the NPC's next request, same game hour): the hook consumes the item ---
-        $this->postrequest(['inputtext', '1727000460', (string) (self::T0 + 60), 'Kaida: ...']);
+        // --- the worker applies the item right away (like core's async worker): no later
+        //     request of Muiri is needed for the exchange to move core affinity ---
         $stored = $this->reldyn();
         $after = $stored['dynamics'];
-        $this->assertSame([], $stored['eval_inbox'] ?? [], 'inbox consumed');
+        $this->assertSame([], $stored['eval_inbox'] ?? [], 'the worker applied the inbox');
         $log = $this->log();
+        // The seam: what the producer wrote is what the consumer validated and applied.
+        $this->assertMatchesRegularExpression('/\[RelDyn-EVAL\] job \d+ Muiri: .* tags=insult,jealousy_trigger positive=no/', $log);
+        $this->assertMatchesRegularExpression('/\[EVAL\] Muiri item gamets=\S+ sig=1 tags=\[insult,jealousy_trigger\] applied/', $log);
+        $this->assertStringContainsString('[RelDyn-EVAL] worker applied the eval inbox of Muiri', $log);
 
         // Affinity (core points): raw -10 x R(Jealous affinity) 1.3 (MDD 15.4) x P(Adaptive down) 1.0
         //   x M = maturity 20 -> 1 + (50 - 20)/100 = 1.3, x jealousy 65 -> 1 + (65 - 30)/70 = 1.5
@@ -391,6 +386,7 @@ final class RelDynEvalEndToEndTest extends TestCase
             $log);
         $this->assertSame(-5, $this->coreAff(), 'core relationships.Player.aff 20 -> -5');
         $this->assertEqualsWithDelta(-0.35, (float) $after['_pending_aff_delta'], 1e-3, 'fraction carried for the next commit');
+        $this->assertEqualsWithDelta(60.0 - 12.5, (float) $after['_aff_mirror_x'], 1e-9, 'mirror refreshed from core (-5)');
         $this->assertEqualsWithDelta(0.0, (float) $after['passion'], 1e-9, 'passion moved only by the eval (0 here)');
         $this->assertStringContainsString('[AFF] Muiri -> Player: -25 (aff 20 -> -5)', $log);
 
@@ -419,24 +415,98 @@ final class RelDynEvalEndToEndTest extends TestCase
         $this->assertTrue($after['in_conflict'] ?? false, 'jealousy at 40+ opens a conflict');
         $this->assertEmpty($before['in_conflict'] ?? false);
 
-        // What request 2 changed besides the eval: nothing on these four
+        // What the worker changed besides the eval: nothing on these four
         $this->assertEqualsWithDelta(65.0, (float) $before['jealousy_anger'], 1e-9);
         $this->assertEqualsWithDelta(35.0, (float) $before['dimensions']['resentment']['x'], 1e-9);
         $this->assertEqualsWithDelta(50.0, (float) $before['dimensions']['trust']['x'], 1e-9);
+        $this->assertSame([], $this->jobs(), 'the consumed job is gone');
+        $this->assertSame([], $this->db->failures, 'no failed statements');
 
-        // Request 2 queued its own exchange; the consumed job is gone; no failed SQL anywhere.
+        // --- request 2 (the NPC's next request) finds nothing left to apply: core and
+        //     feelings stay put; it queues its own exchange ---
+        $this->postrequest(['inputtext', '1727000460', (string) (self::T0 + 60), 'Kaida: ...']);
+        $again = $this->reldyn()['dynamics'];
+        $this->assertSame(-5, $this->coreAff());
+        $this->assertEqualsWithDelta((float) $after['dimensions']['resentment']['x'], (float) $again['dimensions']['resentment']['x'], 1e-9);
+        $this->assertEqualsWithDelta((float) $after['jealousy_anger'], (float) $again['jealousy_anger'], 1e-9);
+        $this->assertCount(1, $again['dimensions']['resentment']['grievance_log'], 'the grievance is not applied again');
         $jobs = $this->jobs();
         $this->assertCount(1, $jobs);
         $this->assertSame('pending', $jobs[0]['status']);
         $this->assertEquals(self::T0 + 60, $jobs[0]['job']['gamets']);
         $this->assertSame([], $this->db->failures, 'no failed statements');
+    }
 
-        // --- a third request finds nothing to apply: core and feelings stay put ---
-        $this->postrequest(['inputtext', '1727000520', (string) (self::T0 + 120), 'Kaida: ...']);
-        $again = $this->reldyn()['dynamics'];
+    /** The worker, as runWorker() runs it, with the canned eval reply. */
+    private function runWorker(): array
+    {
+        $stats = RelDynEval::runWorker(fn(array $messages, array $params): string => self::LLM_REPLY);
+        $this->assertSame(1, $stats['queued'], json_encode($stats) . ' ' . $this->log());
+        return $stats;
+    }
+
+    /**
+     * An NPC-initiated line (radiant / rechat) addressed to the player is scored, and the RelDyn
+     * postrequest returns before its consumer for such requests. The worker applies it anyway:
+     * the player's affinity moves without Muiri ever getting another request.
+     */
+    public function testAScoredRadiantLineMovesCoreAffinityWithoutAnotherRequest(): void
+    {
+        $this->seedEventlog();
+        $this->postrequest(['radiant', '1727000400', (string) self::T0, '']);
+        $this->assertCount(1, $this->jobs(), 'the radiant line addressed to the player is queued: ' . $this->log());
+
+        $this->runWorker();
+
+        $this->assertSame(-5, $this->coreAff(), 'applied by the worker, no later request of Muiri');
+        $this->assertSame([], $this->reldyn()['eval_inbox'] ?? []);
+        $this->assertSame([], $this->db->failures, 'no failed statements');
+    }
+
+    /**
+     * A request applying Muiri's inbox holds its lock: the worker leaves the item to it (never
+     * applied twice), and the next request applies it.
+     */
+    public function testWhileARequestHoldsTheInboxTheWorkerLeavesTheItemForTheNextRequest(): void
+    {
+        $this->seedEventlog();
+        $this->postrequest(['inputtext', '1727000400', (string) self::T0, 'Kaida: ...']);
+        $other = pg_connect($this->dsn, PGSQL_CONNECT_FORCE_NEW);
+        pg_query($other, 'SELECT pg_advisory_lock(' . RelDynStorage::INBOX_LOCK_CLASS . ', ' . $this->npcId . ')');
+        try {
+            $this->runWorker();
+        } finally {
+            pg_close($other);   // the other request ends, its lock goes with its connection
+        }
+        $this->assertSame(20, $this->coreAff(), 'not applied while another request holds the inbox');
+        $this->assertCount(1, $this->reldyn()['eval_inbox'] ?? []);
+        $this->assertStringContainsString('another request is applying the eval inbox; left for the next request', $this->log());
+
+        $this->postrequest(['inputtext', '1727000460', (string) (self::T0 + 60), 'Kaida: ...']);
+
+        $this->assertSame(-5, $this->coreAff(), 'the next request applied it');
+        $this->assertSame([], $this->reldyn()['eval_inbox'] ?? []);
+        $this->assertCount(1, $this->reldyn()['dynamics']['dimensions']['resentment']['grievance_log']);
+    }
+
+    /** eval_producer.apply_in_worker off: the worker only fills the inbox; the NPC's next request applies it. */
+    public function testWithApplyInWorkerOffTheNextRequestAppliesTheItem(): void
+    {
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [
+            RelationshipDynamics::CONFIG_ROW_ID,
+            json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true, 'eval_producer' => ['apply_in_worker' => false]])),
+        ]);
+        RelationshipDynamics::clearConfigCache();
+        $this->seedEventlog();
+        $this->postrequest(['inputtext', '1727000400', (string) self::T0, 'Kaida: ...']);
+
+        $this->runWorker();
+        $this->assertSame(20, $this->coreAff());
+        $this->assertCount(1, $this->reldyn()['eval_inbox'] ?? []);
+
+        $this->postrequest(['inputtext', '1727000460', (string) (self::T0 + 60), 'Kaida: ...']);
         $this->assertSame(-5, $this->coreAff());
-        $this->assertEqualsWithDelta((float) $after['dimensions']['resentment']['x'], (float) $again['dimensions']['resentment']['x'], 1e-9);
-        $this->assertEqualsWithDelta((float) $after['jealousy_anger'], (float) $again['jealousy_anger'], 1e-9);
+        $this->assertSame([], $this->reldyn()['eval_inbox'] ?? []);
     }
 
     public function testWithTheEvalSwitchedOffTheLocalHeuristicsCarryResentmentDecayAgain(): void

@@ -6540,6 +6540,60 @@ class RelationshipDynamics
     }
 
     /**
+     * Apply this NPC's eval inbox and what follows from it: the items through
+     * processPendingEvalDeltas() (saved there), bystander jealousy for romantic exposure (the
+     * committed NPCs who SAW it: the exchange's eventlog people, item.witnesses, not whoever
+     * is near her now), the affinity change pushed to core as a locked delta, and betrayal
+     * detection. The eval worker calls it right after it fills the inbox
+     * (RelDynEval::applyInboxInWorker); postrequest.php calls it for anything left. Nothing
+     * with the dimension engine off (the inbox is then dropped by pendingEvalForRequest()).
+     *
+     * @param array &$dynamics NPC dynamics blob from getDynamics() (by reference); saved
+     * @return array  Map of dimensionId => summed actual_delta applied, or empty array
+     */
+    public static function applyEvalInbox(string $npcName, array &$dynamics): array
+    {
+        $config = self::getConfig();
+        if (empty($config['dimension_engine_enabled'])) {
+            return [];
+        }
+        $evalResults = self::processPendingEvalDeltas($npcName, $dynamics);
+        $evalFeelings = $GLOBALS['RELDYN_EVAL_FEELINGS'] ?? [];
+        if (!empty($evalFeelings)) {
+            // Grievances, jealousy, resentment decay and repair from contract items
+            self::saveDynamics($npcName, $dynamics);
+            if ($config['jealousy_enabled'] ?? true) {
+                foreach ($evalFeelings as $f) {
+                    if (empty($f['romantic_exposure'])) {
+                        continue;
+                    }
+                    if (!is_array($f['witnesses'] ?? null)) {
+                        self::log("Bystander jealousy for {$npcName}: the eval item recorded no witnesses; nobody is made jealous");
+                        continue;
+                    }
+                    self::scanBystanderJealousy($npcName, '|' . implode('|', $f['witnesses']) . '|');
+                }
+            }
+        }
+        if (!empty($evalResults)) {
+            error_log("[RelDyn-EVAL] XYZ eval deltas applied for {$npcName}: " . json_encode($evalResults));
+            // affinity_delta moved the mirror; push it to core as a locked delta
+            self::commitPlayerAffinity($npcName, $dynamics);
+            self::saveDynamics($npcName, $dynamics);
+
+            // ========== BETRAYAL DETECTION (PR 10) ==========
+            // If trust dropped by 50+ in a single eval, fire Divine Intervention
+            $trustDeltaActual = $evalResults['trust'] ?? 0;
+            if ($trustDeltaActual <= -50 && !empty($config['divine_intervention_enabled'])) {
+                self::triggerDivineIntervention($npcName, 'betrayal', 4, $dynamics);
+                self::log("[RelDyn-EVAL] Betrayal detected for {$npcName}: trust_delta={$trustDeltaActual}");
+                self::saveDynamics($npcName, $dynamics);   // the worker has no later save
+            }
+        }
+        return $evalResults;
+    }
+
+    /**
      * The pending eval that belongs to THIS request, for readers that run before
      * processPendingEvalDeltas() (ick, charisma, director goal).
      *
