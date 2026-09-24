@@ -456,6 +456,48 @@ final class RelDynEvalPipelineTest extends TestCase
         ], $o);
     }
 
+    /**
+     * Decisions §1: M_modifiers = clamp(product, 0.25, 3.0) is the whole relative multiplier.
+     * The low self-confidence amplification (x1.5 on losses) is a row of M, clamped with the
+     * rest and logged, not an extra factor after the clamp.
+     */
+    public function testLowSelfConfidenceIsAnMRowInsideTheClamp(): void
+    {
+        $o = ['temperament' => 'Jealous', 'core_aff' => 20, 'attachment' => 'toxic', 'traits' => ['egocentric'],
+              'maturity' => 0, 'jealousy' => 100];
+        $moved = [];
+        foreach ([50.0, 20.0] as $sc) {
+            $npc = $this->npc($o);
+            $npc['dimensions']['self_confidence'] = ['x' => $sc, 'baseline' => $sc];
+            $n0 = $npc;
+            $r = RelationshipDynamics::applyEvalSignal('Mjoll', $npc, 'affinity', -2.0, ['insult'], 1.0);
+            $moved[$sc === 20.0 ? 'low' : 'normal'] = $this->coreAffinityMoved($n0, $npc);
+            $this->assertStringContainsString('x decay/caps 1.000', $r['line'], "self_confidence {$sc}: nothing after M");
+        }
+        // Jealous R 1.3 x Adaptive P 1.0 x M 3.0 (1.5 x 2.0 x 1.4 x 1.5 [x 1.5] = 6.3 [9.45], clamped)
+        $this->assertEqualsWithDelta(-2.0 * 1.3 * 3.0, $moved['normal'], 1e-3);
+        $this->assertEqualsWithDelta(-2.0 * 1.3 * 3.0, $moved['low'], 1e-3, 'M never exceeds 3.0');
+
+        $npc = $this->npc(['maturity' => 50]);
+        $npc['dimensions']['self_confidence'] = ['x' => 20.0, 'baseline' => 20.0];
+        $m = RelationshipDynamics::affinityModifiers($npc, -2.0, ['insult']);
+        $this->assertSame(1.5, $m['rows']['low_self_confidence_losses'] ?? null, 'the row is visible in M');
+        $this->assertArrayNotHasKey('low_self_confidence_losses', RelationshipDynamics::affinityModifiers($npc, 2.0, ['praise'])['rows'],
+            'gains are not amplified');
+    }
+
+    /** A negative resentment delta is relief (MDD 15.5 decay), not criticism: never amplified. */
+    public function testLowSelfConfidenceDoesNotSpeedUpResentmentDecay(): void
+    {
+        $low = $this->npc(['resentment' => 40.0]);
+        $low['dimensions']['self_confidence'] = ['x' => 20.0, 'baseline' => 20.0];
+        $normal = $this->npc(['resentment' => 40.0]);
+        $normal['dimensions']['self_confidence'] = ['x' => 50.0, 'baseline' => 50.0];
+        $a = RelationshipDynamics::applyDelta('resentment', $low, -1.0, 'Humble');
+        $b = RelationshipDynamics::applyDelta('resentment', $normal, -1.0, 'Humble');
+        $this->assertEqualsWithDelta($b, $a, 1e-9);
+    }
+
     /** One tag -> love-language table: every tag the producer maps feeds the consumer's love-language rows. */
     public function testEveryTagMappedToALoveLanguageFeedsTheLoveLanguageRows(): void
     {

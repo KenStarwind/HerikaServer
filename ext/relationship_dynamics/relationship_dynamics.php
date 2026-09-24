@@ -1367,6 +1367,11 @@ class RelationshipDynamics
              'mult' => ['state' => 'passion', 'ref' => 0, 'at_ref' => 0.3, 'per_point' => 0.017]],
             ['id' => 'stormy_losses', 'sign' => 'loss', 'tags' => [], 'requires' => 'internal_weather_enabled',
              'when' => [['weather' => 'stormy']], 'mult' => 1.2],
+            // Self-confidence (0..100, only once the dimension is active) below 30: no internal
+            // counterweight to criticism, losses x1.5 (RelDyn cross-signal rule, inside M's
+            // clamp here; applyCrossSignalCaps skips it for eval affinity)
+            ['id' => 'low_self_confidence_losses', 'sign' => 'loss', 'tags' => [],
+             'when' => [['state' => 'self_confidence', 'op' => '<', 'value' => 30]], 'mult' => 1.5],
         ];
     }
 
@@ -6413,8 +6418,11 @@ class RelationshipDynamics
 
         // --- Self-confidence < 30 → amplify social sensitivity 1.5x ---
         // "No internal counterweight to external input"
-        // Only amplify NEGATIVE deltas (vulnerability to criticism)
-        if ($rawDelta < 0) {
+        // Only amplify NEGATIVE deltas (vulnerability to criticism). Not on the accumulators:
+        // a negative resentment delta is relief (MDD 15.5 decay), not a hurt. The eval's
+        // affinity skips it: there it is the M row low_self_confidence_losses (clamped).
+        if ($rawDelta < 0 && !in_array($dimensionId, ['resentment', 'resentment_self'], true)
+            && !in_array('low_self_confidence_losses', $skip, true)) {
             $selfConf = $dims['self_confidence']['x'] ?? null;
             if ($selfConf !== null && $selfConf < 30) {
                 $modifiedDelta *= 1.5;
@@ -7224,11 +7232,15 @@ class RelationshipDynamics
             case 'respect':
                 $x = $dynamics['dimensions'][$state]['x'] ?? null;
                 return is_numeric($x) ? floatval($x) : self::getTemperamentBaseline($temperament, $state);
+            case 'self_confidence':
+                // null until the dimension is active (as the cross-signal cap reads it)
+                $x = $dynamics['dimensions']['self_confidence']['x'] ?? null;
+                return is_numeric($x) ? floatval($x) : null;
         }
         return null;
     }
 
-    const AFFINITY_MODIFIER_STATES = ['maturity', 'jealousy', 'resentment', 'passion', 'comfort', 'trust', 'respect'];
+    const AFFINITY_MODIFIER_STATES = ['maturity', 'jealousy', 'resentment', 'passion', 'comfort', 'trust', 'respect', 'self_confidence'];
 
     /** Why a configured modifier row cannot be used, or null when it is valid. */
     private static function affinityModifierRowProblem($row): ?string
@@ -7266,6 +7278,9 @@ class RelationshipDynamics
     {
         if (isset($cond['state'])) {
             $v = self::affinityModifierState($dynamics, $cond['state']);
+            if ($v === null) {
+                return false;   // state not active: its rows do not match
+            }
             $ref = floatval($cond['value']);
             switch ($cond['op']) {
                 case '<':  return $v < $ref;
@@ -7422,8 +7437,9 @@ class RelationshipDynamics
             }
             $mText = sprintf(' x M=%.3f [%s%s]', $M, implode(' x ', $parts) ?: 'no rows',
                 abs($mods['product'] - $M) > 1e-9 ? sprintf(' = %.3f, clamped', $mods['product']) : '');
-            // resentment > 50 is the M row resentment_blocks_gains; do not halve twice
-            $overrides['skip_caps'] = ['resentment_affinity_gain'];
+            // resentment > 50 is the M row resentment_blocks_gains, low self-confidence the row
+            // low_self_confidence_losses: M (clamped 0.25..3.0) holds them, not the caps again
+            $overrides['skip_caps'] = ['resentment_affinity_gain', 'low_self_confidence_losses'];
         }
 
         $y = $R * $P * $M;
