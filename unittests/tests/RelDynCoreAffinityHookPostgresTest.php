@@ -6,6 +6,9 @@ if (empty($GLOBALS['ENGINE_PATH'])) {
     $GLOBALS['ENGINE_PATH'] = dirname(__DIR__, 2) . '/';
 }
 require_once $GLOBALS['ENGINE_PATH'] . 'lib/logger.php';
+// Production requests have core's game-clock helpers loaded, so the timeline stamp takes its
+// DataLastKnownGameTS() branch (an eventlog query); load them here too so this test covers that path.
+require_once $GLOBALS['ENGINE_PATH'] . 'lib/utils_game_timestamp.php';
 require_once $GLOBALS['ENGINE_PATH'] . 'lib/relationship_manager.php';
 require_once $GLOBALS['ENGINE_PATH'] . 'lib/core/npc_master.class.php';
 require_once $GLOBALS['ENGINE_PATH'] . 'ext/relationship_system/relationship_llm.php';
@@ -174,6 +177,9 @@ final class RelDynCoreAffinityHookPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE relationship_eval_queue (id SERIAL PRIMARY KEY, npc_id INTEGER NOT NULL UNIQUE,
             eval_data JSONB NOT NULL, created_at TIMESTAMP DEFAULT NOW(), retry_count INTEGER DEFAULT 0, last_error TEXT)");
         pg_query($admin, "CREATE TABLE prompts (prompt_key text PRIMARY KEY, custom_prompt text, default_prompt text)");
+        pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
+            localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,
+            utterance_id text, delivery_state text)");
         pg_query($admin, "CREATE TABLE audit_request (id serial PRIMARY KEY, request text, result text, connector text, url text)");
         pg_close($admin);
 
