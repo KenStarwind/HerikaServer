@@ -94,6 +94,9 @@ final class RelDynFacetPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
         pg_query($admin, "CREATE TABLE eventlog (rowid bigserial, ts bigint, gamets bigint, type text, data text, people text, localts bigint, location text)");
         pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
+        pg_query($admin, "CREATE TABLE locations (name text, formid bigint, region text, hold text, tags text,
+            factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,
+            updated_at timestamp, world text, chim_added integer)");
         pg_close($admin);
 
         $this->db = new RelDynFacetPgDb($dsn, $this->schema);
@@ -218,5 +221,54 @@ final class RelDynFacetPostgresTest extends TestCase
         $d = $this->stored();
         $this->assertContains($d['_internal_weather'], ['overcast', 'stormy']);
         $this->assertEqualsWithDelta(1.0, $d['_weather_state']['deprivation'], 1e-9);
+    }
+
+    /** One core eventlog row as logEvent() writes it: the location context and the beings nearby. */
+    private function event(float $gamets, string $type, string $place, string $people): void
+    {
+        $location = "(Context location: {$place} ,Hold: The Pale, Buildings to go:, Current Date in Skyrim World: Sundas, 9:37 AM, 17th of Last Seed, 4E 201)";
+        pg_query_params($this->db->link,
+            'INSERT INTO eventlog (ts, gamets, type, data, people, localts, location) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [time(), (int) $gamets, $type, $type === 'infoloc' ? $location : 'Kaida: onward', $people, time(), $location]);
+    }
+
+    /**
+     * internal-weather review 2026-09-24: deprivation counted the time since the NPC was last
+     * SPOKEN TO in a loved place. A follower who spent 3.5 game days in the forest while the
+     * player talked to others started her next line stormy, with a place_feeling saying she was
+     * at home. Core's eventlog says where she was (people lists the beings nearby); her next
+     * prerequest catches up on those places, and on the place she is in now, before the roll.
+     */
+    public function testDeprivationCountsWhereTheNpcWasNotWhenSheWasLastSpokenTo(): void
+    {
+        $this->config(['facet_appraisal' => ['weather_roll_amplitude' => 0.0]]);
+        $this->seedHuntress();
+        $woods = 'Fallowstone Woods outdoors';
+        $this->event(self::T0, 'infoloc', $woods, '|Kaida|Aela the Huntress|');
+        $this->hook('prerequest.php', self::T0);
+
+        // 3.5 game days in the woods with Kaida; she is never addressed
+        $last = self::T0;
+        for ($h = 6; $h <= 84; $h += 6) {
+            $last = self::T0 + $h * self::HOUR;
+            $this->event($last, 'chat', $woods, '|Kaida|Aela the Huntress|Lydia|');
+        }
+        // later rows she is not part of: a woods she never saw, and her far away
+        $this->event($last + self::HOUR, 'chat', 'Pinewatch Woods outdoors', '|Kaida|Lydia|');
+        $this->event($last + 2 * self::HOUR, 'chat', 'Pinewatch Woods outdoors', '|Kaida|Aela the Huntress (far away)|');
+        $now = self::T0 + 3.5 * self::DAY;
+        $this->hook('prerequest.php', $now);
+        $d = $this->stored();
+
+        $this->assertEquals($last, $d['_facet_fed']['nature'], 'fed by the last woods she was in, not by places she was not');
+        $this->assertEquals($last, $d['_facet_fed']['wild']);
+        $this->assertLessThan(0.5, $d['_weather_state']['deprivation'], 'only combat went unfed');
+        $this->assertNotSame('stormy', $d['_internal_weather']);
+
+        // Her current place counts before this turn's roll, even before the context hook reads it.
+        $next = (int) ($now + self::HOUR);
+        $this->event($next, 'infoloc', $woods, '');
+        $this->hook('prerequest.php', $next);
+        $this->assertEquals($next, $this->stored()['_facet_fed']['nature']);
     }
 }

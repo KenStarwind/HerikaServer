@@ -13092,14 +13092,18 @@ class RelationshipDynamics
 
     /**
      * Update internal weather (MDD 4.1) from the facet state: pressure fed both ways by
-     * appraisals, the daily roll and deprivation of loved facets (RelDynFacets::updateWeather).
-     * Returns the weather; 'clear' while internal weather is switched off.
+     * appraisals, the daily roll and deprivation of loved facets (RelDynFacets::updateWeather),
+     * after catching up on where the NPC has been since her last turn and where she is now
+     * (RelDynFacets::catchUpPresence, core eventlog). Returns the weather; 'clear' while
+     * internal weather is switched off.
      */
     public static function updateInternalWeather(string $npcName, array &$dynamics, ?float $nowGamets = null): string
     {
         if (!self::configValue('internal_weather_enabled')) return 'clear';
-        return RelDynFacets::updateWeather($npcName, $dynamics, RelDynFacets::preferences($dynamics, $npcName),
-            $nowGamets ?? self::currentGamets());
+        $now = $nowGamets ?? self::currentGamets();
+        $prefs = RelDynFacets::preferences($dynamics, $npcName);
+        RelDynFacets::catchUpPresence($npcName, $dynamics, $prefs, $now);
+        return RelDynFacets::updateWeather($npcName, $dynamics, $prefs, $now);
     }
 
     /**

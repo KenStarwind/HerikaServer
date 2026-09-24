@@ -158,40 +158,58 @@ class RelDynFacets
 
         $gamets = RelationshipDynamics::currentGamets();
         if (is_array($row) && !empty($row['data'])) {
-            $parsed = self::parseLocationContext((string) $row['data']);
-            $ctx['known'] = true;
-            $ctx['name'] = $parsed['name'];
-            $ctx['raw_name'] = $parsed['raw_name'];
-            $ctx['hold'] = $parsed['hold'];
-            $ctx['weather'] = $parsed['weather'];
-            $ctx['is_interior'] = $parsed['is_interior'];
             if ($gamets <= 0) $gamets = floatval($row['gamets'] ?? 0);
+            $ctx = self::placeContextFromLocation((string) $row['data'], $gamets, true);
+        } else {
+            $hour = $gamets > 0 ? RelationshipDynamics::gameHourOfDay($gamets) : null;
+            $ctx['hour'] = $hour === null ? null : round($hour, 2);
+            $ctx['time_of_day'] = self::timeOfDay($hour);
+        }
+        return $ctx;
+    }
 
-            if ($parsed['name'] !== '') {
-                $loc = self::locationRow($parsed['name']);
-                if ($loc !== null) {
-                    $ctx['tags'] = self::parseTags($loc['tags'] ?? '');
-                    $ctx['region'] = (string) ($loc['region'] ?? '');
-                    $ctx['factions'] = (string) ($loc['factions'] ?? '');
-                    if ($ctx['hold'] === '') $ctx['hold'] = (string) ($loc['hold'] ?? '');
-                }
-                if ($ctx['is_interior'] === null) {
-                    // No 'outdoors'/'interior' suffix and no weather in the row: the plugin
-                    // (GetPlayerLocation) leaves the suffix off for an interior cell and for an
-                    // exterior in a worldspace other than Skyrim's (a walled city). Only the
-                    // exact location row of a city worldspace says exterior.
-                    $world = strtolower(trim((string) ($loc['world'] ?? '')));
-                    $exact = $loc !== null && strcasecmp(trim((string) $loc['name']), $parsed['name']) === 0;
-                    $ctx['is_interior'] = !($exact && $world !== '' && !in_array($world, self::MAIN_WORLDSPACES, true));
-                }
-            } elseif ($ctx['is_interior'] === null) {
-                // Empty name: an exterior cell with no location (the wilderness).
-                $ctx['is_interior'] = false;
-            }
+    /**
+     * The place context of one core location string ("(Context location: X ,Hold: Y, ...)",
+     * an eventlog data or location column) at game time $gamets: the parsed name, hold,
+     * weather and inside/outside, the core `locations` row's tags, the time of day. With
+     * $reportedWeather, an empty weather falls back to the newest weather core reported (only
+     * right for the place the NPC is in now).
+     */
+    public static function placeContextFromLocation(string $data, float $gamets, bool $reportedWeather = false): array
+    {
+        $ctx = ['name' => '', 'raw_name' => '', 'hold' => '', 'region' => '', 'tags' => [], 'factions' => '',
+            'is_interior' => null, 'hour' => null, 'time_of_day' => null, 'weather' => [], 'known' => true];
+        $parsed = self::parseLocationContext($data);
+        $ctx['name'] = $parsed['name'];
+        $ctx['raw_name'] = $parsed['raw_name'];
+        $ctx['hold'] = $parsed['hold'];
+        $ctx['weather'] = $parsed['weather'];
+        $ctx['is_interior'] = $parsed['is_interior'];
 
-            if (empty($ctx['weather'])) {
-                $ctx['weather'] = self::lastReportedWeather();
+        if ($parsed['name'] !== '') {
+            $loc = self::locationRow($parsed['name']);
+            if ($loc !== null) {
+                $ctx['tags'] = self::parseTags($loc['tags'] ?? '');
+                $ctx['region'] = (string) ($loc['region'] ?? '');
+                $ctx['factions'] = (string) ($loc['factions'] ?? '');
+                if ($ctx['hold'] === '') $ctx['hold'] = (string) ($loc['hold'] ?? '');
             }
+            if ($ctx['is_interior'] === null) {
+                // No 'outdoors'/'interior' suffix and no weather in the row: the plugin
+                // (GetPlayerLocation) leaves the suffix off for an interior cell and for an
+                // exterior in a worldspace other than Skyrim's (a walled city). Only the
+                // exact location row of a city worldspace says exterior.
+                $world = strtolower(trim((string) ($loc['world'] ?? '')));
+                $exact = $loc !== null && strcasecmp(trim((string) $loc['name']), $parsed['name']) === 0;
+                $ctx['is_interior'] = !($exact && $world !== '' && !in_array($world, self::MAIN_WORLDSPACES, true));
+            }
+        } elseif ($ctx['is_interior'] === null) {
+            // Empty name: an exterior cell with no location (the wilderness).
+            $ctx['is_interior'] = false;
+        }
+
+        if (empty($ctx['weather']) && $reportedWeather) {
+            $ctx['weather'] = self::lastReportedWeather();
         }
 
         $hour = $gamets > 0 ? RelationshipDynamics::gameHourOfDay($gamets) : null;
@@ -906,6 +924,7 @@ class RelDynFacets
             'deprivation_grace_game_days'           => 1.0,
             'deprivation_full_game_days'            => 3.0,  // MDD 4.1: Aela 3 days without combat -> withdrawal
             'deprivation_weight'                    => 0.6,  // score points at full deprivation
+            'presence_scan_max_places'              => 50,   // distinct places read per catch-up (catchUpPresence)
             'weather_roll_amplitude'                => 0.2,  // the daily roll: +- this, fixed per NPC and game day
             // score = pressure + roll - deprivation x weight; weather = first threshold the score reaches
             'weather_thresholds' => ['sunny' => 0.3, 'clear' => -0.1, 'overcast' => -0.45],   // below: stormy
@@ -1049,7 +1068,10 @@ class RelDynFacets
         return $points;
     }
 
-    /** Stamp every loved facet an experience touches (weight >= weather_fed_min_weight) as fed now. */
+    /**
+     * Stamp every loved facet an experience touches (weight >= weather_fed_min_weight) as fed
+     * at $now; a stamp never moves back in time (the presence catch-up feeds past moments).
+     */
     private static function markFed(array &$dynamics, array $facets, array $prefs, float $now, array $cfg): void
     {
         if ($now <= 0) return;
@@ -1057,7 +1079,7 @@ class RelDynFacets
         foreach ($facets as $facet => $w) {
             if (!in_array($facet, self::FACETS, true) || !is_numeric($w)) continue;
             if (floatval($w) >= floatval($cfg['weather_fed_min_weight']) && floatval($prefs[$facet] ?? 0) >= floatval($cfg['weather_loved_at'])) {
-                $fed[$facet] = $now;
+                $fed[$facet] = max(floatval($fed[$facet] ?? 0), $now);
             }
         }
         $dynamics['_facet_fed'] = $fed;
@@ -1109,6 +1131,52 @@ class RelDynFacets
             self::feedWeather($dynamics, $appraisal['valence'] * floatval($cfg['weather_feed_per_experience']), $now, $cfg);
         }
         return $appraisal;
+    }
+
+    /**
+     * Where the NPC has been since the last catch-up (MDD 4.1 deprivation counts what she went
+     * without, not how long since she was last spoken to): core logs every event with the
+     * beings nearby (eventlog.people '|A|B|') and the location context (eventlog.location). Each
+     * place she was near the player in since _presence_scan_gamets (at most
+     * deprivation_full_game_days back, presence_scan_max_places places) feeds her loved facets
+     * at the last time she was there; then the place she is in now (currentPlaceContext) feeds
+     * them at $now, before this turn's roll (the context hook's place read runs after the
+     * prerequest). '(far away)' does not count as there. Returns the number of places read.
+     */
+    public static function catchUpPresence(string $npcName, array &$dynamics, array $prefs, float $now): int
+    {
+        if ($now <= 0 || trim($npcName) === '') return 0;
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return 0;
+        $cfg = self::getAppraisalConfig();
+        $window = floatval($cfg['deprivation_full_game_days']) * RelationshipDynamics::GAMETS_PER_DAY;
+        $since = max(floatval($dynamics['_presence_scan_gamets'] ?? 0), $now - $window);
+        $places = 0;
+        if ($since < $now) {
+            $people = '%|' . RelationshipDynamics::escapeLike(trim($npcName)) . '|%';
+            try {
+                $rows = $db->fetchAll("SELECT split_part(location, ',', 1) AS head, max(gamets) AS last_seen FROM eventlog"
+                    . ' WHERE gamets > ' . intval(floor($since)) . ' AND gamets <= ' . intval(floor($now))
+                    . " AND location LIKE '%(Context%' AND people LIKE " . $db->escapeLiteral($people) . " ESCAPE '\\'"
+                    . ' GROUP BY 1 ORDER BY 2 DESC LIMIT ' . max(1, intval($cfg['presence_scan_max_places'])));
+            } catch (\Throwable $e) {
+                RelationshipDynamics::logError("catchUpPresence({$npcName})", $e);
+                return 0;   // the scan stamp stays: the next turn tries this stretch again
+            }
+            foreach (array_reverse((array) $rows) as $r) {
+                $at = floatval($r['last_seen'] ?? 0);
+                $ctx = self::placeContextFromLocation((string) ($r['head'] ?? '') . ',', $at);
+                self::markFed($dynamics, self::placeFacets($ctx), $prefs, $at, $cfg);
+                $places++;
+            }
+        }
+        $here = static::currentPlaceContext($npcName);
+        if (($here['known'] ?? false) === true) {
+            self::markFed($dynamics, self::placeFacets($here), $prefs, $now, $cfg);
+            $places++;
+        }
+        $dynamics['_presence_scan_gamets'] = $now;
+        return $places;
     }
 
     /**
