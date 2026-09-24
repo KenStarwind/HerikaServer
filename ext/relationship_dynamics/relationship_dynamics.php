@@ -6355,13 +6355,13 @@ class RelationshipDynamics
             }
         }
 
-        // --- Resentment > 50 → halve all affinity gains ---
-        // "Grievances block bonding"
+        // --- Resentment > 50 → halve affinity gains; >= 70 → frozen (MDD 15.4 / 15.5) ---
+        // "Grievances block bonding". The multiplier is getResentmentEffects()'s, the one accessor.
         if ($dimensionId === 'affinity' && $rawDelta > 0) {
-            $resentment = $dims['resentment']['x'] ?? 0;
-            if ($resentment > 50) {
-                $modifiedDelta *= 0.5;
-                error_log("[RelDyn-CAP] High resentment ({$resentment}) halving affinity gain");
+            $gainMult = self::getResentmentEffects($dynamics)['affinity_gain_mult'];
+            if ($gainMult < 1.0) {
+                $modifiedDelta *= $gainMult;
+                error_log("[RelDyn-CAP] High resentment (" . floatval($dims['resentment']['x'] ?? 0) . ") affinity gain x{$gainMult}");
             }
         }
 
@@ -6776,8 +6776,9 @@ class RelationshipDynamics
         // Store significance for downstream (tier advancement gating)
         $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] = $significance;
 
-        // Handle grievance if present
-        if (!empty($evalResult['grievance'])) {
+        // Handle grievance if present (legacy string form; a contract v1 grievance object is
+        // applyEvalFeelings()'s)
+        if (!empty($evalResult['grievance']) && !self::isEvalContractItem($evalResult)) {
             if (!isset($dynamics['dimensions']['resentment'])) {
                 $dynamics['dimensions']['resentment'] = [];
             }
@@ -7124,6 +7125,279 @@ class RelationshipDynamics
     const RESENTMENT_SUPPRESSED_MATURITY_BELOW = 50;
     /** ... multiply resentment gains by this. */
     const RESENTMENT_SUPPRESSED_MULT = 1.5;
+
+    /** MDD 15.5 threshold events, resentment points (0..100), reached at >= the value. */
+    const RESENTMENT_PASSIVE_AGGRESSIVE_AT = 30;   // tone leaks into keywords
+    const RESENTMENT_CONFRONTATION_AT = 50;        // NPC initiates confrontation (P3, Director)
+    const RESENTMENT_WITHDRAWAL_AT = 70;           // affinity frozen, comfort drops to 0
+    const RESENTMENT_WALKAWAY_AT = 90;             // the walkaway
+    /** MDD 15.4 cross-signal: resentment strictly above this halves affinity gains. */
+    const RESENTMENT_HALVES_GAINS_ABOVE = 50;
+
+    /**
+     * MDD 15.5 effects of the current resentment, the one accessor every consumer reads (the
+     * affinity pipeline's gain multiplier, context, the P3 confrontation). Pure.
+     *
+     * @return array{resentment: float, passive_aggressive: bool, confrontation_due: bool,
+     *               withdrawn: bool, walkaway: bool, affinity_gain_mult: float}
+     *         affinity_gain_mult multiplies affinity GAINS only: 0.5 above 50, 0.0 (frozen) at 70+.
+     */
+    public static function getResentmentEffects(array $dynamics): array
+    {
+        $r = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);   // 0..100
+        $gainMult = 1.0;
+        if ($r >= self::RESENTMENT_WITHDRAWAL_AT) {
+            $gainMult = 0.0;
+        } elseif ($r > self::RESENTMENT_HALVES_GAINS_ABOVE) {
+            $gainMult = 0.5;
+        }
+        return [
+            'resentment'         => $r,
+            'passive_aggressive' => $r >= self::RESENTMENT_PASSIVE_AGGRESSIVE_AT,
+            'confrontation_due'  => $r >= self::RESENTMENT_CONFRONTATION_AT,
+            'withdrawn'          => $r >= self::RESENTMENT_WITHDRAWAL_AT,
+            'walkaway'           => $r >= self::RESENTMENT_WALKAWAY_AT,
+            'affinity_gain_mult' => $gainMult,
+        ];
+    }
+
+    /** Shared eval contract v1 (the eval lane produces it; this section consumes it). */
+    public static function isEvalContractItem($item): bool
+    {
+        return is_array($item) && intval($item['v'] ?? 0) === 1 && ($item['source'] ?? null) === 'reldyn_eval';
+    }
+
+    /**
+     * True once this NPC's resentment decay and conflict repair come from contract evals
+     * (positive_interaction). The postrequest heuristics (passion gain > 0) then stand down,
+     * so one positive exchange is not counted twice.
+     */
+    public static function evalFeelingsActive(array $dynamics): bool
+    {
+        return !empty($dynamics['_eval_feelings_seen']);
+    }
+
+    /** Low self-respect + low maturity (MDD autonomy design, PR 16 caps): suffers inward. */
+    public static function isPeoplePleaser(array $dynamics): bool
+    {
+        $dims = $dynamics['dimensions'] ?? [];
+        return floatval($dims['self_confidence']['x'] ?? 50) < self::PEOPLE_PLEASER_CONFIDENCE_CAP
+            && floatval($dims['maturity']['x'] ?? 50) < self::PEOPLE_PLEASER_MATURITY_CAP;
+    }
+
+    /**
+     * Facts power_gap is derived from, all read from core data:
+     *  - core_type: core relationships.Player.type (stored by prerequest as _core_rel_type);
+     *  - in_party:  the NPC is in the player's current party (conf_opts CurrentParty via
+     *               CHIM's CACHE_PARTY / DataGetCurrentPartyConf): a commanded follower;
+     *  - factions:  core_npc_master.extended_data.factions ([{name, rank}], plugin editor ids).
+     * A failed read is logged and that fact counts as absent.
+     */
+    public static function powerGapFacts(string $npcName, array $dynamics): array
+    {
+        $facts = ['core_type' => $dynamics['_core_rel_type'] ?? null, 'in_party' => false, 'factions' => []];
+
+        $party = $GLOBALS['CACHE_PARTY'] ?? null;
+        if ($party === null && function_exists('DataGetCurrentPartyConf') && !empty($GLOBALS['db'])) {
+            try {
+                $party = DataGetCurrentPartyConf();
+            } catch (\Throwable $e) {
+                error_log("[RelDyn-RESENTMENT] power gap: party read failed for {$npcName}: " . $e->getMessage());
+            }
+        }
+        $party = is_string($party) ? json_decode($party, true) : $party;
+        if (is_array($party)) {
+            foreach ($party as $key => $member) {
+                $name = is_array($member) ? ($member['name'] ?? $key) : $key;
+                if (is_string($name) && strcasecmp(trim($name), trim($npcName)) === 0) {
+                    $facts['in_party'] = true;
+                    break;
+                }
+            }
+        }
+
+        if (!empty($GLOBALS['db'])) {
+            try {
+                $row = self::fetchCoreProfileRow($npcName);
+                $ext = json_decode((string) ($row['extended_data'] ?? ''), true);
+                if (is_array($ext) && is_array($ext['factions'] ?? null)) {
+                    $facts['factions'] = $ext['factions'];
+                }
+            } catch (\Throwable $e) {
+                error_log("[RelDyn-RESENTMENT] power gap: core_npc_master read failed for {$npcName}: " . $e->getMessage());
+            }
+        }
+        return $facts;
+    }
+
+    /**
+     * power_gap (0..1, decisions §5): how little the NPC can leave. The largest matching
+     * source counts (sources are not added: a servant in the party is still 1.0). Pure.
+     *
+     * @return array{gap: float, sources: string[]}
+     */
+    public static function computePowerGap(array $facts): array
+    {
+        $gap = 0.0;
+        $sources = [];
+        $take = function (float $g, string $why) use (&$gap, &$sources) {
+            if ($g <= 0) return;
+            $sources[] = $why;
+            $gap = max($gap, $g);
+        };
+
+        $type = strtolower(trim((string) ($facts['core_type'] ?? '')));
+        $byType = (array) self::configValue('power_gap_core_types');
+        if ($type !== '' && isset($byType[$type])) {
+            $take(floatval($byType[$type]), "type:{$type}");
+        }
+        if (!empty($facts['in_party'])) {
+            $take(floatval(self::configValue('power_gap_in_party')), 'party');
+        }
+        foreach ((array) ($facts['factions'] ?? []) as $faction) {
+            if (!is_array($faction) || intval($faction['rank'] ?? 0) < 0) continue;   // rank -1: not a member
+            $key = self::profileMatchKey($faction['name'] ?? '');
+            foreach ((array) self::configValue('power_gap_factions') as $rule) {
+                foreach ((array) ($rule['match'] ?? []) as $needle) {
+                    if ($key !== '' && $needle !== '' && str_contains($key, self::profileMatchKey($needle))) {
+                        $take(floatval($rule['gap'] ?? 0), "faction:" . ($faction['name'] ?? ''));
+                        continue 3;
+                    }
+                }
+            }
+        }
+        return ['gap' => max(0.0, min(1.0, $gap)), 'sources' => $sources];
+    }
+
+    /**
+     * One flagged grievance (not jealousy) into the accumulator (MDD 15.5, decisions §5):
+     *   raw = grievance_resentment_raw (5) x grievance_severity_mult[severity]
+     *         x (1 + power_gap) x post-hoover multiplier (_hoover_resentment_mult, >= 1)
+     * through applyDelta (suppressed +50%, inverted rubber band). A people-pleaser
+     * (isPeoplePleaser) takes it as resentment_self instead. Logged in grievance_log (last 10).
+     *
+     * @return array{raw: float, amount: float, target: string, power_gap: float, severity: int}
+     */
+    public static function recordGrievance(array &$dynamics, array $grievance, array $powerFacts, string $summary = ''): array
+    {
+        $severity = max(0, min(3, intval($grievance['severity'] ?? 0)));
+        $sevMult = floatval(((array) self::configValue('grievance_severity_mult'))[$severity] ?? 1.0);
+        $gap = self::computePowerGap($powerFacts);
+        $hoover = max(1.0, floatval($dynamics['_hoover_resentment_mult'] ?? 1.0));
+        $raw = floatval(self::configValue('grievance_resentment_raw')) * $sevMult * (1.0 + $gap['gap']) * $hoover;   // raw resentment points
+
+        $target = self::isPeoplePleaser($dynamics) ? 'resentment_self' : 'resentment';
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $amount = self::applyDelta($target, $dynamics, $raw, $temperament);
+
+        if (!isset($dynamics['dimensions']['resentment']) || !is_array($dynamics['dimensions']['resentment'])) {
+            $dynamics['dimensions']['resentment'] = ['x' => 0, 'baseline' => 0, 'active' => true];
+        }
+        $kind = is_string($grievance['kind'] ?? null) ? $grievance['kind'] : null;
+        $log = (array) ($dynamics['dimensions']['resentment']['grievance_log'] ?? []);
+        $log[] = [
+            'text'      => $summary !== '' ? $summary : ($kind ?? 'grievance'),
+            'kind'      => $kind,
+            'severity'  => $severity,
+            'power_gap' => $gap['gap'],
+            'raw'       => round($raw, 4),
+            'amount'    => round($amount, 4),
+            'target'    => $target,
+            'gamets'    => self::currentGamets(),   // raw game-calendar gamets (0 when unknown)
+        ];
+        $dynamics['dimensions']['resentment']['grievance_log'] = array_slice($log, -10);
+
+        error_log("[RelDyn-RESENTMENT] grievance kind=" . ($kind ?? '-') . " severity={$severity} power_gap={$gap['gap']} ("
+            . implode(',', $gap['sources']) . ") raw=" . round($raw, 3) . " -> {$target} +" . round($amount, 3));
+        return ['raw' => $raw, 'amount' => $amount, 'target' => $target, 'power_gap' => $gap['gap'], 'severity' => $severity];
+    }
+
+    /**
+     * Apply the feelings side of one contract v1 eval item to this NPC (signals are the
+     * affinity/dimension consumer's): grievance -> resentment (or jealousy for jealousy
+     * kinds), jealousy events, and positive_interaction -> resentment -1 and conflict repair.
+     * Call once per item. Returns [] for a non-contract item.
+     *
+     * @return array{grievance: ?array, jealousy: float, resentment_decay: float, repair_burst: float, romantic_exposure: bool}
+     */
+    public static function applyEvalFeelings(string $npcName, $item, array &$dynamics): array
+    {
+        if (!self::isEvalContractItem($item)) {
+            return [];
+        }
+        $dynamics['_eval_feelings_seen'] = true;
+        $out = ['grievance' => null, 'jealousy' => 0.0, 'resentment_decay' => 0.0, 'repair_burst' => 0.0, 'romantic_exposure' => false];
+        $tags = array_map(fn($t) => strtolower(trim((string) $t)), array_filter((array) ($item['tags'] ?? []), 'is_scalar'));
+        $summary = is_string($item['summary'] ?? null) ? $item['summary'] : '';
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+
+        // Jealousy sources: the jealousy object, the jealousy_trigger tag, a jealousy-kind grievance.
+        $jealous = is_array($item['jealousy'] ?? null) ? $item['jealousy'] : [];
+        $intensity = !empty($jealous['flag']) ? max(0, min(3, intval($jealous['intensity'] ?? 0))) : null;
+        $rival = is_string($jealous['rival'] ?? null) && trim($jealous['rival']) !== '' ? trim($jealous['rival']) : null;
+        if ($intensity === null && in_array('jealousy_trigger', $tags, true)) {
+            $intensity = 1;
+        }
+
+        $grievance = is_array($item['grievance'] ?? null) ? $item['grievance'] : [];
+        if (!empty($grievance['flag'])) {
+            $kind = strtolower(trim((string) ($grievance['kind'] ?? '')));
+            $jealousyKinds = array_map('strtolower', (array) self::configValue('jealousy_grievance_kinds'));
+            if ($kind !== '' && in_array($kind, $jealousyKinds, true)) {
+                // Jealousy is not a grievance: it feeds resentment through the calendar conversion (§5)
+                $intensity = max($intensity ?? 0, max(0, min(3, intval($grievance['severity'] ?? 0))));
+            } elseif (self::configValue('dimension_engine_enabled')) {
+                $out['grievance'] = self::recordGrievance($dynamics, $grievance, self::powerGapFacts($npcName, $dynamics), $summary);
+            }
+        }
+
+        if ($intensity !== null && self::configValue('jealousy_enabled')) {
+            $gain = self::jealousyEventGain($dynamics, $intensity);
+            if ($gain > 0) {
+                self::addJealousy($dynamics, $gain, $rival);
+                $out['jealousy'] = $gain;
+            }
+        }
+
+        if (!empty($item['positive_interaction'])) {
+            // MDD 15.5 natural decay: -1 raw per meaningful positive interaction (the eval judged it)
+            if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) > 0) {
+                $out['resentment_decay'] = self::applyDelta('resentment', $dynamics,
+                    -floatval(self::configValue('resentment_positive_decay')), $temperament);
+            }
+            if (!empty($dynamics['in_conflict']) && self::configValue('conflict_enabled')) {
+                $burst = self::recordConflictPositive($dynamics);
+                if ($burst > 0) {
+                    self::addPassion($dynamics, $burst, 'repair');
+                    $out['repair_burst'] = $burst;
+                }
+            }
+            $out['romantic_exposure'] = count(array_intersect($tags,
+                array_map('strtolower', (array) self::configValue('jealousy_bystander_tags')))) > 0;
+        }
+        return $out;
+    }
+
+    /**
+     * Jealousy points (0..100 scale) one eval jealousy event adds to this NPC:
+     *   jealousy_eval_gain x jealousy_intensity_mult[intensity] x TEMPERAMENT_JEALOUSY_MULT (MDD 1.3)
+     *   x attachment jealousy_mult x relationship preference (polyamorous 0.2, not_interested 0)
+     */
+    public static function jealousyEventGain(array $dynamics, int $intensity, float $commitment = 1.0): float
+    {
+        $intensity = max(0, min(3, $intensity));
+        $pref = $dynamics['relationship_preference'] ?? null;
+        if ($pref === 'not_interested') {
+            return 0.0;
+        }
+        $gain = floatval(self::configValue('jealousy_eval_gain'))
+            * floatval(((array) self::configValue('jealousy_intensity_mult'))[$intensity] ?? 1.0)
+            * floatval(self::TEMPERAMENT_JEALOUSY_MULT[$dynamics['inferred_temperament'] ?? ''] ?? 1.0)
+            * floatval(self::getAttachmentModifier($dynamics, 'jealousy_mult') ?? 1.0)
+            * ($pref === 'polyamorous' ? 0.2 : 1.0)
+            * $commitment;
+        return max(0.0, $gain);
+    }
 
     // ========== END EVAL FEELINGS ==========
 
@@ -14620,8 +14894,7 @@ class RelationshipDynamics
         }
 
         // People-pleaser override: low confidence + low maturity = forced compliance
-        $isPeoplePleaser = ($selfConfidence < self::PEOPLE_PLEASER_CONFIDENCE_CAP
-                         && $maturity < self::PEOPLE_PLEASER_MATURITY_CAP);
+        $isPeoplePleaser = self::isPeoplePleaser($dynamics);
 
         if ($isPeoplePleaser && ($state === 'refusing' || $state === 'walkaway')) {
             $state = 'compliant';
