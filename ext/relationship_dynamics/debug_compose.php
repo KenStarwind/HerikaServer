@@ -8,12 +8,16 @@
 
 header('Content-Type: text/plain; charset=utf-8');
 
-// Bootstrap
+// Bootstrap (3.4.1: conf/conf.php is empty, use the runtime bootstrap)
 $enginePath = realpath(__DIR__ . '/../../') . '/';
-$GLOBALS['ENGINE_PATH'] = $enginePath;
-require_once $enginePath . 'conf/conf.php';
-require_once $enginePath . "lib/{$GLOBALS['DBDRIVER']}.class.php";
-$GLOBALS['db'] = new sql();
+require_once $enginePath . 'lib/runtime_bootstrap.php';
+chimRuntimeBootstrapIfNeeded($enginePath, [
+    'run_db_updates' => false,
+    'load_general_settings' => true,
+    'load_stt_connector' => false,
+    'load_itt_connector' => false,
+    'load_player_name' => true,
+]);
 $GLOBALS['PLAYER_NAME'] = $GLOBALS['PLAYER_NAME'] ?? 'Player';
 
 // Load Sharmat NsfwNpcData if available

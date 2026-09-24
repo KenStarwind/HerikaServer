@@ -10,10 +10,16 @@
 
 header('Content-Type: application/json');
 
-$enginePath = __DIR__ . "/../../";
-require_once($enginePath . "conf/conf.php");
-require_once($enginePath . "lib/" . $GLOBALS["DBDRIVER"] . ".class.php");
-$GLOBALS['db'] = new sql();
+// Bootstrap CHIM (3.4.1: conf/conf.php is empty, use the runtime bootstrap)
+$enginePath = realpath(__DIR__ . '/../../') . '/';
+require_once $enginePath . 'lib/runtime_bootstrap.php';
+chimRuntimeBootstrapIfNeeded($enginePath, [
+    'run_db_updates' => false,
+    'load_general_settings' => true,
+    'load_stt_connector' => false,
+    'load_itt_connector' => false,
+    'load_player_name' => true,
+]);
 
 require_once __DIR__ . '/relationship_dynamics.php';
 

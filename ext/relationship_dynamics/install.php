@@ -9,14 +9,16 @@
  * Usage from CLI:     php /var/www/html/HerikaServer/ext/relationship_dynamics/install.php
  */
 
-// Bootstrap CHIM if running standalone
-if (!isset($GLOBALS['ENGINE_PATH'])) {
-    $enginePath = realpath(__DIR__ . '/../../') . '/';
-    $GLOBALS['ENGINE_PATH'] = $enginePath;
-    require_once $enginePath . 'conf/conf.php';
-    require_once $enginePath . "lib/{$GLOBALS['DBDRIVER']}.class.php";
-    $GLOBALS['db'] = new sql();
-}
+// Bootstrap CHIM if running standalone (3.4.1: conf/conf.php is empty, use the runtime bootstrap)
+$enginePath = realpath(__DIR__ . '/../../') . '/';
+require_once $enginePath . 'lib/runtime_bootstrap.php';
+chimRuntimeBootstrapIfNeeded($enginePath, [
+    'run_db_updates' => false,
+    'load_general_settings' => true,
+    'load_stt_connector' => false,
+    'load_itt_connector' => false,
+    'load_player_name' => true,
+]);
 
 $db = $GLOBALS['db'];
 
