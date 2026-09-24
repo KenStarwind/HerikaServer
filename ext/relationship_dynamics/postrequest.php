@@ -34,6 +34,7 @@ $isCombatEvent = in_array($reqType, $combatNarratorTypes);
 if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
     if ($isCombatEvent) {
         require_once __DIR__ . '/relationship_dynamics.php';
+        RelationshipDynamics::beginRequest();
         if (!RelationshipDynamics::isEnabled()) { return; }
 
         $reldynCfg = RelationshipDynamics::getConfig();
@@ -260,6 +261,8 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
 }
 
 require_once __DIR__ . '/relationship_dynamics.php';
+// Each hook is its own request scope: config/bond caches never outlive it (A3).
+RelationshipDynamics::beginRequest();
 
 if (!RelationshipDynamics::isEnabled()) {
     return;
@@ -643,9 +646,11 @@ if (!empty($reldynCfg['parasite_detection_enabled'])) {
 }
 
 // ========== ICK TRACKER + CHARISMA DETECTION (PR 15) ==========
+// Latest queued eval (read-only peek; the inbox is consumed by processPendingEvalDeltas below)
+$rdPendingEval = RelationshipDynamics::peekPendingEval($npcName, $dynamics);
 if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
-    $evalPending = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? [];
+    $evalPending = $rdPendingEval;
     $isRomantic = RelationshipDynamics::isRomanticAttempt($classifiedLL, $lastMood, $evalPending);
     $temperament = $dynamics['inferred_temperament'] ?? null;
     $ickChanged = RelationshipDynamics::updateIckTracker($dynamics, $isRomantic, $temperament);
@@ -656,7 +661,7 @@ if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
 }
 
 if (!empty($reldynCfg['charisma_detection_enabled'] ?? true)) {
-    $evalPending = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? [];
+    $evalPending = $rdPendingEval;
     $romanticIntent = intval($evalPending['romantic_intent'] ?? 0);
     $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
     RelationshipDynamics::updateCharismaTracker($dynamics, $romanticIntent, $affinityDelta);
@@ -687,7 +692,7 @@ $rdCfg = $rdCfg ?? RelationshipDynamics::getConfig();
 if (!empty($rdCfg['director_goals_enabled'] ?? true)) {
     $activeGoal = RelationshipDynamics::getActiveDirectorGoal($dynamics);
     if ($activeGoal && !empty($activeGoal['text'])) {
-        $evalData = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? null;
+        $evalData = $rdPendingEval;
         if (is_array($evalData) && !empty($evalData['goal_addressed'])) {
             RelationshipDynamics::fulfillDirectorGoal($dynamics, 'eval_confirmed');
         }

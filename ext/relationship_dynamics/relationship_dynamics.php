@@ -8,15 +8,24 @@
  * Architecture: CHIM + Sharmat drive, MARAS rides along.
  * Works without MARAS — degrades gracefully.
  *
- * All state in nsfw_npc_data.extended_data.relationship_dynamics (JSONB).
+ * All state in core_npc_master.plugin_extended_data.reldyn (see reldyn_storage.php);
+ * legacy extended_data.relationship_dynamics is migrated once on first load.
  * Config in conf_opts key 'relationship_dynamics_config'.
+ *
+ * No process-level caches: NPC state is read from the database on every load, and
+ * config/bond caches only live inside an explicit request scope (beginRequest()), so a
+ * long-lived process (relationship worker daemon) never acts on stale data.
  */
+
+require_once __DIR__ . '/reldyn_storage.php';
 
 class RelationshipDynamics
 {
+    // Request-scoped caches: only used between beginRequest() and endRequest() in the
+    // process that opened the scope (a forked child never inherits a valid scope).
     private static $config = null;
-    private static $npcCache = [];
     private static $bondCache = [];
+    private static $requestScopePid = null;
 
     // Love language types
     const LL_WORDS   = 'words_of_affirmation';
@@ -890,35 +899,60 @@ class RelationshipDynamics
     ];
 
     // =========================================================================
+    // REQUEST SCOPE (A3: no process-level caches)
+    // =========================================================================
+
+    /**
+     * Open a request/job scope: drops every cache and lets config/bond lookups be cached
+     * until endRequest() or the next beginRequest(). Hooks call this on entry; a
+     * long-lived worker calls it per job (or never, and simply reads fresh every time).
+     */
+    public static function beginRequest()
+    {
+        self::$config = null;
+        self::$bondCache = [];
+        self::$requestScopePid = getmypid();
+    }
+
+    public static function endRequest()
+    {
+        self::$config = null;
+        self::$bondCache = [];
+        self::$requestScopePid = null;
+    }
+
+    private static function inRequestScope()
+    {
+        return self::$requestScopePid !== null && self::$requestScopePid === getmypid();
+    }
+
+    // =========================================================================
     // CONFIG
     // =========================================================================
 
     public static function getConfig()
     {
-        if (self::$config !== null) {
+        $cacheable = self::inRequestScope();
+        if ($cacheable && self::$config !== null) {
             return self::$config;
         }
 
+        $config = self::defaultConfig();
         try {
             $db = $GLOBALS['db'] ?? null;
-            if (!$db) {
-                self::$config = self::defaultConfig();
-                return self::$config;
+            if ($db) {
+                $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = 'relationship_dynamics_config' LIMIT 1");
+                if (is_array($row) && !empty($row['value'])) {
+                    $config = json_decode($row['value'], true) ?: self::defaultConfig();
+                }
             }
-
-            $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = 'relationship_dynamics_config' LIMIT 1");
-            if (!is_array($row) || empty($row['value'])) {
-                self::$config = self::defaultConfig();
-                return self::$config;
-            }
-
-            self::$config = json_decode($row['value'], true) ?: self::defaultConfig();
         } catch (Throwable $e) {
             error_log("[RelDyn] Config load error: " . $e->getMessage());
-            self::$config = self::defaultConfig();
+            $config = self::defaultConfig();
         }
 
-        return self::$config;
+        self::$config = $cacheable ? $config : null;
+        return $config;
     }
 
     public static function defaultConfig()
@@ -989,42 +1023,47 @@ class RelationshipDynamics
     }
 
     // =========================================================================
-    // NPC DYNAMICS DATA (read/write from nsfw_npc_data.extended_data)
+    // NPC DYNAMICS DATA (plugin_extended_data.reldyn.dynamics, see reldyn_storage.php)
     // =========================================================================
+
+    /**
+     * Raw stored dynamics for an NPC (no defaults merged), or null when none exist.
+     * Always reads the database; migrates the legacy extended_data blob on first load.
+     */
+    public static function loadStoredDynamics($npcName)
+    {
+        if (empty($npcName) || empty($GLOBALS['db'])) return null;
+
+        $npcId = RelDynStorage::resolveNpcId($npcName);
+        if ($npcId === null) return null;
+
+        $rd = RelDynStorage::loadDynamics($npcId);
+        if ($rd === null && RelDynStorage::migrateLegacy($npcId)) {
+            error_log("[RelDyn] Migrated extended_data.relationship_dynamics to plugin storage for {$npcName} (id {$npcId})");
+            $rd = RelDynStorage::loadDynamics($npcId);
+        }
+        return $rd;
+    }
 
     public static function getDynamics($npcName)
     {
         if (empty($npcName)) return self::defaultDynamics();
 
-        $cacheKey = strtolower($npcName);
-        if (isset(self::$npcCache[$cacheKey])) {
-            return self::$npcCache[$cacheKey];
-        }
-
-        // Primary: read from core_npc_master.extended_data.relationship_dynamics
+        // Primary: core_npc_master.plugin_extended_data.reldyn.dynamics (fresh read, no cache)
         try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db) {
-                $escaped = $db->escape($npcName);
-                $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
-                if (is_array($row) && !empty($row['extended_data'])) {
-                    $ext = json_decode($row['extended_data'], true) ?: [];
-                    $rd = $ext['relationship_dynamics'] ?? null;
-                    if (is_array($rd) && !empty($rd)) {
-                        $merged = array_merge(self::defaultDynamics(), $rd);
-                        $merged = self::migrateDimensions($merged);
-                        // ========== REPUTATION LAYER (PR 9) ==========
-                        if (isset($GLOBALS['PLAYER_NAME']) && !empty($GLOBALS['PLAYER_NAME'])) {
-                            $temperament = $merged['inferred_temperament'] ?? $merged['temperament'] ?? 'Stoic';
-                            self::applyReputationModifiers($merged, $GLOBALS['PLAYER_NAME'], $npcName, $temperament);
-                        }
-                        self::$npcCache[$cacheKey] = $merged;
-                        return self::$npcCache[$cacheKey];
-                    }
+            $rd = self::loadStoredDynamics($npcName);
+            if (is_array($rd) && !empty($rd)) {
+                $merged = array_merge(self::defaultDynamics(), $rd);
+                $merged = self::migrateDimensions($merged);
+                // ========== REPUTATION LAYER (PR 9) ==========
+                if (isset($GLOBALS['PLAYER_NAME']) && !empty($GLOBALS['PLAYER_NAME'])) {
+                    $temperament = $merged['inferred_temperament'] ?? $merged['temperament'] ?? 'Stoic';
+                    self::applyReputationModifiers($merged, $GLOBALS['PLAYER_NAME'], $npcName, $temperament);
                 }
+                return $merged;
             }
         } catch (\Throwable $e) {
-            self::log("getDynamics DB error: " . $e->getMessage());
+            error_log("[RelDyn] getDynamics storage error for {$npcName}: " . $e->getMessage());
         }
 
         // Fallback: try nsfw_npc_data (legacy, pre-storage-pivot)
@@ -1038,15 +1077,12 @@ class RelationshipDynamics
                     $temperament = $merged['inferred_temperament'] ?? $merged['temperament'] ?? 'Stoic';
                     self::applyReputationModifiers($merged, $GLOBALS['PLAYER_NAME'], $npcName, $temperament);
                 }
-                self::$npcCache[$cacheKey] = $merged;
-                return self::$npcCache[$cacheKey];
+                return $merged;
             }
         }
 
         // No data found: return defaults
-        $defaults = self::defaultDynamics();
-        self::$npcCache[$cacheKey] = $defaults;
-        return $defaults;
+        return self::defaultDynamics();
     }
 
     public static function saveDynamics($npcName, $dynamics)
@@ -1056,21 +1092,17 @@ class RelationshipDynamics
         // XYZ shim: sync legacy keys from dimensions before persisting
         $dynamics = self::syncLegacyFromDimensions($dynamics);
 
-        $cacheKey = strtolower($npcName);
-        self::$npcCache[$cacheKey] = $dynamics;
-
-        // Primary: save to core_npc_master.extended_data.relationship_dynamics
+        // Primary: write only the 'dynamics' key of plugin_extended_data.reldyn, so a save
+        // never clobbers the eval inbox or any other key written concurrently.
         try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db) {
-                $escaped = $db->escape($npcName);
-                $jsonDynamics = json_encode($dynamics);
-                $escapedJson = $db->escape($jsonDynamics);
-                $db->execQuery("UPDATE core_npc_master SET extended_data = jsonb_set(COALESCE(extended_data, '{}'::jsonb), '{relationship_dynamics}', '{$escapedJson}'::jsonb) WHERE lower(npc_name) = lower('{$escaped}')");
-                return true;
+            if (!empty($GLOBALS['db'])) {
+                $npcId = RelDynStorage::resolveNpcId($npcName);
+                if ($npcId !== null) {
+                    return RelDynStorage::saveDynamics($npcId, $dynamics);
+                }
             }
         } catch (\Throwable $e) {
-            self::log("saveDynamics DB error: " . $e->getMessage());
+            error_log("[RelDyn] saveDynamics storage error for {$npcName}: " . $e->getMessage());
         }
 
         // Fallback: try nsfw_npc_data (legacy)
@@ -2782,13 +2814,12 @@ class RelationshipDynamics
     // CACHE MANAGEMENT
     // =========================================================================
 
+    /**
+     * Kept for callers from before A3: NPC state is no longer cached (every getDynamics()
+     * reads the database), so there is nothing to clear.
+     */
     public static function clearNpcCache($npcName = null)
     {
-        if ($npcName !== null) {
-            unset(self::$npcCache[$npcName]);
-        } else {
-            self::$npcCache = [];
-        }
     }
 
     // =========================================================================
@@ -5114,25 +5145,96 @@ class RelationshipDynamics
     }
 
     /**
-     * Drain pending XYZ eval deltas stored by the async relationship_system worker.
+     * Queue an eval result for this NPC (producer side, e.g. an eval worker).
      *
-     * The worker stores eval results in $dynamics['_pending_xyz_eval'] and this
-     * method processes them on the next interaction, then unsets the pending key.
+     * Appends to plugin_extended_data.reldyn.eval_inbox in one statement, separate from
+     * the dynamics key, so a request saving its dynamics can never clobber it and two
+     * producers never lose each other's results.
+     *
+     * @return bool true when queued
+     */
+    public static function queuePendingEval($npcName, array $evalResult)
+    {
+        try {
+            $npcId = RelDynStorage::resolveNpcId($npcName);
+            if ($npcId === null) {
+                error_log("[RelDyn-EVAL] queuePendingEval: unknown NPC '{$npcName}', eval dropped");
+                return false;
+            }
+            return RelDynStorage::appendItem($npcId, RelDynStorage::KEY_EVAL_INBOX, [
+                'queued_at' => time(),
+                'eval'      => $evalResult,
+            ]);
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-EVAL] queuePendingEval failed for {$npcName}: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Most recent pending eval without consuming it (inbox first, then the legacy
+     * _pending_xyz_eval / _pending_eval keys inside a migrated blob). [] when none.
+     */
+    public static function peekPendingEval($npcName, $dynamics = [])
+    {
+        try {
+            $npcId = RelDynStorage::resolveNpcId($npcName);
+            if ($npcId !== null) {
+                $items = RelDynStorage::peekItems($npcId, RelDynStorage::KEY_EVAL_INBOX);
+                for ($i = count($items) - 1; $i >= 0; $i--) {
+                    if (is_array($items[$i]['eval'] ?? null)) {
+                        return $items[$i]['eval'];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-EVAL] peekPendingEval failed for {$npcName}: " . $e->getMessage());
+        }
+        $legacy = $dynamics['_pending_xyz_eval'] ?? $dynamics['_pending_eval'] ?? [];
+        return is_array($legacy) ? $legacy : [];
+    }
+
+    /**
+     * Drain pending XYZ eval deltas queued for this NPC.
+     *
+     * Atomically takes every eval from the inbox (plus a legacy _pending_xyz_eval left in
+     * a migrated blob) and applies them in order to $dynamics. The caller must save
+     * $dynamics afterwards; overlapping callers never receive the same eval twice.
      *
      * @param string $npcName   NPC name
      * @param array  &$dynamics NPC dynamics blob (by reference)
-     * @return array  Map of dimensionId => actual_delta applied, or empty array
+     * @return array  Map of dimensionId => summed actual_delta applied, or empty array
      */
     public static function processPendingEvalDeltas($npcName, &$dynamics)
     {
-        if (!isset($dynamics['_pending_xyz_eval']) || !is_array($dynamics['_pending_xyz_eval'])) {
-            return [];
+        $pendingList = [];
+        if (isset($dynamics['_pending_xyz_eval'])) {
+            if (is_array($dynamics['_pending_xyz_eval'])) {
+                $pendingList[] = $dynamics['_pending_xyz_eval'];
+            }
+            unset($dynamics['_pending_xyz_eval']);
         }
 
-        $pending = $dynamics['_pending_xyz_eval'];
-        unset($dynamics['_pending_xyz_eval']);
+        try {
+            $npcId = RelDynStorage::resolveNpcId($npcName);
+            if ($npcId !== null) {
+                foreach (RelDynStorage::takeItems($npcId, RelDynStorage::KEY_EVAL_INBOX) as $item) {
+                    if (is_array($item['eval'] ?? null)) {
+                        $pendingList[] = $item['eval'];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-EVAL] processPendingEvalDeltas: inbox take failed for {$npcName}: " . $e->getMessage());
+        }
 
-        return self::processEvalDeltas($npcName, $pending, $dynamics);
+        $totals = [];
+        foreach ($pendingList as $pending) {
+            foreach (self::processEvalDeltas($npcName, $pending, $dynamics) as $dimId => $actual) {
+                $totals[$dimId] = ($totals[$dimId] ?? 0) + $actual;
+            }
+        }
+        return $totals;
     }
 
 
@@ -6038,12 +6140,12 @@ class RelationshipDynamics
     /**
      * Get all bonds for an NPC from the database.
      * Returns array keyed by bond target name with 'aff', 'type', 'trust' keys.
-     * Caches within the same request.
+     * Caches only inside a request scope (beginRequest()); otherwise reads fresh.
      */
     public static function getAllBondsForNpc($npcName): array
     {
         $cacheKey = strtolower($npcName);
-        if (isset(self::$bondCache[$cacheKey])) {
+        if (self::inRequestScope() && isset(self::$bondCache[$cacheKey])) {
             return self::$bondCache[$cacheKey];
         }
 
@@ -6069,7 +6171,9 @@ class RelationshipDynamics
             error_log("[RelDyn-DI] getAllBondsForNpc error for {$npcName}: " . $e->getMessage());
         }
 
-        self::$bondCache[$cacheKey] = $bonds;
+        if (self::inRequestScope()) {
+            self::$bondCache[$cacheKey] = $bonds;
+        }
         return $bonds;
     }
 

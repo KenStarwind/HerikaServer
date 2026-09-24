@@ -13,6 +13,8 @@ if (empty($npcName) || $npcName === 'The Narrator') {
 }
 
 require_once __DIR__ . '/relationship_dynamics.php';
+// Each hook is its own request scope: config/bond caches never outlive it (A3).
+RelationshipDynamics::beginRequest();
 
 if (!RelationshipDynamics::isEnabled()) {
     return;
