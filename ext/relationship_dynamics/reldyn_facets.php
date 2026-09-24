@@ -1061,6 +1061,11 @@ class RelDynFacets
             self::markFed($dynamics, $facets, $prefs, $now, $cfg);
             $out['pressure'] = self::feedWeather($dynamics, $v * floatval($cfg['weather_feed_per_game_hour']) * $hours, $now, $cfg);
         }
+        // Time in a place together covers the NPC's facet needs (rulings §9 fulfillment).
+        if ($hours > 0) {
+            RelDynFulfillment::recordFacets($dynamics, $facets,
+                floatval(RelDynFulfillment::config()['place_units_per_game_hour']) * $hours, $now);
+        }
 
         if (RelationshipDynamics::configValue('ambient_enabled') && RelationshipDynamics::configValue('passion_enabled')) {
             $out['poi_floor'] = self::holdPoiFloor($dynamics, $v, $cfg);
@@ -1175,6 +1180,10 @@ class RelDynFacets
             self::markFed($dynamics, $facets, $prefs, $now, $cfg);
             self::feedWeather($dynamics, $appraisal['valence'] * floatval($cfg['weather_feed_per_experience']), $now, $cfg);
         }
+        // An experience shared covers the NPC's facet needs (rulings §9 fulfillment).
+        if ($facets) {
+            RelDynFulfillment::recordFacets($dynamics, $facets, floatval(RelDynFulfillment::config()['experience_units']), $now);
+        }
         return $appraisal;
     }
 
@@ -1231,7 +1240,10 @@ class RelDynFacets
      *         - deprivation x deprivation_weight
      * deprivation (0..1) = preference-weighted mean, over loved facets (preference >=
      * weather_loved_at), of how long each went unfed: 0 within deprivation_grace_game_days,
-     * 1 from deprivation_full_game_days. A loved facet first seen now starts fed.
+     * 1 from deprivation_full_game_days. A loved facet first seen now starts fed. The
+     * relationship's own deprivation (RelDynFulfillment::weatherDeprivation, from the
+     * fulfillment band) counts instead when it is the larger. _weather_state keeps both
+     * ('deprivation' = loved facets, 'relationship_deprivation').
      * Weather = first of weather_thresholds the score reaches, else 'stormy'. Numbers stay in
      * _weather_state (for Jev and debugging); the LLM only ever gets the weather's feeling.
      */
@@ -1261,12 +1273,15 @@ class RelDynFacets
         }
         $dynamics['_facet_fed'] = $fed;
         $deprivation = $wSum > 0 ? $dSum / $wSum : 0.0;
+        // The relationship's fulfillment band is deprivation too (rulings §9): the larger counts.
+        $relDeprivation = RelDynFulfillment::weatherDeprivation($dynamics, $now);
+        $feltDeprivation = max($deprivation, $relDeprivation ?? 0.0);
 
         $day = (int) floor($now / RelationshipDynamics::GAMETS_PER_DAY);
         $unit = crc32(strtolower(trim($npcName)) . '|' . $day) / 4294967295.0;   // 0..1, fixed per NPC and day
         $roll = (2.0 * $unit - 1.0) * floatval($cfg['weather_roll_amplitude']);
 
-        $score = $pressure + $roll - $deprivation * floatval($cfg['deprivation_weight']);
+        $score = $pressure + $roll - $feltDeprivation * floatval($cfg['deprivation_weight']);
         $weather = 'stormy';
         foreach ((array) $cfg['weather_thresholds'] as $name => $min) {
             if ($score >= floatval($min)) { $weather = (string) $name; break; }
@@ -1276,6 +1291,9 @@ class RelDynFacets
             'pressure' => $pressure, 'gamets' => $now, 'day' => $day,
             'roll' => round($roll, 4), 'deprivation' => round($deprivation, 4), 'score' => round($score, 4),
         ];
+        if ($relDeprivation !== null) {
+            $dynamics['_weather_state']['relationship_deprivation'] = round($relDeprivation, 4);
+        }
         $dynamics['_internal_weather'] = $weather;
         if ($weather !== $current) {
             RelationshipDynamics::log("[WEATHER] {$npcName}: {$current} -> {$weather} (pressure=" . round($pressure, 2)

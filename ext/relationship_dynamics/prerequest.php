@@ -159,6 +159,12 @@ if (($reldynCfg['conflict_enabled'] ?? true) && $GLOBALS['RELDYN_PRE_AFF'] !== n
     RelationshipDynamics::observeCoreAffinity($dynamics, floatval($GLOBALS['RELDYN_PRE_AFF']), RelationshipDynamics::currentGamets());
 }
 
+// ========== FULFILLMENT (rulings 2026-09-24 §9: neglect = absence of fulfillment) ==========
+// Needs vector refreshed on contact, day-end samples, unfulfilled neglect, the mature boundary
+// (a failed probation steps core's type back), and the band this contact leaves behind for
+// the next absence. After core's type snapshot above, before weather and contact below.
+RelationshipDynamics::advanceFulfillment($npcName, $dynamics, RelationshipDynamics::currentGamets(), true);
+
 $reunionPassion = ($reldynCfg['reunion_enabled'] ?? true) ? RelationshipDynamics::checkReunion($dynamics, $npcAffection) : 0;
 if ($reunionPassion > 0) {
     RelationshipDynamics::addPassion($dynamics, $reunionPassion, 'reunion');
