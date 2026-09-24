@@ -456,6 +456,23 @@ final class RelDynEvalPipelineTest extends TestCase
         ], $o);
     }
 
+    /** One tag -> love-language table: every tag the producer maps feeds the consumer's love-language rows. */
+    public function testEveryTagMappedToALoveLanguageFeedsTheLoveLanguageRows(): void
+    {
+        $this->assertSame(RelDynEval::TAG_LOVE_LANGUAGE, RelationshipDynamics::defaultConfig()['affinity_tag_love_language'],
+            'the producer constant and the consumer config default are the same table');
+        foreach (RelDynEval::TAG_LOVE_LANGUAGE as $tag => $ll) {
+            $primary = RelationshipDynamics::affinityModifiers($this->npc(['ll_primary' => $ll]), 5, [$tag]);
+            $this->assertSame(2.0, $primary['rows']['love_language_primary'] ?? null, "{$tag} -> {$ll} primary x2.0");
+            $secondary = RelationshipDynamics::affinityModifiers($this->npc(['ll_secondary' => $ll]), 5, [$tag]);
+            $this->assertSame(1.5, $secondary['rows']['love_language_secondary'] ?? null, "{$tag} -> {$ll} secondary x1.5");
+            $this->assertSame([$ll], RelDynEval::loveLanguagesForTags([$tag]));
+        }
+        foreach (['apology', 'reassurance'] as $tag) {
+            $this->assertArrayHasKey($tag, RelDynEval::TAG_LOVE_LANGUAGE, "{$tag} is words of affirmation");
+        }
+    }
+
     public function testContractValidation(): void
     {
         $this->assertNotNull(RelationshipDynamics::normalizeEvalContractItem($this->item()));

@@ -99,18 +99,12 @@ final class RelDynEval
     /** Tags that mark an exchange as not positive, whatever the signals say. */
     const NEGATIVE_TAGS = ['insult', 'criticism', 'neglect', 'jealousy_trigger', 'betrayal', 'lie'];
 
-    /** Tag => love language it feeds (RelationshipDynamics::LL_* values). Unlisted tags feed none. */
-    const TAG_LOVE_LANGUAGE = [
-        'gift'         => 'gifts',
-        'praise'       => 'words_of_affirmation',
-        'reassurance'  => 'words_of_affirmation',
-        'apology'      => 'words_of_affirmation',
-        'quality_time' => 'quality_time',
-        'touch'        => 'physical_touch',
-        'intimacy'     => 'physical_touch',
-        'help'         => 'acts_of_service',
-        'rescue'       => 'acts_of_service',
-    ];
+    /**
+     * Tag => love language it feeds (RelationshipDynamics::LL_* values). Unlisted tags feed
+     * none. The same table the consumer's love-language rows read (config default
+     * affinity_tag_love_language).
+     */
+    const TAG_LOVE_LANGUAGE = RelationshipDynamics::EVAL_TAG_LOVE_LANGUAGE;
 
     /** Love language => the tag a local classifyInteraction() result stands for. */
     const LOVE_LANGUAGE_TAGS = [

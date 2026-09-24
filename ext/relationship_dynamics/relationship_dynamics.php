@@ -1259,16 +1259,9 @@ class RelationshipDynamics
             'affinity_modifier_min' => 0.25,
             'affinity_modifier_max' => 3.0,
             'affinity_modifiers' => self::affinityModifierDefaults(),
-            // Eval source tag -> love language (LL_* ids) for the love-language rows.
-            'affinity_tag_love_language' => [
-                'gift' => self::LL_GIFTS,
-                'praise' => self::LL_WORDS,
-                'quality_time' => self::LL_TIME,
-                'touch' => self::LL_TOUCH,
-                'intimacy' => self::LL_TOUCH,
-                'help' => self::LL_SERVICE,
-                'rescue' => self::LL_SERVICE,
-            ],
+            // Eval source tag -> love language (LL_* ids) for the love-language rows. The one
+            // table: the producer's RelDynEval::TAG_LOVE_LANGUAGE is this constant.
+            'affinity_tag_love_language' => self::EVAL_TAG_LOVE_LANGUAGE,
             // ===== Resentment / jealousy / conflict (decisions 2026-09-23 §5, MDD 15.5 / 6.5) =====
             // RAW resentment points (0..100 scale, before applyDelta's physics) per flagged
             // grievance (MDD 15.5: +5), times grievance_severity_mult[eval severity 0..3].
@@ -7126,6 +7119,23 @@ class RelationshipDynamics
 
     const EVAL_CONTRACT_VERSION = 1;
     const EVAL_CONTRACT_SOURCE = 'reldyn_eval';
+
+    /**
+     * Eval source tag => the love language (LL_* value) it feeds; unlisted tags feed none.
+     * The single tag/love-language table: config default affinity_tag_love_language and the
+     * producer's RelDynEval::TAG_LOVE_LANGUAGE are both this.
+     */
+    const EVAL_TAG_LOVE_LANGUAGE = [
+        'gift'         => self::LL_GIFTS,
+        'praise'       => self::LL_WORDS,
+        'reassurance'  => self::LL_WORDS,
+        'apology'      => self::LL_WORDS,
+        'quality_time' => self::LL_TIME,
+        'touch'        => self::LL_TOUCH,
+        'intimacy'     => self::LL_TOUCH,
+        'help'         => self::LL_SERVICE,
+        'rescue'       => self::LL_SERVICE,
+    ];
 
     /**
      * Contract signals in application order => raw range (+-; dimension points, affinity in core
