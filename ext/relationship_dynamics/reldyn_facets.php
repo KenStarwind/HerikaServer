@@ -925,6 +925,12 @@ class RelDynFacets
             'deprivation_full_game_days'            => 3.0,  // MDD 4.1: Aela 3 days without combat -> withdrawal
             'deprivation_weight'                    => 0.6,  // score points at full deprivation
             'presence_scan_max_places'              => 50,   // distinct places read per catch-up (catchUpPresence)
+            // Intimacy deprivation (PR 13, <intimacy_state>; RelationshipDynamics::ensureIntimacyClock)
+            'intimacy_min_passion'          => 30.0,  // passion points (0..100) from which physical needs exist (PR 13)
+            'intimacy_tag_levels'           => ['intimacy' => 1.0, 'touch' => 0.5],   // satisfaction per exchange (PR 13: full / half)
+            'intimacy_satisfied_game_days'  => 7.0,   // a full satisfaction wears off to nothing over this many game days
+            'intimacy_deprived_at'          => 0.3,   // satisfaction at or below this is deprivation (April threshold)
+            'intimacy_attachment_rate'      => ['secure' => 1.0, 'avoidant' => 0.5, 'anxious' => 2.0, 'toxic' => 1.5],
             'weather_roll_amplitude'                => 0.2,  // the daily roll: +- this, fixed per NPC and game day
             // score = pressure + roll - deprivation x weight; weather = first threshold the score reaches
             'weather_thresholds' => ['sunny' => 0.3, 'clear' => -0.1, 'overcast' => -0.45],   // below: stormy

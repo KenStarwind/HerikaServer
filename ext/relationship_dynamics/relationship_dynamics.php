@@ -1661,11 +1661,10 @@ class RelationshipDynamics
             '_relationship_type_history' => [],
 
             // ========== ENVIRONMENTAL QUIRKS (PR 13) ==========
+            // (internal weather state: _weather_state / _facet_fed, reldyn_facets.php;
+            // intimacy: _intimacy_fed, ensureIntimacyClock)
             '_baseline_drift_samples' => [],
-            '_interest_satisfaction' => [],
-            '_interest_last_satisfied' => [],
             '_internal_weather' => 'clear',
-            '_intimacy_last_satisfied' => 0,
             'creature_type' => null,
 
             // ========== SOCIAL MASKING + AUTONOMOUS DIARY (PR 14) ==========
@@ -4512,10 +4511,7 @@ class RelationshipDynamics
     {
         $pr13Fields = [
             '_baseline_drift_samples' => [],
-            '_interest_satisfaction' => [],
-            '_interest_last_satisfied' => [],
             '_internal_weather' => 'clear',
-            '_intimacy_last_satisfied' => 0,
             'creature_type' => null,
         ];
 
@@ -7120,6 +7116,8 @@ class RelationshipDynamics
         // Grievance / jealousy / positive interaction (resentment, conflict): once per accepted
         // item, after its signals. A rejected, misaddressed or already-applied item never gets here.
         $feelings = self::applyEvalFeelings((string) $npcName, $n, $dynamics);
+        // An intimate or touching exchange feeds intimacy (PR 13 deprivation), at the exchange's game time.
+        self::recordIntimacyFromTags($dynamics, $n['tags'], floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -13133,13 +13131,89 @@ class RelationshipDynamics
         }
     }
 
-    /**
-     * Generate M/F-aware intimacy deprivation context.
-     */
-    public static function generateIntimacyDeprivationContext(string $npcName, array $dynamics): ?string
+    // ---------- Intimacy deprivation (PR 13 "intimacy as a deprivation category") ----------
+    // On the game calendar (the April version counted interactions and was fed by the retired
+    // calculateInterestSatisfaction). State: _intimacy_fed = ['gamets' => when, 'level' => 0..1].
+    // Settings: facet_appraisal intimacy_* (reldyn_facets.php).
+
+    /** Physical needs exist at all: passion from intimacy_min_passion (PR 13's inference). */
+    private static function hasIntimacyNeeds(array $dynamics): bool
     {
-        $intimacySat = floatval($dynamics['_interest_satisfaction']['intimacy'] ?? 1.0);
-        if ($intimacySat > 0.3) return null;
+        return self::getPassion($dynamics) >= floatval(RelDynFacets::getAppraisalConfig()['intimacy_min_passion']);
+    }
+
+    /**
+     * Start the intimacy clock (satisfied now) the first time the NPC has physical needs, the
+     * way a loved facet first seen starts fed. Prerequest, with internal weather on.
+     */
+    public static function ensureIntimacyClock(array &$dynamics, float $now): void
+    {
+        if ($now <= 0 || is_array($dynamics['_intimacy_fed'] ?? null) || !self::hasIntimacyNeeds($dynamics)) return;
+        $dynamics['_intimacy_fed'] = ['gamets' => $now, 'level' => 1.0];
+    }
+
+    /**
+     * Intimacy satisfaction 0..1 at $now, or null before the clock started: the last level
+     * worn off linearly over intimacy_satisfied_game_days, faster or slower by the attachment
+     * style (intimacy_attachment_rate; PR 13: avoidant 0.5x, anxious 2x, toxic 1.5x).
+     */
+    public static function intimacySatisfaction(array $dynamics, float $now): ?float
+    {
+        $fed = $dynamics['_intimacy_fed'] ?? null;
+        if (!is_array($fed) || floatval($fed['gamets'] ?? 0) <= 0 || $now <= 0) return null;
+        $cfg = RelDynFacets::getAppraisalConfig();
+        $rate = floatval(((array) $cfg['intimacy_attachment_rate'])[self::getAttachmentStyle($dynamics)] ?? 1.0);
+        $days = max(0.0, $now - floatval($fed['gamets'])) / self::GAMETS_PER_DAY * $rate;
+        $span = max(0.001, floatval($cfg['intimacy_satisfied_game_days']));
+        return max(0.0, min(1.0, floatval($fed['level'] ?? 1.0) * (1.0 - $days / $span)));
+    }
+
+    /**
+     * An intimate exchange satisfies: $level (intimacy_tag_levels: intimacy 1.0, touch 0.5)
+     * becomes the new satisfaction at $now, unless the current one is higher (a hug after
+     * lovemaking does not lower it). Returns true when it changed $dynamics.
+     */
+    public static function markIntimacy(array &$dynamics, float $level, float $now): bool
+    {
+        if ($now <= 0 || $level <= 0) return false;
+        $level = min(1.0, $level);
+        $current = self::intimacySatisfaction($dynamics, $now);
+        if ($current !== null && $current >= $level) return false;
+        $dynamics['_intimacy_fed'] = ['gamets' => $now, 'level' => $level];
+        return true;
+    }
+
+    /** The eval contract's tags of one item (intimacy, touch) as an intimacy satisfaction. */
+    private static function recordIntimacyFromTags(array &$dynamics, array $tags, float $now): bool
+    {
+        $levels = (array) RelDynFacets::getAppraisalConfig()['intimacy_tag_levels'];
+        $level = 0.0;
+        foreach ($tags as $t) {
+            $level = max($level, floatval($levels[$t] ?? 0));
+        }
+        return $level > 0 && self::markIntimacy($dynamics, $level, $now);
+    }
+
+    /**
+     * A request classified as physical touch (classifyInteraction: hug, kiss, a scene) is a
+     * touch-level satisfaction (legacy postrequest classifier path). True when it changed $dynamics.
+     */
+    public static function recordIntimacyFromRequest(array &$dynamics, ?string $interactionLL, float $now): bool
+    {
+        if ($interactionLL !== self::LL_TOUCH) return false;
+        return self::recordIntimacyFromTags($dynamics, ['touch'], $now);
+    }
+
+    /**
+     * Generate M/F-aware intimacy deprivation context: an NPC with physical needs whose
+     * intimacy satisfaction has worn down to intimacy_deprived_at or below. Null otherwise
+     * (and before the clock started). The retired _interest_satisfaction is not read.
+     */
+    public static function generateIntimacyDeprivationContext(string $npcName, array $dynamics, ?float $nowGamets = null): ?string
+    {
+        if (!self::hasIntimacyNeeds($dynamics)) return null;
+        $intimacySat = self::intimacySatisfaction($dynamics, $nowGamets ?? self::currentGamets());
+        if ($intimacySat === null || $intimacySat > floatval(RelDynFacets::getAppraisalConfig()['intimacy_deprived_at'])) return null;
 
         $dims = $dynamics['dimensions'] ?? [];
         $coordM = floatval($dims['coord_m']['x'] ?? 50);

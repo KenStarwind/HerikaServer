@@ -333,6 +333,8 @@ try {
 
 $interactionLL = RelationshipDynamics::classifyInteraction($GLOBALS['gameRequest'], $lastMood);
 $GLOBALS['RELDYN_LAST_INTERACTION_LL'] = $interactionLL;
+// A touch request (hug, kiss) feeds intimacy (PR 13 deprivation, on the game calendar)
+RelationshipDynamics::recordIntimacyFromRequest($dynamics, $interactionLL, RelationshipDynamics::currentGamets());
 RelationshipDynamics::log("POST classify: npc={$npcName} type={$reqType} mood={$lastMood} LL=" . ($interactionLL ?? 'NULL'));
 
 // The shared-activity multiplier (place / gift appraisal, decisions §6) is part of

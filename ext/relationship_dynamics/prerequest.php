@@ -228,6 +228,7 @@ if (!empty($reldynCfg['internal_weather_enabled'])) {
     // caches needed. The place appraisal that feeds it runs in context.php, after core has
     // set CACHE_LOCATION / CACHE_PEOPLE.
     RelationshipDynamics::updateInternalWeather($npcName, $dynamics);
+    RelationshipDynamics::ensureIntimacyClock($dynamics, RelationshipDynamics::currentGamets());
     $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
     RelationshipDynamics::applyWeatherModifiers($npcName, $dynamics, $temperament);
 }
