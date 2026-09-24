@@ -6863,11 +6863,17 @@ class RelationshipDynamics
         }
 
         $totals = [];
+        $feelings = [];
         foreach ($pendingList as $pending) {
             foreach (self::processEvalDeltas($npcName, $pending, $dynamics) as $dimId => $actual) {
                 $totals[$dimId] = ($totals[$dimId] ?? 0) + $actual;
             }
+            // Contract v1: grievance / jealousy / positive interaction (resentment, conflict)
+            $f = self::applyEvalFeelings((string) $npcName, $pending, $dynamics);
+            if ($f !== []) $feelings[] = $f;
         }
+        // For the hook's bystander jealousy scan (romantic_exposure), after the save
+        $GLOBALS['RELDYN_EVAL_FEELINGS'] = $feelings;
         return $totals;
     }
 
@@ -15787,6 +15793,9 @@ class RelationshipDynamics
         // moment the lock is lifted, over the value the user pinned.
         $dynamics['_pending_aff_delta'] = !empty($result['locked']) ? 0.0 : round($pending - $whole, 4);
         self::refreshAffinityMirror($dynamics, $result['new']);
+        if (self::configValue('conflict_enabled')) {
+            self::observeCoreAffinity($dynamics, floatval($result['new']), self::currentGamets());   // conflict/repair
+        }
         return $result;
     }
 
