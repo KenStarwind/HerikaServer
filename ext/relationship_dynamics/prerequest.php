@@ -402,10 +402,12 @@ if (!empty($reldynCfg['attachment_style_enabled'] ?? true)) {
 // ========== AFFINITY DECAY WIRING (PR 10) ==========
 // Absence ticks on the game calendar since the last turn with this NPC (consumed here).
 // PR 16: Pause affinity decay during walkaway (NPC chose to leave, not forgotten): the
-// paused interval is dropped, not banked for after the walkaway resolves.
+// paused interval is dropped, not banked for after the walkaway resolves. calculateDecayTicks
+// leaves exactly the walkaway interval out, so a walkaway that starts on this turn does not
+// swallow the absence before it.
 if (!empty($reldynCfg['dimension_engine_enabled'])) {
     $decayTicks = RelationshipDynamics::calculateDecayTicks($dynamics);
-    if ($decayTicks > 0.001 && empty($dynamics['_walkaway_affinity_decay_paused'])) {
+    if ($decayTicks > 0.001) {
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
         // Same type every other consumer reads: core Player.type (snapshotted above), mapped
         $relType = RelationshipDynamics::getRelationshipType($npcName, $dynamics);

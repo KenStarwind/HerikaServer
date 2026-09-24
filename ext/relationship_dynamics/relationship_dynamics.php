@@ -8535,6 +8535,11 @@ class RelationshipDynamics
      * earlier save was loaded (checkpoint re-armed), and for a turn less than one tick after
      * the previous one (still talking: conversation is not absence).
      *
+     * Walkaway (PR 16): the time the NPC was gone (_decay_paused_intervals, game calendar,
+     * see startDecayPause/endDecayPause) is left out of the ticks and dropped, not banked. The
+     * absence before the NPC left and after it came back still counts, whichever request
+     * (this NPC's turn or the calendar scan) started or ended the walkaway.
+     *
      * @param array &$dynamics  NPC dynamics blob (modified: sets _decay_last_game_gamets)
      * @return float  Number of absence ticks elapsed
      */
@@ -8548,17 +8553,100 @@ class RelationshipDynamics
         $dynamics['_decay_last_game_gamets'] = $now;
 
         if ($mark <= 0 || $mark > $now) {
+            self::dropConsumedDecayPauses($dynamics, $now);
             return 0.0;
         }
 
-        $gametsSinceDecay = $now - $mark;
+        $gametsSinceDecay = $now - $mark;                                   // raw gamets
+        $paused = self::decayPausedGametsBetween($dynamics, $mark, $now);    // raw gamets
+        self::dropConsumedDecayPauses($dynamics, $now);
         if ($gametsSinceDecay < self::GAMETS_PER_DECAY_TICK) {
             return 0.0;
         }
 
-        $ticksElapsed = $gametsSinceDecay / self::GAMETS_PER_DECAY_TICK;
+        $ticksElapsed = max(0.0, $gametsSinceDecay - $paused) / self::GAMETS_PER_DECAY_TICK;
 
         return $ticksElapsed;
+    }
+
+    /**
+     * Pause absence decay from now (game calendar): the NPC walked away. The interval stays
+     * open until endDecayPause(). Unit: raw gamets.
+     */
+    public static function startDecayPause(array &$dynamics): void
+    {
+        $dynamics['_walkaway_affinity_decay_paused'] = true;
+        $now = self::currentGamets();
+        if ($now <= 0) {
+            return;   // no clock: the legacy flag alone pauses the whole gap
+        }
+        $intervals = is_array($dynamics['_decay_paused_intervals'] ?? null) ? $dynamics['_decay_paused_intervals'] : [];
+        foreach ($intervals as $iv) {
+            if (is_array($iv) && ($iv['until'] ?? null) === null) {
+                return;   // already paused
+            }
+        }
+        $intervals[] = ['from' => $now, 'until' => null];
+        $dynamics['_decay_paused_intervals'] = array_values($intervals);
+    }
+
+    /** End the walkaway's decay pause now (game calendar); decay counts again from here. */
+    public static function endDecayPause(array &$dynamics): void
+    {
+        $wasPaused = !empty($dynamics['_walkaway_affinity_decay_paused']);
+        $dynamics['_walkaway_affinity_decay_paused'] = false;
+        $now = self::currentGamets();
+        $intervals = is_array($dynamics['_decay_paused_intervals'] ?? null) ? $dynamics['_decay_paused_intervals'] : [];
+        $open = false;
+        foreach ($intervals as $i => $iv) {
+            if (is_array($iv) && ($iv['until'] ?? null) === null) {
+                $intervals[$i]['until'] = $now > 0 ? max($now, floatval($iv['from'] ?? 0)) : floatval($iv['from'] ?? 0);
+                $open = true;
+            }
+        }
+        if (!$open && $wasPaused && $now > 0) {
+            // Paused by an older build (flag only): paused since the absence checkpoint.
+            $from = floatval($dynamics['_decay_last_game_gamets'] ?? 0);
+            if ($from > 0 && $from < $now) {
+                $intervals[] = ['from' => $from, 'until' => $now];
+            }
+        }
+        if ($intervals) {
+            $dynamics['_decay_paused_intervals'] = array_values($intervals);
+        }
+    }
+
+    /** Raw gamets of [from, to] covered by decay pauses (an open pause runs to $to). */
+    private static function decayPausedGametsBetween(array $dynamics, float $from, float $to): float
+    {
+        $intervals = is_array($dynamics['_decay_paused_intervals'] ?? null) ? $dynamics['_decay_paused_intervals'] : [];
+        $open = false;
+        $paused = 0.0;
+        foreach ($intervals as $iv) {
+            if (!is_array($iv)) continue;
+            $start = floatval($iv['from'] ?? 0);
+            $end = ($iv['until'] ?? null) === null ? $to : floatval($iv['until']);
+            if (($iv['until'] ?? null) === null) $open = true;
+            $paused += max(0.0, min($end, $to) - max($start, $from));
+        }
+        if (!$open && !empty($dynamics['_walkaway_affinity_decay_paused'])) {
+            // Paused by an older build (flag only, no interval): the whole gap is paused.
+            return $to - $from;
+        }
+        return min($paused, $to - $from);
+    }
+
+    /** Forget pauses the absence checkpoint has passed (closed at or before $now). */
+    private static function dropConsumedDecayPauses(array &$dynamics, float $now): void
+    {
+        if (!is_array($dynamics['_decay_paused_intervals'] ?? null)) return;
+        $keep = array_values(array_filter($dynamics['_decay_paused_intervals'], fn($iv) => is_array($iv)
+            && (($iv['until'] ?? null) === null || floatval($iv['until']) > $now)));
+        if ($keep) {
+            $dynamics['_decay_paused_intervals'] = $keep;
+        } else {
+            unset($dynamics['_decay_paused_intervals']);
+        }
     }
 
     // ========== END AFFINITY DECAY + TIER DEMOTION (PR 5) ==========
@@ -14577,7 +14665,7 @@ class RelationshipDynamics
         self::markGameClock($dynamics, '_walkaway_activated_calendar_gamets');
 
         // Pause affinity decay during walkaway (they chose to leave, not forgotten)
-        $dynamics['_walkaway_affinity_decay_paused'] = true;
+        self::startDecayPause($dynamics);
 
         // Execute physical departure
         self::executeWalkawaySelfDismiss($npcName, $dynamics);
@@ -14656,14 +14744,14 @@ class RelationshipDynamics
             if ($boundaryResult === 'recovery') {
                 $dynamics['_walkaway_state'] = 'recovery';
                 self::markGameClock($dynamics, '_walkaway_recovery_calendar_gamets');
-                $dynamics['_walkaway_affinity_decay_paused'] = false;
+                self::endDecayPause($dynamics);
                 self::log("[WALKAWAY] {$npcName} entering recovery — boundary test resolved");
                 $result['state'] = 'recovery';
                 $result['changed'] = true;
             } elseif ($boundaryResult === 'permanent') {
                 $dynamics['_walkaway_state'] = 'permanent';
                 self::markGameClock($dynamics, '_walkaway_permanent_calendar_gamets');
-                $dynamics['_walkaway_affinity_decay_paused'] = false;
+                self::endDecayPause($dynamics);
                 self::log("[WALKAWAY] {$npcName} permanent departure — boundary test failed");
                 $result['state'] = 'permanent';
                 $result['changed'] = true;
@@ -14873,7 +14961,7 @@ class RelationshipDynamics
     public static function resetWalkawayState(&$dynamics)
     {
         $dynamics['_walkaway_state'] = 'normal';
-        $dynamics['_walkaway_affinity_decay_paused'] = false;
+        self::endDecayPause($dynamics);   // closes the pause interval (calculateDecayTicks drops it)
         unset(
             $dynamics['_walkaway_reason'],
             $dynamics['_walkaway_started_gamets'],
