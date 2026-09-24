@@ -3324,6 +3324,7 @@ class RelationshipDynamics
     /**
      * Advance one NPC through game-calendar time [from, to] (raw gamets) with no contact:
      *  - fester: open conflict + maturity below fester_maturity_below -> raw resentment per day;
+     *  - jealousy: jealousy above jealousy_resentment_above -> raw resentment per day (§5);
      *  - neglect: bonded NPC past its grace since _last_contact_gamets -> raw resentment per
      *    day, logged as one 'neglect' grievance per absence;
      *  - passion fade: past the absence grace, passion fades per day x attachment multiplier
@@ -3332,11 +3333,11 @@ class RelationshipDynamics
      * Nothing negative is ever reduced here. Neglect and fade are skipped while the NPC is
      * the one who left (walkaway). Pure: no database, no clock reads.
      *
-     * @return array ['game_days', 'resentment_raw', 'resentment', 'neglect_days', 'passion_fade', 'warmth_fade', 'bond_type']
+     * @return array ['game_days', 'resentment_raw', 'resentment', 'jealousy_resentment_raw', 'neglect_days', 'passion_fade', 'warmth_fade', 'bond_type']
      */
     public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
     {
-        $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0,
+        $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0, 'jealousy_resentment_raw' => 0.0,
                 'neglect_days' => 0.0, 'passion_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
         if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
             return $out;
@@ -3354,6 +3355,18 @@ class RelationshipDynamics
         // Fester: an open conflict in an immature NPC grows every game day.
         if (!empty($dynamics['in_conflict']) && $maturity < floatval(self::configValue('fester_maturity_below'))) {
             $raw += floatval(self::configValue('fester_resentment_per_game_day')) * $days;
+        }
+
+        // Sustained jealousy converts into resentment (decisions §5): while jealousy (0..100)
+        // is above the threshold, k x (jealousy - 30) / 70 raw points per game day. Jealousy
+        // only cools in contact (decayJealousy), so it is constant over this interval.
+        $jealousy = floatval($dynamics['jealousy_anger'] ?? 0);
+        $jAbove = floatval(self::configValue('jealousy_resentment_above'));
+        if ($jealousy > $jAbove && self::configValue('jealousy_enabled')) {
+            $jRaw = floatval(self::configValue('jealousy_resentment_k'))
+                * ($jealousy - $jAbove) / (self::JEALOUSY_SCALE_MAX - $jAbove) * $days;
+            $raw += $jRaw;
+            $out['jealousy_resentment_raw'] = $jRaw;
         }
 
         // Neglect: game days past the bond's grace since the player's last contact.
@@ -3576,54 +3589,8 @@ class RelationshipDynamics
     // JEALOUSY
     // =========================================================================
 
-    /**
-     * Check if an NPC should gain jealousy from player's romantic interaction with another NPC.
-     *
-     * @param string $jealousNpcName The NPC who might be jealous
-     * @param string $flirtTargetName The NPC the player is flirting with
-     * @param array $jealousDynamics Dynamics data for the jealous NPC
-     * @param string|null $relPreference relationship_preference from nsfw_npc_data
-     * @param string|null $marasStatus MARAS status (married/engaged/candidate)
-     * @param int $marasAffection MARAS affection 0-100
-     * @return float Jealousy amount to add
-     */
-    public static function calculateJealousyGain(
-        $jealousNpcName, $flirtTargetName, $jealousDynamics,
-        $relPreference = null, $marasStatus = null, $marasAffection = 0
-    ) {
-        $cfg = self::getConfig();
-        $baseGain = 10.0;
-
-        // Temperament multiplier
-        $temperament = $jealousDynamics['inferred_temperament'] ?? null;
-        $tempMult = self::TEMPERAMENT_JEALOUSY_MULT[$temperament] ?? 1.0;
-
-        // Relationship status multiplier
-        $relMult = 1.0;
-        if ($marasStatus === 'married') {
-            // Check rank for lead vs lower spouse (simplified: assume lead)
-            $relMult = 1.5;
-        } elseif ($marasStatus === 'engaged') {
-            $relMult = 1.2;
-        } elseif ($marasStatus === 'candidate' && $marasAffection >= 60) {
-            $relMult = 0.8; // boyfriend/girlfriend level
-        } else {
-            return 0.0; // Not committed enough to be jealous
-        }
-
-        // Relationship preference modifier
-        if ($relPreference === 'polyamorous') {
-            $relMult *= 0.2;
-        } elseif ($relPreference === 'not_interested') {
-            return 0.0; // Doesn't care
-        }
-
-        $gain = $baseGain * $tempMult * $relMult;
-
-        self::log("Jealousy: {$jealousNpcName} gains {$gain} (target={$flirtTargetName}, temp={$tempMult}, rel={$relMult})");
-
-        return max(0.0, min(floatval($cfg['jealousy_max'] ?? 100.0), $gain));
-    }
+    // Jealousy sources (no MARAS on 3.4.1): contract eval jealousy events and the bystander
+    // scan, see jealousyEventGain() / bystanderJealousyGain() in the EVAL FEELINGS section.
 
     /**
      * Add jealousy to an NPC's dynamics.
@@ -7397,6 +7364,91 @@ class RelationshipDynamics
             * ($pref === 'polyamorous' ? 0.2 : 1.0)
             * $commitment;
         return max(0.0, $gain);
+    }
+
+    /** Jealousy scale ceiling, jealousy points (MDD 6.5: walkaway at 100). */
+    const JEALOUSY_SCALE_MAX = 100.0;
+
+    /**
+     * Jealousy points a bystander gains from seeing the player be intimate with another NPC:
+     * an intensity-1 event scaled by the bystander's commitment, read from its core
+     * relationships.Player.type (_core_rel_type, stored by its own last prerequest) through
+     * jealousy_bystander_commitment. Not committed (or type unknown) -> 0. Pure.
+     */
+    public static function bystanderJealousyGain(array $observerDynamics): float
+    {
+        $type = strtolower(trim((string) ($observerDynamics['_core_rel_type'] ?? '')));
+        $commitment = floatval(((array) self::configValue('jealousy_bystander_commitment'))[$type] ?? 0.0);
+        if ($commitment <= 0) {
+            return 0.0;
+        }
+        return self::jealousyEventGain($observerDynamics, 1, $commitment);
+    }
+
+    /**
+     * NPCs near $npcName (CHIM's CACHE_PEOPLE, '|'-delimited) watched the player be intimate
+     * with $npcName (an eval item for $npcName with romantic_exposure). Each committed
+     * bystander with RelDyn state gains bystanderJealousyGain(), rival = $npcName, and is
+     * saved (merge save). Returns bystander => jealousy points added.
+     */
+    public static function scanBystanderJealousy(string $npcName, ?string $cachePeople = null): array
+    {
+        $cachePeople = $cachePeople ?? (string) ($GLOBALS['CACHE_PEOPLE'] ?? '');
+        $added = [];
+        $seen = [];
+        foreach (explode('|', $cachePeople) as $name) {
+            $name = trim($name);
+            $key = strtolower($name);
+            if ($name === '' || $key === strtolower(trim($npcName)) || isset($seen[$key])) continue;
+            $seen[$key] = true;
+            if (self::loadStoredDynamics($name) === null) continue;   // no bond state: not jealous of anyone
+
+            $dyn = self::getDynamics($name);
+            $gain = self::bystanderJealousyGain($dyn);
+            if ($gain <= 0) continue;
+            self::addJealousy($dyn, $gain, $npcName);
+            if (!self::saveDynamics($name, $dyn)) {
+                error_log("[RelDyn-JEALOUSY] bystander {$name}: save failed, +{$gain} jealousy lost");
+                continue;
+            }
+            $added[$name] = $gain;
+            self::log("Bystander jealousy: {$name} +" . round($gain, 2) . " (saw the player with {$npcName})");
+        }
+        return $added;
+    }
+
+    /**
+     * Observe the NPC's core affinity (relationships.Player.aff, -100..100) at raw game time
+     * $nowGamets, whoever changed it (core eval, RelDyn, the editor). A session runs while
+     * observations come no more than conflict_session_gap_game_hours apart; a drop of
+     * conflict_threshold_affinity_drop points below the session's high opens a conflict
+     * (MDD conflict/repair). Returns true when this observation opened one.
+     */
+    public static function observeCoreAffinity(array &$dynamics, float $coreAff, float $nowGamets): bool
+    {
+        if ($nowGamets <= 0) {
+            return false;   // game clock unknown: sessions cannot be told apart
+        }
+        $gapGamets = floatval(self::configValue('conflict_session_gap_game_hours')) * self::GAMETS_PER_DAY / 24.0;
+        $s = $dynamics['_conflict_aff_session'] ?? null;
+        $seen = is_array($s) ? floatval($s['seen_gamets'] ?? 0) : 0.0;
+        if (!is_array($s) || !is_numeric($s['high'] ?? null) || $seen <= 0 || $seen > $nowGamets
+            || $nowGamets - $seen > $gapGamets) {
+            $high = $coreAff;   // a new session starts here
+        } else {
+            $high = max(floatval($s['high']), $coreAff);
+        }
+
+        $opened = false;
+        $threshold = floatval(self::configValue('conflict_threshold_affinity_drop'));   // core affinity points
+        if ($high - $coreAff >= $threshold && empty($dynamics['in_conflict']) && self::configValue('conflict_enabled')) {
+            self::enterConflict($dynamics);
+            self::log("Conflict: core affinity fell " . round($high - $coreAff, 2) . " below this session's high ({$high} -> {$coreAff})");
+            $high = $coreAff;
+            $opened = true;
+        }
+        $dynamics['_conflict_aff_session'] = ['high' => $high, 'seen_gamets' => $nowGamets];
+        return $opened;
     }
 
     // ========== END EVAL FEELINGS ==========
@@ -14907,6 +14959,10 @@ class RelationshipDynamics
             $state = 'walkaway';
         }
         if ($resentment > 70 && !$isPeoplePleaser) {
+            $state = 'walkaway';
+        }
+        // MDD 6.5: jealousy (0..100) reaching jealousy_walkaway_at -> walkaway
+        if (floatval($dynamics['jealousy_anger'] ?? 0) >= floatval(self::configValue('jealousy_walkaway_at'))) {
             $state = 'walkaway';
         }
 

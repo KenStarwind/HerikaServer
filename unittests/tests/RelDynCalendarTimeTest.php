@@ -219,8 +219,9 @@ final class RelDynCalendarTimeTest extends TestCase
 
     public function testNegativeStatesDoNotDecayWithTimeAlone(): void
     {
-        // Not bonded, no open conflict: a month passes and nothing negative moves.
-        $d = $this->npc(['jealousy_anger' => 35.0], ['resentment' => 40.0, 'resentment_self' => 12.0]);
+        // Not bonded, no open conflict, jealousy below the §5 conversion threshold (30): a month
+        // passes and nothing negative moves (RelDynJealousyConflictTest covers the conversion).
+        $d = $this->npc(['jealousy_anger' => 25.0], ['resentment' => 40.0, 'resentment_self' => 12.0]);
         $d['dimensions']['resentment']['grievance_log'] = [['text' => 'insulted', 'amount' => 5]];
 
         RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 30 * self::DAY);

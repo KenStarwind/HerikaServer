@@ -69,7 +69,7 @@ final class RelDynTemperamentMddTest extends TestCase
         $passion0 = RelationshipDynamics::calculatePassionGain($this->npc(null), RelationshipDynamics::LL_TIME);
         $n = $this->npc(null);
         $reunion0 = RelationshipDynamics::checkReunion($n, 100);   // core affinity 100 (-100..100)
-        $jealousy0 = RelationshipDynamics::calculateJealousyGain('Serana', 'Lydia', $this->npc(null), null, 'married');
+        $jealousy0 = RelationshipDynamics::jealousyEventGain(['attachment_style' => 'secure'] + $this->npc(null), 1);   // secure: temperament only
         $this->assertGreaterThan(0, $passion0);
         $this->assertGreaterThan(0, $reunion0);
         $this->assertGreaterThan(0, $jealousy0);
@@ -82,7 +82,7 @@ final class RelDynTemperamentMddTest extends TestCase
             $r = RelationshipDynamics::checkReunion($d, 100);
             $this->assertEqualsWithDelta($reunion, $r / $reunion0, 1e-9, "{$temperament} reunion (MDD 1.3)");
 
-            $j = RelationshipDynamics::calculateJealousyGain('Serana', 'Lydia', $this->npc($temperament), null, 'married');
+            $j = RelationshipDynamics::jealousyEventGain(['attachment_style' => 'secure'] + $this->npc($temperament), 1);
             $this->assertEqualsWithDelta($jealousy, $j / $jealousy0, 1e-9, "{$temperament} jealousy (MDD 1.3)");
         }
     }
