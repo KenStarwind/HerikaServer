@@ -1251,6 +1251,86 @@ class RelationshipDynamics
             // advanced on any request; at most calendar_scan_max_npcs per request.
             'calendar_scan_interval_game_hours' => 1,
             'calendar_scan_max_npcs' => 10,
+            // ===== Eval consumer (MDD 15.4, decisions 2026-09-23 §1) =====
+            // Significance clamp: one eval item moves a dimension by at most this many points x
+            // significance (0..1). Dimension points; for affinity, core points (-100..100 scale).
+            'eval_significance_clamp' => 30,
+            // M_modifiers = clamp(product of every matching row, min, max) (unitless multipliers)
+            'affinity_modifier_min' => 0.25,
+            'affinity_modifier_max' => 3.0,
+            'affinity_modifiers' => self::affinityModifierDefaults(),
+            // Eval source tag -> love language (LL_* ids) for the love-language rows.
+            'affinity_tag_love_language' => [
+                'gift' => self::LL_GIFTS,
+                'praise' => self::LL_WORDS,
+                'quality_time' => self::LL_TIME,
+                'touch' => self::LL_TOUCH,
+                'intimacy' => self::LL_TOUCH,
+                'help' => self::LL_SERVICE,
+                'rescue' => self::LL_SERVICE,
+            ],
+        ];
+    }
+
+    /**
+     * Decisions 2026-09-23 §1 (PROPOSED math): the initial M_modifiers table for affinity.
+     *
+     * A row matches an affinity delta on (sign, tags, when):
+     *   'sign'     'gain' (delta > 0), 'loss' (delta < 0) or 'any'
+     *   'tags'     the delta must carry at least one of these eval source tags; [] = any delta
+     *   'when'     every condition must hold (AND):
+     *                ['state' => S, 'op' => '<'|'<='|'>'|'>=', 'value' => number]  (S below)
+     *                ['attachment' => secure|avoidant|anxious|toxic]   (MDD 6.1, getAttachmentStyle)
+     *                ['trait' => tag]                                  (hasTrait, profile overrides first)
+     *                ['love_language' => 'primary'|'secondary']        (a tag maps to that LL)
+     *                ['weather' => clear|cloudy|stormy|...]            (_internal_weather)
+     *   'requires' config toggle that must be on (state the subsystem keeps; off = row ignored)
+     *   'mult'     a number, or linear in a state: at_ref + per_point x (state - ref), clamped
+     *              to optional min/max.
+     * States (units): maturity 0..100 (dimensions.maturity.x), jealousy 0..jealousy_max jealousy
+     * points (jealousy_anger), resentment 0..100 (dimensions.resentment.x), passion 0..100
+     * (dimensions.passion.x), comfort 0..100 (dimensions.comfort.x), trust 0..100, respect 0..100.
+     */
+    public static function affinityModifierDefaults(): array
+    {
+        return [
+            // Current maturity m: losses x (1 + (50 - m)/100): m=0 1.5, m=50 1.0, m=100 0.5
+            ['id' => 'maturity_losses', 'sign' => 'loss', 'tags' => [], 'when' => [],
+             'mult' => ['state' => 'maturity', 'ref' => 50, 'at_ref' => 1.0, 'per_point' => -0.01]],
+            // Jealousy j > 30: losses x (1 + (j - 30)/70), up to 2.0
+            ['id' => 'jealousy_losses', 'sign' => 'loss', 'tags' => [], 'requires' => 'jealousy_enabled',
+             'when' => [['state' => 'jealousy', 'op' => '>', 'value' => 30]],
+             'mult' => ['state' => 'jealousy', 'ref' => 30, 'at_ref' => 1.0, 'per_point' => 1 / 70, 'max' => 2.0]],
+            // Jealousy j > 30: reassurance gains x1.2
+            ['id' => 'jealousy_reassurance', 'sign' => 'gain', 'tags' => ['quality_time', 'praise', 'reassurance'],
+             'requires' => 'jealousy_enabled', 'when' => [['state' => 'jealousy', 'op' => '>', 'value' => 30]], 'mult' => 1.2],
+            ['id' => 'anxious_abandonment', 'sign' => 'loss', 'tags' => ['neglect', 'jealousy_trigger'],
+             'when' => [['attachment' => 'anxious']], 'mult' => 2.0],
+            ['id' => 'anxious_reassurance', 'sign' => 'gain', 'tags' => ['quality_time', 'praise'],
+             'when' => [['attachment' => 'anxious']], 'mult' => 1.3],
+            ['id' => 'avoidant_closeness', 'sign' => 'gain', 'tags' => ['touch', 'intimacy'],
+             'when' => [['attachment' => 'avoidant'], ['state' => 'comfort', 'op' => '<', 'value' => 50]], 'mult' => 0.6],
+            ['id' => 'avoidant_neglect', 'sign' => 'loss', 'tags' => ['neglect'],
+             'when' => [['attachment' => 'avoidant']], 'mult' => 0.5],
+            ['id' => 'toxic_all', 'sign' => 'any', 'tags' => [], 'when' => [['attachment' => 'toxic']], 'mult' => 1.4],
+            ['id' => 'egocentric_flattery', 'sign' => 'gain', 'tags' => ['gift', 'praise'],
+             'when' => [['trait' => 'egocentric']], 'mult' => 1.5],
+            ['id' => 'egocentric_slight', 'sign' => 'loss', 'tags' => ['criticism', 'insult', 'neglect'],
+             'when' => [['trait' => 'egocentric']], 'mult' => 1.5],
+            // The player outshining them stings
+            ['id' => 'egocentric_outshone', 'sign' => 'gain', 'tags' => ['help', 'competence'],
+             'when' => [['trait' => 'egocentric']], 'mult' => 0.8],
+            // MDD 1.2: primary x2.0 / secondary x1.5
+            ['id' => 'love_language_primary', 'sign' => 'gain', 'tags' => [], 'when' => [['love_language' => 'primary']], 'mult' => 2.0],
+            ['id' => 'love_language_secondary', 'sign' => 'gain', 'tags' => [], 'when' => [['love_language' => 'secondary']], 'mult' => 1.5],
+            // MDD 15.4 stage 3 / 15.5: resentment above 50 halves gains
+            ['id' => 'resentment_blocks_gains', 'sign' => 'gain', 'tags' => [],
+             'when' => [['state' => 'resentment', 'op' => '>', 'value' => 50]], 'mult' => 0.5],
+            // MDD 1.1: passion 0 -> x0.3 (idling), 100 -> x2.0 (redline)
+            ['id' => 'passion_drives_gains', 'sign' => 'gain', 'tags' => [], 'requires' => 'passion_enabled', 'when' => [],
+             'mult' => ['state' => 'passion', 'ref' => 0, 'at_ref' => 0.3, 'per_point' => 0.017]],
+            ['id' => 'stormy_losses', 'sign' => 'loss', 'tags' => [], 'requires' => 'internal_weather_enabled',
+             'when' => [['weather' => 'stormy']], 'mult' => 1.2],
         ];
     }
 
@@ -6243,7 +6323,7 @@ class RelationshipDynamics
      * @param float  $rawDelta      Raw delta before physics
      * @return float Modified delta after cross-signal caps
      */
-    public static function applyCrossSignalCaps(&$dynamics, $dimensionId, $rawDelta)
+    public static function applyCrossSignalCaps(&$dynamics, $dimensionId, $rawDelta, array $skip = [])
     {
         $dims = $dynamics['dimensions'] ?? [];
         $modifiedDelta = $rawDelta;
@@ -6311,8 +6391,9 @@ class RelationshipDynamics
         }
 
         // --- Resentment > 50 → halve all affinity gains ---
-        // "Grievances block bonding"
-        if ($dimensionId === 'affinity' && $rawDelta > 0) {
+        // "Grievances block bonding". Skipped for the eval consumer: its M_modifiers table
+        // carries this rule (resentment_blocks_gains), so the gain is halved once.
+        if ($dimensionId === 'affinity' && $rawDelta > 0 && !in_array('resentment_affinity_gain', $skip, true)) {
             $resentment = $dims['resentment']['x'] ?? 0;
             if ($resentment > 50) {
                 $modifiedDelta *= 0.5;
@@ -6392,7 +6473,9 @@ class RelationshipDynamics
      * @param array      &$dynamics    NPC dynamics array (modified in place)
      * @param float      $rawDelta     Raw delta from eval or event (positive or negative)
      * @param string|null $temperament Temperament name (null = use defaults)
-     * @param array      $overrides    Optional overrides: Y_up, Y_down, Z, maturity
+     * @param array      $overrides    Optional overrides: Y_up, Y_down, Z, maturity,
+     *                                 max_abs (clamp on |actual delta|, physics units),
+     *                                 skip_caps (applyCrossSignalCaps rules to skip)
      * @return float     The actual delta applied (after all physics)
      */
     public static function applyDelta($dimensionId, &$dynamics, $rawDelta, $temperament = null, $overrides = [])
@@ -6405,7 +6488,7 @@ class RelationshipDynamics
         // Apply cross-signal caps (other dimensions modify this delta)
         $config = self::getConfig();
         if (!empty($config['dimension_engine_enabled'])) {
-            $rawDelta = self::applyCrossSignalCaps($dynamics, $dimensionId, $rawDelta);
+            $rawDelta = self::applyCrossSignalCaps($dynamics, $dimensionId, $rawDelta, (array) ($overrides['skip_caps'] ?? []));
         }
 
 
@@ -6527,6 +6610,13 @@ class RelationshipDynamics
         } else {
             // --- No crossing: single application ---
             $actualDelta = self::applyPortionDelta($x, $baseline, $rawDelta, $z, $yUp, $yDown, $invertRubberBand);
+        }
+
+        // --- Significance clamp (eval consumer): |delta| <= max_abs, in physics units
+        // (dimension points; core affinity points for affinity) ---
+        if (isset($overrides['max_abs'])) {
+            $maxAbs = max(0.0, floatval($overrides['max_abs']));
+            $actualDelta = max(-$maxAbs, min($maxAbs, $actualDelta));
         }
 
         // --- Clamp to range ---
@@ -6806,6 +6896,9 @@ class RelationshipDynamics
                     if (is_array($items[$i]['eval'] ?? null)) {
                         return $items[$i]['eval'];
                     }
+                    if (self::isEvalContractItem($items[$i])) {
+                        return $items[$i];
+                    }
                 }
             }
         } catch (\Throwable $e) {
@@ -6840,9 +6933,17 @@ class RelationshipDynamics
             $npcId = RelDynStorage::resolveNpcId($npcName);
             if ($npcId !== null) {
                 foreach (RelDynStorage::takeItems($npcId, RelDynStorage::KEY_EVAL_INBOX) as $item) {
-                    if (is_array($item['eval'] ?? null)) {
-                        $pendingList[] = $item['eval'];
+                    // {queued_at, eval} from queuePendingEval(), or a bare shared-contract item
+                    $pending = is_array($item['eval'] ?? null) ? $item['eval'] : (self::isEvalContractItem($item) ? $item : null);
+                    if ($pending === null) {
+                        error_log("[RelDyn-EVAL] processPendingEvalDeltas: unrecognised inbox item for {$npcName} dropped: " . substr((string) json_encode($item), 0, 300));
+                        continue;
                     }
+                    if (self::isEvalContractItem($pending) && is_numeric($pending['npc_id'] ?? null) && intval($pending['npc_id']) !== $npcId) {
+                        error_log("[RelDyn-EVAL] processPendingEvalDeltas: item for npc_id {$pending['npc_id']} in the inbox of {$npcName} (id {$npcId}) dropped");
+                        continue;
+                    }
+                    $pendingList[] = $pending;
                 }
             }
         } catch (\Throwable $e) {
@@ -6851,7 +6952,10 @@ class RelationshipDynamics
 
         $totals = [];
         foreach ($pendingList as $pending) {
-            foreach (self::processEvalDeltas($npcName, $pending, $dynamics) as $dimId => $actual) {
+            $applied = self::isEvalContractItem($pending)
+                ? self::processEvalContractItem($npcName, $pending, $dynamics)
+                : self::processEvalDeltas($npcName, $pending, $dynamics);
+            foreach ($applied as $dimId => $actual) {
                 $totals[$dimId] = ($totals[$dimId] ?? 0) + $actual;
             }
         }
@@ -6899,6 +7003,498 @@ class RelationshipDynamics
         }
 
         return self::peekPendingEval($npcName, $dynamics);
+    }
+
+
+    // ========== EVAL CONTRACT CONSUMER (shared eval contract v1) ==========
+    // Every signal of an eval item runs the MDD 15.4 pipeline, with the relative affinity
+    // multipliers of decisions 2026-09-23 §1 on affinity:
+    //   delta = raw x R_temperament[signal] x P_maturity_type[direction] x M_modifiers (affinity only)
+    //         x distance_decay (applyDelta rubber band + MDD 15.4 stage 3 cross-signal caps),
+    //   then |delta| <= eval_significance_clamp x significance.
+    // Signals are raw: dimension points, affinity in CORE points (-100..100 scale). The affinity
+    // result moves the core mirror; commitPlayerAffinity() pushes it to core as a locked delta.
+
+    const EVAL_CONTRACT_VERSION = 1;
+    const EVAL_CONTRACT_SOURCE = 'reldyn_eval';
+
+    /**
+     * Contract signals in application order => raw range (+-; dimension points, affinity in core
+     * points). Affinity goes first so its M_modifiers read maturity, passion and comfort as they
+     * were before this item.
+     */
+    const EVAL_CONTRACT_SIGNALS = [
+        'affinity' => 30, 'trust' => 30, 'comfort' => 30, 'respect' => 30, 'passion' => 30, 'maturity' => 10,
+    ];
+
+    const EVAL_CONTRACT_TAGS = [
+        'gift', 'praise', 'help', 'rescue', 'quality_time', 'touch', 'intimacy', 'insult', 'criticism',
+        'neglect', 'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology',
+    ];
+
+    /** Fingerprints of applied items kept per NPC (count), so a re-queued copy is skipped. */
+    const EVAL_APPLIED_KEEP = 32;
+
+    /**
+     * MDD 15.4 stage 1: temperament resistance per signal (unitless multipliers). The MDD lists
+     * a 'Volatile' row (not one of MDD 1.3's 13 temperaments) and no 'Humble' row; a temperament
+     * without a row resists nothing (1.0). Passion has no column there: getSignalResistance()
+     * uses MDD 1.3's passion multiplier (TEMPERAMENT_PASSION_MULT).
+     */
+    const TEMPERAMENT_SIGNAL_RESISTANCE = [
+        'Stoic'       => ['affinity' => 0.5, 'trust' => 0.7, 'comfort' => 0.4, 'respect' => 0.8, 'maturity' => 0.5],
+        'Romantic'    => ['affinity' => 1.3, 'trust' => 1.0, 'comfort' => 1.2, 'respect' => 0.8, 'maturity' => 1.0],
+        'Anxious'     => ['affinity' => 1.5, 'trust' => 0.6, 'comfort' => 0.5, 'respect' => 0.7, 'maturity' => 1.3],
+        'Guarded'     => ['affinity' => 0.6, 'trust' => 0.4, 'comfort' => 0.3, 'respect' => 0.7, 'maturity' => 0.8],
+        'Playful'     => ['affinity' => 1.2, 'trust' => 0.9, 'comfort' => 1.4, 'respect' => 0.6, 'maturity' => 0.7],
+        'Bold'        => ['affinity' => 0.9, 'trust' => 1.0, 'comfort' => 1.1, 'respect' => 1.3, 'maturity' => 0.9],
+        'Volatile'    => ['affinity' => 1.5, 'trust' => 0.5, 'comfort' => 0.5, 'respect' => 0.6, 'maturity' => 1.5],
+        'Independent' => ['affinity' => 0.7, 'trust' => 0.8, 'comfort' => 0.5, 'respect' => 1.0, 'maturity' => 0.6],
+        'Nurturing'   => ['affinity' => 1.1, 'trust' => 1.1, 'comfort' => 1.3, 'respect' => 0.7, 'maturity' => 0.8],
+        'Gentle'      => ['affinity' => 1.0, 'trust' => 0.9, 'comfort' => 1.2, 'respect' => 0.5, 'maturity' => 0.9],
+        'Jealous'     => ['affinity' => 1.3, 'trust' => 0.4, 'comfort' => 0.4, 'respect' => 0.9, 'maturity' => 1.2],
+        'Proud'       => ['affinity' => 0.7, 'trust' => 0.6, 'comfort' => 0.3, 'respect' => 1.5, 'maturity' => 0.7],
+        'Defiant'     => ['affinity' => 1.1, 'trust' => 0.7, 'comfort' => 0.8, 'respect' => 1.2, 'maturity' => 1.0],
+    ];
+
+    /** R_temperament[signal] (MDD 15.4; passion: MDD 1.3). Unitless. */
+    public static function getSignalResistance($temperament, string $signal): float
+    {
+        if ($signal === 'passion') {
+            return (float) (self::TEMPERAMENT_PASSION_MULT[$temperament] ?? 1.0);
+        }
+        return (float) (self::TEMPERAMENT_SIGNAL_RESISTANCE[$temperament][$signal] ?? 1.0);
+    }
+
+    /**
+     * The NPC's maturity type (MDD 15.6): an active arc override (_plasticity_override until
+     * its raw game-calendar expiry, as applyDelta reads it), else the stored type, else the
+     * temperament default.
+     */
+    public static function resolveMaturityType(array $dynamics): string
+    {
+        $override = $dynamics['_plasticity_override'] ?? null;
+        if (is_string($override) && isset(self::MATURITY_PLASTICITY_VALUES[$override])) {
+            $expires = floatval($dynamics['_plasticity_override_expires_gamets'] ?? 0); // raw gamets
+            $now = floatval($dynamics['_last_gamets'] ?? 0);                           // raw gamets
+            if (!($now > 0 && $now >= $expires)) {
+                return $override;
+            }
+        }
+        $stored = $dynamics['dimensions']['maturity']['plasticity_type'] ?? null;
+        if (is_string($stored) && isset(self::MATURITY_PLASTICITY_VALUES[$stored])) {
+            return $stored;
+        }
+        return self::getMaturityPlasticityType($dynamics['inferred_temperament'] ?? null);
+    }
+
+    /** State a modifier row reads (units in affinityModifierDefaults()). */
+    private static function affinityModifierState(array $dynamics, string $state): ?float
+    {
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        switch ($state) {
+            case 'jealousy':
+                return floatval($dynamics['jealousy_anger'] ?? 0);
+            case 'passion':
+                return self::getPassion($dynamics);
+            case 'resentment':
+                return floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
+            case 'maturity':
+            case 'comfort':
+            case 'trust':
+            case 'respect':
+                $x = $dynamics['dimensions'][$state]['x'] ?? null;
+                return is_numeric($x) ? floatval($x) : self::getTemperamentBaseline($temperament, $state);
+        }
+        return null;
+    }
+
+    const AFFINITY_MODIFIER_STATES = ['maturity', 'jealousy', 'resentment', 'passion', 'comfort', 'trust', 'respect'];
+
+    /** Why a configured modifier row cannot be used, or null when it is valid. */
+    private static function affinityModifierRowProblem($row): ?string
+    {
+        if (!is_array($row)) return 'not an object';
+        if (!in_array($row['sign'] ?? null, ['gain', 'loss', 'any'], true)) return "sign must be gain, loss or any";
+        if (isset($row['tags']) && !is_array($row['tags'])) return 'tags must be a list';
+        if (isset($row['requires']) && !is_string($row['requires'])) return 'requires must be a config key';
+        if (isset($row['when']) && !is_array($row['when'])) return 'when must be a list';
+        foreach ((array) ($row['when'] ?? []) as $cond) {
+            if (!is_array($cond)) return 'a when condition is not an object';
+            if (isset($cond['state'])) {
+                if (!in_array($cond['state'], self::AFFINITY_MODIFIER_STATES, true)) return "unknown state '{$cond['state']}'";
+                if (!in_array($cond['op'] ?? null, ['<', '<=', '>', '>='], true) || !is_numeric($cond['value'] ?? null)) {
+                    return 'a state condition needs op (< <= > >=) and a numeric value';
+                }
+            } elseif (!isset($cond['attachment']) && !isset($cond['trait']) && !isset($cond['weather'])
+                && !in_array($cond['love_language'] ?? null, ['primary', 'secondary'], true)) {
+                return 'unknown condition ' . json_encode($cond);
+            }
+        }
+        $mult = $row['mult'] ?? null;
+        if (is_array($mult)) {
+            if (!in_array($mult['state'] ?? null, self::AFFINITY_MODIFIER_STATES, true)
+                || !is_numeric($mult['ref'] ?? null) || !is_numeric($mult['at_ref'] ?? null) || !is_numeric($mult['per_point'] ?? null)) {
+                return 'a linear mult needs a known state and numeric ref, at_ref, per_point';
+            }
+        } elseif (!is_numeric($mult)) {
+            return 'mult must be a number or a linear formula';
+        }
+        return null;
+    }
+
+    private static function affinityConditionHolds(array $dynamics, array $cond, array $tags, array $cfg): bool
+    {
+        if (isset($cond['state'])) {
+            $v = self::affinityModifierState($dynamics, $cond['state']);
+            $ref = floatval($cond['value']);
+            switch ($cond['op']) {
+                case '<':  return $v < $ref;
+                case '<=': return $v <= $ref;
+                case '>':  return $v > $ref;
+                case '>=': return $v >= $ref;
+            }
+            return false;
+        }
+        if (isset($cond['attachment'])) {
+            return self::getAttachmentStyle($dynamics) === strtolower((string) $cond['attachment']);
+        }
+        if (isset($cond['trait'])) {
+            return self::hasTrait($dynamics, (string) $cond['trait']);
+        }
+        if (isset($cond['weather'])) {
+            return ($dynamics['_internal_weather'] ?? 'clear') === (string) $cond['weather'];
+        }
+        $ll = $dynamics['love_language_' . $cond['love_language']] ?? null;
+        if (empty($ll)) return false;
+        $map = is_array($cfg['affinity_tag_love_language'] ?? null) ? $cfg['affinity_tag_love_language'] : [];
+        foreach ($tags as $tag) {
+            if (($map[$tag] ?? null) === $ll) return true;
+        }
+        return false;
+    }
+
+    /**
+     * M_modifiers for one affinity delta (decisions 2026-09-23 §1): the product of every
+     * matching row of the configured table (config 'affinity_modifiers'), clamped to
+     * affinity_modifier_min..affinity_modifier_max. Rows read traits through hasTrait().
+     *
+     * @param float $raw  signed raw delta (only its sign matters)
+     * @param array $tags eval source tags
+     * @return array ['M' => clamped multiplier, 'product' => unclamped, 'rows' => [row id => multiplier]]
+     */
+    public static function affinityModifiers(array $dynamics, float $raw, array $tags): array
+    {
+        $out = ['M' => 1.0, 'product' => 1.0, 'rows' => []];
+        if (abs($raw) < 0.0001) {
+            return $out;
+        }
+        $sign = $raw > 0 ? 'gain' : 'loss';
+        $tags = array_values(array_unique(array_map(fn($t) => strtolower(trim((string) $t)), $tags)));
+        $cfg = self::getConfig();
+        $rows = $cfg['affinity_modifiers'] ?? null;
+        if (!is_array($rows)) {
+            error_log("[RelDyn] ERROR affinity_modifiers config is not a list; using the default table");
+            $rows = self::affinityModifierDefaults();
+        }
+
+        $product = 1.0;
+        foreach ($rows as $i => $row) {
+            $id = (is_array($row) && isset($row['id'])) ? (string) $row['id'] : "#{$i}";
+            $problem = self::affinityModifierRowProblem($row);
+            if ($problem !== null) {
+                error_log("[RelDyn] ERROR affinity_modifiers row '{$id}' ignored: {$problem}");
+                continue;
+            }
+            if ($row['sign'] !== 'any' && $row['sign'] !== $sign) continue;
+            if (!empty($row['requires']) && empty($cfg[$row['requires']])) continue;
+            $rowTags = array_map(fn($t) => strtolower(trim((string) $t)), (array) ($row['tags'] ?? []));
+            if (!empty($rowTags) && empty(array_intersect($rowTags, $tags))) continue;
+            foreach ((array) ($row['when'] ?? []) as $cond) {
+                if (!self::affinityConditionHolds($dynamics, $cond, $tags, $cfg)) continue 2;
+            }
+
+            $mult = $row['mult'];
+            if (is_array($mult)) {
+                $state = self::affinityModifierState($dynamics, $mult['state']);
+                $mult = floatval($mult['at_ref']) + floatval($mult['per_point']) * ($state - floatval($mult['ref']));
+                if (isset($row['mult']['min']) && is_numeric($row['mult']['min'])) $mult = max(floatval($row['mult']['min']), $mult);
+                if (isset($row['mult']['max']) && is_numeric($row['mult']['max'])) $mult = min(floatval($row['mult']['max']), $mult);
+            }
+            $mult = floatval($mult);
+            $out['rows'][$id] = $mult;
+            $product *= $mult;
+        }
+
+        $min = floatval($cfg['affinity_modifier_min'] ?? 0.25);   // unitless
+        $max = floatval($cfg['affinity_modifier_max'] ?? 3.0);    // unitless
+        $out['product'] = $product;
+        $out['M'] = max($min, min($max, $product));
+        return $out;
+    }
+
+    /**
+     * Apply one raw eval signal through the pipeline (see the section comment).
+     *
+     * @param string $signal       affinity|trust|comfort|respect|passion|maturity
+     * @param float  $raw          raw signal (dimension points; affinity in core points), clamped
+     *                             to the contract range first
+     * @param float  $significance 0..1; |delta| <= eval_significance_clamp x significance
+     * @return array ['dimension' => $signal, 'actual' => change of dimensions.<signal>.x (for
+     *               affinity: mirror units, core = x2), 'line' => the math, as logged]
+     */
+    public static function applyEvalSignal($npcName, array &$dynamics, string $signal, float $raw, array $tags, float $significance): array
+    {
+        $result = ['dimension' => $signal, 'actual' => 0.0, 'line' => ''];
+        $range = self::EVAL_CONTRACT_SIGNALS[$signal] ?? null;
+        if ($range === null) {
+            error_log("[RelDyn-EVAL] applyEvalSignal: unknown signal '{$signal}' for {$npcName} ignored");
+            return $result;
+        }
+        $input = $raw;
+        $raw = max(-$range, min($range, $raw));
+        if (abs($raw) < 0.0001) {
+            return $result;
+        }
+        $clampNote = abs($input - $raw) > 0.0001 ? sprintf(' (clamped from %+.2f)', $input) : '';
+        $rawIn = $raw;
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $steps = '';
+
+        // Ick (PR 15): passion gains invert, comfort is forced negative
+        $beforeIck = $raw;
+        if (self::applyIckEffects($dynamics, $signal, $raw) && abs($raw - $beforeIck) > 0.0001) {
+            $steps .= sprintf(' ick->%+.2f', $raw);
+        }
+        // Charisma effectiveness (PR 15) on affinity and passion
+        $style = $dynamics['_charisma_tracker']['detected_style'] ?? null;
+        if ($style !== null && in_array($signal, ['affinity', 'passion'], true)) {
+            $mat = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+            $cm = self::getCharismaEffectiveness($style, $temperament, $mat, $signal);
+            if (abs($cm - 1.0) > 0.001) {
+                $raw *= $cm;
+                $steps .= sprintf(' charisma(%s)x%.2f', $style, $cm);
+            }
+        }
+        if (abs($raw) < 0.0001) {
+            return $result;
+        }
+
+        $R = self::getSignalResistance($temperament, $signal);
+        $type = self::resolveMaturityType($dynamics);
+        $dirKey = $raw > 0 ? 'Y_up' : 'Y_down';
+        $P = floatval(self::MATURITY_PLASTICITY_VALUES[$type][$dirKey]);
+        $M = 1.0;
+        $mText = '';
+        $overrides = [];
+        if ($signal === 'affinity') {
+            // The mirror must track core before it moves, or commitPlayerAffinity() has no
+            // marker to measure RelDyn's change against.
+            if (!is_numeric($dynamics['_aff_mirror_x'] ?? null)) {
+                $rel = self::getPlayerRelationship($npcName);
+                self::refreshAffinityMirror($dynamics, intval($rel['aff'] ?? 0));
+                self::log("[EVAL] {$npcName}: affinity mirror read from core (aff " . intval($rel['aff'] ?? 0) . ')');
+            }
+            $mods = self::affinityModifiers($dynamics, $raw, $tags);
+            $M = $mods['M'];
+            $parts = [];
+            foreach ($mods['rows'] as $id => $mult) {
+                $parts[] = sprintf('%s %.3f', $id, $mult);
+            }
+            $mText = sprintf(' x M=%.3f [%s%s]', $M, implode(' x ', $parts) ?: 'no rows',
+                abs($mods['product'] - $M) > 1e-9 ? sprintf(' = %.3f, clamped', $mods['product']) : '');
+            // resentment > 50 is the M row resentment_blocks_gains; do not halve twice
+            $overrides['skip_caps'] = ['resentment_affinity_gain'];
+        }
+
+        $y = $R * $P * $M;
+        $overrides['Y_up'] = $y;
+        $overrides['Y_down'] = $y;
+        $significance = max(0.0, min(1.0, $significance));
+        $clampPoints = max(0.0, floatval(self::configValue('eval_significance_clamp')));  // points at significance 1
+        $overrides['max_abs'] = $clampPoints * $significance;
+
+        $actual = self::applyDelta($signal, $dynamics, $raw, $temperament, $overrides);
+        $result['actual'] = $actual;
+
+        // Physics units: core points for affinity (mirror x2), dimension points otherwise
+        $moved = ($signal === 'affinity') ? $actual * 2.0 : $actual;
+        $pre = $raw * $y;
+        $rest = abs($pre) > 1e-9 ? $moved / $pre : 0.0;
+        $unit = ($signal === 'affinity') ? ' core' : '';
+        $result['line'] = sprintf(
+            '[EVAL-MATH] %s %s: raw %+.2f%s%s tags=[%s] x R(%s)=%.2f x P(%s %s)=%.2f%s = %+.3f; x decay/caps %.3f, |d|<=%.1f (sig %.2f) => %+.3f%s',
+            $npcName, $signal, $rawIn, $clampNote, $steps,
+            implode(',', $tags), $temperament ?? 'none', $R, $type, $raw > 0 ? 'up' : 'down', $P, $mText,
+            $pre, $rest, $overrides['max_abs'], $significance, $moved, $unit
+        );
+        self::log($result['line']);
+        return $result;
+    }
+
+    /** True for an item shaped like the shared eval contract (validated by normalizeEvalContractItem). */
+    public static function isEvalContractItem($item): bool
+    {
+        return is_array($item) && array_key_exists('v', $item) && array_key_exists('signals', $item);
+    }
+
+    /**
+     * Validate a shared-eval-contract item and bring it into range. Returns null (logged) for
+     * an item that cannot be applied; out-of-range values are clamped and unknown tags dropped
+     * (both logged). Not a contract item at all (legacy *_delta shape): null, not logged.
+     */
+    public static function normalizeEvalContractItem($item): ?array
+    {
+        if (!self::isEvalContractItem($item)) {
+            return null;
+        }
+        $reject = function (string $why) use ($item): ?array {
+            error_log("[RelDyn-EVAL] eval item rejected ({$why}): " . substr((string) json_encode($item), 0, 300));
+            return null;
+        };
+        if (!is_numeric($item['v']) || intval($item['v']) !== self::EVAL_CONTRACT_VERSION) {
+            return $reject('contract version ' . json_encode($item['v']) . ', expected ' . self::EVAL_CONTRACT_VERSION);
+        }
+        if (($item['source'] ?? null) !== self::EVAL_CONTRACT_SOURCE) {
+            return $reject('source ' . json_encode($item['source'] ?? null) . ', expected ' . self::EVAL_CONTRACT_SOURCE);
+        }
+        if (!is_string($item['npc'] ?? null) || trim($item['npc']) === '') {
+            return $reject('no npc name');
+        }
+        if (!is_array($item['signals'])) {
+            return $reject('signals is not an object');
+        }
+        if (!is_numeric($item['significance'] ?? null)) {
+            return $reject('significance is not a number');
+        }
+        $npc = trim($item['npc']);
+
+        $signals = [];
+        foreach (self::EVAL_CONTRACT_SIGNALS as $signal => $range) {
+            if (!array_key_exists($signal, $item['signals'])) {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: signal {$signal} missing, read as 0");
+                $signals[$signal] = 0.0;
+                continue;
+            }
+            $v = $item['signals'][$signal];
+            if (!is_numeric($v)) {
+                return $reject("signal {$signal} is not a number");
+            }
+            $v = floatval($v);
+            if ($v > $range || $v < -$range) {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: signal {$signal} {$item['signals'][$signal]} outside -{$range}..{$range}, clamped");
+                $v = floatval(max(-$range, min($range, $v)));
+            }
+            $signals[$signal] = $v;
+        }
+        foreach (array_diff(array_keys($item['signals']), array_keys(self::EVAL_CONTRACT_SIGNALS)) as $extra) {
+            error_log("[RelDyn-EVAL] eval item for {$npc}: unknown signal '{$extra}' ignored");
+        }
+
+        $tags = [];
+        foreach ((array) ($item['tags'] ?? []) as $tag) {
+            $t = strtolower(trim((string) $tag));
+            if (!in_array($t, self::EVAL_CONTRACT_TAGS, true)) {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: unknown tag '{$t}' dropped");
+                continue;
+            }
+            $tags[$t] = true;
+        }
+
+        $significance = floatval($item['significance']);
+        if ($significance < 0.0 || $significance > 1.0) {
+            error_log("[RelDyn-EVAL] eval item for {$npc}: significance {$significance} outside 0..1, clamped");
+            $significance = max(0.0, min(1.0, $significance));
+        }
+
+        $g = is_array($item['grievance'] ?? null) ? $item['grievance'] : [];
+        $j = is_array($item['jealousy'] ?? null) ? $item['jealousy'] : [];
+        return [
+            'v' => self::EVAL_CONTRACT_VERSION,
+            'npc' => $npc,
+            'npc_id' => is_numeric($item['npc_id'] ?? null) ? intval($item['npc_id']) : null,
+            'gamets' => is_numeric($item['gamets'] ?? null) ? intval($item['gamets']) : null,
+            'source' => self::EVAL_CONTRACT_SOURCE,
+            'signals' => $signals,
+            'tags' => array_keys($tags),
+            'grievance' => [
+                'flag' => !empty($g['flag']),
+                'kind' => is_string($g['kind'] ?? null) ? $g['kind'] : null,
+                'severity' => max(0, min(3, intval($g['severity'] ?? 0))),
+            ],
+            'jealousy' => [
+                'flag' => !empty($j['flag']),
+                'rival' => is_string($j['rival'] ?? null) ? $j['rival'] : null,
+                'intensity' => max(0, min(3, intval($j['intensity'] ?? 0))),
+            ],
+            'significance' => $significance,
+            'positive_interaction' => !empty($item['positive_interaction']),
+            'summary' => is_string($item['summary'] ?? null) ? $item['summary'] : '',
+        ];
+    }
+
+    /**
+     * Apply one shared-eval-contract item to $dynamics: every non-zero signal through
+     * applyEvalSignal() (in EVAL_CONTRACT_SIGNALS order), a flagged grievance queued for
+     * processGrievances() (MDD 15.5: +5 resentment each). An item already applied to this
+     * NPC (same fingerprint in _eval_applied) is skipped. The caller commits affinity
+     * (commitPlayerAffinity) and saves.
+     *
+     * @return array dimension => actual change (dimension units; affinity in mirror units)
+     */
+    public static function processEvalContractItem($npcName, array $item, array &$dynamics): array
+    {
+        $config = self::getConfig();
+        if (empty($config['dimension_engine_enabled'])) {
+            return [];
+        }
+        $n = self::normalizeEvalContractItem($item);
+        if ($n === null) {
+            return [];
+        }
+        if (strcasecmp($n['npc'], trim((string) $npcName)) !== 0) {
+            error_log("[RelDyn-EVAL] item for '{$n['npc']}' in the inbox of '{$npcName}' dropped");
+            return [];
+        }
+
+        $fingerprint = sha1((string) json_encode([
+            strtolower($n['npc']), $n['npc_id'], $n['gamets'], $n['signals'], $n['tags'],
+            $n['grievance'], $n['jealousy'], $n['significance'], $n['summary'],
+        ]));
+        $applied = is_array($dynamics['_eval_applied'] ?? null) ? array_values($dynamics['_eval_applied']) : [];
+        if (in_array($fingerprint, $applied, true)) {
+            error_log("[RelDyn-EVAL] {$npcName}: eval item already applied (gamets {$n['gamets']}), skipped: {$n['summary']}");
+            return [];
+        }
+
+        $totals = [];
+        foreach (self::EVAL_CONTRACT_SIGNALS as $signal => $_range) {
+            $raw = $n['signals'][$signal];
+            if (abs($raw) < 0.0001) {
+                continue;
+            }
+            $r = self::applyEvalSignal($npcName, $dynamics, $signal, $raw, $n['tags'], $n['significance']);
+            $totals[$signal] = $r['actual'];
+        }
+
+        if ($n['grievance']['flag']) {
+            if (!isset($dynamics['dimensions']['resentment']) || !is_array($dynamics['dimensions']['resentment'])) {
+                $dynamics['dimensions']['resentment'] = [];
+            }
+            $dynamics['dimensions']['resentment']['pending_grievances'][] = [
+                'kind' => $n['grievance']['kind'],
+                'severity' => $n['grievance']['severity'],
+                'summary' => $n['summary'],
+                'gamets' => $n['gamets'],
+            ];
+        }
+
+        $applied[] = $fingerprint;
+        $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
+        self::log("[EVAL] {$npcName} item gamets={$n['gamets']} sig={$n['significance']} tags=[" . implode(',', $n['tags']) . "] "
+            . "applied " . json_encode($totals) . ($n['grievance']['flag'] ? " grievance={$n['grievance']['kind']}" : '')
+            . " ({$n['summary']})");
+        return $totals;
     }
 
 
