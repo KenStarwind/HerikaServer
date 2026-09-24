@@ -1672,6 +1672,21 @@ class RelationshipDynamics
         }
     }
 
+    /** Real hours of filtered play elapsed since the play checkpoint under $key, or null. */
+    public static function playHoursSince(array $dynamics, string $key): ?float
+    {
+        $elapsed = self::playGametsSince($dynamics, $key);
+        return $elapsed === null ? null : $elapsed / self::GAMETS_PER_REAL_HOUR;
+    }
+
+    /** Re-arm a play checkpoint that is ahead of the play clock (another clock's value). */
+    public static function rearmPlayCheckpoint(array &$dynamics, string $key): void
+    {
+        if (floatval($dynamics[$key] ?? 0) > 0 && self::playGametsSince($dynamics, $key) === null) {
+            self::markPlayCheckpoint($dynamics, $key);
+        }
+    }
+
     /** Game-calendar hours elapsed since the gamets stored under $key, or null. */
     public static function gameHoursSince(array $dynamics, string $key): ?float
     {
@@ -12955,14 +12970,14 @@ class RelationshipDynamics
     const WALKAWAY_RESENTMENT_TICK = -0.5;            // Resentment decay per tick when player stays away
     const WALKAWAY_FOLLOW_RESENTMENT_MULT = 2.0;      // Resentment multiplier when player follows
     const WALKAWAY_FOLLOW_TRUST_PENALTY = -5.0;       // Permanent trust hit when player follows during walkaway
-    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum game-calendar hours for boundary test
-    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum game-calendar hours for boundary test
+    const BOUNDARY_TEST_MIN_HOURS = 24;                // Minimum real play hours for boundary test
+    const BOUNDARY_TEST_MAX_HOURS = 48;                // Maximum real play hours for boundary test
     const WALKAWAY_RECOVERY_RESENTMENT_MAX = 50;       // Resentment must be below this to recover
     const WALKAWAY_RECOVERY_COMFORT_MIN = 30;          // Comfort must be above this to recover
 
     // Hoover constants (Toxic exclusive)
-    const HOOVER_MIN_HOURS = 72;                       // Minimum game-calendar hours before hoover triggers
-    const HOOVER_MAX_HOURS = 96;                       // Maximum game-calendar hours for random hoover window
+    const HOOVER_MIN_HOURS = 72;                       // Minimum real play hours before hoover triggers (MDD 6.6)
+    const HOOVER_MAX_HOURS = 96;                       // Maximum real play hours for random hoover window
     const HOOVER_MATURITY_CAP = 40;                    // Maturity must be below this for hoover
     const HOOVER_RESENTMENT_REBUILD_MULT = 1.5;        // Post-hoover resentment rebuilds faster
     const HOOVER_WALKAWAY_THRESHOLD_REDUCTION = 0.20;  // Next walkaway triggers 20% sooner
@@ -13229,7 +13244,7 @@ class RelationshipDynamics
 
         $dynamics['_walkaway_state'] = 'pending';
         $dynamics['_walkaway_reason'] = $reason;
-        self::markGameClock($dynamics, '_walkaway_started_gamets');
+        self::markPlayCheckpoint($dynamics, '_walkaway_started_gamets');
         $dynamics['_walkaway_boundary_test_hours'] = round($testHours, 1);
         $dynamics['_walkaway_player_followed'] = false;
 
@@ -13246,7 +13261,7 @@ class RelationshipDynamics
     public static function activateWalkaway(&$dynamics, $npcName)
     {
         $dynamics['_walkaway_state'] = 'active';
-        self::markGameClock($dynamics, '_walkaway_activated_gamets');
+        self::markPlayCheckpoint($dynamics, '_walkaway_activated_gamets');
 
         // Pause affinity decay during walkaway (they chose to leave, not forgotten)
         $dynamics['_walkaway_affinity_decay_paused'] = true;
@@ -13272,6 +13287,11 @@ class RelationshipDynamics
         $state = $dynamics['_walkaway_state'] ?? 'normal';
         if ($state === 'normal' || $state === 'permanent') {
             return ['state' => $state, 'changed' => false];
+        }
+
+        // Timers started by an older build hold wall-clock or game-calendar values
+        foreach (['_walkaway_started_gamets', '_walkaway_activated_gamets', '_boundary_test_started_gamets'] as $timerKey) {
+            self::rearmPlayCheckpoint($dynamics, $timerKey);
         }
 
         // Pending → Active on next interaction
@@ -13304,7 +13324,7 @@ class RelationshipDynamics
         // Move to boundary test phase after activation
         if ($state === 'active') {
             $dynamics['_walkaway_state'] = 'boundary_test';
-            self::markGameClock($dynamics, '_boundary_test_started_gamets');
+            self::markPlayCheckpoint($dynamics, '_boundary_test_started_gamets');
             $result['state'] = 'boundary_test';
             $result['changed'] = true;
         }
@@ -13317,14 +13337,14 @@ class RelationshipDynamics
             $boundaryResult = self::checkBoundaryTest($dynamics);
             if ($boundaryResult === 'recovery') {
                 $dynamics['_walkaway_state'] = 'recovery';
-                self::markGameClock($dynamics, '_walkaway_recovery_gamets');
+                self::markPlayCheckpoint($dynamics, '_walkaway_recovery_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
                 self::log("[WALKAWAY] {$npcName} entering recovery — conditions met");
                 $result['state'] = 'recovery';
                 $result['changed'] = true;
             } elseif ($boundaryResult === 'permanent') {
                 $dynamics['_walkaway_state'] = 'permanent';
-                self::markGameClock($dynamics, '_walkaway_permanent_gamets');
+                self::markPlayCheckpoint($dynamics, '_walkaway_permanent_gamets');
                 $dynamics['_walkaway_affinity_decay_paused'] = false;
                 self::log("[WALKAWAY] {$npcName} permanent departure — boundary test failed");
                 $result['state'] = 'permanent';
@@ -13347,9 +13367,10 @@ class RelationshipDynamics
             return null;
         }
 
-        // Boundary test runs on the game calendar: the NPC is left alone for N game hours.
+        // MDD 6.4 "hidden real-time timer": real hours of filtered play (never the game
+        // calendar, which one long sleep or wait would push past the whole test).
         $testHours = floatval($dynamics['_walkaway_boundary_test_hours'] ?? 36);
-        $elapsedHours = self::gameHoursSince($dynamics, '_boundary_test_started_gamets') ?? 0.0;
+        $elapsedHours = self::playHoursSince($dynamics, '_boundary_test_started_gamets') ?? 0.0;
 
         // Test hasn't expired yet — check early recovery
         $dims = $dynamics['dimensions'] ?? [];
@@ -13568,14 +13589,14 @@ class RelationshipDynamics
             return false;
         }
 
-        // Walkaway must have been active long enough (game calendar hours)
+        // Walkaway must have been active long enough (MDD 6.6: 72-96 IRL hours = real play hours)
         $walkKey = !empty($dynamics['_walkaway_activated_gamets']) ? '_walkaway_activated_gamets' : '_walkaway_started_gamets';
         $walkStart = intval($dynamics[$walkKey] ?? 0);
         if ($walkStart === 0) {
             return false;
         }
 
-        $elapsedHours = self::gameHoursSince($dynamics, $walkKey);
+        $elapsedHours = self::playHoursSince($dynamics, $walkKey);
         if ($elapsedHours === null) {
             return false;
         }
@@ -13615,7 +13636,7 @@ class RelationshipDynamics
 
         // Track hoover history
         $dynamics['_hoover_count'] = intval($dynamics['_hoover_count'] ?? 0) + 1;
-        self::markGameClock($dynamics, '_hoover_last_gamets');
+        self::markPlayCheckpoint($dynamics, '_hoover_last_gamets');
         unset($dynamics['_hoover_last_at']); // legacy wall-clock stamp
         $dynamics['_hoover_resentment_mult'] = self::HOOVER_RESENTMENT_REBUILD_MULT;
 
@@ -13640,8 +13661,8 @@ class RelationshipDynamics
      */
     public static function getHooverContext($dynamics, $npcName)
     {
-        // Only inject for 48 game hours after hoover
-        $hoursSince = self::gameHoursSince($dynamics, '_hoover_last_gamets');
+        // Only inject for 48 real play hours after hoover
+        $hoursSince = self::playHoursSince($dynamics, '_hoover_last_gamets');
         if ($hoursSince === null || $hoursSince > 48) {
             return null;
         }
