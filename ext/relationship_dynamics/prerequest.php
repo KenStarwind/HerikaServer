@@ -41,6 +41,12 @@ if (!RelationshipDynamics::isEnabled()) {
     return;
 }
 
+// ========== GAME CALENDAR (decisions 2026-09-23 §2: time does not heal) ==========
+// Time moves for every bond, not only this one: each NPC whose calendar step is due gets
+// fester, neglect, passion fade and walkaway/hoover timers advanced. This NPC goes first,
+// before its dynamics load and before contact is marked below, so its own absence counts.
+RelationshipDynamics::runCalendarScan($npcName);
+
 // Load dynamics
 $dynamics = RelationshipDynamics::getDynamics($npcName);
 

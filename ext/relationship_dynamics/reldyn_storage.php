@@ -26,6 +26,8 @@ class RelDynStorage
     const PLUGIN_ID      = 'reldyn';
     const KEY_DYNAMICS   = 'dynamics';
     const KEY_EVAL_INBOX = 'eval_inbox';
+    // {"checked_gamets": raw game-calendar gamets up to which the calendar step has run}
+    const KEY_CALENDAR   = 'calendar';
 
     // Pre-3.4.1 location of the whole state blob (kept in place after migration).
     const LEGACY_EXTENDED_KEY = 'relationship_dynamics';
@@ -242,6 +244,37 @@ class RelDynStorage
         }
         $items = json_decode($row['inbox'], true, 512, JSON_THROW_ON_ERROR);
         return (is_array($items) && array_is_list($items)) ? $items : [];
+    }
+
+    /**
+     * NPCs with stored dynamics whose calendar step is unset or at/before $dueBefore (raw
+     * gamets), oldest first, at most $limit. One row per name, the lowest id, which is the
+     * row resolveNpcId() picks. Returns [['id' => int, 'npc_name' => string], ...].
+     */
+    public static function dueForCalendar(float $dueBefore, int $limit): array
+    {
+        $plugin = self::PLUGIN_ID;
+        $cal = self::KEY_CALENDAR;
+        $dyn = self::KEY_DYNAMICS;
+        $sql = sprintf(
+            "SELECT id, npc_name FROM (
+                 SELECT DISTINCT ON (lower(npc_name)) id, npc_name,
+                        jsonb_typeof(plugin_extended_data -> '%s' -> '%s') = 'object' AS has_dynamics,
+                        CASE WHEN jsonb_typeof(plugin_extended_data -> '%s' -> '%s' -> 'checked_gamets') = 'number'
+                             THEN (plugin_extended_data -> '%s' -> '%s' ->> 'checked_gamets')::float8 END AS checked
+                 FROM core_npc_master
+                 ORDER BY lower(npc_name), id
+             ) n
+             WHERE has_dynamics AND (checked IS NULL OR checked <= %.6F)
+             ORDER BY checked ASC NULLS FIRST, id
+             LIMIT %d",
+            $plugin, $dyn, $plugin, $cal, $plugin, $cal, $dueBefore, max(0, $limit)
+        );
+        $rows = self::db()->fetchAll($sql);
+        if (!is_array($rows)) {
+            throw new RuntimeException('RelDynStorage::dueForCalendar: query failed');
+        }
+        return array_map(fn($r) => ['id' => intval($r['id']), 'npc_name' => (string) $r['npc_name']], $rows);
     }
 
     /** Read a list key without consuming it. */

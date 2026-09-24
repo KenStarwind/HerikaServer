@@ -2467,6 +2467,118 @@ class RelationshipDynamics
         $dynamics['dimensions']['resentment']['grievance_log'] = array_slice($log, -10);
     }
 
+    /**
+     * Advance the game calendar for NPCs whose calendar step is due (at least
+     * calendar_scan_interval_game_hours old), so time moves for every bond on any request,
+     * not only for the NPC being talked to. $priorityNpc (the NPC of this request) goes
+     * first when due, so its absence is felt before contact is marked; then at most
+     * calendar_scan_max_npcs others, oldest step first. Cost when nothing is due: one SELECT.
+     *
+     * @return array npcName => ['calendar' => advanceCalendar() result|null, 'walkaway' => state|null, 'hoover' => bool]
+     */
+    public static function runCalendarScan(?string $priorityNpc = null): array
+    {
+        $now = self::currentGamets();   // raw game-calendar gamets
+        if ($now <= 0 || empty($GLOBALS['db'])) {
+            return [];
+        }
+        $dueBefore = $now - floatval(self::configValue('calendar_scan_interval_game_hours')) * self::GAMETS_PER_DAY / 24.0;
+        $limit = max(0, intval(self::configValue('calendar_scan_max_npcs')));
+
+        $done = [];
+        try {
+            if ($priorityNpc !== null && $priorityNpc !== '') {
+                $id = RelDynStorage::resolveNpcId($priorityNpc);
+                if ($id !== null) {
+                    $r = self::advanceNpcCalendar($id, $priorityNpc, $now, $dueBefore);
+                    if ($r !== null) $done[$priorityNpc] = $r;
+                }
+            }
+            if ($limit > 0) {
+                $others = 0;
+                foreach (RelDynStorage::dueForCalendar($dueBefore, $limit + count($done)) as $row) {
+                    if ($others >= $limit) break;
+                    if (isset($done[$row['npc_name']])) continue;   // the priority NPC, already stepped
+                    $r = self::advanceNpcCalendar($row['id'], $row['npc_name'], $now, $dueBefore);
+                    if ($r !== null) {
+                        $done[$row['npc_name']] = $r;
+                        $others++;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-CAL] calendar scan failed: " . $e->getMessage());
+        }
+        return $done;
+    }
+
+    /**
+     * One NPC's calendar step from its stored checkpoint to $now (raw gamets).
+     *
+     * The interval is claimed first with a compare-and-set on the 'calendar' key: of two
+     * overlapping requests only the one whose write lands applies it, the other skips
+     * (a crash after the claim loses the interval rather than applying it twice). The
+     * effects are then saved with the usual merge, so a concurrent save of this NPC keeps
+     * both. First sight (no step yet, or a save loaded from before the step) starts the
+     * clocks at $now without backdated effects.
+     *
+     * @return array|null null when not due or another request took the interval
+     */
+    public static function advanceNpcCalendar(int $npcId, string $npcName, float $now, float $dueBefore): ?array
+    {
+        $cur = RelDynStorage::readKeyForUpdate($npcId, RelDynStorage::KEY_CALENDAR);
+        if ($cur === null) {
+            return null;
+        }
+        $from = floatval($cur['value']['checked_gamets'] ?? 0);
+        $firstSight = ($from <= 0 || $from > $now);
+        if (!$firstSight && $from > $dueBefore) {
+            return null;
+        }
+        if (!RelDynStorage::setKeyIfUnchanged($npcId, RelDynStorage::KEY_CALENDAR, $cur['expected'], ['checked_gamets' => $now])) {
+            return null;
+        }
+
+        $dyn = self::getDynamics($npcName);
+        $changed = false;
+        $result = ['calendar' => null, 'walkaway' => null, 'hoover' => false];
+
+        if (floatval($dyn['_last_contact_gamets'] ?? 0) <= 0 || floatval($dyn['_last_contact_gamets']) > $now) {
+            $dyn['_last_contact_gamets'] = $now;   // absence counts from the first time we see them
+            $changed = true;
+        }
+        if (!$firstSight) {
+            $step = self::advanceCalendar($dyn, $from, $now);
+            $result['calendar'] = $step;
+            $changed = $changed || $step['resentment_raw'] > 0 || $step['passion_fade'] > 0;
+        }
+
+        // A walkaway resolves (or a Toxic sleeper hoovers back) while the player is elsewhere.
+        // 'pending' waits for the NPC's own next request, when they physically leave.
+        $cfg = self::getConfig();
+        $temperament = $dyn['inferred_temperament'] ?? $dyn['temperament'] ?? 'Stoic';
+        $walkState = $dyn['_walkaway_state'] ?? 'normal';
+        if (($cfg['autonomy_enabled'] ?? true) && in_array($walkState, ['active', 'boundary_test'], true)) {
+            $walkKeys = fn(array $d) => array_filter($d, fn($k) => is_string($k)
+                && (str_starts_with($k, '_walkaway_') || str_starts_with($k, '_boundary_test_')), ARRAY_FILTER_USE_KEY);
+            $before = $walkKeys($dyn);
+            $tick = self::resolveWalkawayTick($dyn, $npcName, $temperament, false);
+            $result['walkaway'] = $tick['state'];
+            // Save any state change, and clocks a first tick started (older builds' walkaways)
+            $changed = $changed || $tick['returned'] || $walkKeys($dyn) != $before;
+        }
+        if (($cfg['hoover_enabled'] ?? true) && self::checkHooverEligibility($dyn)) {
+            self::executeHoover($dyn, $npcName, $temperament);
+            $result['hoover'] = true;
+            $changed = true;
+        }
+
+        if ($changed) {
+            self::saveDynamics($npcName, $dyn);
+        }
+        return $result;
+    }
+
     // =========================================================================
     // JEALOUSY
     // =========================================================================
