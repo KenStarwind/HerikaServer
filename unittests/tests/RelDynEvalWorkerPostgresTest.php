@@ -354,6 +354,7 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
             'significance' => 0.4,
             'positive_interaction' => true,
             'summary' => 'Pleased the player thought of her.',
+            'witnesses' => [],   // nobody else was there (eventlog people |Aela the Huntress|Kaida|)
         ]), $item, 'contract item; unknown tag "flattery" dropped');
 
         // What the eval saw: the real conversation, attributed, once.
@@ -448,6 +449,20 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
             self::scoredLines($calls[0]), 'job A scores exchange A');
         $this->assertSame(['[Kaida] (to Aela the Huntress): B: You smell like a goat.', '[Aela the Huntress] (to Kaida): RB: Excuse me?!'],
             self::scoredLines($calls[1]), 'job B scores exchange B');
+    }
+
+    public function testTheItemNamesTheWitnessesTheExchangeRowsRecorded(): void
+    {
+        $this->seedConversation();   // the exchange rows record |Aela the Huntress|Kaida|
+        $this->event('inputtext', 'Kaida: Come here, you. (Talking to Aela the Huntress)', self::T0 + 900, '|Aela the Huntress|Farkas|Kaida|');
+        $this->npcSays(self::NPC, 'Mmh. Not in front of Farkas.', self::PLAYER, self::T0 + 900, '|Aela the Huntress|Farkas (standing)|Njada|Kaida|');
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) (self::T0 + 900), 'Kaida: Come here, you.'], self::PLAYER);
+
+        $calls = [];
+        RelDynEval::runWorker($this->llm(self::GOOD_REPLY, $calls));
+        $item = $this->inbox()[0]['eval'];
+        $this->assertSame(['Farkas', 'Njada'], $item['witnesses'], 'present at the exchange, minus her and the player');
+        $this->assertNotNull(RelationshipDynamics::normalizeEvalContractItem($item));
     }
 
     public function testMalformedOutputIsLoggedAndDroppedNotApplied(): void

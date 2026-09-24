@@ -7539,6 +7539,10 @@ class RelationshipDynamics
             'significance' => $significance,
             'positive_interaction' => !empty($item['positive_interaction']),
             'summary' => is_string($item['summary'] ?? null) ? $item['summary'] : '',
+            // optional (additive to v1): names present at the exchange; null = not recorded
+            'witnesses' => is_array($item['witnesses'] ?? null)
+                ? array_values(array_filter(array_map(fn($w) => trim((string) $w), array_filter($item['witnesses'], 'is_string')), fn($w) => $w !== ''))
+                : null,
         ];
     }
 
@@ -7956,7 +7960,8 @@ class RelationshipDynamics
      * kinds), jealousy events, and positive_interaction -> resentment -1 and conflict repair.
      * Call once per item. Returns [] for a non-contract item.
      *
-     * @return array{grievance: ?array, jealousy: float, resentment_decay: float, repair_burst: float, romantic_exposure: bool}
+     * @return array{grievance: ?array, jealousy: float, resentment_decay: float, repair_burst: float, romantic_exposure: bool, witnesses: ?array}
+     *         witnesses: the item's names present at the exchange (null when it recorded none)
      */
     public static function applyEvalFeelings(string $npcName, $item, array &$dynamics): array
     {
@@ -7965,7 +7970,8 @@ class RelationshipDynamics
             return [];
         }
         unset($dynamics['_eval_feelings_seen']);   // retired flag (per exchange now: postrequest $evalOwnsExchange)
-        $out = ['grievance' => null, 'jealousy' => 0.0, 'resentment_decay' => 0.0, 'repair_burst' => 0.0, 'romantic_exposure' => false];
+        $out = ['grievance' => null, 'jealousy' => 0.0, 'resentment_decay' => 0.0, 'repair_burst' => 0.0, 'romantic_exposure' => false,
+                'witnesses' => is_array($item['witnesses'] ?? null) ? array_values(array_filter($item['witnesses'], 'is_string')) : null];
         $tags = array_map(fn($t) => strtolower(trim((string) $t)), array_filter((array) ($item['tags'] ?? []), 'is_scalar'));
         $summary = is_string($item['summary'] ?? null) ? $item['summary'] : '';
         $temperament = $dynamics['inferred_temperament'] ?? null;

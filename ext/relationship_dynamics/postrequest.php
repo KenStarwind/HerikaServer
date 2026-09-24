@@ -652,13 +652,18 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
     if (!empty($evalFeelings)) {
         // Grievances, jealousy, resentment decay and repair from contract items
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
-        // The player was intimate with this NPC: committed bystanders nearby get jealous
+        // The player was intimate with this NPC: the committed NPCs who SAW it (the exchange's
+        // eventlog people, item.witnesses) get jealous, not whoever is near her now.
         if ($reldynCfg['jealousy_enabled'] ?? true) {
             foreach ($evalFeelings as $f) {
-                if (!empty($f['romantic_exposure'])) {
-                    RelationshipDynamics::scanBystanderJealousy($npcName);
-                    break;
+                if (empty($f['romantic_exposure'])) {
+                    continue;
                 }
+                if (!is_array($f['witnesses'] ?? null)) {
+                    RelationshipDynamics::log("Bystander jealousy for {$npcName}: the eval item recorded no witnesses; nobody is made jealous");
+                    continue;
+                }
+                RelationshipDynamics::scanBystanderJealousy($npcName, '|' . implode('|', $f['witnesses']) . '|');
             }
         }
     }

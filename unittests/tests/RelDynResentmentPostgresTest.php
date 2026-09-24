@@ -250,25 +250,45 @@ final class RelDynResentmentPostgresTest extends TestCase
 
     /**
      * The player is intimate with Lydia while Aela (core Player.type romantic) and Mjoll
-     * (platonic) stand nearby: Aela's own row gains jealousy with Lydia as the rival.
+     * (platonic) stand nearby: Aela's own row gains jealousy with Lydia as the rival. The
+     * witnesses are the ones the exchange's eventlog rows recorded (item.witnesses), not
+     * whoever is near Lydia when her next request applies the item days later: Muiri
+     * (romantic) is there by then, Aela is not.
      */
-    public function testIntimacyWithOneNpcMakesACommittedBystanderJealous(): void
+    public function testIntimacyWithOneNpcMakesTheCommittedWitnessesJealous(): void
     {
         $dims = ['maturity' => 60.0, 'resentment' => 0.0];
         $this->seed('Lydia', 40, 'romantic', $dims);
         $this->seed('Aela', 60, 'romantic', $dims, ['inferred_temperament' => 'Jealous']);
         $this->seed('Mjoll', 60, 'platonic', $dims, ['inferred_temperament' => 'Jealous']);
+        $this->seed('Muiri', 60, 'romantic', $dims, ['inferred_temperament' => 'Jealous']);
         RelationshipDynamics::queuePendingEval('Lydia', $this->item('Lydia',
-            ['tags' => ['intimacy', 'touch'], 'positive_interaction' => true]));
-        $GLOBALS['CACHE_PEOPLE'] = '|Lydia|Aela|Mjoll|Kaida|';
+            ['tags' => ['intimacy', 'touch'], 'positive_interaction' => true, 'witnesses' => ['Aela', 'Mjoll']]));
+        $GLOBALS['CACHE_PEOPLE'] = '|Lydia|Muiri|Kaida|';   // who is around at consume time
 
-        $this->postrequest('Lydia', self::T0 + self::HOUR);
+        $this->postrequest('Lydia', self::T0 + 3 * self::DAY);
 
         $aela = $this->dynamics('Aela');
         $base = (float) RelationshipDynamics::defaultConfig()['jealousy_eval_gain'];
         $this->assertEqualsWithDelta($base * 2.0, (float) $aela['jealousy_anger'], 1e-9, 'intensity-1 event x Jealous 2.0');
         $this->assertSame('Lydia', $aela['jealousy_trigger_npc']);
         $this->assertSame(0.0, (float) ($this->dynamics('Mjoll')['jealousy_anger'] ?? 0.0), 'platonic: not jealous');
+        $this->assertSame(0.0, (float) ($this->dynamics('Muiri')['jealousy_anger'] ?? 0.0), 'Muiri did not see it');
+    }
+
+    /** An item without witnesses (produced before they were recorded) makes nobody jealous. */
+    public function testAnItemWithoutWitnessesMakesNobodyJealous(): void
+    {
+        $dims = ['maturity' => 60.0, 'resentment' => 0.0];
+        $this->seed('Lydia', 40, 'romantic', $dims);
+        $this->seed('Aela', 60, 'romantic', $dims, ['inferred_temperament' => 'Jealous']);
+        RelationshipDynamics::queuePendingEval('Lydia', $this->item('Lydia',
+            ['tags' => ['intimacy'], 'positive_interaction' => true]));
+        $GLOBALS['CACHE_PEOPLE'] = '|Lydia|Aela|Kaida|';
+
+        $this->postrequest('Lydia', self::T0 + self::HOUR);
+
+        $this->assertSame(0.0, (float) ($this->dynamics('Aela')['jealousy_anger'] ?? 0.0), 'the people present now are not witnesses');
     }
 
     /** Aela stays jealous (65) while the player is away: the calendar scan turns it into resentment. */

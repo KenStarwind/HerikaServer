@@ -23,7 +23,9 @@
  *    signals:{affinity,trust,comfort,respect,passion -30..30, maturity -10..10} (raw, ints;
  *            affinity in CORE affinity points, -100..100 scale, before RelDyn physics),
  *    tags:[subset of TAGS], grievance:{flag,kind,severity 0..3},
- *    jealousy:{flag,rival,intensity 0..3}, significance 0..1, positive_interaction, summary}
+ *    jealousy:{flag,rival,intensity 0..3}, significance 0..1, positive_interaction, summary,
+ *    witnesses: optional (additive to v1) list of names present at the exchange, from its
+ *               eventlog rows' people column; bystander jealousy reads it}
  *
  * Classification: tags are the one interaction classification source. TAG_LOVE_LANGUAGE /
  * LOVE_LANGUAGE_TAGS translate between tags and RelDyn's love-language constants, and
@@ -603,6 +605,7 @@ final class RelDynEval
             error_log("[RelDyn-EVAL] ERROR malformed eval output for {$npc} dropped ({$reason}): " . substr(str_replace("\n", ' ', $raw), 0, 300));
             return ['drop' => 'malformed'];
         }
+        $item['witnesses'] = self::witnesses($window['current'], $npc, $player);
         return ['item' => $item];
     }
 
@@ -730,6 +733,7 @@ final class RelDynEval
                 continue;   // the same line logged twice
             }
             $line['rowid'] = intval($r['rowid']);
+            $line['people'] = (string) ($r['people'] ?? '');
             $lines[] = $line;
         }
         $lines = array_slice($lines, -max(2, $windowLines));
@@ -748,6 +752,42 @@ final class RelDynEval
             }
         }
         return ['earlier' => array_slice($lines, 0, $start), 'current' => array_slice($lines, $start)];
+    }
+
+    /**
+     * Who saw the exchange: the union of the people columns of its eventlog rows (CHIM
+     * records who was present per row), without the NPC and the player, in first-seen order.
+     * Contract v1 optional field 'witnesses': bystander jealousy reads it, not the people
+     * around when the item is applied.
+     */
+    public static function witnesses(array $currentLines, string $npcName, string $playerName): array
+    {
+        $out = [];
+        $seen = [];
+        foreach ($currentLines as $line) {
+            foreach (self::peopleNames((string) ($line['people'] ?? '')) as $p) {
+                $key = mb_strtolower($p);
+                if (isset($seen[$key]) || self::sameName($p, $npcName) || self::sameName($p, $playerName) || $key === 'player') {
+                    continue;
+                }
+                $seen[$key] = true;
+                $out[] = $p;
+            }
+        }
+        return $out;
+    }
+
+    /** Names in an eventlog people column ("|A|B (state)|"), state suffixes stripped. */
+    private static function peopleNames(string $people): array
+    {
+        $names = [];
+        foreach (explode('|', $people) as $p) {
+            $p = trim(preg_replace('/\s*\([^)]*\)\s*$/u', '', $p) ?? $p);
+            if ($p !== '') {
+                $names[] = $p;
+            }
+        }
+        return $names;
     }
 
     private static function lineInvolves(array $line, string $people, string $npcName): bool
