@@ -4755,11 +4755,6 @@ try {
 try {
     $aj10Saved = setDIConfig(['internal_weather_enabled' => true]);
     $aj10Dyn = RelationshipDynamics::defaultDynamics();
-    $aj10Dyn['interests'] = ['combat' => 2.0, 'social' => 1.5, 'adventure' => 1.0];
-    $aj10Dyn['interaction_count'] = 20;
-    $aj10Dyn['_interest_last_satisfied'] = [];
-    $aj10Dyn['_interest_satisfaction'] = [];
-    $aj10Dyn['dimensions']['passion']['x'] = 10; // Low to avoid implicit intimacy interest
 
     $aj10Weather = RelationshipDynamics::updateInternalWeather('TestNPC_AJ10', $aj10Dyn, null);
     $aj10Valid = in_array($aj10Weather, ['sunny', 'clear', 'overcast', 'stormy']);
@@ -4771,29 +4766,20 @@ try {
     try { restoreDIConfig($aj10Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AJ11: WEATHER_MODIFIERS constant has all 4 states ──
+// ── AJ11: weather modifier table (config facet_appraisal.weather_modifiers) has all 4 states ──
 try {
-    $aj11Keys = array_keys(RelationshipDynamics::WEATHER_MODIFIERS);
-    check('AJ11a: sunny exists', in_array('sunny', $aj11Keys), true);
-    check('AJ11b: clear exists', in_array('clear', $aj11Keys), true);
-    check('AJ11c: overcast exists', in_array('overcast', $aj11Keys), true);
-    check('AJ11d: stormy exists', in_array('stormy', $aj11Keys), true);
-    echo "      WEATHER_MODIFIERS keys: " . implode(', ', $aj11Keys) . "\n";
+    $aj11Keys = array_keys(RelDynFacets::getAppraisalConfig()['weather_modifiers']);
+    foreach (['sunny', 'clear', 'overcast', 'stormy'] as $aj11State) {
+        check("AJ11: {$aj11State} exists", in_array($aj11State, $aj11Keys), true);
+    }
+    echo "      weather_modifiers keys: " . implode(', ', $aj11Keys) . "
+";
 } catch (Throwable $e) {
     skip('AJ11', 'Exception: ' . $e->getMessage());
 }
 
-// ── AJ12: FACTION_INTEREST_FLOORS has Companions with combat >= 0.3 ──
-try {
-    $aj12Floors = RelationshipDynamics::FACTION_INTEREST_FLOORS;
-    $aj12HasCompanions = isset($aj12Floors['Companions']);
-    check('AJ12a: Companions entry exists', $aj12HasCompanions, true);
-    $aj12CompCombat = $aj12Floors['Companions']['combat'] ?? 0;
-    check('AJ12b: Companions combat >= 0.3', $aj12CompCombat >= 0.3, true);
-    echo "      Companions: " . json_encode($aj12Floors['Companions'] ?? []) . "\n";
-} catch (Throwable $e) {
-    skip('AJ12', 'Exception: ' . $e->getMessage());
-}
+// AJ12 (FACTION_INTEREST_FLOORS) retired with the April satisfaction engine: faction membership
+// now shapes the signed facet preferences (RelDynFacets::derivePreferences, unit tests).
 
 // ── AJ13: Weather modifiers apply via applyWeatherModifiers ──
 try {
@@ -4817,8 +4803,6 @@ try {
 try {
     $aj14Saved = setDIConfig(['internal_weather_enabled' => false]);
     $aj14Dyn = RelationshipDynamics::defaultDynamics();
-    $aj14Dyn['interests'] = ['combat' => 2.0];
-    $aj14Dyn['interaction_count'] = 50;
 
     $aj14Weather = RelationshipDynamics::updateInternalWeather('TestNPC_AJ14', $aj14Dyn, null);
     check('AJ14: Disabled weather returns clear', $aj14Weather, 'clear');
@@ -4829,67 +4813,8 @@ try {
     try { restoreDIConfig($aj14Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AJ15: checkIntimacySatisfaction returns 0.0-1.0 ──
-try {
-    $aj15Saved = setDIConfig(['internal_weather_enabled' => true, 'attachment_style_enabled' => true]);
-    $aj15Dyn = RelationshipDynamics::defaultDynamics();
-    $aj15Dyn['interests'] = ['combat' => 1.0];
-    $aj15Dyn['interaction_count'] = 100;
-    $aj15Dyn['_intimacy_last_satisfied'] = 0; // huge gap = 100
-    $aj15Dyn['_interest_satisfaction'] = [];
-    $aj15Dyn['_interest_last_satisfied'] = [];
-    $aj15Dyn['dimensions']['passion']['x'] = 60; // enough for implicit intimacy interest
-
-    // calculateInterestSatisfaction calls checkIntimacySatisfaction internally
-    $aj15Sat = RelationshipDynamics::calculateInterestSatisfaction('TestNPC_AJ15', $aj15Dyn, null);
-    $aj15IntSat = $aj15Sat['intimacy'] ?? -1;
-    check('AJ15a: Intimacy satisfaction in 0.0-1.0', $aj15IntSat >= 0.0 && $aj15IntSat <= 1.0, true);
-    check('AJ15b: Large gap → low satisfaction', $aj15IntSat <= 0.2, true);
-    echo "      intimacy satisfaction (gap=100): " . round($aj15IntSat, 3) . "\n";
-    restoreDIConfig($aj15Saved);
-} catch (Throwable $e) {
-    skip('AJ15', 'Exception: ' . $e->getMessage());
-    try { restoreDIConfig($aj15Saved ?? null); } catch (Throwable $e2) {}
-}
-
-// ── AJ16: Attachment style modifies deprivation rate ──
-try {
-    $aj16Saved = setDIConfig(['internal_weather_enabled' => true, 'attachment_style_enabled' => true]);
-
-    // Anxious NPC (2x rate)
-    $aj16AnxDyn = RelationshipDynamics::defaultDynamics();
-    $aj16AnxDyn['attachment_style'] = 'anxious';
-    $aj16AnxDyn['interests'] = ['combat' => 1.0];
-    $aj16AnxDyn['interaction_count'] = 20;
-    $aj16AnxDyn['_intimacy_last_satisfied'] = 10; // gap = 10
-    $aj16AnxDyn['_interest_satisfaction'] = [];
-    $aj16AnxDyn['_interest_last_satisfied'] = [];
-    $aj16AnxDyn['dimensions']['passion']['x'] = 60;
-
-    $aj16AnxSat = RelationshipDynamics::calculateInterestSatisfaction('TestNPC_AJ16a', $aj16AnxDyn, null);
-    $aj16AnxIntSat = $aj16AnxSat['intimacy'] ?? 1;
-
-    // Secure NPC (1x rate)
-    $aj16SecDyn = RelationshipDynamics::defaultDynamics();
-    $aj16SecDyn['attachment_style'] = 'secure';
-    $aj16SecDyn['interests'] = ['combat' => 1.0];
-    $aj16SecDyn['interaction_count'] = 20;
-    $aj16SecDyn['_intimacy_last_satisfied'] = 10; // gap = 10
-    $aj16SecDyn['_interest_satisfaction'] = [];
-    $aj16SecDyn['_interest_last_satisfied'] = [];
-    $aj16SecDyn['dimensions']['passion']['x'] = 60;
-
-    $aj16SecSat = RelationshipDynamics::calculateInterestSatisfaction('TestNPC_AJ16b', $aj16SecDyn, null);
-    $aj16SecIntSat = $aj16SecSat['intimacy'] ?? 1;
-
-    // Anxious (2x rate) with same gap should have lower satisfaction
-    check('AJ16: Anxious lower satisfaction than Secure', $aj16AnxIntSat < $aj16SecIntSat, true);
-    echo "      anxious=" . round($aj16AnxIntSat, 3) . " secure=" . round($aj16SecIntSat, 3) . "\n";
-    restoreDIConfig($aj16Saved);
-} catch (Throwable $e) {
-    skip('AJ16', 'Exception: ' . $e->getMessage());
-    try { restoreDIConfig($aj16Saved ?? null); } catch (Throwable $e2) {}
-}
+// AJ15/AJ16 (April interest/intimacy satisfaction) retired with calculateInterestSatisfaction:
+// weather deprivation is facet-based now (RelDynFacetEffectsTest).
 
 // ── AJ17: M/F context selection ──
 try {

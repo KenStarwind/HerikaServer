@@ -162,25 +162,19 @@ if ($lastLL && $primaryLL) {
 }
 
 // -------------------------------------------------------------------------
-// Interest resonance (shared experience context)
+// Place appraisal (decisions 2026-09-23 §6: facets -> appraisal -> feeling)
 // -------------------------------------------------------------------------
-// Use cached ambient result from prerequest (avoids double-computing)
-$currentInterest = $GLOBALS['RELDYN_AMBIENT_INTEREST'] ?? null;
-$currentResonance = floatval($GLOBALS['RELDYN_AMBIENT_RESONANCE'] ?? 0.0);
-$currentLocation = $GLOBALS['RELDYN_AMBIENT_LOCATION'] ?? '';
-$currentSource = $GLOBALS['RELDYN_AMBIENT_SOURCE'] ?? 'none';
-
-if ($currentInterest && $currentResonance >= 0.15) {
-    if ($currentSource === 'vector' && $currentResonance >= 0.3) {
-        // Rich vector-based resonance text — the NPC is responding to the specific place
-        $intText = RelationshipDynamics::getEnvironmentalResonanceText($npcName, $currentInterest, $currentResonance, $currentLocation);
-        if ($intText) $parts[] = $intText;
-    } else {
-        // Keyword-based or low resonance — use original interest category text
-        $intPrefs = RelationshipDynamics::getInterests($dynamics);
-        $rawMult = floatval($intPrefs[$currentInterest] ?? 1.0);
-        $intText = RelationshipDynamics::getInterestResonanceText($npcName, $currentInterest, $rawMult);
-        if ($intText) $parts[] = $intText;
+// Runs here, not in prerequest: core sets CACHE_LOCATION / CACHE_PEOPLE after the
+// prerequest hooks (main.php), and this turn's context needs this turn's read. The turn
+// nudges comfort and mood, builds or relieves discomfort, feeds internal weather and holds
+// the Point-of-Interest passion floor; the LLM gets only the feeling, never numbers.
+if (RelationshipDynamics::configValue('ambient_enabled')) {
+    $placeTurn = RelDynFacets::contextTurn($npcName, $dynamics, RelationshipDynamics::currentGamets());
+    if ($placeTurn['changed']) {
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+    }
+    if ($placeTurn['text'] !== null) {
+        $parts[] = "<place_feeling>{$placeTurn['text']}</place_feeling>";
     }
 }
 

@@ -34,7 +34,8 @@ $rdJealousy     = floatval($rdDynamics['jealousy_anger'] ?? 0);
 $rdStage        = $rdDynamics['stage'] ?? 'early';
 $rdTotalPos     = intval($rdDynamics['total_positive_interactions'] ?? 0);
 $rdInConflict   = !empty($rdDynamics['in_conflict']);
-$rdInterests    = $rdDynamics['interests'] ?? [];
+// MDD 1.2 sliders = the signed facet preferences through the documented mapping (decisions §6)
+$rdInterests    = class_exists('RelationshipDynamics') ? RelationshipDynamics::getInterests($rdDynamics, $rdNpcName) : [];
 $rdInteractions = intval($rdDynamics['interaction_count'] ?? 0);
 
 // ========== MATURITY DIMENSION (PR 3) ==========
