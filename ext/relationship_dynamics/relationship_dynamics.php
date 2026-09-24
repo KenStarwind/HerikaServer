@@ -7639,7 +7639,7 @@ class RelationshipDynamics
     //
     // Affinity here is CORE affinity (-100..+100), through getCoreAffinity() and the
     // RelDyn tier (getCurrentTier, CONTEXT_TIER_BY_RELATIONSHIP_TIER):
-    // Tier 0 (Stranger)     : hostile/stranger, core <= 5    — bare minimum
+    // Tier 0 (Stranger)     : hostile/stranger, core <= 5    — nothing injected
     // Tier 1 (Acquaintance) : acquaintance, core 6..30       — band keywords only
     // Tier 2 (Friend+)      : friend/close_friend, core 31..75 — keywords + maturity + shifts
     // Tier 3 (Bonded+)      : bonded/devoted, core 76+       — full dimensional state

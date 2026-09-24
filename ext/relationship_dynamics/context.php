@@ -258,7 +258,7 @@ if (!empty($parts)) {
 // Placed AFTER <emotional_dynamics> to extend, not replace.
 //
 // Affinity = CORE relationships.Player.aff (-100..+100), via RelationshipDynamics::getContextTier():
-// Tier 0 (Stranger)     : core <= 5 — bare minimum ("stranger, no established history")
+// Tier 0 (Stranger/hostile): core <= 5 — nothing injected
 // Tier 1 (Acquaintance) : core 6..30 — band keywords only (cap 5 lines)
 // Tier 2 (Friend+)      : core 31..75 — keywords + maturity guidance + recent shifts (cap 8 lines)
 // Tier 3 (Bonded+)      : core 76+ — full dimensional state + reasons + maturity + shifts (cap 10 lines)
@@ -301,16 +301,15 @@ if (!empty($rdCfg['dimension_context_enabled']) && !empty($dynamics['dimensions'
     }
 
     // -----------------------------------------------------------------
-    // Tier 0: Stranger — inject minimal context, skip dimension loop
+    // Tier 0 (core <= 5, no tier-2 high-water mark): inject nothing. Tier 0 also holds
+    // hostile NPCs with a long history (core enemies), so any "stranger" line would be
+    // false for them; core's own relationship block speaks for that bond.
     // -----------------------------------------------------------------
     if ($contextTier === 0) {
-        $dimBlock = "<relational_dimensions>\n{$npcName} is a stranger to {$player} — no established emotional history.\n</relational_dimensions>";
-        $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => $dimBlock];
-
-        RelationshipDynamics::log("CTX: Injected relational_dimensions for {$npcName}: tier 0 (stranger)");
+        RelationshipDynamics::log("CTX: No relational_dimensions for {$npcName}: context tier 0");
 
         if ($dimDebug) {
-            error_log("[RelDyn-CTX] Dimension context for {$npcName}: tier 0 (stranger), hwm={$hwmValue}");
+            error_log("[RelDyn-CTX] Dimension context for {$npcName}: tier 0 (nothing injected), hwm={$hwmValue}");
         }
     } else {
         // -----------------------------------------------------------------

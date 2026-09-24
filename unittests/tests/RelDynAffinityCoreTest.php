@@ -586,9 +586,29 @@ final class RelDynAffinityCoreTest extends TestCase
 
         $block = $this->relationalDimensionsBlock();
 
-        $this->assertStringContainsString('is a stranger to', $block);
-        $this->assertStringNotContainsString('Warm', $block);
+        // Roadmap tiered-dimension-context: tier 0 injects nothing.
+        $this->assertSame('', $block, 'context tier 0 injects no <relational_dimensions> block');
         $this->assertSame(0, intval($this->storedDynamics()['context_tier_hwm'] ?? 0));
+    }
+
+    /** A core enemy with a long history is at context tier 0 and must not be called a stranger. */
+    public function testAHostileNpcWithHistoryIsNotToldItIsAStranger(): void
+    {
+        $this->setConfig(['dimension_context_enabled' => true]);
+        $this->seedNpc(['Player' => ['aff' => -80, 'type' => 'enemy']], [
+            'stage' => 'deep',
+            'interaction_count' => 200,
+        ]);
+
+        $GLOBALS['contextDataFull'] = [];
+        $this->runHook('prerequest');
+        $this->resetEngineCaches();
+        $this->runHook('context');
+        $joined = implode("\n", array_map(fn($m) => (string)($m['content'] ?? ''), $GLOBALS['contextDataFull']));
+
+        $this->assertSame(0, RelationshipDynamics::getContextTier($this->storedDynamics()), 'core -80 is context tier 0');
+        $this->assertStringNotContainsString('stranger', $joined, 'an enemy of long standing is no stranger');
+        $this->assertStringNotContainsString('no established emotional history', $joined);
     }
 
     public function testAcquaintanceAffinityLineUsesTheCoreBand(): void
