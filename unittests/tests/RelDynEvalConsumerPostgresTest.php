@@ -2,6 +2,9 @@
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/../../lib/logger.php';
+// Loaded as in production (main.php), so currentGamets() takes the same path whatever ran before.
+require_once __DIR__ . '/../../lib/utils_game_timestamp.php';
 require_once __DIR__ . '/../../lib/core/npc_master.class.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 
@@ -105,6 +108,11 @@ final class RelDynEvalConsumerPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE core_npc_master_history (history_id serial PRIMARY KEY, npc_id integer NOT NULL,
             created timestamp without time zone DEFAULT now(), " . str_replace('npc_name text NOT NULL', 'npc_name text', $columns) . ")");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
+        // Same columns as data/database_default.sql eventlog: the game clock outside a request
+        // (DataLastKnownGameTS) reads it.
+        pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
+            localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,
+            utterance_id text, delivery_state text)");
         pg_close($admin);
 
         $this->db = new RelDynEvalConsumerPgDb($dsn, $this->schema);
@@ -112,6 +120,8 @@ final class RelDynEvalConsumerPostgresTest extends TestCase
             $this->savedGlobals[$key] = array_key_exists($key, $GLOBALS) ? [$GLOBALS[$key]] : null;
         }
         unset($GLOBALS['PLAYER_NAME'], $GLOBALS['gameRequest'], $GLOBALS['HERIKA_NAME'], $GLOBALS['RELDYN_PLAYER_NAME']);
+        // The consuming postrequest's own request (raw gamets just after the items' exchange).
+        $GLOBALS['gameRequest'] = ['inputtext', '1727000000', '987654400', 'Kaida: hello'];
         $GLOBALS['db'] = $this->db;
         $this->errorLog = tempnam(sys_get_temp_dir(), 'reldyn-evalpg-');
         ini_set('error_log', $this->errorLog);

@@ -3,6 +3,9 @@
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/../../lib/logger.php';
+// Loaded as in production (main.php), so currentGamets() takes the same path whatever ran before.
+require_once __DIR__ . '/../../lib/utils_game_timestamp.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
 
@@ -43,10 +46,13 @@ final class RelDynEvalPipelineTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['db', 'PLAYER_NAME', 'RELDYN_PLAYER_NAME'] as $key) {
+        foreach (['db', 'PLAYER_NAME', 'RELDYN_PLAYER_NAME', 'gameRequest'] as $key) {
             $this->savedGlobals[$key] = array_key_exists($key, $GLOBALS) ? [$GLOBALS[$key]] : null;
         }
         unset($GLOBALS['PLAYER_NAME'], $GLOBALS['RELDYN_PLAYER_NAME']);
+        // A request carries its game clock (raw gamets, $gameRequest[2]); the grievance log
+        // stamps it (recordGrievance -> currentGamets) without reading eventlog.
+        $GLOBALS['gameRequest'] = ['inputtext', '1727000000', '123456', 'Kaida: hello'];
         $this->errorLog = tempnam(sys_get_temp_dir(), 'reldyn-evalpipe-');
         ini_set('error_log', $this->errorLog);
         $this->db = new RelDynEvalPipelineConfDb();
