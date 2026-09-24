@@ -1164,6 +1164,9 @@ class RelationshipDynamics
             'facet_classifier' => RelDynFacetClassifier::configDefaults(),
             // What a topic / gift appraisal does: MDD 1.2 interest multiplier range, match threshold.
             'thing_appraisal' => RelDynFacetClassifier::appraisalDefaults(),
+            // ===== Romance promotion + Sharmat handoff (rulings 2026-09-24 §9) =====
+            // Ladder, moment thresholds, momentum per NPC (reldyn_romance.php).
+            'romance_promotion' => RelDynRomance::configDefaults(),
         ];
     }
 
@@ -6759,6 +6762,9 @@ class RelationshipDynamics
                 self::saveDynamics($npcName, $dynamics);   // the worker has no later save
             }
         }
+        // Romance promotion (rulings §9): the moments these items carried, checked on core's
+        // fresh type and affinity (after the commit above); saves what it consumed.
+        RelDynRomance::maybePromote($npcName, $dynamics);
         return $evalResults;
     }
 
@@ -6847,6 +6853,7 @@ class RelationshipDynamics
     const EVAL_CONTRACT_TAGS = [
         'gift', 'praise', 'help', 'rescue', 'quality_time', 'touch', 'intimacy', 'insult', 'criticism',
         'neglect', 'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology',
+        'confession',
     ];
 
     /** Fingerprints of applied items kept per NPC (count), so a re-queued copy is skipped. */
@@ -7341,6 +7348,8 @@ class RelationshipDynamics
         $feelings = self::applyEvalFeelings((string) $npcName, $n, $dynamics);
         // An intimate or touching exchange feeds intimacy (PR 13 deprivation), at the exchange's game time.
         self::recordIntimacyFromTags($dynamics, $n['tags'], floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
+        // A romantic moment or a setback, for the romance promotion after the inbox (rulings §9)
+        RelDynRomance::noteMoment($dynamics, $n);
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -15795,9 +15804,176 @@ class RelationshipDynamics
         return ['old' => $oldAff, 'new' => $newAff, 'delta' => $newAff - $oldAff];
     }
 
+    /**
+     * Change core relationships.Player.type (lib/relationship_manager.php TYPES; the one
+     * relationship type every consumer reads, Sharmat's consent gate included). Used for
+     * RelDyn's romance promotion and for the fulfillment lane's step-backs.
+     *
+     * Same write discipline as applyPlayerAffinityDelta(): one transaction holding
+     * pg_advisory_xact_lock(1001000000 + npc id) (core relationship_system's key), the row read
+     * FOR UPDATE, only relationships.Player.type written. Nothing is written when
+     * extended_data.relationships_locked is set (editor lock), for a type core does not know
+     * (built-in or a custom type already on this NPC), or, with $onlyFrom, when core's type is
+     * no longer one of those (another writer changed it since the caller looked). Afterwards
+     * core's timeline snapshot, and RelDyn's record of the change (plugin_extended_data.reldyn
+     * core_type_change: from, to, reason, gamets, direction) for the romance ladder.
+     *
+     * CONTRACT (fulfillment lane owns): changeCoreRelationshipType(string, string, string): bool.
+     * $onlyFrom is an optional compare-and-set added by the romance lane.
+     *
+     * @param string[]|null $onlyFrom write only if core's current type is one of these
+     * @return bool true when core now holds $newType (also when it already did)
+     */
+    public static function changeCoreRelationshipType(string $npcName, string $newType, string $reason, ?array $onlyFrom = null): bool
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || trim($npcName) === '') {
+            return false;
+        }
+        self::loadRelationshipManager();
+        $npcId = intval(RelDynStorage::resolveNpcId($npcName) ?? 0);
+        if ($npcId <= 0) {
+            error_log("[RelDyn-TYPE] Cannot change relationship type to '{$newType}': no core_npc_master row for {$npcName}");
+            return false;
+        }
+        $lockId = self::CORE_RELATIONSHIP_LOCK_BASE + $npcId;
+        $old = null;
+        $to = null;
+        try {
+            if ($db->execQuery("BEGIN") === false) {
+                error_log("[RelDyn-TYPE] BEGIN failed for {$npcName}");
+                return false;
+            }
+            if ($db->execQuery("SELECT pg_advisory_xact_lock({$lockId})") === false) {
+                throw new RuntimeException("advisory lock {$lockId} failed");
+            }
+            $locked = $db->fetchOne('SELECT extended_data FROM core_npc_master WHERE id = $1 FOR UPDATE', [$npcId]);
+            $raw = $locked['extended_data'] ?? null;
+            $extended = ($raw === null || $raw === '') ? [] : json_decode((string) $raw, true);
+            if (!is_array($extended)) {
+                throw new RuntimeException("extended_data is not valid JSON");
+            }
+            $rawRels = $extended['relationships'] ?? [];
+            $rels = self::normalizeRelationshipMap($rawRels);
+            $playerRel = $rels[self::PLAYER_RELATIONSHIP_KEY] ?? ['aff' => 0, 'type' => 'neutral'];
+            $old = strtolower(trim((string) ($playerRel['type'] ?? 'neutral')));
+            $old = $old === '' ? 'neutral' : $old;
+            $to = RelationshipManager::canonicalizeRelationshipType($newType, RelationshipManager::getCustomRelationshipTypes($rels));
+
+            $refuse = null;
+            if (!empty($extended['relationships_locked'])) {
+                $refuse = 'relationships_locked (manual edits protected)';
+            } elseif ($to === null) {
+                $refuse = "unknown relationship type '{$newType}'";
+            } elseif ($onlyFrom !== null && !in_array($old, array_map(fn($t) => strtolower(trim((string) $t)), $onlyFrom), true)) {
+                $refuse = "core type is now '{$old}', not " . implode('/', $onlyFrom);
+            }
+            if ($refuse !== null || $old === $to) {
+                if ($db->execQuery("COMMIT") === false) {
+                    throw new RuntimeException("COMMIT failed");
+                }
+                if ($refuse !== null) {
+                    error_log("[RelDyn-TYPE] SKIP {$npcName} -> Player type {$old} -> {$newType}: {$refuse}");
+                    return false;
+                }
+                return true;
+            }
+
+            $hasLegacyKey = false;
+            foreach (array_keys(is_array($rawRels) ? $rawRels : []) as $target) {
+                if ($target !== self::PLAYER_RELATIONSHIP_KEY && self::isPlayerRelationshipKey($target)) {
+                    $hasLegacyKey = true;
+                    break;
+                }
+            }
+            if (!$hasLegacyKey && is_array($rawRels) && is_array($rawRels[self::PLAYER_RELATIONSHIP_KEY] ?? null)) {
+                $path = '{relationships,' . self::PLAYER_RELATIONSHIP_KEY . ',type}';
+                $value = json_encode($to);
+            } else {
+                // jsonb_set cannot create intermediate keys: write the relationships object
+                $playerRel['type'] = $to;
+                $playerRel['aff'] = intval($playerRel['aff'] ?? 0);
+                $rels[self::PLAYER_RELATIONSHIP_KEY] = $playerRel;
+                $path = '{relationships}';
+                $value = json_encode((object) $rels, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+            $updated = $db->fetchOne(
+                "UPDATE core_npc_master SET extended_data = jsonb_set(COALESCE(extended_data, '{}'::jsonb), \$1::text[], \$2::jsonb, true)
+                 WHERE id = \$3 RETURNING id",
+                [$path, $value, $npcId]
+            );
+            if (!isset($updated['id'])) {
+                throw new RuntimeException("type UPDATE failed");
+            }
+            if ($db->execQuery("COMMIT") === false) {
+                throw new RuntimeException("COMMIT failed");
+            }
+        } catch (\Throwable $e) {
+            $db->execQuery("ROLLBACK");
+            error_log("[RelDyn-TYPE] Type change {$old} -> {$newType} for {$npcName} rolled back: " . $e->getMessage());
+            return false;
+        }
+
+        // Same game-timeline snapshot core writes after relationship changes
+        if (function_exists('chimRelationshipTimelineStamp')) {
+            chimRelationshipTimelineStamp($npcId);
+        }
+        $record = [
+            'from' => $old, 'to' => $to, 'reason' => substr($reason, 0, 200),
+            'gamets' => self::currentGamets(), 'direction' => RelDynRomance::direction($old, $to),
+        ];
+        if (!RelDynStorage::setKey($npcId, RelDynRomance::STORAGE_KEY_TYPE_CHANGE, $record)) {
+            error_log("[RelDyn-TYPE] ERROR {$npcName}: core type changed but RelDyn's record of it was not stored");
+        }
+        error_log("[RelDyn-TYPE] {$npcName} -> Player: type {$old} -> {$to} ({$record['direction']}; {$reason})");
+        return true;
+    }
+
+    /**
+     * Attraction for the player through this NPC's eyes (MDD §2, NPC-subjective pillars).
+     *
+     * CONTRACT (attraction lane owns): attractionFor(string, array): array =
+     *   ['score' 0..1, 'passes' bool, 'friendzoned' bool,
+     *    'pillars' => [name => ['score','weight','rigidity','pass']], 'ceiling_tier' string|null, 'reason' string]
+     * Minimal version over the existing matrix (calculateAttractionMatrix): passes = the
+     * visceral axis (beauty + strength) and gender (MDD 2.6: the physical/romantic types);
+     * ceiling_tier null when the matrix is off. The lane's version replaces this one.
+     */
+    public static function attractionFor(string $npcName, array $dynamics): array
+    {
+        $m = self::calculateAttractionMatrix($npcName, $dynamics);
+        $cfg = self::getConfig();
+        $profile = is_array($dynamics['attraction_profile'] ?? null) ? $dynamics['attraction_profile'] : self::getArchetypeProfile($dynamics);
+        $pillars = [];
+        foreach (['beauty', 'strength', 'status', 'competence'] as $p) {
+            $pillars[$p] = [
+                'score' => floatval($m['pillar_scores'][$p] ?? 0),
+                'weight' => floatval($cfg["attraction_{$p}_weight"] ?? 1.0),
+                'rigidity' => (string) ($profile['pillar_rigidity'][$p] ?? 'soft'),
+                'pass' => !empty($m['pillar_pass'][$p]),
+            ];
+        }
+        $enabled = !empty($m['enabled']);
+        $visceral = !empty($m['visceral_pass']);
+        $sociological = !empty($m['sociological_pass']);
+        return [
+            'score' => max(0.0, min(1.0, array_sum(array_column($pillars, 'score')) / 4.0)),
+            'passes' => $visceral && !empty($m['gender_pass']),
+            'friendzoned' => !empty($m['friendzoned']),
+            'pillars' => $pillars,
+            'ceiling_tier' => $enabled ? (string) $m['max_tier'] : null,
+            'reason' => $enabled
+                ? 'visceral ' . ($visceral ? 'pass' : 'fail') . ', sociological ' . ($sociological ? 'pass' : 'fail')
+                  . (empty($m['gender_pass']) ? ', gender preference' : '')
+                : 'attraction matrix off',
+        ];
+    }
+
     // ========== END CORE AFFINITY BRIDGE (CHIM 3.4.1) ==========
 
 }
 
 // Facets -> appraisal -> feeling (decisions 2026-09-23 §6); its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_facets.php';
+// Romance promotion + Sharmat handoff (rulings 2026-09-24 §9); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_romance.php';

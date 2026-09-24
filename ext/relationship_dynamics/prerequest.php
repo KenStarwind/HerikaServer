@@ -367,24 +367,10 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
     }
 }
 
-// Calculate effective disposition (overlay on existing sex_disposal)
-$npcNameKey = "aiagent_nsfw_intimacy_" . strtolower(str_replace(' ', '_', $npcName));
-$existingDisposal = 0;
-try {
-    if (isset($GLOBALS['db'])) {
-        $escapedKey = $GLOBALS['db']->escape($npcNameKey);
-        $confRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = '{$escapedKey}' LIMIT 1");
-        if (is_array($confRow) && !empty($confRow['value'])) {
-            $intimacyData = json_decode($confRow['value'], true) ?: [];
-            $existingDisposal = intval($intimacyData['sex_disposal'] ?? 0);
-        }
-    }
-} catch (Throwable $e) {
-    RelationshipDynamics::logError('prerequest intimacy disposal read', $e);
-    // Use 0
-}
-
-$effectiveDisposal = RelationshipDynamics::getEffectiveDisposition($existingDisposal, $dynamics);
+// Effective disposition: the MDD overlay (passion x 0.3 - jealousy x 0.3) on Sharmat's own
+// arousal (nsfw_npc_data aiagent_nsfw_intimacy_data.sex_disposal), read only; 0 without Sharmat.
+$sharmatArousal = RelDynRomance::sharmatArousal($npcName);
+$effectiveDisposal = RelationshipDynamics::getEffectiveDisposition($sharmatArousal ?? 0, $dynamics);
 
 // Snapshot NPC name AND player name for postrequest (processor/postrequest.php re-requires
 // conf.php which resets HERIKA_NAME to 'The Narrator' and PLAYER_NAME to 'Prisoner')
@@ -403,16 +389,11 @@ $GLOBALS['RELDYN_LOVE_LANG_SECONDARY'] = $dynamics['love_language_secondary'];
 // (maras_bridge reads this to scale blush duration)
 $GLOBALS['RELDYN_BLUSH_MULTIPLIER'] = 1.0;
 
-// Bridge to Sharmat: write effective disposal so Sharmat's scene gating reads it
-// Only fires if Sharmat is installed — zero dependency otherwise
-if (class_exists('NsfwNpcData')) {
-    try {
-        NsfwNpcData::setKey($npcName, 'sex_disposal', intval($effectiveDisposal));
-    } catch (\Throwable $e) {
-        RelationshipDynamics::logError('prerequest Sharmat disposal write', $e);
-        // Sharmat not available — silently continue
-    }
-}
+// Handoff to Sharmat (rulings §9, domain split): Sharmat's consent gate reads core
+// Player.type, which RelDyn's romance promotion writes. RelDyn's romantic state (passion band,
+// attraction, friendzone, walkaway, conflict, effective disposition) is published to
+// plugin_extended_data.reldyn.romance for a Sharmat hook; Sharmat's store is never written.
+RelDynRomance::publishState($npcName, $dynamics, $dynamics['_core_rel_type'] ?? null, $sharmatArousal);
 
 // ========== DIRECTOR GOAL — PASSIVE BRIDGE (PR 39, Step 9) ==========
 // If no director goal is currently active, check CHIM's HERIKA_GOALS for

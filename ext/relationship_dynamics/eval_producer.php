@@ -80,7 +80,7 @@ final class RelDynEval
     const SUMMARY_MAX_CHARS = 200;
     const KIND_MAX_CHARS = 40;
 
-    /** Source tags (decisions 2026-09-23 §1 plus reassurance and apology) with the definitions the LLM sees. */
+    /** Source tags (decisions 2026-09-23 §1 plus reassurance, apology and confession: rulings §9 romance) with the definitions the LLM sees. */
     const TAG_DEFINITIONS = [
         'gift'             => 'the player gave them something of value',
         'praise'           => 'the player complimented, thanked or admired them',
@@ -99,6 +99,7 @@ final class RelDynEval
         'competence'       => 'the player showed skill or capability',
         'reassurance'      => 'the player calmed a fear or doubt they had',
         'apology'          => 'the player apologised or made amends',
+        'confession'       => 'the player openly declared romantic feelings for them or asked to be more than friends',
     ];
 
     /** Tags that mark an exchange as not positive, whatever the signals say. */
