@@ -611,6 +611,21 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         $this->assertNoDbFailures();
     }
 
+    /** Mode 'strict': only RelDyn's own moments promote; a core write is stepped back even where attraction would allow it. */
+    public function testStrictOwnershipStepsBackEveryCoreRomanceWrite(): void
+    {
+        $this->setConfig(['romance_promotion' => ['guard_core_promotions' => 'strict'] + RelDynRomance::configDefaults()]);
+        $this->addNpc('Hulda', 'Citizen', 'female', [], [], ['aff' => 80, 'type' => 'neutral']);
+        $this->build('warrior');
+        $this->turn('A room for the night.', 'Hulda', 'default');
+        $this->assertSame([], $this->dynamics('Hulda')['_attraction']['blocked_types'], 'attraction would allow it');
+        $this->setCorePlayerRel(['aff' => 80, 'type' => 'romantic'], 'Hulda');
+        $this->turn('I missed you.', 'Hulda', 'default');
+        $this->assertSame('neutral', $this->corePlayerRel('Hulda')['type']);
+        $this->assertStringContainsString('strict: only RelDyn promotes', (string) file_get_contents($this->errorLog));
+        $this->assertNoDbFailures();
+    }
+
     // ------------------------------------------------------------------ attraction-gated-passion: beauty (MDD 2.1)
 
     public function testBeautyIsTheAppearanceTextThroughHerEyes(): void

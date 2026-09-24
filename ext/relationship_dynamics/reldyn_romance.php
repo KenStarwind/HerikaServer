@@ -51,7 +51,9 @@
  * gate. A romance rung core wrote since this NPC's last request, that RelDyn did not write
  * (STORAGE_KEY_TYPE_CHANGE) and that this request's attraction does not allow (friendzoned,
  * or its effective romance level below the rung), is stepped back to the previous type under
- * core's lock; relationships_locked (the editor's manual edits) is respected.
+ * core's lock; relationships_locked (the editor's manual edits) is respected. Mode 'strict'
+ * steps back every such promotion RelDyn did not write, allowed by attraction or not (only
+ * RelDyn's moments promote); 'attraction' (default) keeps the ones attraction allows.
  *
  * SHARMAT HANDOFF (domain split: RelDyn emotional layer, Sharmat sexual layer):
  *   - Sharmat's consent gate (common.php aiagentNsfwRelTypeSexEligible) reads core
@@ -115,8 +117,9 @@ final class RelDynRomance
             'stepback_momentum_mult' => 3.0,
             // 'boundary': a mature boundary is pending or on probation (fulfillment lane)
             'block_states' => ['walkaway', 'conflict', 'ick', 'withdrawn', 'boundary'],
-            // Step back a romance type core wrote without RelDyn that attraction does not allow
-            'guard_core_promotions' => true,
+            // Romance types core writes without RelDyn: 'attraction' steps back the ones the
+            // attraction does not allow, 'strict' all of them, false none (see the file comment)
+            'guard_core_promotions' => 'attraction',
         ];
     }
 
@@ -204,7 +207,8 @@ final class RelDynRomance
     public static function guardCorePromotion(string $npcName, array &$dynamics, ?string $previousType): ?string
     {
         $cfg = self::config();
-        if (empty($cfg['enabled']) || empty($cfg['guard_core_promotions'])) {
+        $mode = $cfg['guard_core_promotions'] === true ? 'attraction' : $cfg['guard_core_promotions'];
+        if (empty($cfg['enabled']) || !in_array($mode, ['attraction', 'strict'], true)) {
             return null;
         }
         $prev = strtolower(trim((string) $previousType));
@@ -216,8 +220,8 @@ final class RelDynRomance
         if ($rung <= self::rung($prev, $cfg)) {
             return null;   // not a promotion into romance
         }
-        $sum = $dynamics['_attraction'] ?? null;
-        if (!is_array($sum) || empty($sum['enabled'])) {
+        $sum = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
+        if ($mode === 'attraction' && empty($sum['enabled'])) {
             return null;   // the Matrix is off: it judges nothing
         }
         $npcId = RelDynStorage::resolveNpcId($npcName);
@@ -225,12 +229,13 @@ final class RelDynRomance
         if (is_array($last) && strtolower((string) ($last['to'] ?? '')) === $now) {
             return null;   // RelDyn's own promotion
         }
-        $allowed = empty($sum['friendzoned']) && intval($sum['romance']['effective'] ?? 0) >= $rung;
+        $allowed = $mode === 'attraction' && empty($sum['friendzoned']) && intval($sum['romance']['effective'] ?? 0) >= $rung;
         if ($allowed) {
             RelationshipDynamics::log("[ROMANCE] {$npcName}: core wrote {$prev} -> {$now}; attraction allows it, kept");
             return null;
         }
-        $why = !empty($sum['friendzoned']) ? 'friendzoned' : 'romance not earned (' . ($sum['outcome'] ?? 'unattracted') . ')';
+        $why = $mode === 'strict' ? 'strict: only RelDyn promotes'
+            : (!empty($sum['friendzoned']) ? 'friendzoned' : 'romance not earned (' . ($sum['outcome'] ?? 'unattracted') . ')');
         $reason = "RelDyn owns romance: core wrote {$prev} -> {$now} without RelDyn's gate; attraction: {$why}";
         if (!RelationshipDynamics::changeCoreRelationshipType($npcName, $prev, $reason, $now)) {
             error_log("[RelDyn-ROMANCE] {$npcName}: core's {$prev} -> {$now} not allowed by attraction ({$why}), but it was not stepped back");
