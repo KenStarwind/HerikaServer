@@ -6890,14 +6890,20 @@ class RelationshipDynamics
                 error_log("[RelDyn-EVAL] queuePendingEval: unknown NPC '{$npcName}', eval dropped");
                 return false;
             }
-            return RelDynStorage::appendItem($npcId, RelDynStorage::KEY_EVAL_INBOX, [
-                'queued_at' => time(),
-                'eval'      => $evalResult,
-            ]);
+            return RelDynStorage::appendItem($npcId, RelDynStorage::KEY_EVAL_INBOX, self::evalInboxEntry($evalResult));
         } catch (\Throwable $e) {
             error_log("[RelDyn-EVAL] queuePendingEval failed for {$npcName}: " . $e->getMessage());
             return false;
         }
+    }
+
+    /**
+     * One eval inbox entry: {queued_at, eval}. queued_at is a unix timestamp kept for the
+     * logs / editor only; nothing measures a duration with it.
+     */
+    public static function evalInboxEntry(array $evalResult): array
+    {
+        return ['queued_at' => time(), 'eval' => $evalResult];
     }
 
     /**

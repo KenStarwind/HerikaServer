@@ -11,8 +11,8 @@
  *      lock), jobs in id order. Per job it reads FRESH state (dynamics, config, connector),
  *      builds the eval prompt from a real eventlog window (prechat excluded, speakers parsed),
  *      calls the eval LLM, validates the JSON strictly into the shared eval contract and hands
- *      the item to RelationshipDynamics::queuePendingEval() (the eval inbox). The next request
- *      of that NPC consumes the inbox.
+ *      the item to the eval inbox in the same statement that deletes the job
+ *      (RelDynStorage::appendItemConsumingRow). The next request of that NPC consumes the inbox.
  *   3. Failures: an LLM/transport error or a failed inbox write keeps the job (attempts+1,
  *      dead-lettered as status 'dead' after max_attempts, never deleted). Malformed LLM output
  *      is logged and dropped (not applied). A job whose exchange a save load rolled back
@@ -497,10 +497,17 @@ final class RelDynEval
                 self::deleteJob($id);
                 return 'dropped';
             }
-            if (!RelationshipDynamics::queuePendingEval($job['npc'], $result['item'])) {
-                throw new RuntimeException('eval inbox write failed');
+            // The inbox write and the job delete are ONE statement: a worker that dies in
+            // between, or a delete that does nothing, can never leave the exchange queued
+            // for a second evaluation next to its inbox item.
+            $npcId = RelDynStorage::resolveNpcId($job['npc']);
+            if ($npcId === null) {
+                throw new RuntimeException("eval inbox write failed: '{$job['npc']}' is not in core_npc_master");
             }
-            self::deleteJob($id);
+            if (!RelDynStorage::appendItemConsumingRow($npcId, RelDynStorage::KEY_EVAL_INBOX,
+                    RelationshipDynamics::evalInboxEntry($result['item']), self::QUEUE_TABLE, $id)) {
+                throw new RuntimeException('eval inbox write + job delete wrote nothing');
+            }
             error_log("[RelDyn-EVAL] job {$id} {$npc}: " . json_encode($result['item']['signals'])
                 . ' tags=' . implode(',', $result['item']['tags']) . ' positive=' . ($result['item']['positive_interaction'] ? 'yes' : 'no'));
             return 'queued';
@@ -518,9 +525,15 @@ final class RelDynEval
         }
     }
 
-    private static function deleteJob(int $id): void
+    /** Delete a dropped job; logged when nothing was deleted (the job is then seen again). */
+    private static function deleteJob(int $id): bool
     {
-        self::db()->fetchOne('DELETE FROM ' . self::QUEUE_TABLE . ' WHERE id = $1 RETURNING id', [$id]);
+        $row = self::db()->fetchOne('DELETE FROM ' . self::QUEUE_TABLE . ' WHERE id = $1 RETURNING id', [$id]);
+        if (!isset($row['id'])) {
+            error_log("[RelDyn-EVAL] ERROR job {$id}: delete removed nothing; the job stays queued");
+            return false;
+        }
+        return true;
     }
 
     /**

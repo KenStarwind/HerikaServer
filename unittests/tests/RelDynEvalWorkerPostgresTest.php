@@ -15,6 +15,8 @@ final class RelDynEvalPgDb
 {
     public $link;
     public array $failures = [];
+    /** Test seam: callable(string $sql): ?array. A non-null return replaces running the statement. */
+    public $beforeQuery = null;
 
     public function __construct(string $dsn, string $schema)
     {
@@ -25,6 +27,10 @@ final class RelDynEvalPgDb
 
     public function fetchOne($q, array $params = [])
     {
+        if ($this->beforeQuery !== null) {
+            $replaced = ($this->beforeQuery)((string) $q);
+            if ($replaced !== null) return $replaced;
+        }
         $res = $params ? @pg_query_params($this->link, $q, $params) : @pg_query($this->link, $q);
         if (!$res) {
             $this->failures[] = pg_last_error($this->link) . ' :: ' . substr(preg_replace('/\s+/', ' ', $q), 0, 160);
@@ -429,6 +435,57 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
         $this->assertSame(1, $stats['queued']);
         $this->assertCount(1, $this->inbox());
         $this->assertSame(['dead'], array_column($this->jobs(), 'status'));
+    }
+
+    public function testAWorkerDyingBetweenInboxWriteAndJobDeleteNeverAppliesTheExchangeTwice(): void
+    {
+        $this->seedConversation();
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) self::T0, 'Kaida: I kept the best pelt for you. (Talking to Aela the Huntress)'], self::PLAYER);
+
+        // The worker process dies at the job delete (after the LLM answered).
+        $this->db->beforeQuery = function (string $q): ?array {
+            if (stripos($q, 'DELETE FROM reldyn_eval_queue') !== false) {
+                throw new Error('worker killed');
+            }
+            return null;
+        };
+        $calls = [];
+        try {
+            RelDynEval::runWorker($this->llm(self::GOOD_REPLY, $calls));
+        } catch (Error $e) {
+            $this->assertSame('worker killed', $e->getMessage());
+        }
+        $this->db->beforeQuery = null;
+        $this->assertSame([], $this->inbox(), 'no inbox item without the job delete: one statement');
+        $jobs = $this->jobs();
+        $this->assertCount(1, $jobs);
+        $this->assertSame('pending', $jobs[0]['status'], 'the job is still there for the next worker');
+
+        // The next worker scores it again (the model words it differently): one item in total.
+        $calls = [];
+        $stats = RelDynEval::runWorker($this->llm(str_replace('Pleased the player thought of her.', 'She liked the pelt.', self::GOOD_REPLY), $calls));
+        $this->assertSame(1, $stats['queued']);
+        $this->assertCount(1, $this->inbox(), 'the exchange is in the inbox exactly once');
+        $this->assertSame([], $this->jobs());
+    }
+
+    public function testAJobDeleteThatDoesNothingIsNotCountedAsQueued(): void
+    {
+        $this->seedConversation();
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) self::T0, 'Kaida: pelt'], self::PLAYER);
+
+        // The combined write reports no row (e.g. the statement failed without throwing).
+        $this->db->beforeQuery = fn(string $q): ?array => stripos($q, 'DELETE FROM reldyn_eval_queue') !== false ? [] : null;
+        $calls = [];
+        $stats = RelDynEval::runWorker($this->llm(self::GOOD_REPLY, $calls));
+        $this->db->beforeQuery = null;
+
+        $this->assertSame(0, $stats['queued'], json_encode($stats));
+        $this->assertSame(1, $stats['failed']);
+        $this->assertSame([], $this->inbox());
+        $jobs = $this->jobs();
+        $this->assertSame('pending', $jobs[0]['status']);
+        $this->assertSame('1', $jobs[0]['attempts'], 'retried like any failed inbox write');
     }
 
     public function testAJobWhoseExchangeASaveLoadRolledBackIsDropped(): void

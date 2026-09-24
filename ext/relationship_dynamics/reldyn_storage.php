@@ -195,6 +195,44 @@ class RelDynStorage
     }
 
     /**
+     * Append one item to a list key AND delete row $rowId of $table, in one statement (so
+     * both happen or neither does, whatever kills the process in between): the append only
+     * runs while that row exists (locked), the delete only when the append wrote. Returns
+     * false when nothing was written (the row or the NPC is gone, or the statement failed).
+     *
+     * @param string $table a queue table name (identifier, not user input)
+     */
+    public static function appendItemConsumingRow(int $npcId, string $key, array $item, string $table, int $rowId): bool
+    {
+        if (!preg_match('/^[a-z_][a-z0-9_]*$/', $table)) {
+            throw new InvalidArgumentException("RelDynStorage::appendItemConsumingRow: bad table name '{$table}'");
+        }
+        $row = self::db()->fetchOne(
+            "WITH job AS (
+                 SELECT id FROM {$table} WHERE id = \$5 FOR UPDATE
+             ), app AS (
+                 UPDATE core_npc_master
+                 SET plugin_extended_data = jsonb_set(
+                     plugin_extended_data,
+                     ARRAY[\$2::text],
+                     (CASE WHEN jsonb_typeof(plugin_extended_data -> \$2::text) = 'object'
+                           THEN plugin_extended_data -> \$2::text ELSE '{}'::jsonb END)
+                     || jsonb_build_object(\$3::text,
+                            (CASE WHEN jsonb_typeof(plugin_extended_data -> \$2::text -> \$3::text) = 'array'
+                                  THEN plugin_extended_data -> \$2::text -> \$3::text ELSE '[]'::jsonb END)
+                            || jsonb_build_array(\$4::jsonb)),
+                     true)
+                 WHERE id = \$1 AND EXISTS (SELECT 1 FROM job)
+                 RETURNING id
+             )
+             DELETE FROM {$table} AS q USING app WHERE q.id = \$5
+             RETURNING q.id AS id",
+            [$npcId, self::PLUGIN_ID, $key, self::encode($item), $rowId]
+        );
+        return isset($row['id']);
+    }
+
+    /**
      * Atomically return and remove every item of a list key. The row is locked for the
      * statement, so two overlapping consumers can never both receive the same item and an
      * append that commits first is always included.
