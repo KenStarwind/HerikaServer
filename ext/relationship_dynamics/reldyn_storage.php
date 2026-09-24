@@ -11,7 +11,9 @@
  * because that replaces the whole 'reldyn' object and would let a dynamics save clobber an
  * eval queued in between. Instead every writer changes only its own top-level key with a
  * single UPDATE (jsonb_set on the same column), which PostgreSQL applies atomically per row:
- *   - setKey()     replaces one key          (dynamics saves)
+ *   - setKeyIfUnchanged() replaces one key only if nobody wrote it since it was read
+ *                          (dynamics saves: RelationshipDynamics::saveDynamics() merges and retries)
+ *   - setKey()     replaces one key unconditionally
  *   - appendItem() appends to a list key     (eval producers)
  *   - takeItems()  returns and removes a list key under a row lock (eval consumer)
  *
@@ -90,6 +92,10 @@ class RelDynStorage
         return (is_array($dyn) && !empty($dyn)) ? $dyn : null;
     }
 
+    /**
+     * Unconditional overwrite of the dynamics key. Engine code must not use this for a
+     * loaded-and-modified copy (lost updates); RelationshipDynamics::saveDynamics() merges.
+     */
     public static function saveDynamics(int $npcId, array $dynamics): bool
     {
         return self::setKey($npcId, self::KEY_DYNAMICS, $dynamics);
@@ -136,6 +142,56 @@ class RelDynStorage
              WHERE id = \$1
              RETURNING id",
             [$npcId, self::PLUGIN_ID, $key, self::encode(is_array($value) && empty($value) ? new stdClass() : $value)]
+        );
+        return isset($row['id']);
+    }
+
+    /**
+     * Current value of one key, for a compare-and-set write.
+     *
+     * Returns null when the NPC row does not exist, otherwise
+     *   ['value' => assoc value or null, 'expected' => JSON of the stored value or null when absent].
+     * 'expected' keeps JSON objects as objects (NpcMaster preserves stdClass), so PostgreSQL's
+     * jsonb equality in setKeyIfUnchanged() matches exactly when nobody wrote the key since.
+     */
+    public static function readKeyForUpdate(int $npcId, string $key): ?array
+    {
+        $row = self::db()->fetchOne(
+            'SELECT plugin_extended_data -> $2::text AS plugin_data FROM core_npc_master WHERE id = $1',
+            [$npcId, self::PLUGIN_ID]
+        );
+        if (!is_array($row) || !array_key_exists('plugin_data', $row)) {
+            return null;
+        }
+        $ns = ($row['plugin_data'] === null || $row['plugin_data'] === '')
+            ? null
+            : json_decode($row['plugin_data'], false, 512, JSON_THROW_ON_ERROR);
+        if (!$ns instanceof stdClass || !property_exists($ns, $key)) {
+            return ['value' => null, 'expected' => null];
+        }
+        return ['value' => self::toAssoc($ns->$key), 'expected' => self::encode($ns->$key)];
+    }
+
+    /**
+     * Replace one key only if it still holds $expected (JSON from readKeyForUpdate(), null = absent).
+     * Single statement, so the check and the write are atomic. Returns false when another
+     * writer changed the key first; the caller re-reads, merges and tries again.
+     */
+    public static function setKeyIfUnchanged(int $npcId, string $key, ?string $expected, $value): bool
+    {
+        $row = self::db()->fetchOne(
+            "UPDATE core_npc_master
+             SET plugin_extended_data = jsonb_set(
+                 plugin_extended_data,
+                 ARRAY[\$2::text],
+                 (CASE WHEN jsonb_typeof(plugin_extended_data -> \$2::text) = 'object'
+                       THEN plugin_extended_data -> \$2::text ELSE '{}'::jsonb END)
+                 || jsonb_build_object(\$3::text, \$4::jsonb),
+                 true)
+             WHERE id = \$1
+               AND (plugin_extended_data -> \$2::text -> \$3::text) IS NOT DISTINCT FROM \$5::jsonb
+             RETURNING id",
+            [$npcId, self::PLUGIN_ID, $key, self::encode(is_array($value) && empty($value) ? new stdClass() : $value), $expected]
         );
         return isset($row['id']);
     }

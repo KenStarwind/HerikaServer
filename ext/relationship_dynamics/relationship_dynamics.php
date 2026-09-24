@@ -1076,14 +1076,21 @@ class RelationshipDynamics
         try {
             $rd = self::loadStoredDynamics($npcName);
             if (is_array($rd) && !empty($rd)) {
-                $merged = array_merge(self::defaultDynamics(), $rd);
-                $merged = self::migrateDimensions($merged);
+                $base = self::normalizeStoredDynamics($rd);
+                $merged = $base;
                 // ========== REPUTATION LAYER (PR 9) ==========
                 if (isset($GLOBALS['PLAYER_NAME']) && !empty($GLOBALS['PLAYER_NAME'])) {
                     $temperament = $merged['inferred_temperament'] ?? $merged['temperament'] ?? 'Stoic';
                     self::applyReputationModifiers($merged, $GLOBALS['PLAYER_NAME'], $npcName, $temperament);
                 }
+                // saveDynamics() merges this copy's changes onto whatever is stored by then
+                $merged[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($base);
                 return $merged;
+            }
+            if (!empty($GLOBALS['db']) && RelDynStorage::resolveNpcId($npcName) !== null) {
+                $defaults = self::defaultDynamics();
+                $defaults[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase(self::defaultDynamics());
+                return $defaults;
             }
         } catch (\Throwable $e) {
             error_log("[RelDyn] getDynamics storage error for {$npcName}: " . $e->getMessage());
@@ -1108,12 +1115,26 @@ class RelationshipDynamics
         return self::defaultDynamics();
     }
 
-    public static function saveDynamics($npcName, $dynamics)
+    /**
+     * Persist a copy obtained from getDynamics().
+     *
+     * Hooks, the eval consumer and the editor each load a copy, change it and save it,
+     * and requests for the same NPC overlap. So the save is a three-way merge, not an
+     * overwrite: only what THIS copy changed since it was loaded is applied on top of
+     * what is stored now (see mergeDynamics()), written with a compare-and-set that
+     * retries when another writer got in between. On success $dynamics is replaced by
+     * the merged state, so the caller can keep working on it and save again.
+     */
+    public static function saveDynamics($npcName, &$dynamics)
     {
         if (empty($npcName)) return false;
 
+        $token = $dynamics[self::LOAD_TOKEN_KEY] ?? null;
+        $mine = $dynamics;
+        unset($mine[self::LOAD_TOKEN_KEY]);
+
         // XYZ shim: sync legacy keys from dimensions before persisting
-        $dynamics = self::syncLegacyFromDimensions($dynamics);
+        $mine = self::syncLegacyFromDimensions($mine);
 
         // Primary: write only the 'dynamics' key of plugin_extended_data.reldyn, so a save
         // never clobbers the eval inbox or any other key written concurrently.
@@ -1121,7 +1142,29 @@ class RelationshipDynamics
             if (!empty($GLOBALS['db'])) {
                 $npcId = RelDynStorage::resolveNpcId($npcName);
                 if ($npcId !== null) {
-                    return RelDynStorage::saveDynamics($npcId, $dynamics);
+                    $base = ($token !== null) ? (self::$loadedBases[$token] ?? null) : null;
+                    if ($base === null) {
+                        error_log("[RelDyn] saveDynamics for {$npcName}: copy has no load snapshot (not from getDynamics() in this process); it overwrites the stored state");
+                    }
+                    for ($attempt = 1; $attempt <= self::SAVE_MERGE_ATTEMPTS; $attempt++) {
+                        $current = RelDynStorage::readKeyForUpdate($npcId, RelDynStorage::KEY_DYNAMICS);
+                        if ($current === null) {
+                            error_log("[RelDyn] saveDynamics for {$npcName}: core_npc_master row {$npcId} is gone");
+                            return false;
+                        }
+                        $toWrite = $mine;
+                        if ($base !== null) {
+                            $theirs = self::normalizeStoredDynamics(is_array($current['value']) ? $current['value'] : null);
+                            $toWrite = self::syncLegacyFromDimensions(self::mergeDynamics($base, $mine, $theirs));
+                        }
+                        if (RelDynStorage::setKeyIfUnchanged($npcId, RelDynStorage::KEY_DYNAMICS, $current['expected'], $toWrite)) {
+                            $toWrite[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($toWrite);
+                            $dynamics = $toWrite;
+                            return true;
+                        }
+                    }
+                    error_log("[RelDyn] saveDynamics for {$npcName}: state changed under every one of " . self::SAVE_MERGE_ATTEMPTS . " merge attempts; this save was dropped");
+                    return false;
                 }
             }
         } catch (\Throwable $e) {
@@ -1130,10 +1173,166 @@ class RelationshipDynamics
 
         // Fallback: try nsfw_npc_data (legacy)
         if (class_exists('NsfwNpcData')) {
-            return NsfwNpcData::setKey($npcName, 'relationship_dynamics', $dynamics);
+            return NsfwNpcData::setKey($npcName, 'relationship_dynamics', $mine);
         }
 
         return false;
+    }
+
+    // ---- Lost-update protection for saveDynamics() -------------------------------------
+
+    /** Hidden key carrying a loaded copy's snapshot token (never stored). */
+    const LOAD_TOKEN_KEY = '_rd_load_token';
+    const LOADED_BASES_MAX = 32;
+    const SAVE_MERGE_ATTEMPTS = 5;
+
+    /** token => the stored state (normalized) a loaded copy was derived from, this process only. */
+    private static $loadedBases = [];
+
+    /** Stored blob in the shape getDynamics() hands out (defaults filled, dimensions migrated). */
+    private static function normalizeStoredDynamics(?array $stored): array
+    {
+        $d = self::migrateDimensions(array_merge(self::defaultDynamics(), $stored ?? []));
+        unset($d[self::LOAD_TOKEN_KEY]);
+        return self::syncLegacyFromDimensions($d);
+    }
+
+    private static function rememberLoadedBase(array $base): string
+    {
+        $token = md5(serialize($base));
+        unset(self::$loadedBases[$token]);
+        self::$loadedBases[$token] = $base;
+        while (count(self::$loadedBases) > self::LOADED_BASES_MAX) {
+            unset(self::$loadedBases[array_key_first(self::$loadedBases)]);
+        }
+        return $token;
+    }
+
+    /**
+     * Three-way merge: apply what $mine changed relative to $base on top of $theirs (the
+     * state stored now). A key only one side changed takes that side's value. A key both
+     * sides changed:
+     *   - nested maps merge key by key;
+     *   - clocks/checkpoints (…_at, …_ts, …gamets, last…, accumulated…, …_hwm) take the max,
+     *     so a stale copy never rewinds a clock and never re-counts an interval;
+     *   - accumulators (dimension x, passion, jealousy_anger, _pending_aff_delta, counters)
+     *     add both changes: theirs + (mine - base), clamped to the value's range;
+     *   - anything else (strings, flags, lists, set-once numbers) takes this copy's value.
+     * The affinity mirror is merged as a pair so the uncommitted part (x - _aff_mirror_x)
+     * of both sides survives and nothing already committed to core is queued again.
+     */
+    public static function mergeDynamics(array $base, array $mine, array $theirs): array
+    {
+        $out = self::mergeDynamicsLevel($base, $mine, $theirs, '');
+
+        $uncommitted = static function (array $d): ?float {
+            $x = $d['dimensions']['affinity']['x'] ?? null;
+            $mark = $d['_aff_mirror_x'] ?? null;
+            return (self::isMergeNumber($x) && self::isMergeNumber($mark)) ? floatval($x) - floatval($mark) : null;
+        };
+        $uBase = $uncommitted($base);
+        $uMine = $uncommitted($mine);
+        $uTheirs = $uncommitted($theirs);
+        $mark = $out['_aff_mirror_x'] ?? null;
+        if ($uBase !== null && $uMine !== null && $uTheirs !== null && self::isMergeNumber($mark)
+            && isset($out['dimensions']['affinity']) && is_array($out['dimensions']['affinity'])) {
+            $out['dimensions']['affinity']['x'] = round(floatval($mark) + $uTheirs + $uMine - $uBase, 4);
+        }
+        return $out;
+    }
+
+    private static function mergeDynamicsLevel(array $base, array $mine, array $theirs, string $path): array
+    {
+        $out = [];
+        foreach (array_keys($mine + $theirs + $base) as $k) {
+            $inB = array_key_exists($k, $base);
+            $inM = array_key_exists($k, $mine);
+            $inT = array_key_exists($k, $theirs);
+            $b = $base[$k] ?? null;
+            $m = $mine[$k] ?? null;
+            $t = $theirs[$k] ?? null;
+
+            $mineChanged = ($inM !== $inB) || ($inM && !self::sameMergeValue($m, $b));
+            if (!$mineChanged) {
+                if ($inT) $out[$k] = $t;
+                continue;
+            }
+            $theirsChanged = ($inT !== $inB) || ($inT && !self::sameMergeValue($t, $b));
+            if (!$theirsChanged) {
+                if ($inM) $out[$k] = $m;
+                continue;
+            }
+
+            // Both sides changed this key. Even an identical change is two events for an
+            // accumulator (two requests each adding 0.5), so numbers go through the rules.
+            if (!$inM) continue;                   // this copy removed it (e.g. consumed)
+            if (!$inT) { $out[$k] = $m; continue; }
+
+            $childPath = ($path === '') ? (string) $k : $path . '.' . $k;
+            if (self::isMergeMap($m) && self::isMergeMap($t)) {
+                $out[$k] = self::mergeDynamicsLevel(self::isMergeMap($b) ? $b : [], $m, $t, $childPath);
+            } elseif ($inB && self::isMergeNumber($b) && self::isMergeNumber($m) && self::isMergeNumber($t)) {
+                $out[$k] = self::mergeDynamicsNumber($childPath, (string) $k, $b, $m, $t);
+            } else {
+                $out[$k] = $m;
+            }
+        }
+        return $out;
+    }
+
+    private static function mergeDynamicsNumber(string $path, string $key, $b, $m, $t)
+    {
+        // Merged as a pair in mergeDynamics()
+        if ($path === 'dimensions.affinity.x' || $key === '_aff_mirror_x') {
+            return $m;
+        }
+        if (preg_match('/(^|_)(at|ts|gamets|tick|start|hwm)$|(^|_)last(_|$)|(^|_)accumulated(_|$)/', $key)) {
+            return max($m, $t);
+        }
+        $additive = in_array($key, ['x', 'passion', 'jealousy_anger', '_pending_aff_delta'], true)
+            || preg_match('/(_count|_interactions|_given|_score|_window)$/', $key)
+            || preg_match('/^(passion_sources|_interest_satisfaction|_interaction_pattern)\./', $path);
+        if (!$additive) {
+            return $m;
+        }
+
+        $v = $t + ($m - $b);
+        if ($key === 'x' && preg_match('/^dimensions\.([^.]+)\.x$/', $path, $dm)) {
+            $def = self::getDimensionDefinition($dm[1]);
+            if ($def) {
+                $v = max((float) $def['range_min'], min((float) $def['range_max'], $v));
+            }
+        } elseif ($key === 'passion' || $key === 'jealousy_anger') {
+            $v = max(0.0, min(100.0, $v));
+        } elseif ($key !== '_pending_aff_delta') {
+            $v = max(0, $v);
+        }
+        return (is_int($b) && is_int($m) && is_int($t)) ? (int) $v : round($v, 6);
+    }
+
+    private static function isMergeNumber($v): bool
+    {
+        return is_int($v) || is_float($v);
+    }
+
+    private static function isMergeMap($v): bool
+    {
+        return is_array($v) && ($v === [] || !array_is_list($v));
+    }
+
+    private static function sameMergeValue($a, $b): bool
+    {
+        if (self::isMergeNumber($a) && self::isMergeNumber($b)) {
+            return abs(floatval($a) - floatval($b)) <= 1e-9 * max(1.0, abs(floatval($a)));
+        }
+        if (is_array($a) && is_array($b)) {
+            if (count($a) !== count($b)) return false;
+            foreach ($a as $k => $v) {
+                if (!array_key_exists($k, $b) || !self::sameMergeValue($v, $b[$k])) return false;
+            }
+            return true;
+        }
+        return $a === $b;
     }
 
     public static function defaultDynamics()
