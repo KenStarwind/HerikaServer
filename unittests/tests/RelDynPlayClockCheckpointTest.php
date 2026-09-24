@@ -6,8 +6,8 @@ require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 
 /**
- * Passion/jealousy decay, the diminishing-returns clock and reunion absence run on the
- * NPC's filtered play clock (_accumulated_play_gamets, ~2315/real second). That clock
+ * Passion/jealousy decay, the diminishing-returns clock and reunion's played-time check run
+ * on the NPC's filtered play clock (_accumulated_play_gamets, ~2315/real second). That clock
  * passes 1e9 after ~120 real hours with an NPC, so "checkpoint > 1e9 means a legacy
  * Unix timestamp" must not be used to spot legacy values: after 120 h it would reset
  * every valid checkpoint to now and stop all of these timers for good.
@@ -84,12 +84,18 @@ final class RelDynPlayClockCheckpointTest extends TestCase
 
     public function testReunionAbsenceIsMeasuredAfterLongPlay(): void
     {
+        // Reunion counts game-calendar hours apart (decisions 2026-09-23 §2) and needs real
+        // play in between; its play checkpoint must still work once the play clock is > 1e9.
+        $contact = 400 * RelationshipDynamics::GAMETS_PER_DAY;
+        $GLOBALS['gameRequest'] = ['inputtext', '1727000000', (string) ($contact + 20 * RelationshipDynamics::GAMETS_PER_DAY / 24), 'hi'];
         $d = $this->dyn([
             '_accumulated_play_gamets' => self::LONG_PLAY,
-            'last_seen_at' => self::LONG_PLAY - 2315 * 3600 * 20,   // twenty play hours apart
+            '_last_contact_gamets' => $contact,                                  // twenty game hours apart
+            '_last_contact_play_gamets' => self::LONG_PLAY - 2315 * 60 * 30,     // thirty play minutes of it
         ]);
 
         $spike = RelationshipDynamics::checkReunion($d, 80);
+        unset($GLOBALS['gameRequest']);
 
         $this->assertEqualsWithDelta(8.0, $spike, 0.001, '16-24 h apart gives the 8.0 spike');
         $this->assertTrue($d['reunion_spike_given']);
@@ -106,7 +112,7 @@ final class RelDynPlayClockCheckpointTest extends TestCase
         $this->assertSame(50.0, RelationshipDynamics::getPassion($d), 'no decay from a bogus interval');
         $this->assertSame($play, (float) $d['passion_updated_at']);
 
+        // Reunion no longer reads last_seen_at: without a calendar contact there is no spike.
         $this->assertSame(0.0, RelationshipDynamics::checkReunion($d, 80));
-        $this->assertSame($play, (float) $d['last_seen_at']);
     }
 }

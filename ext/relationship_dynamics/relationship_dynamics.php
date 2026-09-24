@@ -989,8 +989,8 @@ class RelationshipDynamics
             'conflict_resolution_positive_count' => 3,
             'conflict_repair_passion_burst' => 20.0,
             'conflict_repair_passion_mult' => 1.5,
-            'reunion_min_hours' => 8,
-            'reunion_min_affection' => 40,
+            'reunion_min_hours' => 8,          // game-calendar hours since last contact
+            'reunion_min_affection' => 40,     // core affinity (-100..100)
             'stage_established_threshold' => 50,
             'stage_deep_threshold' => 200,
             'log_enabled' => false,
@@ -1034,6 +1034,10 @@ class RelationshipDynamics
             // Contacts (this NPC's requests) an NPC back from a resolved boundary test
             // waits before walking away again while its resentment is still high.
             'walkaway_return_grace_contacts' => 5,
+            // Reunion: reunion_min_hours is GAME-CALENDAR hours since the last contact; the
+            // time apart must also hold this many real minutes of filtered play (no reunion
+            // from a wait or sleep alone).
+            'reunion_min_play_minutes' => 10,
         ];
     }
 
@@ -2236,35 +2240,28 @@ class RelationshipDynamics
     public static function checkReunion(&$dynamics, $npcAffection = 0)
     {
         $cfg = self::getConfig();
-        $minHours = floatval($cfg['reunion_min_hours'] ?? 8);
-        $minAff = intval($cfg['reunion_min_affection'] ?? 40);
+        $minHours = floatval(self::configValue('reunion_min_hours'));             // game-calendar hours
+        $minAff = intval($cfg['reunion_min_affection'] ?? 40);                    // core affinity, -100..100
+        $minPlayMinutes = floatval(self::configValue('reunion_min_play_minutes')); // real minutes of play
 
         // Already spiked this visit
         if (!empty($dynamics['reunion_spike_given'])) return 0.0;
 
-        $now = self::getPlayGamets($dynamics);
-        $lastSeen = floatval($dynamics['last_seen_at'] ?? 0);
-        if ($lastSeen <= 0) {
-            // First time — initialize, no spike
-            $dynamics['last_seen_at'] = $now;
-            return 0.0;
-        }
-
-        // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
-        // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
-        // itself passes 1e9 after ~120 real hours with an NPC.
-        if ($lastSeen > $now) {
-            $lastSeen = $now;
-            $dynamics['last_seen_at'] = $now;
-        }
+        // Time apart is game-calendar hours since the last contact (waiting and sleeping
+        // count). Null: no calendar contact yet (markContact starts it) or an earlier save.
+        $hoursApart = self::gameHoursSince($dynamics, '_last_contact_gamets');
+        if ($hoursApart === null) return 0.0;
 
         // Check affection threshold
         if ($npcAffection < $minAff) return 0.0;
 
-        $hoursApart = ($now - $lastSeen) / self::GAMETS_PER_REAL_HOUR;
         if ($hoursApart < $minHours) return 0.0;
 
-        // Calculate spike
+        // No wait-scumming: the separation must hold real play, not only a wait or sleep.
+        $playApart = self::playGametsSince($dynamics, '_last_contact_play_gamets') ?? 0.0;
+        if ($playApart / (self::GAMETS_PER_REAL_SECOND * 60.0) < $minPlayMinutes) return 0.0;
+
+        // Calculate spike (tiers in game-calendar hours)
         $spike = 0.0;
         if ($hoursApart >= 72) {
             $spike = 25.0;
@@ -2284,10 +2281,23 @@ class RelationshipDynamics
         $spike *= $tempMult;
 
         $dynamics['reunion_spike_given'] = true;
+        $dynamics['_reunion_hours_apart'] = round($hoursApart, 2);   // game-calendar hours, for context.php
 
-        self::log("Reunion spike for NPC: +{$spike} passion (hours_apart={$hoursApart}, temp_mult={$tempMult})");
+        self::log("Reunion spike for NPC: +{$spike} passion (game_hours_apart={$hoursApart}, temp_mult={$tempMult})");
 
         return $spike;
+    }
+
+    /**
+     * Record contact with the player now: this NPC's request is being handled. Stamps the
+     * game calendar (absence, reunion, neglect) and the play clock (reunion's check that
+     * the time apart held real play). Call after checkReunion() and after the calendar
+     * step for this NPC, which both measure the time since the previous contact.
+     */
+    public static function markContact(array &$dynamics): void
+    {
+        self::markGameClock($dynamics, '_last_contact_gamets');
+        self::markPlayCheckpoint($dynamics, '_last_contact_play_gamets');
     }
 
     // =========================================================================

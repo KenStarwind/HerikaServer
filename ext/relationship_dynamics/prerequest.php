@@ -144,6 +144,8 @@ $reunionPassion = ($reldynCfg['reunion_enabled'] ?? true) ? RelationshipDynamics
 if ($reunionPassion > 0) {
     RelationshipDynamics::addPassion($dynamics, $reunionPassion, 'reunion');
 }
+// Contact now (game calendar + play clock): absence, neglect and the next reunion count from here
+RelationshipDynamics::markContact($dynamics);
 
 // -------------------------------------------------------------------------
 // Ambient presence: being in a location matching NPC interests builds
