@@ -1213,7 +1213,7 @@ class RelationshipDynamics
             // Fester (MDD 15.5 + decisions §2): while a conflict is open, an NPC with
             // maturity (0..100) below fester_maturity_below gains this much RAW resentment
             // (0..100 points) per game-calendar day. Raw goes through applyDelta, which adds
-            // the 15.5 +50% for maturity < 50 and the accumulator physics (inverted rubber
+            // the 15.5 +50% (resentment > 30, maturity < 50) and the accumulator physics (inverted rubber
             // band, attachment gain mult), so the felt rate is roughly 2-4x the raw rate.
             // Starting value 1.0: half the §5 jealousy-conversion k=2, because of that physics.
             'fester_resentment_per_game_day' => 1.0,
@@ -1251,6 +1251,49 @@ class RelationshipDynamics
             // advanced on any request; at most calendar_scan_max_npcs per request.
             'calendar_scan_interval_game_hours' => 1,
             'calendar_scan_max_npcs' => 10,
+            // ===== Resentment / jealousy / conflict (decisions 2026-09-23 §5, MDD 15.5 / 6.5) =====
+            // RAW resentment points (0..100 scale, before applyDelta's physics) per flagged
+            // grievance (MDD 15.5: +5), times grievance_severity_mult[eval severity 0..3].
+            // Severity 0 (flagged, unrated) and 1 are the MDD's one grade; 2 and 3 scale up.
+            'grievance_resentment_raw' => 5.0,
+            'grievance_severity_mult' => [1.0, 1.0, 1.5, 2.0],
+            // RAW resentment points removed per positive interaction (MDD 15.5: -1).
+            'resentment_positive_decay' => 1.0,
+            // Sustained jealousy converts into resentment (decisions §5): while jealousy (0..100)
+            // is above jealousy_resentment_above, RAW resentment += k x (jealousy - 30) / 70
+            // per game-calendar day (k = jealousy_resentment_k, start 2).
+            'jealousy_resentment_k' => 2.0,
+            'jealousy_resentment_above' => 30,
+            // Jealousy (0..100 points) from an eval jealousy event at intensity 0/1, before the
+            // temperament (MDD 1.3), attachment and preference multipliers;
+            // x jealousy_intensity_mult[intensity 0..3].
+            'jealousy_eval_gain' => 10.0,
+            'jealousy_intensity_mult' => [1.0, 1.0, 1.5, 2.0],
+            // Eval grievance kinds that are jealousy (a rival), not a grievance: they raise
+            // jealousy, which feeds resentment only through the conversion above (§5).
+            'jealousy_grievance_kinds' => ['jealousy', 'jealous', 'rival', 'jealousy_trigger', 'envy'],
+            // Bystander jealousy: when an eval says the player was intimate with this NPC
+            // (tags below, positive interaction), NPCs nearby whose core Player.type is listed
+            // gain jealousy_eval_gain x this commitment multiplier (x the same multipliers).
+            'jealousy_bystander_tags' => ['intimacy', 'touch'],
+            'jealousy_bystander_commitment' => ['romantic' => 1.0, 'obsessed' => 1.5, 'crush' => 0.8],
+            // MDD 6.5: jealousy (0..100) at or above this -> walkaway.
+            'jealousy_walkaway_at' => 100,
+            // Power gap (decisions §5), 0..1: how little the NPC can leave. The largest matching
+            // source counts. Core Player.type -> gap; in the player's current party (commanded
+            // follower, CHIM CurrentParty) -> gap; core_npc_master faction editor ids (member,
+            // rank >= 0, letters/digits substring match) -> gap.
+            'power_gap_core_types' => ['servant' => 1.0, 'fanatical' => 0.8, 'indebted' => 0.5, 'fearful' => 0.5],
+            'power_gap_in_party' => 0.5,
+            'power_gap_factions' => [
+                ['match' => ['thrall'], 'gap' => 1.0],
+                ['match' => ['housecarl'], 'gap' => 0.8],
+                ['match' => ['servant', 'steward'], 'gap' => 0.6],
+            ],
+            // Conflict from an affinity drop (MDD conflict/repair): a "session" is contact with no
+            // game-calendar gap longer than this; a drop of conflict_threshold_affinity_drop core
+            // affinity points below the session's high opens a conflict.
+            'conflict_session_gap_game_hours' => 6,
         ];
     }
 
@@ -6269,13 +6312,15 @@ class RelationshipDynamics
             }
         }
 
-        // --- Maturity < 50 → amplify resentment buildup +50% ---
-        // "Immature NPCs bottle things up worse"
+        // --- MDD 15.5 suppressed buildup: resentment > 30 and maturity < 50 → gains +50% ---
+        // "Immature NPCs bottle things up worse" (the one place this rule is applied)
         if ($dimensionId === 'resentment' && $rawDelta > 0) {
             $maturity = $dims['maturity']['x'] ?? null;
-            if ($maturity !== null && $maturity < 50) {
-                $modifiedDelta *= 1.5;
-                error_log("[RelDyn-CAP] Low maturity ({$maturity}) amplifying resentment buildup");
+            $resentment = floatval($dims['resentment']['x'] ?? 0);
+            if ($maturity !== null && $maturity < self::RESENTMENT_SUPPRESSED_MATURITY_BELOW
+                && $resentment > self::RESENTMENT_SUPPRESSED_ABOVE) {
+                $modifiedDelta *= self::RESENTMENT_SUPPRESSED_MULT;
+                error_log("[RelDyn-CAP] Suppressed buildup (resentment {$resentment}, maturity {$maturity}) amplifying resentment gain");
             }
         }
 
@@ -6907,11 +6952,10 @@ class RelationshipDynamics
     /**
      * Process pending grievances into resentment buildup.
      *
-     * Each grievance adds +5 to resentment via applyDelta. Grievance text is
-     * stored in a rolling window (last 10). If maturity < 50, the impact is
-     * multiplied by 1.5 (immature NPCs bottle up worse — this stacks with the
-     * cross-signal cap in applyCrossSignalCaps which also amplifies resentment
-     * buildup for low maturity, giving double pressure on immature NPCs).
+     * Legacy pending list (pre-contract evals): each grievance adds grievance_resentment_raw
+     * (MDD 15.5: +5) to resentment via applyDelta, whose cross-signal caps apply the 15.5
+     * suppressed-buildup +50% once. Grievance text is stored in a rolling window (last 10).
+     * Contract v1 items go through recordGrievance() instead.
      *
      * @param array  &$dynamics    NPC dynamics blob (by reference)
      * @param string|null $temperament Temperament name
@@ -6935,16 +6979,12 @@ class RelationshipDynamics
             $resentment['grievance_log'] = [];
         }
 
-        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
         $processed = 0;
 
         foreach ($pending as $grievanceText) {
-            $baseAmount = 5.0;
-
-            // Immature NPCs bottle up worse: +50% impact
-            if ($maturity < 50) {
-                $baseAmount *= 1.5;
-            }
+            // MDD 15.5: +5 raw resentment points. The suppressed-buildup +50% (resentment > 30,
+            // maturity < 50) is applied once, in applyCrossSignalCaps.
+            $baseAmount = floatval(self::configValue('grievance_resentment_raw'));
 
             // Apply through XYZ physics (cross-signal caps + rubber band)
             $actual = self::applyDelta('resentment', $dynamics, $baseAmount, $temperament);
@@ -7075,6 +7115,17 @@ class RelationshipDynamics
     }
 
     // ========== END RESENTMENT DIMENSION (PR 7) ==========
+
+    // ========== EVAL FEELINGS: RESENTMENT, JEALOUSY, CONFLICT (decisions §5, MDD 15.5 / 6.5) ==========
+
+    /** MDD 15.5 suppressed buildup: resentment (0..100) above this ... */
+    const RESENTMENT_SUPPRESSED_ABOVE = 30;
+    /** ... and maturity (0..100) below this ... */
+    const RESENTMENT_SUPPRESSED_MATURITY_BELOW = 50;
+    /** ... multiply resentment gains by this. */
+    const RESENTMENT_SUPPRESSED_MULT = 1.5;
+
+    // ========== END EVAL FEELINGS ==========
 
 
     // ========== RELATIONSHIP TYPE MODIFIERS (PR 5) ==========

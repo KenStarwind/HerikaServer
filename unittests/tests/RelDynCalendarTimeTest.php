@@ -243,7 +243,7 @@ final class RelDynCalendarTimeTest extends TestCase
 
         $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 3 * self::DAY);
 
-        $this->assertGreaterThan(10.0 + 3 * $rate * 1.5 - 1e-6, self::resentment($d), 'MDD 15.5 +50% for maturity < 50, then the accumulator physics');
+        $this->assertGreaterThan(10.0 + 3 * $rate * 1.5 - 1e-6, self::resentment($d), 'the accumulator physics (maturity-derived Y, inverted rubber band)');
         $this->assertEqualsWithDelta(self::resentment($expected), self::resentment($d), 1e-6);
         $this->assertEqualsWithDelta(3 * $rate, $r['resentment_raw'], 1e-9);
     }
