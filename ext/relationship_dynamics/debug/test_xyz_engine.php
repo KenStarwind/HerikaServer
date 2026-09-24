@@ -313,9 +313,10 @@ $migrated['dimensions']['passion']['x'] = 77.0;
 $synced = RelationshipDynamics::syncLegacyFromDimensions($migrated);
 check('E3: Sync writes passion back to legacy', $synced['passion'] ?? -1, 77.0, 0.1);
 
-// E4: migrateDimensions re-reads from legacy (legacy is authoritative)
+// E4: once migrated, dimensions.passion.x is canonical and the legacy key is only a mirror
+$migrated['passion'] = 42.5;
 $migrated2 = RelationshipDynamics::migrateDimensions($migrated);
-check('E4: Migration — legacy passion overrides dimension', $migrated2['dimensions']['passion']['x'] ?? -1, 42.5, 0.1);
+check('E4: Migration — dimension passion is canonical, legacy mirror follows', $migrated2['passion'] ?? -1, 77.0, 0.1);
 
 // E5: Maturity is now activated by PR3 — initialized from temperament baseline
 $matX = $migrated['dimensions']['maturity']['x'] ?? null;
