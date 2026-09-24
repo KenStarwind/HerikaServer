@@ -92,12 +92,11 @@ $npcAffection = 0; // Default — no relationship means no reunion spike
 try {
     $db = $GLOBALS['db'] ?? null;
     if ($db) {
-        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
         $escaped = $db->escape($npcName);
         $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
         if (is_array($row) && !empty($row['extended_data'])) {
             $ext = json_decode($row['extended_data'], true) ?: [];
-            $playerRel = $ext['relationships'][$playerName] ?? null;
+            $playerRel = RelationshipDynamics::getPlayerRelationshipFromExtended($ext); // CHIM 3.4.1 key "Player"
             if ($playerRel) {
                 // Use raw CHIM affinity (-100..+100) directly
                 // reunion_min_affection default 40 means CHIM aff >= 40 (Friendly+)
@@ -107,6 +106,7 @@ try {
     }
 } catch (Throwable $e) {
     // Use default
+    error_log("[RelDyn-PRE] Reunion affinity read failed for {$npcName}: " . $e->getMessage());
 }
 
 // Snapshot current CHIM affinity for RPM→Speed delta in postrequest
@@ -114,35 +114,29 @@ $GLOBALS['RELDYN_PRE_AFF'] = null;
 try {
     $db2 = $GLOBALS['db'] ?? null;
     if ($db2) {
-        $playerName2 = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
         $escaped2 = $db2->escape($npcName);
         $row2 = $db2->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped2}') LIMIT 1");
         if (is_array($row2) && !empty($row2['extended_data'])) {
             $ext2 = json_decode($row2['extended_data'], true) ?: [];
-            $pRel = $ext2['relationships'][$playerName2] ?? null;
-            if ($pRel) {
-                $GLOBALS['RELDYN_PRE_AFF'] = intval($pRel['aff'] ?? 0);
-            }
+            $pRel = RelationshipDynamics::getPlayerRelationshipFromExtended($ext2);
+            // No Player entry yet = core's default neutral stranger (aff 0)
+            $GLOBALS['RELDYN_PRE_AFF'] = intval($pRel['aff'] ?? 0);
         }
     }
 } catch (Throwable $e) {
     // Best effort
+    error_log("[RelDyn-PRE] Affinity snapshot read failed for {$npcName}: " . $e->getMessage());
 }
 
 // ========== CHIM → RelDyn AFFINITY DIMENSION SYNC ==========
-// CHIM owns aff (-100..+100); RelDyn XYZ uses dimensions.affinity.x (0..100).
-// Sync once per prerequest so dimension consumers see up-to-date value.
+// CHIM owns aff (-100..+100); RelDyn XYZ uses dimensions.affinity.x (0..100) as a
+// read-only mirror. Refresh it once per prerequest so dimension consumers see the
+// value core holds (including core eval's changes). RelDyn's own changes to x are
+// pushed to core by commitPlayerAffinity() before each save.
 if (!empty($reldynCfg['dimension_engine_enabled'])) {
     $chimAff = $GLOBALS['RELDYN_PRE_AFF'];
     if ($chimAff !== null) {
-        $relDynAff = ($chimAff + 100) / 2.0;  // -100→0, 0→50, 100→100
-        if (!isset($dynamics['dimensions'])) {
-            $dynamics['dimensions'] = [];
-        }
-        if (!isset($dynamics['dimensions']['affinity'])) {
-            $dynamics['dimensions']['affinity'] = ['x' => 0, 'baseline' => null];
-        }
-        $dynamics['dimensions']['affinity']['x'] = round($relDynAff, 2);
+        RelationshipDynamics::refreshAffinityMirror($dynamics, $chimAff);  // -100→0, 0→50, 100→100
     }
 }
 
@@ -408,15 +402,16 @@ if (!empty($reldynCfg['dimension_engine_enabled']) && empty($dynamics['_walkaway
         try {
             $db = $GLOBALS['db'] ?? null;
             if ($db) {
-                $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
                 $escaped = $db->escape($npcName);
                 $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
                 if (is_array($row) && !empty($row['extended_data'])) {
                     $ext = json_decode($row['extended_data'], true) ?: [];
-                    $relType = $ext['relationships'][$playerName]['type'] ?? 'stranger';
+                    $relType = RelationshipDynamics::getPlayerRelationshipFromExtended($ext)['type'] ?? 'stranger';
                 }
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-PRE] Relationship type read failed for {$npcName}: " . $e->getMessage());
+        }
 
         $decayResult = RelationshipDynamics::processAffinityDecay($dynamics, $npcName, $temperament, $relType, $decayTicks);
         if ($decayResult && !($decayResult['skipped'] ?? false)) {
@@ -512,6 +507,9 @@ if (!empty($reldynCfg['director_goals_enabled'] ?? true)) {
     }
     $GLOBALS['RELDYN_DIRECTOR_GOAL'] = RelationshipDynamics::getActiveDirectorGoal($dynamics);
 }
+
+// Push RelDyn's affinity change (absence decay) to core as a locked delta
+RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
 
 // Save dynamics (decay + reunion applied)
 RelationshipDynamics::saveDynamics($npcName, $dynamics);

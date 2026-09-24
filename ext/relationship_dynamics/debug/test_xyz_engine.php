@@ -1471,17 +1471,17 @@ try {
     $asheS = RelationshipDynamics::migrateDimensions($asheS);
     $temperamentS = $asheS['inferred_temperament'] ?? $asheS['temperament'] ?? 'Stoic';
 
-    // Sync affinity from extended_data.relationships.Kaida.aff if available
+    // Sync affinity from extended_data.relationships.Player.aff (CHIM 3.4.1 key) if available
     $asheExtended = null;
     $dbS = $GLOBALS['db'] ?? null;
     if ($dbS) {
         $rowS = $dbS->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('Ashe') LIMIT 1");
         if ($rowS && !empty($rowS['extended_data'])) {
             $asheExtended = json_decode($rowS['extended_data'], true);
-            $kaidaAff = $asheExtended['relationships']['Kaida']['aff'] ?? null;
+            $kaidaAff = RelationshipDynamics::getPlayerRelationshipFromExtended($asheExtended)['aff'] ?? null;
             if ($kaidaAff !== null) {
-                $asheS['dimensions']['affinity']['x'] = floatval($kaidaAff);
-                echo "      Synced affinity from extended_data.relationships.Kaida.aff = {$kaidaAff}\n";
+                RelationshipDynamics::refreshAffinityMirror($asheS, $kaidaAff);
+                echo "      Synced affinity mirror from extended_data.relationships.Player.aff = {$kaidaAff}\n";
             }
         }
     }

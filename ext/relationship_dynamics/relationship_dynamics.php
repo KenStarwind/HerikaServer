@@ -1587,10 +1587,10 @@ class RelationshipDynamics
             if (!is_array($row) || empty($row['extended_data'])) return null;
 
             $ext = json_decode($row['extended_data'], true) ?: [];
-            $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
-            $maras = $ext['relationships'][$playerName]['maras'] ?? null;
+            $maras = self::getPlayerRelationshipFromExtended($ext)['maras'] ?? null;
             return $maras['temperament'] ?? null;
         } catch (Throwable $e) {
+            error_log("[RelDyn] getMarasTemperament failed for {$npcName}: " . $e->getMessage());
             return null;
         }
     }
@@ -1627,10 +1627,10 @@ class RelationshipDynamics
             if (!is_array($row) || empty($row['extended_data'])) return null;
 
             $ext = json_decode($row['extended_data'], true) ?: [];
-            $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
-            $maras = $ext['relationships'][$playerName]['maras'] ?? null;
+            $maras = self::getPlayerRelationshipFromExtended($ext)['maras'] ?? null;
             return $maras['socialClass'] ?? null;
         } catch (Throwable $e) {
+            error_log("[RelDyn] getSocialClass failed for {$npcName}: " . $e->getMessage());
             return null;
         }
     }
@@ -6263,7 +6263,8 @@ class RelationshipDynamics
             $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
             if (is_array($row) && !empty($row['extended_data'])) {
                 $ext = json_decode($row['extended_data'], true) ?: [];
-                $relationships = $ext['relationships'] ?? [];
+                // CHIM 3.4.1: the player's bond is keyed "Player"
+                $relationships = self::normalizeRelationshipMap($ext['relationships'] ?? []);
                 foreach ($relationships as $targetName => $relData) {
                     $bonds[$targetName] = [
                         'aff'   => floatval($relData['aff'] ?? 0),
@@ -6291,7 +6292,6 @@ class RelationshipDynamics
     {
         $bonds = self::getAllBondsForNpc($npcName);
         $dims = $dynamics['dimensions'] ?? [];
-        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
 
         $globalTrustX = floatval($dims['trust']['x'] ?? 0);
         $totalTrust = 0.0;
@@ -6300,7 +6300,7 @@ class RelationshipDynamics
         foreach ($bonds as $targetName => $bond) {
             $bondAff = ($bond['aff'] + 100) / 2.0; // Scale -100..+100 to 0..100
 
-            if (strcasecmp($targetName, $playerName) === 0) {
+            if ($targetName === self::PLAYER_RELATIONSHIP_KEY) {
                 $totalTrust += $globalTrustX;
             } else {
                 $totalTrust += max(0, $bondAff * 0.5);
@@ -6496,7 +6496,6 @@ class RelationshipDynamics
         // Check CACHE_PEOPLE for NPC anchors
         $cachePeopleRaw = $GLOBALS['CACHE_PEOPLE'] ?? '';
         $cachePeople = array_values(array_filter(array_map('trim', explode('|', $cachePeopleRaw))));
-        $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
         foreach ($cachePeople as $nearbyNpc) {
             if (!empty($nearbyNpc) && strcasecmp($nearbyNpc, $npcName) !== 0) {
                 $potentialAnchors[] = $nearbyNpc;
@@ -6506,10 +6505,12 @@ class RelationshipDynamics
 
         $bonds = self::getAllBondsForNpc($npcName);
         foreach ($potentialAnchors as $anchor) {
-            $bond = $bonds[$anchor] ?? null;
+            // Bonds are keyed "Player" for the player (CHIM 3.4.1); $anchor may be the real name
+            $anchorKey = self::relationshipTargetKey($anchor);
+            $bond = $bonds[$anchorKey] ?? null;
             if ($bond) {
                 $bondAff = ($bond['aff'] + 100) / 2.0;
-                $bondTrust = (strcasecmp($anchor, $playerName) === 0)
+                $bondTrust = ($anchorKey === self::PLAYER_RELATIONSHIP_KEY)
                     ? floatval($dynamics['dimensions']['trust']['x'] ?? 0)
                     : max(0, $bondAff * 0.5);
                 if ($bondAff > 50 && $bondTrust > 40) {
@@ -10397,13 +10398,14 @@ class RelationshipDynamics
                         $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
                         if ($row && !empty($row['extended_data'])) {
                             $ext = json_decode($row['extended_data'], true) ?: [];
-                            $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
-                            $aff = floatval($ext['relationships'][$playerName]['aff'] ?? 0);
+                            $aff = floatval(self::getPlayerRelationshipFromExtended($ext)['aff'] ?? 0);
                             $normalizedAff = ($aff + 100) / 2.0; // Scale -100..+100 to 0..100
                             return min(1.0, $normalizedAff / max(1, $min));
                         }
                     }
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    error_log("[RelDyn] npc_affinity metric read failed for {$targetNpc}: " . $e->getMessage());
+                }
                 return 0.0;
 
             case 'lifetime_wealth':
@@ -10781,7 +10783,7 @@ class RelationshipDynamics
 
         foreach ($sourceBonds as $targetName => $bond) {
             if ($count >= self::CASCADE_MAX_TARGETS) break;
-            if (strcasecmp($targetName, $playerName) === 0) continue;
+            if (strcasecmp($targetName, $playerName) === 0 || self::isPlayerRelationshipKey($targetName)) continue;
 
             $bondAff = ($bond['aff'] + 100) / 200.0; // Normalize to 0-1
             if ($bondAff < 0.2) continue; // Weak bonds don't propagate
@@ -13289,5 +13291,256 @@ class RelationshipDynamics
     }
 
     // ========== END HOOVER PROTOCOL (PR 16) ==========
+
+    // ========== CORE AFFINITY BRIDGE (CHIM 3.4.1) ==========
+    //
+    // Core owns player affinity: core_npc_master.extended_data.relationships.Player.aff
+    // (-100..+100). CHIM 3.4.1 keys the player's entry by the literal "Player"
+    // (RelationshipManager::normalizeTargetName), never by the character's name; the
+    // real name is only for display and prompts.
+    //
+    // dimensions.affinity.x (0..100) is a read-only mirror of the core value. RelDyn's own
+    // affinity changes (eval deltas, absence decay, gifts, passion-gain bonus) are
+    // queued in core units in _pending_aff_delta and applied by commitPlayerAffinity()
+    // as a delta inside a transaction that holds core's per-NPC advisory lock
+    // (1001000000 + npc id, the key relationship_system uses around applyChanges).
+    // Core eval and RelDyn can both move affinity, up or down, and neither overwrites
+    // the other. _aff_mirror_x records the mirrored value so only RelDyn's own change
+    // (x - mirror) is queued, and it is queued once: the mirror is reset right after.
+
+    const PLAYER_RELATIONSHIP_KEY = 'Player';
+    const CORE_RELATIONSHIP_LOCK_BASE = 1001000000;
+    const CORE_AFFINITY_MIN = -100;
+    const CORE_AFFINITY_MAX = 100;
+
+    private static function loadRelationshipManager()
+    {
+        if (!class_exists('RelationshipManager')) {
+            require_once __DIR__ . '/../../lib/relationship_manager.php';
+        }
+    }
+
+    /**
+     * Canonical relationship-map key for a target name ("Player" for the player).
+     * Also maps the prerequest snapshot of the player's name, because postrequest
+     * may run after conf.php reset PLAYER_NAME.
+     */
+    public static function relationshipTargetKey($targetName)
+    {
+        self::loadRelationshipManager();
+        $key = RelationshipManager::normalizeTargetName($targetName);
+        $snapshotName = trim((string)($GLOBALS['RELDYN_PLAYER_NAME'] ?? ''));
+        if ($key !== self::PLAYER_RELATIONSHIP_KEY && $snapshotName !== '' && strcasecmp(trim((string)$targetName), $snapshotName) === 0) {
+            return self::PLAYER_RELATIONSHIP_KEY;
+        }
+        return $key;
+    }
+
+    public static function isPlayerRelationshipKey($targetName)
+    {
+        return self::relationshipTargetKey($targetName) === self::PLAYER_RELATIONSHIP_KEY;
+    }
+
+    /**
+     * Relationship map as core reads it: legacy real-name player entries folded into "Player".
+     */
+    public static function normalizeRelationshipMap($relationships)
+    {
+        if (!is_array($relationships)) {
+            return [];
+        }
+        self::loadRelationshipManager();
+        $normalized = RelationshipManager::normalizeRelationshipMap($relationships);
+        foreach (array_keys($normalized) as $target) {
+            if ($target !== self::PLAYER_RELATIONSHIP_KEY && self::isPlayerRelationshipKey($target)) {
+                if (!isset($normalized[self::PLAYER_RELATIONSHIP_KEY])) {
+                    $normalized[self::PLAYER_RELATIONSHIP_KEY] = $normalized[$target];
+                }
+                unset($normalized[$target]);
+            }
+        }
+        return $normalized;
+    }
+
+    /**
+     * The player's relationship entry from a decoded core extended_data array, or null.
+     */
+    public static function getPlayerRelationshipFromExtended($extended)
+    {
+        if (!is_array($extended)) {
+            return null;
+        }
+        $rels = self::normalizeRelationshipMap($extended['relationships'] ?? []);
+        return $rels[self::PLAYER_RELATIONSHIP_KEY] ?? null;
+    }
+
+    /**
+     * The player's relationship entry for an NPC (core row), or null.
+     */
+    public static function getPlayerRelationship($npcName)
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || empty($npcName)) {
+            return null;
+        }
+        $escaped = $db->escape($npcName);
+        $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+        if (!is_array($row) || empty($row['extended_data'])) {
+            return null;
+        }
+        return self::getPlayerRelationshipFromExtended(json_decode($row['extended_data'], true));
+    }
+
+    /**
+     * Set the read-only affinity mirror from a core aff value (-100..+100 -> 0..100).
+     */
+    public static function refreshAffinityMirror(&$dynamics, $coreAff)
+    {
+        if (!isset($dynamics['dimensions'])) {
+            $dynamics['dimensions'] = [];
+        }
+        if (!isset($dynamics['dimensions']['affinity'])) {
+            $dynamics['dimensions']['affinity'] = ['x' => 0, 'baseline' => null];
+        }
+        $mirror = round((floatval($coreAff) + 100) / 2.0, 2);
+        $dynamics['dimensions']['affinity']['x'] = $mirror;
+        $dynamics['_aff_mirror_x'] = $mirror;
+    }
+
+    /**
+     * Queue an affinity change in core units (-100..+100 scale) for commitPlayerAffinity().
+     */
+    public static function queueAffinityDelta(&$dynamics, $coreDelta)
+    {
+        $dynamics['_pending_aff_delta'] = round(floatval($dynamics['_pending_aff_delta'] ?? 0) + floatval($coreDelta), 4);
+    }
+
+    /**
+     * Push RelDyn's pending affinity change to core.
+     *
+     * Moves any change RelDyn made to dimensions.affinity.x since the last mirror into
+     * the pending queue (dimension units x2 = core units), then applies the whole-point
+     * part of the queue as a locked delta on relationships.Player.aff. The fraction
+     * stays queued. On success the mirror is refreshed from the value core now holds.
+     *
+     * @return array|null ['old' => int, 'new' => int, 'delta' => int] or null if nothing was written
+     */
+    public static function commitPlayerAffinity($npcName, &$dynamics)
+    {
+        $marker = $dynamics['_aff_mirror_x'] ?? null;
+        $x = $dynamics['dimensions']['affinity']['x'] ?? null;
+        if ($marker !== null && $x !== null && abs(floatval($x) - floatval($marker)) > 0.0001) {
+            self::queueAffinityDelta($dynamics, (floatval($x) - floatval($marker)) * 2.0);
+            $dynamics['dimensions']['affinity']['x'] = floatval($marker);
+        }
+
+        $pending = floatval($dynamics['_pending_aff_delta'] ?? 0);
+        $whole = (int)$pending; // truncate toward zero; the fraction waits for the next change
+        if ($whole === 0) {
+            return null;
+        }
+
+        $result = self::applyPlayerAffinityDelta($npcName, $whole);
+        if ($result === null) {
+            return null; // keep the delta queued; logged by applyPlayerAffinityDelta
+        }
+
+        // Drop what was requested (a clamped remainder at +/-100 is not retried forever)
+        $dynamics['_pending_aff_delta'] = round($pending - $whole, 4);
+        self::refreshAffinityMirror($dynamics, $result['new']);
+        return $result;
+    }
+
+    /**
+     * Apply a delta to core relationships.Player.aff atomically.
+     *
+     * Runs in one transaction holding pg_advisory_xact_lock(1001000000 + npc id), which
+     * serialises with core relationship_system's pg_advisory_lock on the same key. Only
+     * relationships.Player.aff is written (the whole relationships object only when the
+     * Player entry is missing or a legacy real-name entry must be folded into it).
+     *
+     * @return array|null ['old' => int, 'new' => int, 'delta' => int] or null on failure
+     */
+    public static function applyPlayerAffinityDelta($npcName, $delta)
+    {
+        $delta = (int)$delta;
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || empty($npcName) || $delta === 0) {
+            return null;
+        }
+
+        $escaped = $db->escape($npcName);
+        $row = $db->fetchOne("SELECT id FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
+        $npcId = intval($row['id'] ?? 0);
+        if ($npcId <= 0) {
+            error_log("[RelDyn-AFF] Cannot apply affinity delta {$delta}: no core_npc_master row for {$npcName}");
+            return null;
+        }
+        $lockId = self::CORE_RELATIONSHIP_LOCK_BASE + $npcId;
+
+        try {
+            if ($db->execQuery("BEGIN") === false) {
+                error_log("[RelDyn-AFF] BEGIN failed for {$npcName}");
+                return null;
+            }
+            if ($db->execQuery("SELECT pg_advisory_xact_lock({$lockId})") === false) {
+                throw new RuntimeException("advisory lock {$lockId} failed");
+            }
+
+            $locked = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE id = {$npcId} FOR UPDATE");
+            $extended = json_decode($locked['extended_data'] ?? '{}', true);
+            if (!is_array($extended)) {
+                throw new RuntimeException("extended_data is not valid JSON");
+            }
+
+            $rawRels = $extended['relationships'] ?? [];
+            $rels = self::normalizeRelationshipMap($rawRels);
+            $playerRel = $rels[self::PLAYER_RELATIONSHIP_KEY] ?? ['aff' => 0, 'type' => 'neutral'];
+            $oldAff = intval($playerRel['aff'] ?? 0);
+            $newAff = max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, $oldAff + $delta));
+
+            $hasLegacyKey = false;
+            foreach (array_keys(is_array($rawRels) ? $rawRels : []) as $target) {
+                if ($target !== self::PLAYER_RELATIONSHIP_KEY && self::isPlayerRelationshipKey($target)) {
+                    $hasLegacyKey = true;
+                    break;
+                }
+            }
+
+            if (!$hasLegacyKey && is_array($rawRels) && isset($rawRels[self::PLAYER_RELATIONSHIP_KEY]) && is_array($rawRels[self::PLAYER_RELATIONSHIP_KEY])) {
+                $path = '{relationships,' . self::PLAYER_RELATIONSHIP_KEY . ',aff}';
+                $value = json_encode($newAff);
+            } else {
+                // jsonb_set cannot create intermediate keys: write the relationships object
+                $playerRel['aff'] = $newAff;
+                $rels[self::PLAYER_RELATIONSHIP_KEY] = $playerRel;
+                $path = '{relationships}';
+                $value = json_encode((object)$rels, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+
+            $valueEscaped = $db->escape($value);
+            $updated = $db->execQuery("UPDATE core_npc_master SET extended_data = jsonb_set(COALESCE(extended_data, '{}'::jsonb), '{$path}', '{$valueEscaped}'::jsonb, true) WHERE id = {$npcId}");
+            if ($updated === false) {
+                throw new RuntimeException("affinity UPDATE failed");
+            }
+            if ($db->execQuery("COMMIT") === false) {
+                throw new RuntimeException("COMMIT failed");
+            }
+        } catch (\Throwable $e) {
+            $db->execQuery("ROLLBACK");
+            error_log("[RelDyn-AFF] Affinity delta {$delta} for {$npcName} rolled back: " . $e->getMessage());
+            return null;
+        }
+
+        // Same game-timeline snapshot core writes after relationship changes
+        if (function_exists('chimRelationshipTimelineStamp')) {
+            chimRelationshipTimelineStamp($npcId);
+        }
+
+        self::log("[AFF] {$npcName} -> Player: " . sprintf('%+d', $delta) . " (aff {$oldAff} -> {$newAff})");
+        return ['old' => $oldAff, 'new' => $newAff, 'delta' => $newAff - $oldAff];
+    }
+
+    // ========== END CORE AFFINITY BRIDGE (CHIM 3.4.1) ==========
 
 }
