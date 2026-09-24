@@ -569,16 +569,17 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
         $aAela = RelDynFacetClassifier::thingAppraisal(RelDynFacets::preferences($b, 'Aela the Huntress'), 'topic', 'dwemer');
         $this->assertSame(1, $aAshe['dominant_sign']);
         $this->assertSame(-1, $aAela['dominant_sign']);
-        $this->assertStringContainsString('<topic_resonance>' . RelDynFacets::feltText('Ashe', $aAshe, 'topic', 'dwemer') . '</topic_resonance>', $ctxAshe);
-        $this->assertStringContainsString('<topic_resonance>' . RelDynFacets::feltText('Aela the Huntress', $aAela, 'topic', 'dwemer') . '</topic_resonance>', $ctxAela);
-        $this->assertDoesNotMatchRegularExpression('/<topic_resonance>[^<]*\d/', $ctxAshe . $ctxAela, 'feelings, never numbers');
+        $this->assertStringContainsString('- ' . RelDynFacets::feltText('Ashe', $aAshe, 'topic', 'dwemer') . "\n", $ctxAshe);
+        $this->assertStringContainsString('- ' . RelDynFacets::feltText('Aela the Huntress', $aAela, 'topic', 'dwemer') . "\n", $ctxAela);
+        $this->assertDoesNotMatchRegularExpression('/\d/', $ctxAshe . $ctxAela, 'feelings, never numbers');
 
         // Next turn grounds no topic: the read clears (a stale conf_opts current_oghma_topic is not read)
         pg_query($this->db->link, "INSERT INTO conf_opts (id, value) VALUES ('current_oghma_topic', 'dwemer')");
         $again = $this->postrequest('Ashe', [], 'Kaida: Lovely weather.');
         $this->assertSame(1.0, $again['topic_bonus']);
         $this->assertArrayNotHasKey('_last_topic_felt', $this->dynamics('Ashe'));
-        $this->assertStringNotContainsString('<topic_resonance>', $this->contextFor('Ashe'));
+        $this->contextFor('Ashe');
+        $this->assertArrayNotHasKey('topic', RelDynFelt::lastRendered());
     }
 
     public function testTheStrongestFeltTopicOfTheTurnSpeaks(): void

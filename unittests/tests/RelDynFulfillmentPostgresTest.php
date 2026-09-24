@@ -348,8 +348,8 @@ final class RelDynFulfillmentPostgresTest extends TestCase
 
         // Her context says what she misses, as a feeling
         $ctx = $this->context('Serana', $end);
-        $this->assertStringContainsString('<relationship_needs>Serana feels something missing between them and Kaida', $ctx);
-        $this->assertStringNotContainsString('<relationship_needs>', $this->context('Aela', $end));
+        $this->assertStringContainsString('- Serana keeps waiting on something from Kaida that does not come', $ctx);
+        $this->assertStringNotContainsString('keeps waiting on something from', $this->context('Aela', $end));
         $this->assertNoFailedStatements();
     }
 
@@ -499,9 +499,9 @@ final class RelDynFulfillmentPostgresTest extends TestCase
             'low since the day-2 end, five game days sustained');
         $at = self::T0 + 7 * self::DAY;
         $ctx = $this->context($name, $at);
-        $this->assertStringContainsString("<relationship_boundary>{$name} has thought about this calmly", $ctx);
+        $this->assertStringContainsString("- {$name} has thought about this calmly", $ctx);
         $this->assertStringContainsString('it has to change consistently', $ctx);
-        $this->assertDoesNotMatchRegularExpression('/<relationship_boundary>[^<]*\d/', $ctx, 'a feeling, never a number');
+        $this->assertDoesNotMatchRegularExpression('/\d/', $ctx, 'a feeling, never a number');
         $b = $this->dynamics($name)['_fulfillment']['boundary'];
         $this->assertSame('probation', $b['state']);
         $this->assertEqualsWithDelta($at + 7 * self::DAY, $b['until_gamets'], 1.0, 'probation: seven game days from the statement');
@@ -540,7 +540,7 @@ final class RelDynFulfillmentPostgresTest extends TestCase
             $this->assertSame('pending', $this->dynamics('Aela')['_fulfillment']['boundary']['state'], "{$type}: not consumed");
         }
         $ctx = $this->context('Aela', $at + 3 * self::HOUR);
-        $this->assertStringContainsString('<relationship_boundary>Aela has thought about this calmly', $ctx);
+        $this->assertStringContainsString('- Aela has thought about this calmly', $ctx);
         $b = $this->dynamics('Aela')['_fulfillment']['boundary'];
         $this->assertSame('probation', $b['state']);
         $this->assertEqualsWithDelta($at + 3 * self::HOUR, $b['started_gamets'], 1.0, 'the window starts when she said it to the player');

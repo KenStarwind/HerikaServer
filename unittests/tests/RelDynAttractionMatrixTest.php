@@ -463,7 +463,7 @@ final class RelDynAttractionMatrixTest extends TestCase
         }
         $d = $this->npc(self::AELA);
         RelationshipDynamics::updateAttraction(self::AELA, $d, self::player('bard'));
-        $this->assertStringContainsString('warm deflection', RelDynAttraction::feltText(self::AELA, $d['_attraction']));
+        $this->assertStringContainsString('warm, kind deflection', RelDynAttraction::feltText(self::AELA, $d['_attraction']));
     }
 
     // ------------------------------------------------------------------ passion gated by attraction + attachment

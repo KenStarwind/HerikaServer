@@ -564,15 +564,15 @@ final class RelDynAffinityCoreTest extends TestCase
         $this->assertSame(40, $this->coreAff(), 'hate is self-sustaining: a core enemy does not decay');
     }
 
-    /** Runs prerequest then the context hook; returns the <relational_dimensions> block. */
-    private function relationalDimensionsBlock(): string
+    /** Runs prerequest then the context hook; returns RelDyn's <subtext> block (felt steering). */
+    private function subtextBlock(): string
     {
         $GLOBALS['contextDataFull'] = [];
         $this->runHook('prerequest');
         $this->resetEngineCaches();
         $this->runHook('context');
         foreach ($GLOBALS['contextDataFull'] as $msg) {
-            if (strpos($msg['content'] ?? '', '<relational_dimensions>') !== false) {
+            if (strpos($msg['content'] ?? '', '<subtext>') !== false) {
                 return $msg['content'];
             }
         }
@@ -584,10 +584,12 @@ final class RelDynAffinityCoreTest extends TestCase
         $this->setConfig(['dimension_context_enabled' => true]);
         $this->seedNpc(['Player' => ['aff' => 0, 'type' => 'neutral']]);
 
-        $block = $this->relationalDimensionsBlock();
+        $block = $this->subtextBlock();
 
-        // Roadmap tiered-dimension-context: tier 0 injects nothing.
-        $this->assertSame('', $block, 'context tier 0 injects no <relational_dimensions> block');
+        // Roadmap tiered-dimension-context: tier 0 gets no dimension band toward the player.
+        foreach (RelationshipDynamics::DIMENSION_BANDS['affinity'] as $band) {
+            $this->assertStringNotContainsString($band['keywords'], $block, 'context tier 0: no affinity band line');
+        }
         $this->assertSame(0, intval($this->storedDynamics()['context_tier_hwm'] ?? 0));
     }
 
@@ -617,11 +619,13 @@ final class RelDynAffinityCoreTest extends TestCase
         // Core 28 = Acquaintance (tier 1). As a mirror (x = 64) it read as the 'Fond' band.
         $this->seedNpc(['Player' => ['aff' => 28, 'type' => 'neutral']]);
 
-        $block = $this->relationalDimensionsBlock();
+        $block = $this->subtextBlock();
+        $band = fn(string $label) => array_values(array_filter(RelationshipDynamics::DIMENSION_BANDS['affinity'],
+            fn($b) => $b['label'] === $label))[0]['keywords'];
 
         $this->assertSame(1, intval($this->storedDynamics()['context_tier_hwm'] ?? 0));
-        $this->assertStringContainsString('Affinity: Neutral —', $block, 'acquaintance = the draft band at the same step');
-        $this->assertStringNotContainsString('Affinity: Fond', $block);
+        $this->assertStringContainsString($band('Neutral'), $block, 'acquaintance = the draft band at the same step');
+        $this->assertStringNotContainsString($band('Fond'), $block);
     }
 
     public function testFractionalDeltasAccumulateInsteadOfRounding(): void

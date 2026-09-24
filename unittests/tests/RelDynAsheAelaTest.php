@@ -110,7 +110,7 @@ final class RelDynAsheAelaTest extends TestCase
     private $prevErrorLog = null;
     private int $realTs = 1727000000;
     private float $gamets = 200 * self::DAY + 10 * self::HOUR;   // game day 200, 10:00
-    /** Every <place_feeling> the context hook gave the LLM: [npc, place, text]. */
+    /** Every place line the context hook gave the LLM (felt steering): [npc, place, text]. */
     private array $felt = [];
     /** [PLACE] log lines seen so far per NPC. */
     private array $placeReads = [self::ASHE => 0, self::AELA => 0];
@@ -282,7 +282,7 @@ final class RelDynAsheAelaTest extends TestCase
 
     /**
      * One player line to $npc through the real hooks, in CHIM's order: prerequest, context
-     * (after core has set its caches), postrequest. Returns this turn's <place_feeling>.
+     * (after core has set its caches), postrequest. Returns this turn's place line.
      */
     private function turn(string $npc, string $line, array $topics = []): ?string
     {
@@ -312,7 +312,8 @@ final class RelDynAsheAelaTest extends TestCase
         $run('postrequest.php');
         $this->clearReldynGlobals();
 
-        $felt = preg_match('/<place_feeling>(.*?)<\/place_feeling>/s', $context, $m) ? $m[1] : null;
+        $felt = RelDynFelt::lastRendered()['place'] ?? null;
+        if ($felt !== null) $this->assertStringContainsString($felt, $context, 'the place line is in the context');
         $this->felt[] = [$npc, $this->dynamics($npc)['_place_appraisal']['place'] ?? null, $felt];
         return $felt;
     }
@@ -530,7 +531,8 @@ final class RelDynAsheAelaTest extends TestCase
             (static function (): void { require __DIR__ . '/../../ext/relationship_dynamics/context.php'; })();
             RelationshipDynamics::endRequest();
             $ctx = implode("\n", array_map(fn($m) => (string) ($m['content'] ?? ''), $GLOBALS['contextDataFull']));
-            $topicText[$npc] = preg_match('/<topic_resonance>(.*?)<\/topic_resonance>/s', $ctx, $m) ? $m[1] : null;
+            $topicText[$npc] = RelDynFelt::lastRendered()['topic'] ?? null;
+            if ($topicText[$npc] !== null) $this->assertStringContainsString($topicText[$npc], $ctx);
         }
 
         $ashe = $this->dynamics(self::ASHE);

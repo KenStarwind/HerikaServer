@@ -1241,38 +1241,40 @@ class RelDynAttraction
             'noble' => 'the player\'s bearing',
         ];
         $valued = $valuedWords[$summary['valued'] ?? ''] ?? null;
+        // Behavior, never a verdict ("is drawn to", "feels no pull"): decisions 2026-09-23 §3.
         switch ($summary['outcome'] ?? null) {
             case 'drawn':
-                $lines[] = "{$npcName} is drawn to the player" . ($valued ? ", and {$valued} is exactly what {$npcName} finds compelling." : '.');
+                $lines[] = "{$npcName}'s eyes keep finding the player" . ($valued ? "; {$valued} holds {$npcName}'s attention" : '')
+                    . ", and flirtation gets a warm answer.";
                 break;
             case 'hookup':
-                $lines[] = "{$npcName} is physically drawn to the player" . ($valued ? " ({$valued} stirs something)" : '')
-                    . ", but the player has not yet proven themselves worth more than a flirtation. Commitment is not on the table yet.";
+                $lines[] = "{$npcName} flirts back and lets the player close" . ($valued ? " ({$valued} holds {$npcName}'s eye)" : '')
+                    . ", but turns any talk of commitment aside.";
                 break;
             case 'prebond':
-                $lines[] = "{$npcName} is not moved by looks or deeds alone; any romantic feeling can only grow out of a deep, proven bond.";
+                $lines[] = "{$npcName} is not swayed by looks or deeds alone; warms slowly, and anything romantic waits on a deep, proven bond.";
                 break;
             case 'friendzone':
-                $lines[] = "{$npcName} values the player as a trusted friend but feels no romantic pull toward them. Flirtation is met with warm deflection, never cruelty.";
+                $lines[] = "{$npcName} treats the player as a trusted friend and meets flirtation with warm, kind deflection, never cruelty.";
                 break;
             default:
-                $lines[] = "{$npcName} feels no particular pull toward the player and keeps a polite distance.";
+                $lines[] = "{$npcName} keeps a polite distance from the player; flirtation is let pass without an answer.";
         }
         if (!empty($summary['tolerated'])) {
-            $lines[] = "Something about the player falls short of what {$npcName} usually wants, but {$npcName} is willing to look past it.";
+            $lines[] = "Something about the player falls short of what {$npcName} usually wants; {$npcName} chooses to look past it.";
         }
         $prefLines = [
-            'demisexual' => "{$npcName} forms deep bonds slowly; romantic feeling needs genuine trust built over time, and physical intimacy without that foundation feels wrong.",
-            'asexual' => "{$npcName} does not experience sexual attraction. Deep emotional bonds are possible, but physical intimacy is not something they seek.",
-            'aromantic' => "{$npcName} does not experience romantic attraction. Deep, loyal friendship is possible; romantic framing feels foreign and uncomfortable.",
-            'not_interested' => "{$npcName} is not looking for romance with anyone right now.",
-            'uncommitted' => "{$npcName} enjoys closeness but shies away from anything that sounds like commitment.",
+            'demisexual' => "{$npcName} bonds slowly; romance waits on trust built over time, and physical closeness before that is turned aside.",
+            'asexual' => "{$npcName} steers away from anything physical; closeness, for {$npcName}, is talk, time and loyalty.",
+            'aromantic' => "{$npcName} deflects romantic framing, uneasy with it, and offers deep, loyal friendship instead.",
+            'not_interested' => "{$npcName} brushes off romance with anyone right now.",
+            'uncommitted' => "{$npcName} enjoys closeness but changes the subject when talk turns to commitment.",
         ];
         if (isset($prefLines[$summary['preference'] ?? ''])) {
             $lines[] = $prefLines[$summary['preference']];
         }
         if (!empty($summary['pending'])) {
-            $lines[] = "{$npcName} has begun to see the player differently; only a truly meaningful moment together could change what they are to each other.";
+            $lines[] = "{$npcName} has started looking at the player differently; one truly meaningful moment together could change what they are to each other.";
         }
         return implode(' ', $lines);
     }
