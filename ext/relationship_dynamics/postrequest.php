@@ -341,6 +341,11 @@ $interactionLL = RelationshipDynamics::classifyInteraction($GLOBALS['gameRequest
 $GLOBALS['RELDYN_LAST_INTERACTION_LL'] = $interactionLL;
 // A touch request (hug, kiss) feeds intimacy (PR 13 deprivation, on the game calendar)
 RelationshipDynamics::recordIntimacyFromRequest($dynamics, $interactionLL, RelationshipDynamics::currentGamets());
+// The same exchange as a love-language delivery to fulfillment (rulings §9), unless the eval
+// scores it (its tags deliver then, in processEvalContractItem).
+if (!$evalOwnsExchange) {
+    RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets());
+}
 RelationshipDynamics::log("POST classify: npc={$npcName} type={$reqType} mood={$lastMood} LL=" . ($interactionLL ?? 'NULL'));
 
 // The shared-activity multiplier (place / gift appraisal, decisions §6) is part of

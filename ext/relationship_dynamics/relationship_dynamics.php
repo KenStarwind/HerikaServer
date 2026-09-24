@@ -1164,6 +1164,10 @@ class RelationshipDynamics
             'facet_classifier' => RelDynFacetClassifier::configDefaults(),
             // What a topic / gift appraisal does: MDD 1.2 interest multiplier range, match threshold.
             'thing_appraisal' => RelDynFacetClassifier::appraisalDefaults(),
+            // ===== Fulfillment coverage + mature boundary (rulings 2026-09-24 §9) =====
+            // Needs vector, deliveries, decay, band thresholds, boundary windows, felt text
+            // (reldyn_fulfillment.php, RelDynFulfillment::configDefaults()).
+            'fulfillment' => RelDynFulfillment::configDefaults(),
         ];
     }
 
@@ -3398,7 +3402,8 @@ class RelationshipDynamics
      *  - jealousy: jealousy above jealousy_resentment_above -> raw resentment per day (§5);
      *  - neglect: bonded NPC past its grace since _last_contact_gamets -> raw resentment per
      *    day, logged as one 'neglect' grievance per absence; grace and rate scaled per NPC
-     *    and resentment from neglect stops at the NPC's ceiling (getNeglectProfile);
+     *    and by the fulfillment band at the last contact (absenceBandFactors), resentment
+     *    from neglect stops at the NPC's ceiling (getNeglectProfile);
      *  - passion fade: past the absence grace, passion fades per day x attachment multiplier
      *    down to the stage floor;
      *  - warmth fade: warmth above its baseline, at its own rate, grace and rate scaled per
@@ -3456,6 +3461,9 @@ class RelationshipDynamics
 
         // Who this NPC is when left alone (rulings §8): scales neglect and warmth fade.
         $severity = self::getNeglectProfile($dynamics);
+        // How fulfilled the bond was at the last contact (rulings §9): a high band buffers the
+        // absence (longer grace, slower), a low one makes it bite sooner and harder.
+        $bandScale = self::absenceBandFactors($dynamics);
 
         // Neglect: game days past the bond's grace since the player's last contact.
         if (!$away && $lastContact > 0 && self::configValue('neglect_enabled')) {
@@ -3463,11 +3471,11 @@ class RelationshipDynamics
             $out['bond_type'] = $bondType;
             $bond = (self::configValue('neglect_bond_types') ?? [])[$bondType] ?? null;
             if (is_array($bond)) {
-                $graceDays = floatval($bond['grace_game_days'] ?? 0) * $severity['grace_mult'];   // game days
+                $graceDays = floatval($bond['grace_game_days'] ?? 0) * $severity['grace_mult'] * $bandScale['grace'];   // game days
                 $neglectDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceDays * self::GAMETS_PER_DAY);
                 if ($neglectDays > 0) {
                     // raw resentment points per game day x game days
-                    $neglectRaw = floatval($bond['resentment_per_game_day'] ?? 0) * $severity['rate_mult'] * $neglectDays;
+                    $neglectRaw = floatval($bond['resentment_per_game_day'] ?? 0) * $severity['rate_mult'] * $bandScale['rate'] * $neglectDays;
                     $out['neglect_days'] = $neglectDays;
                     self::recordNeglectGrievance($dynamics, $lastContact, $toGamets, $neglectRaw);
                 }
@@ -3585,6 +3593,224 @@ class RelationshipDynamics
         $dynamics['dimensions']['resentment']['grievance_log'] = array_slice($log, -10);
     }
 
+    // =========================================================================
+    // FULFILLMENT (rulings 2026-09-24 §9: neglect is the absence of fulfillment)
+    // =========================================================================
+
+    /**
+     * The neglect_bond_types row of this NPC's bond with the player (getRelationshipType), or
+     * null when the bond is not one whose neglect matters (strangers, acquaintances, rivals):
+     * such an NPC gets no fulfillment state, no relationship deprivation, no unmet-needs line.
+     */
+    public static function neglectBond(array $dynamics): ?array
+    {
+        $bond = (self::configValue('neglect_bond_types') ?? [])[self::getRelationshipType('', $dynamics)] ?? null;
+        return is_array($bond) ? $bond : null;
+    }
+
+    /**
+     * Absence scaling by the fulfillment band at the last contact (the band a contact left
+     * behind, _fulfillment.contact_band, -1..+1): grace x 2^(g x band), rate x 2^(r x band),
+     * g / r = fulfillment.absence_band_log2. 1 and 1 when no band is known or fulfillment is off.
+     *
+     * @return array ['grace' => multiplier, 'rate' => multiplier, 'band' => ?float]
+     */
+    public static function absenceBandFactors(array $dynamics): array
+    {
+        $out = ['grace' => 1.0, 'rate' => 1.0, 'band' => null];
+        $band = $dynamics[RelDynFulfillment::STATE_KEY]['contact_band'] ?? null;
+        if (!is_numeric($band) || !RelDynFulfillment::enabled()) return $out;
+        $band = max(-1.0, min(1.0, floatval($band)));
+        $l = (array) RelDynFulfillment::config()['absence_band_log2'];
+        return ['grace' => 2.0 ** (floatval($l['grace'] ?? 0) * $band), 'rate' => 2.0 ** (floatval($l['rate'] ?? 0) * $band), 'band' => $band];
+    }
+
+    /**
+     * Low fulfillment while the player is around is neglect (rulings §9). For each sampled
+     * game-day end [gamets, band] inside the present window (before this bond's absence grace
+     * runs out since the last contact; after it, advanceCalendar's absence neglect counts
+     * instead), raw resentment for that game day =
+     *     bond resentment_per_game_day x unfulfilled_rate_mult x the NPC's neglect rate_mult
+     *     x depth,   depth = clamp((low_band - band) / (low_band + 1), 0, 1)
+     * through the neglect buffer, so it stops at the NPC's neglect ceiling (getNeglectProfile:
+     * a mature NPC's anger is capped there; an immature, codependent one can reach the
+     * walkaway). Bond types not in neglect_bond_types and a walked-away NPC accrue nothing.
+     *
+     * @return array ['raw' => raw resentment points, 'resentment' => points applied, 'days' => game days charged]
+     */
+    public static function chargeUnfulfilledNeglect(array &$dynamics, array $samples): array
+    {
+        $out = ['raw' => 0.0, 'resentment' => 0.0, 'days' => 0];
+        if (!self::configValue('neglect_enabled') || ($dynamics['_walkaway_state'] ?? 'normal') !== 'normal') return $out;
+        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);   // raw gamets
+        if ($lastContact <= 0) return $out;
+        $bond = self::neglectBond($dynamics);
+        if ($bond === null) return $out;
+
+        $cfg = RelDynFulfillment::config();
+        $severity = self::getNeglectProfile($dynamics);
+        $graceDays = floatval($bond['grace_game_days'] ?? 0) * $severity['grace_mult'] * self::absenceBandFactors($dynamics)['grace'];
+        $low = floatval($cfg['low_band']);
+        $rate = floatval($bond['resentment_per_game_day'] ?? 0) * floatval($cfg['unfulfilled_rate_mult']) * $severity['rate_mult'];
+        foreach ($samples as [$t, $band]) {
+            if (floatval($t) > $lastContact + $graceDays * self::GAMETS_PER_DAY) continue;   // absence: advanceCalendar's
+            $depth = max(0.0, min(1.0, ($low - floatval($band)) / max(0.001, $low + 1.0)));
+            if ($depth <= 0.0) continue;
+            $out['raw'] += $rate * $depth;   // raw resentment points for one game day
+            $out['days']++;
+        }
+        if ($out['raw'] <= 0.0) return $out;
+
+        $max = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $out['resentment'] = self::drainCalendarResentment($dynamics, '_calendar_neglect_raw', $out['raw'], min($max, $severity['ceiling']), $temperament);
+        $state = is_array($dynamics[RelDynFulfillment::STATE_KEY] ?? null) ? $dynamics[RelDynFulfillment::STATE_KEY] : [];
+        $since = floatval($state['low_since_gamets'] ?? $samples[0][0]);
+        $now = floatval(end($samples)[0]);
+        self::recordUnfulfilledGrievance($dynamics, $since, $now, $out['raw'], RelDynFulfillment::unmetPhrases($state, $now, 2, $cfg));
+        return $out;
+    }
+
+    /** One 'neglect' grievance (kind 'unfulfilled') per low stretch, keyed by when it began, kept current. */
+    private static function recordUnfulfilledGrievance(array &$dynamics, float $sinceGamets, float $nowGamets, float $raw, array $unmet): void
+    {
+        if (!isset($dynamics['dimensions']['resentment']) || !is_array($dynamics['dimensions']['resentment'])) {
+            $dynamics['dimensions']['resentment'] = ['x' => 0, 'baseline' => 0, 'active' => true];
+        }
+        $log = $dynamics['dimensions']['resentment']['grievance_log'] ?? [];
+        if (!is_array($log)) $log = [];
+        $text = 'neglect: needs unmet' . ($unmet ? ' (' . implode(', ', $unmet) . ')' : '');
+        $found = null;
+        foreach ($log as $i => $entry) {
+            if (is_array($entry) && ($entry['kind'] ?? null) === 'unfulfilled'
+                && abs(floatval($entry['since_gamets'] ?? -1) - $sinceGamets) < 0.5) {
+                $found = $i;
+            }
+        }
+        if ($found !== null) {
+            $log[$found]['raw'] = round(floatval($log[$found]['raw'] ?? 0) + $raw, 4);
+            $log[$found]['gamets'] = $nowGamets;
+            $log[$found]['text'] = $text;
+        } else {
+            $log[] = ['text' => $text, 'tag' => 'neglect', 'kind' => 'unfulfilled', 'since_gamets' => $sinceGamets,
+                      'raw' => round($raw, 4), 'gamets' => $nowGamets];
+        }
+        $dynamics['dimensions']['resentment']['grievance_log'] = array_slice($log, -10);
+    }
+
+    /**
+     * Move this NPC's fulfillment to $now (raw gamets): on contact ($contact, the prerequest)
+     * with a bond whose neglect matters (neglectBond) create or refresh the needs vector first; sample day-ends, charge unfulfilled neglect,
+     * run the mature boundary (RelDynFulfillment::tick); carry out a failed probation's
+     * step-back on core (boundaryStepBack); on contact record the band this contact leaves
+     * behind (absenceBandFactors reads it for the next absence). No state and no contact: nothing.
+     *
+     * @return array ['changed' => bool, 'events' => string[], 'step_back' => ?array, 'band' => ?float]
+     */
+    public static function advanceFulfillment(string $npcName, array &$dynamics, float $now, bool $contact = false): array
+    {
+        $out = ['changed' => false, 'events' => [], 'step_back' => null, 'band' => null];
+        if ($now <= 0 || !RelDynFulfillment::enabled()) return $out;
+        if ($contact && self::neglectBond($dynamics) !== null) {
+            $out['changed'] = RelDynFulfillment::ensure($dynamics, RelDynFacets::preferences($dynamics, $npcName), $now);
+        }
+        if (!is_array($dynamics[RelDynFulfillment::STATE_KEY] ?? null)) return $out;
+
+        $tick = RelDynFulfillment::tick($dynamics, $now);
+        $out['events'] = $tick['events'];
+        $out['changed'] = $out['changed'] || $tick['changed'];
+        if (($dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? null) === 'failed') {
+            $out['step_back'] = self::boundaryStepBack($npcName, $dynamics, $now);
+            $out['changed'] = true;
+        }
+        $band = RelDynFulfillment::bandAt($dynamics[RelDynFulfillment::STATE_KEY], $now);
+        $out['band'] = $band;
+        if ($contact) {
+            $dynamics[RelDynFulfillment::STATE_KEY]['contact_band'] = $band;
+            $out['changed'] = true;
+        }
+        foreach ($out['events'] as $event) {
+            self::log("[FULFILL] {$npcName}: {$event} (band " . round($band, 2) . ')');
+        }
+        if (!empty($tick['neglect']['raw'])) {
+            self::log("[FULFILL] {$npcName}: unfulfilled neglect raw " . round($tick['neglect']['raw'], 3)
+                . " over {$tick['neglect']['days']} game day(s), resentment +" . round($tick['neglect']['resentment'], 3));
+        }
+        return $out;
+    }
+
+    /**
+     * A mature NPC's failed probation (rulings §9): a deliberate step-back of core's
+     * relationships.Player.type (fulfillment.step_back_types), with its reason, under core's
+     * lock (changeCoreRelationshipType). Success: the snapshot _core_rel_type follows and the
+     * boundary closes with the step-back to say once; a refused write (relationships_locked,
+     * core changed the type meanwhile) closes it without a step-back. Either way the low
+     * stretch starts over, so nothing is retried every tick.
+     *
+     * @return array ['from' => core type, 'to' => ?core type, 'written' => bool, 'reason' => string]
+     */
+    private static function boundaryStepBack(string $npcName, array &$dynamics, float $now): array
+    {
+        $cfg = RelDynFulfillment::config();
+        $state = $dynamics[RelDynFulfillment::STATE_KEY];
+        $from = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
+        $to = RelDynFulfillment::stepBackTarget($dynamics, $cfg);
+        $unmet = RelDynFulfillment::unmetPhrases($state, $now, 2, $cfg);
+        $reason = sprintf('mature boundary: stated calmly, then a probation of %s game days without %d consistent days of change%s',
+            rtrim(rtrim(number_format(floatval($cfg['probation_game_days']), 1, '.', ''), '0'), '.'),
+            intval($cfg['consistent_game_days']), $unmet ? ' (unmet: ' . implode(', ', $unmet) . ')' : '');
+        $written = $to !== null && self::changeCoreRelationshipType($npcName, $to, $reason, $from);
+
+        unset($state['low_since_gamets']);
+        if ($written) {
+            $dynamics['_core_rel_type'] = $to;
+            $state['boundary'] = ['state' => 'none', 'stepped_back_gamets' => $now, 'from' => $from, 'to' => $to, 'say' => 'step_back'];
+            $log = is_array($state['step_backs'] ?? null) ? $state['step_backs'] : [];
+            $log[] = ['from' => $from, 'to' => $to, 'gamets' => $now, 'reason' => $reason];
+            $state['step_backs'] = array_slice($log, -5);
+        } else {
+            $state['boundary'] = ['state' => 'none', 'blocked_gamets' => $now, 'from' => $from, 'to' => $to];
+            error_log("[RelDyn-FULFILL] {$npcName}: probation failed but the step-back {$from} -> " . ($to ?? '-') . " was not written; boundary closed");
+        }
+        $dynamics[RelDynFulfillment::STATE_KEY] = $state;
+        return ['from' => $from, 'to' => $to, 'written' => $written, 'reason' => $reason];
+    }
+
+    /**
+     * Shared contract (fulfillment lane): the NPC's needs, coverage per axis, band and trend at
+     * $now (default: the game clock). Needs come from the stored state; before the first
+     * contact they are derived from the NPC's preferences and read neutral.
+     *
+     * @return array ['needs' => axis => 0..1, 'coverage' => axis => -1..1, 'band' => -1..1,
+     *                'trend' => band per game day, 'known' => bool, 'low_band' => bool]
+     */
+    public static function fulfillment(string $npcName, array $dynamics, ?float $now = null): array
+    {
+        $now = $now ?? self::currentGamets();
+        $prefs = is_array($dynamics[RelDynFulfillment::STATE_KEY]['w'] ?? null) ? [] : RelDynFacets::preferences($dynamics, $npcName);
+        return RelDynFulfillment::compute($dynamics, $prefs, $now);
+    }
+
+    /** Spider-graph read API (api_fulfillment.php, for the P5 UI): RelDynFulfillment::graph of a stored NPC. */
+    public static function fulfillmentGraph(string $npcName, ?float $now = null): array
+    {
+        $dynamics = self::getDynamics($npcName);
+        $now = $now ?? self::currentGamets();
+        $prefs = is_array($dynamics[RelDynFulfillment::STATE_KEY]['w'] ?? null) ? [] : RelDynFacets::preferences($dynamics, $npcName);
+        return RelDynFulfillment::graph($npcName, $dynamics, $prefs, $now);
+    }
+
+    /**
+     * An exchange the local classifier read as a love language (the eval did not score it):
+     * fulfillment.legacy_love_language_units to that axis. Returns the units applied.
+     */
+    public static function recordLoveLanguageFulfillment(array &$dynamics, ?string $loveLanguage, float $now): array
+    {
+        if ($loveLanguage === null) return [];
+        return RelDynFulfillment::deliver($dynamics,
+            [$loveLanguage => floatval(RelDynFulfillment::config()['legacy_love_language_units'])], $now);
+    }
+
     /**
      * Advance the game calendar for NPCs whose calendar step is due (at least
      * calendar_scan_interval_game_hours old), so time moves for every bond on any request,
@@ -3671,6 +3897,13 @@ class RelationshipDynamics
             $result['calendar'] = $step;
             $changed = $changed || $step['resentment_raw'] > 0 || $step['jealousy_resentment_raw'] > 0
                 || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0;
+        }
+        // Fulfillment (rulings §9): day-end samples, unfulfilled neglect and the mature boundary
+        // move with the calendar for every bond that has a fulfillment state, talked to or not.
+        if (is_array($dyn[RelDynFulfillment::STATE_KEY] ?? null)) {
+            $f = self::advanceFulfillment($npcName, $dyn, $now, false);
+            $result['fulfillment'] = $f;
+            $changed = $changed || $f['changed'];
         }
 
         // A walkaway resolves (or a Toxic sleeper hoovers back) while the player is elsewhere.
@@ -7341,6 +7574,9 @@ class RelationshipDynamics
         $feelings = self::applyEvalFeelings((string) $npcName, $n, $dynamics);
         // An intimate or touching exchange feeds intimacy (PR 13 deprivation), at the exchange's game time.
         self::recordIntimacyFromTags($dynamics, $n['tags'], floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
+        // What the exchange gave against the NPC's needs (rulings §9 fulfillment), at its game time.
+        RelDynFulfillment::deliver($dynamics, RelDynFulfillment::evalItemAmounts($n),
+            floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -15795,9 +16031,119 @@ class RelationshipDynamics
         return ['old' => $oldAff, 'new' => $newAff, 'delta' => $newAff - $oldAff];
     }
 
+
+    /**
+     * Shared contract (fulfillment lane): set core's relationships.Player.type for this NPC,
+     * the one relationship type everything reads (getRelationshipType). Used for step-backs
+     * (the mature boundary) and romance promotion.
+     *
+     * Same discipline as applyPlayerAffinityDelta(): one transaction holding
+     * pg_advisory_xact_lock(1001000000 + npc id), core's own per-NPC relationship lock; only
+     * relationships.Player.type is written (the whole relationships object only when the Player
+     * entry is missing or a legacy real-name entry must be folded in); nothing is written when
+     * extended_data.relationships_locked is set (editor lock); core's timeline stamp runs after
+     * a write. $newType must be one of core's types (RelationshipManager::TYPES or an alias).
+     * $expectedFrom (optional): write only while core still holds that type, so a decision made
+     * on an older snapshot never overrides a type core changed meanwhile.
+     *
+     * @return bool true when core holds $newType afterwards (already did: no write), false when
+     *              refused (unknown type, editor lock, type changed meanwhile, no row) or failed
+     */
+    public static function changeCoreRelationshipType(string $npcName, string $newType, string $reason, ?string $expectedFrom = null): bool
+    {
+        self::loadRelationshipManager();
+        $type = strtolower(trim($newType));
+        $type = RelationshipManager::TYPE_ALIASES[$type] ?? $type;
+        if (!in_array($type, RelationshipManager::TYPES, true)) {
+            error_log("[RelDyn-TYPE] {$npcName}: '{$newType}' is not a core relationship type; nothing written ({$reason})");
+            return false;
+        }
+        $db = $GLOBALS['db'] ?? null;
+        $npcId = intval(RelDynStorage::resolveNpcId($npcName) ?? 0);
+        if (!$db || $npcId <= 0) {
+            error_log("[RelDyn-TYPE] Cannot set {$npcName} -> Player type {$type}: no core_npc_master row");
+            return false;
+        }
+        $lockId = self::CORE_RELATIONSHIP_LOCK_BASE + $npcId;
+
+        try {
+            if ($db->execQuery("BEGIN") === false) {
+                error_log("[RelDyn-TYPE] BEGIN failed for {$npcName}");
+                return false;
+            }
+            if ($db->execQuery("SELECT pg_advisory_xact_lock({$lockId})") === false) {
+                throw new RuntimeException("advisory lock {$lockId} failed");
+            }
+            $locked = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE id = {$npcId} FOR UPDATE");
+            $extended = json_decode($locked['extended_data'] ?? '{}', true);
+            if (!is_array($extended)) {
+                throw new RuntimeException("extended_data is not valid JSON");
+            }
+            $rawRels = $extended['relationships'] ?? [];
+            $rels = self::normalizeRelationshipMap($rawRels);
+            $playerRel = $rels[self::PLAYER_RELATIONSHIP_KEY] ?? ['aff' => 0, 'type' => 'neutral'];
+            $oldType = strtolower(trim((string) ($playerRel['type'] ?? 'neutral')));
+
+            $refusal = null;
+            if (!empty($extended['relationships_locked'])) {
+                $refusal = 'relationships_locked (manual edits protected)';
+            } elseif ($expectedFrom !== null && $oldType !== strtolower(trim($expectedFrom))) {
+                $refusal = "core type is '{$oldType}', not the expected '{$expectedFrom}'";
+            }
+            if ($refusal !== null || $oldType === $type) {
+                if ($db->execQuery("COMMIT") === false) {
+                    throw new RuntimeException("COMMIT failed");
+                }
+                if ($refusal !== null) {
+                    error_log("[RelDyn-TYPE] SKIP {$npcName} -> Player type {$oldType} -> {$type}: {$refusal} ({$reason})");
+                    return false;
+                }
+                return true;
+            }
+
+            $hasLegacyKey = false;
+            foreach (array_keys(is_array($rawRels) ? $rawRels : []) as $target) {
+                if ($target !== self::PLAYER_RELATIONSHIP_KEY && self::isPlayerRelationshipKey($target)) {
+                    $hasLegacyKey = true;
+                    break;
+                }
+            }
+            if (!$hasLegacyKey && is_array($rawRels) && isset($rawRels[self::PLAYER_RELATIONSHIP_KEY]) && is_array($rawRels[self::PLAYER_RELATIONSHIP_KEY])) {
+                $path = '{relationships,' . self::PLAYER_RELATIONSHIP_KEY . ',type}';
+                $value = json_encode($type);
+            } else {
+                $playerRel['type'] = $type;
+                $rels[self::PLAYER_RELATIONSHIP_KEY] = $playerRel;
+                $path = '{relationships}';
+                $value = json_encode((object) $rels, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+            $valueEscaped = $db->escape($value);
+            $updated = $db->execQuery("UPDATE core_npc_master SET extended_data = jsonb_set(COALESCE(extended_data, '{}'::jsonb), '{$path}', '{$valueEscaped}'::jsonb, true) WHERE id = {$npcId}");
+            if ($updated === false) {
+                throw new RuntimeException("type UPDATE failed");
+            }
+            if ($db->execQuery("COMMIT") === false) {
+                throw new RuntimeException("COMMIT failed");
+            }
+        } catch (\Throwable $e) {
+            $db->execQuery("ROLLBACK");
+            error_log("[RelDyn-TYPE] {$npcName} -> Player type {$type} rolled back: " . $e->getMessage());
+            return false;
+        }
+
+        // Same game-timeline snapshot core writes after relationship changes
+        if (function_exists('chimRelationshipTimelineStamp')) {
+            chimRelationshipTimelineStamp($npcId);
+        }
+        error_log("[RelDyn-TYPE] {$npcName} -> Player: type {$oldType} -> {$type} ({$reason})");
+        return true;
+    }
+
     // ========== END CORE AFFINITY BRIDGE (CHIM 3.4.1) ==========
 
 }
 
 // Facets -> appraisal -> feeling (decisions 2026-09-23 §6); its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_facets.php';
+// Fulfillment coverage and the mature boundary (rulings 2026-09-24 §9); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_fulfillment.php';

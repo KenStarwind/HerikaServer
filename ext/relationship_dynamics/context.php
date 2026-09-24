@@ -676,6 +676,19 @@ if ($weather !== 'clear') {
     }
 }
 
+// ========== FULFILLMENT / MATURE BOUNDARY (rulings 2026-09-24 §9) ==========
+// Feelings only: what the NPC misses, the calm boundary (said once; its probation starts
+// now), the watchfulness while it lasts, the relief or the step-back decision (said once).
+$fulfillmentFelt = RelDynFulfillment::takeFeltTexts($dynamics, $npcName, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'),
+    RelationshipDynamics::currentGamets());
+if ($fulfillmentFelt['changed']) {
+    RelationshipDynamics::saveDynamics($npcName, $dynamics);
+}
+foreach ($fulfillmentFelt['texts'] as $feltKind => $feltText) {
+    $feltTag = $feltKind === 'unmet' ? 'relationship_needs' : 'relationship_boundary';
+    $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => "<{$feltTag}>{$feltText}</{$feltTag}>"];
+}
+
 // ========== INTIMACY DEPRIVATION CONTEXT (PR 13) ==========
 $intimacyContext = RelationshipDynamics::generateIntimacyDeprivationContext($npcName, $dynamics);
 if ($intimacyContext) {
