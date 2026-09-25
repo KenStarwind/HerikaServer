@@ -3,6 +3,11 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.11 — Personality engine under the hood
+Temperaments are now presets inside a trait engine (guard, expressiveness, confidence, pride, resilience, reactivity,
+warmth, restraint, possessiveness, protectiveness). Nothing behaves differently yet: every NPC still sits exactly on
+her old temperament. This is the groundwork for reading each NPC's personality from her own bio.
+
 ## reldyn-v0.10 — Play clock on game time
 Play time now comes only from the game's own event log. Waits, sleeps, fast travel and save loads never count as time
 spent together, and results no longer depend on real-world time between messages.
