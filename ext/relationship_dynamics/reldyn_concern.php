@@ -1235,12 +1235,13 @@ class RelDynConcern
         if ($level >= ($levels[0] ?? 25.0)) {
             $band = $level >= ($levels[2] ?? 75.0) ? 'worry_insist' : ($level >= ($levels[1] ?? 50.0) ? 'worry_raise' : 'worry_uneasy');
             $kind = self::mainKind($state, self::PROTECTIVE, $now, $cfg);
-            // One voice per prompt: an in-between NPC whose values path is the mature one says it
-            // calmly once that path is under way (the boundary said or watching, or the step-back
-            // made), never "sharp, as blame" beside "no shouting, no ultimatum"
+            // One voice per prompt: once the calm boundary is under way (said or watching, or the
+            // step-back made) the worry beside it is calm too, never "sharp, as blame" beside "no
+            // shouting, no ultimatum": for an in-between NPC whose values path is the mature one,
+            // and for one whose composure dips for now (a werewolf under the moon) while it runs
             $bs = (array) $state['boundary'];
-            $calm = $expr['band'] === 'mature' || ($expr['path'] === 'mature'
-                && (in_array($bs['state'] ?? 'none', ['pending', 'probation', 'failed'], true) || isset($bs['stepped_back_gamets'])));
+            $calm = $expr['band'] === 'mature'
+                || in_array($bs['state'] ?? 'none', ['pending', 'probation', 'failed'], true) || isset($bs['stepped_back_gamets']);
             $text = strtr((string) $t[$band], $vars + ['{KIND}' => self::kindPhrase($kind, $cfg, $vars)])
                 . ($calm ? (string) $t['worry_mature'] : '; ' . $vars['{STYLE}']);
             // at the top level the NPC insists or intervenes (§1.4): a line that is never cut

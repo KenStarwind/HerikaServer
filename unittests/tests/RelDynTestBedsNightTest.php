@@ -88,9 +88,10 @@ final class RelDynTestBedsNightPgDb
  *               (a taste for a fight is no tolerance for a tavern night); Lynly, the Vilemyr Inn's
  *               bard, is at home in an inn and does not worry at all; Aela, Ashe and Muiri notice
  *               on the return and count the night once, however they learn of it;
- *   expression  by maturity (§14, §9): Aela and Ashe (mature) state it once, plainly and without
- *               blame; Muiri (in-between) means to say it evenly and it comes out as an
- *               accusation; reassurance eases it; felt text never carries numbers, Jev does;
+ *   expression  by maturity (§14, §9): Ashe (mature) states it once, plainly and without blame;
+ *               Muiri (in-between) and Aela (her beast blood holds her maturity just below the
+ *               mature band) mean to say it evenly and it comes out as an accusation;
+ *               reassurance eases it; felt text never carries numbers, Jev does;
  *   the poll    core's once-a-second poll touches no bond (prerequest-on-poll), so an NPC named as
  *               the server default still has her night apart and notices the return.
  *
@@ -634,11 +635,13 @@ final class RelDynTestBedsNightTest extends TestCase
 
             // ---------------- expression by maturity
             $this->assertSame('mature', $s['Ashe']['expression']['band'], "{$build} Ashe: maturity 75");
-            $this->assertSame('mature', $s['Aela the Huntress']['expression']['band'], "{$build} Aela");
-            foreach (['Aela the Huntress', 'Ashe'] as $npc) {
-                $this->assertStringContainsString('once, plainly and without blame', $s[$npc]['felt_return']['concern_stated_mature'] ?? '', "{$build} {$npc}");
-                $this->assertArrayNotHasKey('concern_stated_mixed', $s[$npc]['felt_return'], "{$build} {$npc}");
-            }
+            // Aela's beast blood (a werewolf of the Circle) holds her maturity a little lower, just
+            // below the mature band: she means to state it evenly; her values path is the mature one
+            $this->assertSame(['mixed', 'mature'], [$s['Aela the Huntress']['expression']['band'], $s['Aela the Huntress']['expression']['path']], "{$build} Aela");
+            $this->assertStringContainsString('once, plainly and without blame', $s['Ashe']['felt_return']['concern_stated_mature'] ?? '', "{$build} Ashe");
+            $this->assertArrayNotHasKey('concern_stated_mixed', $s['Ashe']['felt_return'], "{$build} Ashe");
+            $this->assertStringContainsString('means to say it evenly', $s['Aela the Huntress']['felt_return']['concern_stated_mixed'] ?? '', "{$build} Aela");
+            $this->assertArrayNotHasKey('concern_stated_mature', $s['Aela the Huntress']['felt_return'], "{$build} Aela");
             $this->assertSame('mixed', $s['Muiri']['expression']['band'], "{$build} Muiri: in between");
             $this->assertStringContainsString('means to say it evenly', $s['Muiri']['felt_return']['concern_stated_mixed'] ?? '', $build);
             $this->assertArrayNotHasKey('concern_stated_mature', $s['Muiri']['felt_return'], $build);

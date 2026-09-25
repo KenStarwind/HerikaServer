@@ -75,9 +75,11 @@ final class RelDynConcernBedsPgDb
  * eval producer and worker, and the core relationship write. No LLM call.
  *
  * What the design says, and what the four do (their real vectors, not caricatures):
- *   - Aela (the most protective, Pr 0.68; maturity 55, mature band): a taste for a fight is no
- *     tolerance for a tavern night (Ken's bar example holds for a warrior too): she worries the
- *     most, states it plainly, and walks the calm §9 boundary to a step-back.
+ *   - Aela (the most protective, Pr 0.68; maturity 55, a werewolf of the Circle): a taste for a
+ *     fight is no tolerance for a tavern night (Ken's bar example holds for a warrior too): she
+ *     worries the most and walks the calm §9 boundary to a step-back. Her beast blood holds her
+ *     maturity a little lower (creature moodifications), just below the mature band: she means to
+ *     state it evenly and it comes out as an accusation; her values path is the mature one.
  *   - Ashe (maturity 75, mature): notices, states her values once and plainly, a reminder, then
  *     the values conflict and a calm §9 boundary; the pattern goes on through the probation and
  *     she steps back (romantic -> platonic), with no blow-up.
@@ -408,7 +410,12 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
         $why = json_encode(['expr' => $expr, 'combat' => $combat, 'taste' => $taste, 'Pr' => array_map(fn($t) => $t['Pr'], $x)]);
 
         // Who they are, for the concern (their real vectors)
-        $this->assertSame('mature', $expr['Aela the Huntress']['band'], $why);
+        // Aela's beast blood (werewolf by her CompanionsCircle faction) is held on her maturity:
+        // without it she is in the mature band, with it just below; her path stays the mature one
+        $bare = $d['Aela the Huntress'];
+        $bare['dimensions']['maturity']['x'] -= floatval($bare['_creature']['applied']['maturity'] ?? 0.0);
+        $this->assertSame('mature', RelDynConcern::expression($bare, $x['Aela the Huntress'])['band'], $why);
+        $this->assertSame(['mixed', 'mature'], [$expr['Aela the Huntress']['band'], $expr['Aela the Huntress']['path']], $why);
         $this->assertSame('mature', $expr['Ashe']['band'], 'Ashe: maturity 75');
         $this->assertSame('mixed', $expr['Muiri']['band']);
         $this->assertSame('mature', $expr['Muiri']['path'], 'in between, but her values path is the mature one');
@@ -450,11 +457,11 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
             $this->assertLessThan(25.0, RelDynConcern::level($d[$npc]), "{$npc}: one night is tolerated");
         }
         // Expression diverges by maturity and style
-        foreach (['Aela the Huntress', 'Ashe'] as $npc) {
-            $this->assertStringContainsString('once, plainly and without blame', $this->felt[$npc]['return1']['concern_stated_mature'] ?? '', $npc);
+        $this->assertStringContainsString('once, plainly and without blame', $this->felt['Ashe']['return1']['concern_stated_mature'] ?? '');
+        foreach (['Aela the Huntress', 'Muiri'] as $npc) {
+            $this->assertStringContainsString('means to say it evenly', $this->felt[$npc]['return1']['concern_stated_mixed'] ?? '', $npc);
+            $this->assertStringContainsString('as an accusation', $this->felt[$npc]['return1']['concern_stated_mixed'] ?? '', $npc);
         }
-        $this->assertStringContainsString('means to say it evenly', $this->felt['Muiri']['return1']['concern_stated_mixed']);
-        $this->assertStringContainsString('as an accusation', $this->felt['Muiri']['return1']['concern_stated_mixed']);
         $this->assertArrayNotHasKey('concern_stated_mixed', $this->felt['Ashe']['return1']);
         // How much: the most protective worries most; Ashe and Muiri (Pr .55 / .545) alike
         $lv = array_map(fn($dd) => RelDynConcern::level($dd), $d);
@@ -476,7 +483,8 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
             $this->assertArrayHasKey('concern_boundary', $this->felt[$npc]['return3'], "{$npc}: the calm boundary, said on the return");
             $this->assertSame('probation', $d[$npc]['_concern']['boundary']['state']);
             $this->assertArrayNotHasKey('concern_blowup', $this->felt[$npc]['return3']);
-            // one voice in the prompt: the worry beside the calm boundary is calm too
+            // one voice in the prompt: the worry beside the calm boundary is calm too (Aela's
+            // return3 is under the full moon, day 215 01:00: her composure dips, the voice stays calm)
             foreach (['return3', 'told3'] as $turn) {
                 $this->assertStringNotContainsString('as blame', (string) ($this->felt[$npc][$turn]['concern_worry'] ?? ''), "{$npc} {$turn}");
             }
