@@ -389,8 +389,9 @@ if ($positiveExchange) {
 // (RelationshipDynamics::maskingTurn, after core set CACHE_PEOPLE); the eval's masking field
 // pays its cost (applyEvalExtraFields).
 
-// ========== DIARY COMPLETION (PR 14) ==========
-// If diary was triggered and generated this cycle, mark completed. The reflection is where
+// ========== DIARY MOMENTS (PR 14) ==========
+// The trigger found meaningful moments this cycle: mark them (kept for her next entry in core's
+// diary, which RelDynDiary reflects on at a later prerequest). The mark is where
 // sustained experience moves the NPC's global baselines (baseline drift, PR 13 / recap
 // 2026-03-31 Fix 5), before the diary bookmarks are taken.
 if (!empty($GLOBALS['RELDYN_DIARY_TRIGGERED'])) {

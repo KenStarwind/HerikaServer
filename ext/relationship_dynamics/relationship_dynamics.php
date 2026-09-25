@@ -905,7 +905,8 @@ class RelationshipDynamics
             // context_pre.php (feedback_context_engineering_v2): <knowledge_of_player> by tier and
             // the emotional core inside <character> (primacy). Off: the <subtext> block carries all.
             'context_pre_enabled' => true,
-            // Diary reflection mode: 'baseline' (math-only) or 'trajectory' (LLM-scored)
+            // Diary reflection mode (feedback_diary_system): 'baseline' (snapshot math, no LLM) or
+            // 'trajectory' (one LLM call reads the NPC's recent entries in core's diary)
             'diary_reflection_mode' => 'baseline',
             // PR 10: Behavioral system toggles
             'divine_intervention_enabled' => true,
@@ -1237,6 +1238,9 @@ class RelationshipDynamics
             // ===== Save load (roadmap save-load-rollback) =====
             // What survives loading an earlier save, ledger checkpoints (reldyn_timeline.php).
             'save_load' => RelDynTimeline::configDefaults(),
+            // ===== Self-reflection on core's diary (roadmap diary-trigger, diary-reflection-eval) =====
+            // Depth, the verdicts' deltas, moments, the trajectory call (reldyn_diary.php).
+            'diary_reflection' => RelDynDiary::configDefaults(),
             // ===== Core's request poll (roadmap prerequest-on-poll) =====
             // What each poll runs: the play heartbeat beat, the save-load reconcile (onPollRequest).
             'poll' => self::pollConfigDefaults(),
@@ -8748,6 +8752,8 @@ class RelationshipDynamics
         // 1.0 -> 3). The strongest item of this request counts.
         $level = max(1, min(3, (int) round($n['significance'] * 3)));
         $GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] = max($level, intval($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? 0));
+        // ... and kept on the NPC until the diary's next mark (the worker applies outside her request)
+        $dynamics['_diary_significance_peak'] = max($level, intval($dynamics['_diary_significance_peak'] ?? 0));
         // A lifted attraction ceiling advances only through significant interactions
         // (attraction design memory); a completed lift refreshes the summary at once. A bond the
         // Matrix has not tracked yet (eval worker before any prerequest, or a passionless item
@@ -13744,272 +13750,10 @@ class RelationshipDynamics
 
         return $context;
     }
-    /**
-     * Capture a snapshot of current X values for all active dimensions.
-     *
-     * Stored in $dynamics['_diary_snapshots'][] with timestamp.
-     * Keeps only the last 5 snapshots (rolling window).
-     *
-     * @param array &$dynamics  The NPC's dynamics array (modified in place)
-     */
-    public static function storeDiarySnapshot(&$dynamics)
-    {
-        $dims = $dynamics['dimensions'] ?? [];
-        $snapshot = ['ts' => time(), 'values' => []];
 
-        foreach ($dims as $dimId => $dimData) {
-            // Only snapshot active dimensions with a non-null X
-            if (!is_array($dimData)) continue;
-            if (empty($dimData['active'])) continue;
-            if ($dimData['x'] === null) continue;
+    // The snapshots, the trajectory comparison and the reflection's verdict live in RelDynDiary
+    // (reldyn_diary.php): the reflection rides on core's diary entries.
 
-            $snapshot['values'][$dimId] = floatval($dimData['x']);
-        }
-
-        if (!isset($dynamics['_diary_snapshots']) || !is_array($dynamics['_diary_snapshots'])) {
-            $dynamics['_diary_snapshots'] = [];
-        }
-
-        $dynamics['_diary_snapshots'][] = $snapshot;
-
-        // Keep last 5 only
-        if (count($dynamics['_diary_snapshots']) > 5) {
-            $dynamics['_diary_snapshots'] = array_slice($dynamics['_diary_snapshots'], -5);
-        }
-    }
-
-    /**
-     * Compare most recent snapshot to current dimensional state.
-     *
-     * For each dimension present in the most recent snapshot:
-     *   delta = current_x - snapshot_x
-     *   growth:     delta > 3
-     *   stagnation: abs(delta) <= 3
-     *   regression: delta < -3
-     *
-     * @param array $dynamics  The NPC's dynamics array
-     * @return array  ['growth' => [dim => delta, ...], 'stagnation' => [dim, ...], 'regression' => [dim => delta, ...]]
-     */
-    public static function compareTrajectory($dynamics)
-    {
-        $result = ['growth' => [], 'stagnation' => [], 'regression' => []];
-
-        $snapshots = $dynamics['_diary_snapshots'] ?? [];
-        if (empty($snapshots)) {
-            return $result;
-        }
-
-        // Most recent snapshot
-        $latest = end($snapshots);
-        $snappedValues = $latest['values'] ?? [];
-        $dims = $dynamics['dimensions'] ?? [];
-
-        foreach ($snappedValues as $dimId => $snappedX) {
-            if (!isset($dims[$dimId]) || !is_array($dims[$dimId])) continue;
-            $currentX = $dims[$dimId]['x'];
-            if ($currentX === null) continue;
-
-            $delta = floatval($currentX) - floatval($snappedX);
-
-            if ($delta > 3) {
-                $result['growth'][$dimId] = round($delta, 2);
-            } elseif ($delta < -3) {
-                $result['regression'][$dimId] = round($delta, 2);
-            } else {
-                $result['stagnation'][] = $dimId;
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Score a diary entry as a self-interaction.
-     *
-     * This is the NPC talking to THEMSELVES. No external interaction needed.
-     * The dimensional state produces the diary content, the eval scores it,
-     * and maturity can shift from internal processing.
-     *
-     * Primarily affects:
-     * - maturity: +1 to +3 per meaningful reflection (self-reflection = growth)
-     * - resentment_self: -1 to -3 for recognizing patterns (recognition = healing)
-     *
-     * @param array  &$dynamics     The NPC's dynamics array (modified in place)
-     * @param string $diaryText     The generated diary text to evaluate
-     * @param string $temperament   NPC temperament for applyDelta physics
-     * @return array  Applied deltas: ['maturity' => float, 'resentment_self' => float]
-     */
-    public static function processDiaryEval(&$dynamics, $diaryText, $temperament)
-    {
-        $config = self::getConfig();
-        $mode = $config['diary_reflection_mode'] ?? 'baseline';
-
-        $dims = $dynamics['dimensions'] ?? [];
-        $maturity = floatval($dims['maturity']['x'] ?? 50);
-        $resentmentSelf = floatval($dims['resentment_self']['x'] ?? 0);
-
-        $appliedDeltas = [
-            'maturity' => 0.0,
-            'resentment_self' => 0.0,
-        ];
-
-        // Below minimum maturity: diary is too shallow to score
-        if ($maturity < self::DIARY_MIN_MATURITY) {
-            error_log("[RelDyn-DIARY] Maturity too low ({$maturity}) for meaningful self-reflection");
-            // Still snapshot even if too shallow
-            self::storeDiarySnapshot($dynamics);
-            return $appliedDeltas;
-        }
-
-        $npcName = $dynamics['_npc_name'] ?? 'unknown';
-
-        if ($mode === 'baseline') {
-            // ---- BASELINE MODE: math-only, no LLM call ----
-            $trajectory = self::compareTrajectory($dynamics);
-            $growthCount     = count($trajectory['growth']);
-            $stagnationCount = count($trajectory['stagnation']);
-            $regressionCount = count($trajectory['regression']);
-
-            // maturity +1 per growth dimension (cap +3)
-            if ($growthCount > 0) {
-                $maturityGain = min(3.0, floatval($growthCount));
-                $actualMaturity = self::applyDelta('maturity', $dynamics, $maturityGain, $temperament);
-                $appliedDeltas['maturity'] += $actualMaturity;
-            }
-
-            // resentment_self +2 if stagnation count >= 2
-            if ($stagnationCount >= 2) {
-                $actualRs = self::applyDelta('resentment_self', $dynamics, 2.0, $temperament);
-                $appliedDeltas['resentment_self'] += $actualRs;
-            }
-
-            // maturity -1 per regression dimension (cap -2)
-            if ($regressionCount > 0) {
-                $maturityLoss = max(-2.0, -1.0 * floatval($regressionCount));
-                $actualLoss = self::applyDelta('maturity', $dynamics, $maturityLoss, $temperament);
-                $appliedDeltas['maturity'] += $actualLoss;
-            }
-
-            error_log("[RelDyn-DIARY] Baseline diary eval for {$npcName}: " .
-                "growth={$growthCount}, stagnation={$stagnationCount}, regression={$regressionCount} | " .
-                "maturity " . sprintf('%+.2f', $appliedDeltas['maturity']) .
-                ", resentment_self " . sprintf('%+.2f', $appliedDeltas['resentment_self']));
-
-        } else {
-            // ---- TRAJECTORY MODE: LLM-scored (existing logic) ----
-            $reflectionScore = self::scoreDiaryReflection($diaryText, $maturity);
-
-            // Maturity delta: +1 to +3 based on reflection quality
-            $maturityDelta = max(1.0, min(3.0, $reflectionScore));
-            $actualMaturity = self::applyDelta('maturity', $dynamics, $maturityDelta, $temperament);
-            $appliedDeltas['maturity'] = $actualMaturity;
-
-            // Resentment_self healing: recognizing patterns reduces self-directed resentment
-            if ($resentmentSelf > 15 && $reflectionScore >= 1.5) {
-                $healingDelta = -1 * min(3.0, $reflectionScore);
-                $actualHealing = self::applyDelta('resentment_self', $dynamics, $healingDelta, $temperament);
-                $appliedDeltas['resentment_self'] = $actualHealing;
-            }
-
-            error_log("[RelDyn-DIARY] Trajectory diary eval for {$npcName}: maturity " .
-                sprintf('%+.2f', $actualMaturity) . ", resentment_self " .
-                sprintf('%+.2f', $appliedDeltas['resentment_self']) .
-                " (reflection score: {$reflectionScore})");
-        }
-
-        // Reflection stamps: the cooldown reads play seconds (_diary_last_accumulated); the unix
-        // stamp is a record only (never read as a duration)
-        $dynamics['_last_diary_reflection'] = time();
-        $dynamics['_diary_last_accumulated'] = intval($dynamics['_accumulated_time'] ?? 0);
-
-        // Snapshot after processing (both modes)
-        self::storeDiarySnapshot($dynamics);
-
-        return $appliedDeltas;
-    }
-
-
-    /**
-     * Score diary text quality based on content signals and maturity.
-     *
-     * Looks for markers of self-awareness: pattern recognition, emotional
-     * vocabulary, cause-effect reasoning, growth language. Higher maturity
-     * enables access to deeper markers.
-     *
-     * @param string $diaryText  The diary entry text
-     * @param float  $maturity   Current maturity value
-     * @return float  Reflection score (1.0 to 3.0)
-     */
-    private static function scoreDiaryReflection($diaryText, $maturity)
-    {
-        $score = 1.0; // Base: minimal reflection
-        $text = strtolower($diaryText);
-        $wordCount = str_word_count($text);
-
-        // Length bonus: longer entries suggest more engagement (diminishing returns)
-        if ($wordCount > 50) $score += 0.2;
-        if ($wordCount > 100) $score += 0.2;
-
-        // Pattern recognition markers (maturity 20+)
-        $patternMarkers = ['keep doing', 'always', 'again', 'every time', 'pattern', 'repeating',
-            'same mistake', 'i notice', 'why do i'];
-        foreach ($patternMarkers as $marker) {
-            if (strpos($text, $marker) !== false) {
-                $score += 0.3;
-                break; // Only count once per category
-            }
-        }
-
-        // Emotional vocabulary markers (maturity 30+)
-        if ($maturity >= 30) {
-            $emotionMarkers = ['feel', 'afraid', 'ashamed', 'guilty', 'angry at myself',
-                'disappointed', 'regret', 'hurt', 'vulnerable', 'lonely'];
-            foreach ($emotionMarkers as $marker) {
-                if (strpos($text, $marker) !== false) {
-                    $score += 0.3;
-                    break;
-                }
-            }
-        }
-
-        // Cause-effect reasoning (maturity 40+)
-        if ($maturity >= 40) {
-            $reasoningMarkers = ['because', 'that\'s why', 'i understand', 'i realize',
-                'led to', 'caused', 'result of', 'consequence'];
-            foreach ($reasoningMarkers as $marker) {
-                if (strpos($text, $marker) !== false) {
-                    $score += 0.4;
-                    break;
-                }
-            }
-        }
-
-        // Growth language (maturity 50+)
-        if ($maturity >= 50) {
-            $growthMarkers = ['need to change', 'want to be better', 'i can', 'i will',
-                'going to try', 'learn from', 'grow', 'different next time'];
-            foreach ($growthMarkers as $marker) {
-                if (strpos($text, $marker) !== false) {
-                    $score += 0.4;
-                    break;
-                }
-            }
-        }
-
-        // Self-knowledge (maturity 60+)
-        if ($maturity >= 60) {
-            $insightMarkers = ['i understand why i', 'this is who i', 'i accept',
-                'i\'ve been', 'my tendency to', 'i own', 'accountable'];
-            foreach ($insightMarkers as $marker) {
-                if (strpos($text, $marker) !== false) {
-                    $score += 0.4;
-                    break;
-                }
-            }
-        }
-
-        return min(3.0, $score);
-    }
     /**
      * Check whether dimensional pain should generate an intrinsic goal.
      *
@@ -15698,6 +15442,11 @@ class RelationshipDynamics
             return false;
         }
 
+        // The bond this NPC had when her moments were first watched: a later change is a moment
+        if (($dynamics['_diary_last_rel_type'] ?? null) === null) {
+            $dynamics['_diary_last_rel_type'] = $dynamics['_core_rel_type'] ?? null;
+        }
+
         // Gate 2: Cooldown (accumulated time based)
         $accumulated = intval($dynamics['_accumulated_time'] ?? 0);
         $lastAccumulated = intval($dynamics['_diary_last_accumulated'] ?? 0);
@@ -15713,17 +15462,13 @@ class RelationshipDynamics
             return false;
         }
 
-        // Gate 3: Consumable block
-        if (self::DIARY_CONSUMABLE_BLOCK) {
-            $consumableActive = !empty($dynamics['_active_consumable']);
-            if ($consumableActive) {
-                return false;
-            }
+        // Gate 3: Consumable block (consumeItem keeps them in _active_consumables until they expire)
+        if (self::DIARY_CONSUMABLE_BLOCK && RelDynDiary::intoxicated($dynamics)) {
+            return false;
         }
 
-        // Gate 4: Maturity gate
-        $dims = $dynamics['dimensions'] ?? [];
-        $maturity = floatval($dims['maturity']['x'] ?? 0);
+        // Gate 4: Maturity gate (her own maturity: a held offset such as the full moon is not who she is)
+        $maturity = self::driftSampleValue($dynamics, 'maturity') ?? 0.0;
         if ($maturity <= self::DIARY_MIN_MATURITY) {
             return false;
         }
@@ -15755,16 +15500,18 @@ class RelationshipDynamics
     }
 
     /**
-     * Detect substantive content triggers that warrant a diary entry.
-     *
-     * Checks seven categories of meaningful change:
+     * Detect the meaningful moments since the last mark (markDiaryCompleted's bookmarks) that
+     * the NPC's next diary entry reflects on (RelDynDiary):
      *   1. Sustained delta: 15+ drift from baseline in any dimension
      *   2. Crisis indicators: 2+ of resentment>30, comfort<20, trust<20, resentment_self>30
      *   3. Phase transitions: DI count changed, grief phase changed, attachment shifted
      *   4. New emergent emotions since last diary
      *   5. Intimacy critical: intimacy dimension < 0.1 (near-zero)
      *   6. Tier change: attraction tier ceiling shifted
-     *   7. Defining moment: last interaction had significance >= 3
+     *   7. Defining moment: an interaction of significance level 3 (_diary_significance_peak)
+     *   8. Conflict opened (conflict_opened)
+     *   9. Boundary: a boundary lane moved (boundary:fulfillment, boundary:concern)
+     *  10. Bond change: core's relationship type changed (bond_changed:<from>-><to>)
      *
      * @param array $dynamics  The NPC's dynamics array
      * @return array  Array of trigger description strings (empty = no triggers)
@@ -15853,21 +15600,64 @@ class RelationshipDynamics
             $triggers[] = "tier_changed:{$lastTier}->{$currentTier}";
         }
 
-        // 7. Defining moment: last interaction had significance >= 3
-        $lastSignificance = intval($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? 0);
+        // 7. Defining moment: an interaction of significance level 3 since the last mark (the
+        // strongest applied eval item's level, kept on the NPC: the eval worker applies items
+        // outside this request)
+        $lastSignificance = max(intval($GLOBALS['RELDYN_INTERACTION_SIGNIFICANCE'] ?? 0),
+            intval($dynamics['_diary_significance_peak'] ?? 0));
         if ($lastSignificance >= 3) {
             $triggers[] = "defining_moment:significance_{$lastSignificance}";
+        }
+
+        // 8. Conflict: one opened since the last mark (enterConflict stamps conflict_entered_at)
+        $conflictAt = $dynamics['conflict_entered_at'] ?? null;
+        $lastConflictAt = $dynamics['_diary_last_conflict_at'] ?? null;
+        if (!empty($dynamics['in_conflict']) && is_numeric($conflictAt)
+            && (!is_numeric($lastConflictAt) || floatval($conflictAt) !== floatval($lastConflictAt))) {
+            $triggers[] = 'conflict_opened';
+        }
+
+        // 9. Boundaries: the fulfillment boundary (rulings §9) or the values boundary (concern)
+        // moved to a new state or stepped the bond back since the last mark
+        $lastBoundaries = is_array($dynamics['_diary_last_boundaries'] ?? null) ? $dynamics['_diary_last_boundaries'] : [];
+        foreach (self::diaryBoundarySignatures($dynamics) as $lane => $sig) {
+            if ($sig !== 'none' && $sig !== ($lastBoundaries[$lane] ?? 'none')) {
+                $triggers[] = "boundary:{$lane}";
+            }
+        }
+
+        // 10. Bond change: core's relationship type moved since the last mark
+        $relType = $dynamics['_core_rel_type'] ?? null;
+        $lastRelType = $dynamics['_diary_last_rel_type'] ?? null;
+        if (is_string($relType) && is_string($lastRelType) && $relType !== $lastRelType) {
+            $triggers[] = "bond_changed:{$lastRelType}->{$relType}";
         }
 
         return $triggers;
     }
 
     /**
-     * Mark diary as completed: update all tracking fields to current state.
+     * Each boundary lane's state for the diary's bookmarks: 'none', or its state with the game
+     * time of its last step-back ('probation', 'none@<gamets>').
      *
-     * Called after a diary entry has been successfully generated and processed.
-     * Updates all "last" tracking fields so subsequent trigger checks compare
-     * against the post-diary state.
+     * @return array{fulfillment: string, concern: string}
+     */
+    public static function diaryBoundarySignatures(array $dynamics): array
+    {
+        $out = [];
+        foreach (['fulfillment' => RelDynFulfillment::STATE_KEY, 'concern' => RelDynConcern::STATE_KEY] as $lane => $key) {
+            $b = $dynamics[$key]['boundary'] ?? null;
+            $state = is_array($b) && is_string($b['state'] ?? null) ? $b['state'] : 'none';
+            $out[$lane] = $state . (is_array($b) && is_numeric($b['stepped_back_gamets'] ?? null) ? '@' . $b['stepped_back_gamets'] : '');
+        }
+        return $out;
+    }
+
+    /**
+     * Mark the moments a trigger found (postrequest, after baseline drift): every "last" tracking
+     * field moves to the current state, so the next check compares against it, and the pending
+     * triggers become one moment kept for the NPC's next entry in core's diary
+     * (RelDynDiary::keepMoments; the reflection on it is RelDynDiary::onPrerequest).
      *
      * @param array &$dynamics  NPC dynamics blob (modified in place)
      */
@@ -15899,7 +15689,14 @@ class RelationshipDynamics
         }
         $dynamics['_diary_last_grief_phases'] = $griefPhases;
 
-        // Clear pending triggers
+        // Significance, conflict, boundary and bond bookmarks
+        $dynamics['_diary_significance_peak'] = 0;
+        $dynamics['_diary_last_conflict_at'] = !empty($dynamics['in_conflict']) ? ($dynamics['conflict_entered_at'] ?? null) : null;
+        $dynamics['_diary_last_boundaries'] = self::diaryBoundarySignatures($dynamics);
+        $dynamics['_diary_last_rel_type'] = $dynamics['_core_rel_type'] ?? null;
+
+        // The marked moments wait for the NPC's next diary entry (RelDynDiary::onPrerequest)
+        RelDynDiary::keepMoments($dynamics, (array) ($dynamics['_diary_pending_triggers'] ?? []), self::currentGamets());
         $dynamics['_diary_pending_triggers'] = [];
         $dynamics['_diary_trigger_source'] = null;
     }
@@ -18246,3 +18043,5 @@ require_once __DIR__ . '/reldyn_resentment.php';
 require_once __DIR__ . '/reldyn_creatures.php';
 // Combat passion routing (core combat requests + core's death / bleedout eventlog rows)
 require_once __DIR__ . '/reldyn_combat.php';
+// Self-reflection on core's diary entries (baseline math / trajectory LLM); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_diary.php';

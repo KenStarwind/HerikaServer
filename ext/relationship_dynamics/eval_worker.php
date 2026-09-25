@@ -37,6 +37,16 @@ try {
     $stats = RelDynEval::runWorker();
     error_log('[RelDyn-EVAL] worker done: ' . json_encode($stats));
 
+    // Diary self-reflections (trajectory mode): after the eval's own jobs, their own table and
+    // lock (RelDynDiary::drain); applied on each NPC's next prerequest.
+    if (empty($stats['locked']) && empty($stats['paused'])) {
+        try {
+            error_log('[RelDyn-DIARY] worker done: ' . json_encode(RelDynDiary::drain()));
+        } catch (\Throwable $e) {
+            error_log('[RelDyn-DIARY] ERROR diary reflection drain: ' . get_class($e) . ': ' . $e->getMessage());
+        }
+    }
+
     // Personality trait reads (design §4.7): only after the eval, only with no eval job
     // pending and no switch pending; their own queue and lock, never the eval's way.
     $traits = RelDynEval::drainTraitReadsAfterEval($stats);
