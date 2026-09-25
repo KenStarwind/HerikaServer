@@ -495,7 +495,7 @@ final class RelDynAffinityCoreTest extends TestCase
     {
         $start = 1000000.0;
         $this->seedNpc(['Player' => ['aff' => 60, 'type' => 'platonic']], [
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             '_decay_last_game_gamets' => $start,
         ]);
         // One game day later (7.2 decay ticks); no real play time accumulated in between
@@ -527,7 +527,7 @@ final class RelDynAffinityCoreTest extends TestCase
     {
         $start = 1000000.0;
         $this->seedNpc(['Player' => ['aff' => 60, 'type' => 'platonic']], [
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             '_decay_last_game_gamets' => $start,
             '_walkaway_affinity_decay_paused' => true,
         ]);

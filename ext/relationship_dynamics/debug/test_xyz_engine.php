@@ -2527,87 +2527,29 @@ function restoreAttachmentConfig($old) {
     $configProp->setValue(null, $old);
 }
 
-// ── AC1: Temperament default mapping ──
-try {
-    $asheDynAC = RelationshipDynamics::getDynamics('Ashe');
-    if ($asheDynAC) {
-        // Test with known temperament to verify mapping table
-        // Ashe's DB blob may lack temperament, so we also test the fallback path
-        $asheTemp = $asheDynAC['inferred_temperament'] ?? $asheDynAC['temperament'] ?? null;
+// AC1 (temperament -> attachment map) and AC2 (stored label) retired with the two-axis model
+// (decisions 2026-09-24 §12): Guarded/Stoic/Independent/Proud/Defiant are not avoidant, the
+// axes come from their own evidence and only profile_overrides pins a style (RelDynAttachmentAxesTest).
 
-        // AC1a: Test with explicit temperament set — verify TEMPERAMENT_ATTACHMENT_DEFAULTS
-        $ac1DynA = $asheDynAC;
-        $ac1DynA['attachment_style'] = null;
-        $ac1DynA['inferred_temperament'] = 'Romantic';
-        $actualStyleA = RelationshipDynamics::getAttachmentStyle($ac1DynA);
-        check('AC1a: Romantic temperament default = secure', $actualStyleA, 'secure');
-
-        // AC1b: Anxious temperament maps to anxious attachment
-        $ac1DynB = $asheDynAC;
-        $ac1DynB['attachment_style'] = null;
-        $ac1DynB['inferred_temperament'] = 'Anxious';
-        $actualStyleB = RelationshipDynamics::getAttachmentStyle($ac1DynB);
-        check('AC1b: Anxious temperament default = anxious', $actualStyleB, 'anxious');
-
-        // AC1c: Guarded temperament maps to avoidant attachment
-        $ac1DynC = $asheDynAC;
-        $ac1DynC['attachment_style'] = null;
-        $ac1DynC['inferred_temperament'] = 'Guarded';
-        $actualStyleC = RelationshipDynamics::getAttachmentStyle($ac1DynC);
-        check('AC1c: Guarded temperament default = avoidant', $actualStyleC, 'avoidant');
-
-        // AC1d: No temperament at all — fallback to Stoic → avoidant
-        $ac1DynD = $asheDynAC;
-        $ac1DynD['attachment_style'] = null;
-        unset($ac1DynD['inferred_temperament'], $ac1DynD['temperament']);
-        $actualStyleD = RelationshipDynamics::getAttachmentStyle($ac1DynD);
-        $fallbackTemp = 'Stoic';
-        $expectedFallback = RelationshipDynamics::TEMPERAMENT_ATTACHMENT_DEFAULTS[$fallbackTemp] ?? 'secure';
-        check("AC1d: No temperament fallback ({$fallbackTemp}) = {$expectedFallback}", $actualStyleD, $expectedFallback);
-    } else {
-        skip('AC1', 'Ashe not found in DB');
-    }
-} catch (Throwable $e) {
-    skip('AC1', 'Exception: ' . $e->getMessage());
-}
-
-// ── AC2: Stored style override ──
-try {
-    $ac2Dyn = RelationshipDynamics::getDynamics('Ashe');
-    if ($ac2Dyn) {
-        $ac2Dyn['attachment_style'] = 'toxic';
-        $actualStyle2 = RelationshipDynamics::getAttachmentStyle($ac2Dyn);
-        check('AC2: Stored attachment_style=toxic overrides temperament', $actualStyle2, 'toxic');
-    } else {
-        skip('AC2', 'Ashe not found in DB');
-    }
-} catch (Throwable $e) {
-    skip('AC2', 'Exception: ' . $e->getMessage());
-}
-
-// ── AC3: Modifier retrieval — all 4 styles × 10 keys ──
+// ── AC3: Modifier retrieval — a textbook NPC of each style reads its config row ──
 try {
     $ac3AllValid = true;
     $ac3BadCombo = '';
-    $ac3Styles = ['secure', 'avoidant', 'anxious', 'toxic'];
-    $ac3Keys = ['comfort_decay_mult', 'trust_decay_mult', 'resentment_gain_mult',
-               'confrontation_threshold', 'absence_comfort_delta', 'affinity_absence_mult',
-               'jealousy_mult', 'maturity_floor', 'conflict_passion_gain', 'suffocation_threshold'];
-    foreach ($ac3Styles as $style) {
-        foreach ($ac3Keys as $key) {
-            $expected = RelationshipDynamics::ATTACHMENT_MODIFIERS[$style][$key];
-            $dynAC3 = ['attachment_style' => $style];
+    $ac3Rows = RelationshipDynamics::getAttachmentConfig()['modifiers'];
+    foreach ($ac3Rows as $style => $row) {
+        foreach ($row as $key => $expected) {
+            $dynAC3 = ['profile_overrides' => ['attachment_style' => $style]];
             $actual = RelationshipDynamics::getAttachmentModifier($dynAC3, $key);
-            // Both can be null (maturity_floor for secure, suffocation_threshold for secure, etc.)
-            if ($expected !== $actual) {
+            if ((is_numeric($expected) && abs(floatval($expected) - floatval($actual)) > 1e-9) || (!is_numeric($expected) && $expected !== $actual)) {
                 $ac3AllValid = false;
                 $ac3BadCombo = "{$style}/{$key}: expected " . var_export($expected, true) . " got " . var_export($actual, true);
                 break 2;
             }
         }
     }
-    check('AC3: All 4 styles x 10 modifier keys match ATTACHMENT_MODIFIERS', $ac3AllValid, true);
-    if (!$ac3AllValid) echo "      First mismatch: {$ac3BadCombo}\n";
+    check('AC3: every style x modifier key matches config attachment.modifiers', $ac3AllValid, true);
+    if (!$ac3AllValid) echo "      First mismatch: {$ac3BadCombo}
+";
 } catch (Throwable $e) {
     skip('AC3', 'Exception: ' . $e->getMessage());
 }
@@ -2615,7 +2557,7 @@ try {
 // ── AC4: Cross-signal caps — resentment amplification for anxious ──
 try {
     $ac4Dyn = RelationshipDynamics::defaultDynamics();
-    $ac4Dyn['attachment_style'] = 'anxious';
+    $ac4Dyn['profile_overrides']['attachment_style'] = 'anxious';
     $ac4Dyn['dimensions']['maturity']['x'] = 60;  // above 50 so the low-maturity cap doesn't fire
     $ac4Dyn['dimensions']['resentment']['x'] = 20;
     $rawDelta4 = 5.0;
@@ -2632,7 +2574,7 @@ try {
 try {
     // AC5a: Test maturity floor via applyCrossSignalCaps directly
     $ac5DynA = RelationshipDynamics::defaultDynamics();
-    $ac5DynA['attachment_style'] = 'toxic';
+    $ac5DynA['profile_overrides']['attachment_style'] = 'toxic';
     $ac5DynA['dimensions']['maturity']['x'] = 28;
     $ac5DynA['dimensions']['comfort']['x'] = 60;  // above 30 so comfort cap doesn't fire
     $cappedDelta5 = RelationshipDynamics::applyCrossSignalCaps($ac5DynA, 'maturity', 5.0);
@@ -2641,7 +2583,7 @@ try {
 
     // AC5b: Test that maturity at floor gets delta=0
     $ac5DynB = RelationshipDynamics::defaultDynamics();
-    $ac5DynB['attachment_style'] = 'toxic';
+    $ac5DynB['profile_overrides']['attachment_style'] = 'toxic';
     $ac5DynB['dimensions']['maturity']['x'] = 30;
     $ac5DynB['dimensions']['comfort']['x'] = 60;
     $cappedDelta5b = RelationshipDynamics::applyCrossSignalCaps($ac5DynB, 'maturity', 5.0);
@@ -2650,7 +2592,7 @@ try {
     // AC5c: Full pipeline — enable dimension_engine so applyDelta invokes cross-signal caps
     $oldCfgAC5 = setAttachmentConfig(['dimension_engine_enabled' => true]);
     $ac5DynC = RelationshipDynamics::defaultDynamics();
-    $ac5DynC['attachment_style'] = 'toxic';
+    $ac5DynC['profile_overrides']['attachment_style'] = 'toxic';
     $ac5DynC['dimensions']['maturity']['x'] = 28;
     $ac5DynC['dimensions']['maturity']['baseline'] = 20;
     $ac5DynC['dimensions']['comfort']['x'] = 60;
@@ -2669,7 +2611,7 @@ try {
 // ── AC6: Toxic conflict passion ──
 try {
     $ac6Dyn = RelationshipDynamics::defaultDynamics();
-    $ac6Dyn['attachment_style'] = 'toxic';
+    $ac6Dyn['profile_overrides']['attachment_style'] = 'toxic';
     $ac6Dyn['dimensions']['maturity']['x'] = 60;  // above 50 so maturity amp doesn't fire
     $ac6Dyn['dimensions']['resentment']['x'] = 20;
     $GLOBALS['RELDYN_ATTACHMENT_CONFLICT_PASSION'] = 0;
@@ -2684,7 +2626,7 @@ try {
 // ── AC7: Absence decay — anxious doubles affinity decay + comfort drops ──
 try {
     $ac7Dyn = RelationshipDynamics::defaultDynamics();
-    $ac7Dyn['attachment_style'] = 'anxious';
+    $ac7Dyn['profile_overrides']['attachment_style'] = 'anxious';
     $ac7Dyn['dimensions']['affinity']['x'] = 60;
     $ac7Dyn['dimensions']['affinity']['baseline'] = 50;
     $ac7Dyn['dimensions']['comfort']['x'] = 50;
@@ -2716,7 +2658,7 @@ try {
 // ── AC8: Avoidant comfort gain during absence ──
 try {
     $ac8Dyn = RelationshipDynamics::defaultDynamics();
-    $ac8Dyn['attachment_style'] = 'avoidant';
+    $ac8Dyn['profile_overrides']['attachment_style'] = 'avoidant';
     $ac8Dyn['dimensions']['affinity']['x'] = 60;
     $ac8Dyn['dimensions']['affinity']['baseline'] = 50;
     $ac8Dyn['dimensions']['comfort']['x'] = 40;
@@ -2733,44 +2675,9 @@ try {
     skip('AC8', 'Exception: ' . $e->getMessage());
 }
 
-// ── AC9: Drift — anxious to secure ──
-try {
-    $ac9Dyn = RelationshipDynamics::defaultDynamics();
-    $ac9Dyn['attachment_style'] = 'anxious';
-    $ac9Dyn['dimensions']['maturity']['x'] = 60;
-    $ac9Dyn['dimensions']['trust']['x'] = 65;
-    $ac9Dyn['dimensions']['resentment']['x'] = 10;
-    $ac9Dyn['_attachment_drift_last_check'] = 0;
-    $ac9Dyn['_attachment_drift_score'] = 0;
-    $ac9Dyn['_accumulated_time'] = 0;
-
-    $driftResult9 = null;
-    // Simulate 3 drift checks with 5+ hour gaps (18000+ seconds each)
-    for ($i = 1; $i <= 3; $i++) {
-        $ac9Dyn['_accumulated_time'] = $i * 20000;  // 20000s between each check (> 18000s threshold)
-        $driftResult9 = RelationshipDynamics::checkAttachmentDrift($ac9Dyn, 'Anxious');
-    }
-    check('AC9: Anxious drifts to secure after 3 healthy checks', $driftResult9, 'secure');
-    check('AC9b: attachment_style stored as secure', $ac9Dyn['attachment_style'], 'secure');
-} catch (Throwable $e) {
-    skip('AC9', 'Exception: ' . $e->getMessage());
-}
-
-// ── AC10: Drift — toxic to anxious ──
-try {
-    $ac10Dyn = RelationshipDynamics::defaultDynamics();
-    $ac10Dyn['attachment_style'] = 'toxic';
-    // Toxic maturity_floor = 30. Need maturity >= floor+10 = 40
-    $ac10Dyn['dimensions']['maturity']['x'] = 42;
-    $ac10Dyn['_attachment_drift_last_check'] = 0;
-    $ac10Dyn['_accumulated_time'] = 20000;  // > 18000s threshold
-
-    $drift10 = RelationshipDynamics::checkAttachmentDrift($ac10Dyn, 'Stoic');
-    check('AC10: Toxic drifts to anxious when maturity >= floor+10', $drift10, 'anxious');
-    check('AC10b: attachment_style stored as anxious', $ac10Dyn['attachment_style'], 'anxious');
-} catch (Throwable $e) {
-    skip('AC10', 'Exception: ' . $e->getMessage());
-}
+// AC9 / AC10 (April checkAttachmentDrift on the wall clock) retired: attachment drift is
+// experience on the game calendar now (attachmentExperience / driftAttachmentFromDays,
+// RelDynAttachmentAxesTest, RelDynAttachmentDriftPostgresTest).
 
 // ── AC11: Config gate — disabled returns secure for all ──
 try {
@@ -2778,14 +2685,14 @@ try {
 
     // Test with explicit toxic style -- should still return secure when disabled
     $ac11Dyn = RelationshipDynamics::defaultDynamics();
-    $ac11Dyn['attachment_style'] = 'toxic';
+    $ac11Dyn['profile_overrides']['attachment_style'] = 'toxic';
     $style11a = RelationshipDynamics::getAttachmentStyle($ac11Dyn);
     check('AC11a: Config disabled -- toxic NPC returns secure', $style11a, 'secure');
 
     // Test with anxious temperament default -- should still return secure
     $ac11Dyn2 = RelationshipDynamics::defaultDynamics();
     $ac11Dyn2['inferred_temperament'] = 'Anxious';
-    $ac11Dyn2['attachment_style'] = null;
+    unset($ac11Dyn2['profile_overrides']['attachment_style']);
     $style11b = RelationshipDynamics::getAttachmentStyle($ac11Dyn2);
     check('AC11b: Config disabled -- Anxious temperament returns secure', $style11b, 'secure');
 
@@ -4039,7 +3946,7 @@ try {
 try {
     // Secure + maturity=80 → high tolerance (> 0.5)
     $ah7Dyn1 = RelationshipDynamics::defaultDynamics();
-    $ah7Dyn1['attachment_style'] = 'secure';
+    $ah7Dyn1['profile_overrides']['attachment_style'] = 'secure';
     $ah7Dyn1['dimensions']['maturity'] = ['x' => 80, 'baseline' => 50];
     $ah7Tol1 = RelationshipDynamics::calculateEffectiveTolerance($ah7Dyn1);
     check('AH7a: Secure + maturity=80 → tolerance > 0.5', $ah7Tol1 > 0.5, true);
@@ -4047,7 +3954,7 @@ try {
 
     // Avoidant + maturity=80 → low tolerance (< 0.5) — refined standards
     $ah7Dyn2 = RelationshipDynamics::defaultDynamics();
-    $ah7Dyn2['attachment_style'] = 'avoidant';
+    $ah7Dyn2['profile_overrides']['attachment_style'] = 'avoidant';
     $ah7Dyn2['dimensions']['maturity'] = ['x' => 80, 'baseline' => 50];
     $ah7Tol2 = RelationshipDynamics::calculateEffectiveTolerance($ah7Dyn2);
     check('AH7b: Avoidant + maturity=80 → tolerance < 0.5', $ah7Tol2 < 0.5, true);
@@ -4055,7 +3962,7 @@ try {
 
     // Anxious + maturity=30 → high tolerance (~ 0.9) — desperate
     $ah7Dyn3 = RelationshipDynamics::defaultDynamics();
-    $ah7Dyn3['attachment_style'] = 'anxious';
+    $ah7Dyn3['profile_overrides']['attachment_style'] = 'anxious';
     $ah7Dyn3['dimensions']['maturity'] = ['x' => 30, 'baseline' => 50];
     $ah7Tol3 = RelationshipDynamics::calculateEffectiveTolerance($ah7Dyn3);
     check('AH7c: Anxious + maturity=30 → tolerance ~0.9', abs($ah7Tol3 - 0.9) < 0.15, true);
@@ -4063,7 +3970,7 @@ try {
 
     // Toxic → low tolerance (0.3)
     $ah7Dyn4 = RelationshipDynamics::defaultDynamics();
-    $ah7Dyn4['attachment_style'] = 'toxic';
+    $ah7Dyn4['profile_overrides']['attachment_style'] = 'toxic';
     $ah7Dyn4['dimensions']['maturity'] = ['x' => 50, 'baseline' => 50];
     $ah7Tol4 = RelationshipDynamics::calculateEffectiveTolerance($ah7Dyn4);
     check('AH7d: Toxic → tolerance = 0.3', $ah7Tol4, 0.3, 0.01);
@@ -5135,7 +5042,7 @@ try {
     $ak6Dyn['_divine_intervention_count'] = 0;
     $ak6Dyn['_diary_last_di_count'] = 0;
     $ak6Dyn['_grief_bonds'] = [];
-    $ak6Dyn['attachment_style'] = null;
+    unset($ak6Dyn['profile_overrides']['attachment_style']);
     $ak6Dyn['_diary_last_attachment'] = null;
     $ak6Dyn['_attraction_tier_ceiling'] = 'sworn';
     $ak6Dyn['_diary_last_tier_ceiling'] = 'sworn';
@@ -5182,7 +5089,7 @@ try {
     $ak8Dyn['_accumulated_time'] = 5000;
     $ak8Dyn['interaction_count'] = 20;
     $ak8Dyn['_divine_intervention_count'] = 2;
-    $ak8Dyn['attachment_style'] = 'secure';
+    $ak8Dyn['profile_overrides']['attachment_style'] = 'secure';
     $ak8Dyn['_diary_pending_triggers'] = ['crisis_indicators:2'];
     $ak8Dyn['_diary_trigger_source'] = 'interaction';
 
@@ -5318,7 +5225,7 @@ try {
     ]);
     $ak15Dyn = RelationshipDynamics::defaultDynamics();
     $ak15Dyn['dimensions']['maturity']['x'] = 50;
-    $ak15Dyn['attachment_style'] = 'secure';
+    $ak15Dyn['profile_overrides']['attachment_style'] = 'secure';
 
     RelationshipDynamics::applyMaskingCost('TestNPC_AK15', $ak15Dyn);
     $ak15After = $ak15Dyn['dimensions']['maturity']['x'];
@@ -5340,14 +5247,14 @@ try {
     // Secure NPC
     $ak16SecureDyn = RelationshipDynamics::defaultDynamics();
     $ak16SecureDyn['dimensions']['maturity']['x'] = 50;
-    $ak16SecureDyn['attachment_style'] = 'secure';
+    $ak16SecureDyn['profile_overrides']['attachment_style'] = 'secure';
     RelationshipDynamics::applyMaskingCost('TestNPC_AK16a', $ak16SecureDyn);
     $ak16SecureDrain = 50 - $ak16SecureDyn['dimensions']['maturity']['x'];
 
     // Avoidant NPC
     $ak16AvoidDyn = RelationshipDynamics::defaultDynamics();
     $ak16AvoidDyn['dimensions']['maturity']['x'] = 50;
-    $ak16AvoidDyn['attachment_style'] = 'avoidant';
+    $ak16AvoidDyn['profile_overrides']['attachment_style'] = 'avoidant';
     RelationshipDynamics::applyMaskingCost('TestNPC_AK16b', $ak16AvoidDyn);
     $ak16AvoidDrain = 50 - $ak16AvoidDyn['dimensions']['maturity']['x'];
 
@@ -5997,7 +5904,7 @@ try {
         'self_confidence' => ['x' => 70, 'baseline' => 70],
         'maturity' => ['x' => 70, 'baseline' => 70],
     ]);
-    $ap11Dyn['attachment_style'] = 'toxic';
+    $ap11Dyn['profile_overrides']['attachment_style'] = 'toxic';
     $ap11Type = RelationshipDynamics::getRefusalType($ap11Dyn, 'Stoic');
     check('AP11: Toxic attachment = manipulative refusal', $ap11Type, 'manipulative');
 } catch (Throwable $e) { skip('AP11', $e->getMessage()); }
@@ -6008,7 +5915,7 @@ try {
         'self_confidence' => ['x' => 70, 'baseline' => 70],
         'maturity' => ['x' => 70, 'baseline' => 70],
     ]);
-    $ap12Dyn['attachment_style'] = 'anxious';
+    $ap12Dyn['profile_overrides']['attachment_style'] = 'anxious';
     $ap12Type = RelationshipDynamics::getRefusalType($ap12Dyn, 'Stoic');
     check('AP12: Anxious attachment shifts to silent', $ap12Type, 'silent');
 } catch (Throwable $e) { skip('AP12', $e->getMessage()); }
@@ -6019,7 +5926,7 @@ try {
         'self_confidence' => ['x' => 30, 'baseline' => 30],
         'maturity' => ['x' => 30, 'baseline' => 30],
     ]);
-    $ap13Dyn['attachment_style'] = 'avoidant';
+    $ap13Dyn['profile_overrides']['attachment_style'] = 'avoidant';
     $ap13Type = RelationshipDynamics::getRefusalType($ap13Dyn, 'Stoic');
     check('AP13: Avoidant attachment shifts to direct', $ap13Type, 'direct');
 } catch (Throwable $e) { skip('AP13', $e->getMessage()); }
@@ -6217,7 +6124,7 @@ echo "\n--- Suite AR: Hoover Protocol (PR 16) ---\n";
 try {
     $ar1Dyn = makeMultiDynamics(['maturity' => ['x' => 30, 'baseline' => 30]]);
     $ar1Dyn['_walkaway_state'] = 'normal';
-    $ar1Dyn['attachment_style'] = 'toxic';
+    $ar1Dyn['profile_overrides']['attachment_style'] = 'toxic';
     check('AR1: Not in walkaway = ineligible', RelationshipDynamics::checkHooverEligibility($ar1Dyn), false);
 } catch (Throwable $e) { skip('AR1', $e->getMessage()); }
 
@@ -6225,7 +6132,7 @@ try {
 try {
     $ar2Dyn = makeMultiDynamics(['maturity' => ['x' => 30, 'baseline' => 30]]);
     $ar2Dyn['_walkaway_state'] = 'active';
-    $ar2Dyn['attachment_style'] = 'secure';
+    $ar2Dyn['profile_overrides']['attachment_style'] = 'secure';
     $ar2Dyn['_walkaway_activated_at'] = time() - (80 * 3600);
     check('AR2: Non-toxic = ineligible', RelationshipDynamics::checkHooverEligibility($ar2Dyn), false);
 } catch (Throwable $e) { skip('AR2', $e->getMessage()); }
@@ -6234,7 +6141,7 @@ try {
 try {
     $ar3Dyn = makeMultiDynamics(['maturity' => ['x' => 50, 'baseline' => 50]]);
     $ar3Dyn['_walkaway_state'] = 'active';
-    $ar3Dyn['attachment_style'] = 'toxic';
+    $ar3Dyn['profile_overrides']['attachment_style'] = 'toxic';
     $ar3Dyn['_walkaway_activated_at'] = time() - (80 * 3600);
     check('AR3: Maturity >= 40 = ineligible', RelationshipDynamics::checkHooverEligibility($ar3Dyn), false);
 } catch (Throwable $e) { skip('AR3', $e->getMessage()); }
@@ -6243,7 +6150,7 @@ try {
 try {
     $ar4Dyn = makeMultiDynamics(['maturity' => ['x' => 30, 'baseline' => 30]]);
     $ar4Dyn['_walkaway_state'] = 'active';
-    $ar4Dyn['attachment_style'] = 'toxic';
+    $ar4Dyn['profile_overrides']['attachment_style'] = 'toxic';
     $ar4Dyn['_walkaway_activated_at'] = time() - (10 * 3600); // 10 hours
     check('AR4: Only 10 hours = ineligible', RelationshipDynamics::checkHooverEligibility($ar4Dyn), false);
 } catch (Throwable $e) { skip('AR4', $e->getMessage()); }
@@ -6252,7 +6159,7 @@ try {
 try {
     $ar5Dyn = makeMultiDynamics(['maturity' => ['x' => 25, 'baseline' => 25]]);
     $ar5Dyn['_walkaway_state'] = 'active';
-    $ar5Dyn['attachment_style'] = 'toxic';
+    $ar5Dyn['profile_overrides']['attachment_style'] = 'toxic';
     $ar5Dyn['_walkaway_activated_at'] = time() - (100 * 3600); // 100 hours > 96
     check('AR5: Toxic + low maturity + 100h = eligible', RelationshipDynamics::checkHooverEligibility($ar5Dyn), true);
 } catch (Throwable $e) { skip('AR5', $e->getMessage()); }

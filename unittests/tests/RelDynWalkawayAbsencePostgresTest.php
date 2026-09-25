@@ -185,7 +185,7 @@ final class RelDynWalkawayAbsencePostgresTest extends TestCase
         }
         $dynamics += [
             'inferred_temperament' => 'Romantic',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'love_language_primary' => RelationshipDynamics::LL_TIME,
             'love_language_secondary' => RelationshipDynamics::LL_WORDS,
             '_interest_vector' => [0.1, 0.2, 0.3],
@@ -311,10 +311,10 @@ final class RelDynWalkawayAbsencePostgresTest extends TestCase
         $spouse = ['_core_rel_type' => 'romantic'];
         // Mature, secure, independent.
         $this->seed('Mjoll', 85, 'romantic', $dims + ['maturity' => 80.0],
-            $spouse + ['inferred_temperament' => 'Independent', 'attachment_style' => 'secure', 'traits' => []]);
+            $spouse + ['inferred_temperament' => 'Independent', 'profile_overrides' => ['attachment_style' => 'secure'], 'traits' => []]);
         // Immature, anxious, proud, codependent.
         $this->seed('Serana', 85, 'romantic', $dims + ['maturity' => 20.0],
-            $spouse + ['inferred_temperament' => 'Proud', 'attachment_style' => 'anxious', 'traits' => ['egocentric', 'insecure']]);
+            $spouse + ['inferred_temperament' => 'Proud', 'profile_overrides' => ['attachment_style' => 'anxious'], 'traits' => ['egocentric', 'insecure']]);
         $this->seed('Lydia', 0, 'neutral', $dims + ['maturity' => 50.0]);   // someone else to talk to
     }
 

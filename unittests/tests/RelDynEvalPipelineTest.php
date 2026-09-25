@@ -98,7 +98,7 @@ final class RelDynEvalPipelineTest extends TestCase
         $mirror = ($coreAff + 100.0) / 2.0;
         $dyn = [
             'inferred_temperament' => $o['temperament'] ?? 'Humble',
-            'attachment_style' => $o['attachment'] ?? 'secure',
+            'profile_overrides' => ['attachment_style' => $o['attachment'] ?? 'secure'],
             'traits' => $o['traits'] ?? [],
             'jealousy_anger' => $o['jealousy'] ?? 0.0,
             'love_language_primary' => $o['ll_primary'] ?? null,
@@ -247,11 +247,11 @@ final class RelDynEvalPipelineTest extends TestCase
     {
         $this->setConfig(['passion_enabled' => false]);
         $npc = $this->npc(['traits' => ['egocentric']]);
-        $npc['profile_overrides'] = ['traits' => []];   // editor removed the trait
+        $npc['profile_overrides']['traits'] = [];   // editor removed the trait
         $this->assertEqualsWithDelta(1.0, RelationshipDynamics::affinityModifiers($npc, 10, ['praise'])['M'], 1e-9);
 
         $npc = $this->npc(['traits' => []]);
-        $npc['profile_overrides'] = ['traits' => ['Egocentric']];   // editor added it
+        $npc['profile_overrides']['traits'] = ['Egocentric'];   // editor added it
         $this->assertEqualsWithDelta(1.5, RelationshipDynamics::affinityModifiers($npc, 10, ['praise'])['M'], 1e-9);
     }
 

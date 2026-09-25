@@ -67,7 +67,7 @@ final class RelDynFulfillmentTest extends TestCase
     {
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
             'inferred_temperament' => 'Independent',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'traits' => [],
             'love_language_primary' => RelationshipDynamics::LL_TIME,
             'love_language_secondary' => RelationshipDynamics::LL_WORDS,
@@ -102,7 +102,7 @@ final class RelDynFulfillmentTest extends TestCase
             'loved facets by preference strength, primary 1.0 / secondary 0.6 love language; disliked and faint facets are no need');
 
         // Egocentric wants admiration; an anxious attachment wants time and reassurance; Proud adds admiration
-        $needy = RelDynFulfillment::needs($this->npc(['inferred_temperament' => 'Proud', 'attachment_style' => 'anxious',
+        $needy = RelDynFulfillment::needs($this->npc(['inferred_temperament' => 'Proud', 'profile_overrides' => ['attachment_style' => 'anxious'],
             'traits' => ['egocentric', 'insecure']]), $this->prefs());
         $this->assertSame(1.0, $needy['admiration'], '0.8 egocentric + 0.4 Proud, capped at 1');
         $this->assertSame(1.0, $needy['reassurance'], '0.8 insecure + 0.6 anxious, capped');

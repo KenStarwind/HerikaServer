@@ -233,15 +233,19 @@ final class RelDynTemperamentAutogenTest extends TestCase
     // Attachment style (MDD 6.1) and maturity type (MDD 15.6)
     // ---------------------------------------------------------------------
 
-    public function testAttachmentAndMaturityTypeFollowTemperamentAndClass(): void
+    public function testAttachmentHasItsOwnEvidenceAndMaturityTypeFollowsTemperamentAndClass(): void
     {
         $p = RelationshipDynamics::deriveNpcProfile('Guard', self::withClass('Warrior'));
         $this->assertSame('Bold', $p['temperament']);
         $this->assertSame('secure', $p['attachment_style']);
+        $this->assertSame('derived', $p['sources']['attachment']);
         $this->assertSame('Resilient', $p['maturity_type']);
 
+        // Decisions §12: a Guarded mage is hard to get close to, not avoidant once close
         $p = RelationshipDynamics::deriveNpcProfile('Wizard', self::withClass('Conjurer'));
-        $this->assertSame('avoidant', $p['attachment_style']);
+        $this->assertSame('Guarded', $p['temperament']);
+        $this->assertSame('secure', $p['attachment_style']);
+        $this->assertSame(0.15, $p['attachment']['avoidance']);
         $this->assertSame('Brittle', $p['maturity_type']);
 
         // Class part of "temperament + NPC class" (MDD 15.6): the dramatic bard swings both ways.
@@ -249,26 +253,29 @@ final class RelDynTemperamentAutogenTest extends TestCase
         $this->assertSame('Volatile', $p['maturity_type']);
     }
 
-    public function testWarmthCurveShiftsAttachment(): void
+    public function testTheWarmthCurveNoLongerSetsAttachment(): void
     {
-        // Pipeline MDD 6.1: attachment is "temperament + warmth curve". Guarded -> avoidant by
-        // default; the same temperament on a quick_warmth curve opens up to secure.
+        // The April "temperament + warmth curve" attachment is gone (decisions §12): the curve is
+        // how fast warmth grows, the axes come from their own evidence.
         $row = self::withClass('Conjurer');
-        $this->assertSame('avoidant', RelationshipDynamics::deriveNpcProfile('W', $row)['attachment_style']);
-        $this->assertSame('secure', RelationshipDynamics::deriveNpcProfile('W', $row, ['warmth_curve' => 'quick_warmth'])['attachment_style']);
+        $this->assertArrayNotHasKey('temperament_attachment', RelationshipDynamics::temperamentAutogenDefaults());
+        $this->assertArrayNotHasKey('attachment_curve_shift', RelationshipDynamics::temperamentAutogenDefaults());
+        $this->assertSame(RelationshipDynamics::deriveNpcProfile('W', $row)['attachment'],
+            RelationshipDynamics::deriveNpcProfile('W', $row, ['warmth_curve' => 'quick_warmth'])['attachment']);
     }
 
     public function testToxicIsNeverAutoAssigned(): void
     {
-        $cfg = RelationshipDynamics::temperamentAutogenDefaults();
-        $cfg['temperament_attachment']['Bold'] = 'toxic';
-        $p = RelationshipDynamics::deriveNpcProfile('Guard', self::withClass('Warrior'), ['config' => $cfg]);
-        $this->assertNotSame('toxic', $p['attachment_style']);
+        // Every derivation row pushed high: the fearful region is still not derived
+        $cfg = RelationshipDynamics::attachmentDefaults();
+        $cfg['derive']['temperament']['Bold'] = ['anxiety' => 0.8, 'avoidance' => 0.8];
+        $a = RelationshipDynamics::deriveAttachmentAxes(['temperament' => 'Bold', 'traits' => []], $cfg);
+        $this->assertNotSame('toxic', RelationshipDynamics::attachmentStyleOf($a['anxiety'], $a['avoidance'], $cfg));
 
         // ...but a manual override may set it.
         $p = RelationshipDynamics::deriveNpcProfile('Villain', self::withClass('Warrior'), ['overrides' => ['attachment_style' => 'toxic']]);
         $this->assertSame('toxic', $p['attachment_style']);
-        $this->assertSame('override', $p['sources']['attachment_style']);
+        $this->assertSame('override', $p['sources']['attachment']);
     }
 
     // ---------------------------------------------------------------------
@@ -366,7 +373,8 @@ final class RelDynTemperamentAutogenTest extends TestCase
 
         $this->assertSame('Guarded', $d['inferred_temperament'], 'no longer null on 3.4.1');
         $this->assertSame('guarded', $d['warmth_curve'], 'curve follows the temperament');
-        $this->assertSame('avoidant', $d['attachment_style']);
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($d), 'Guarded is not avoidant (decisions §12)');
+        $this->assertArrayNotHasKey('attachment_style', $d, 'no stored label: the axes are read from the profile');
         $this->assertSame('Brittle', $d['dimensions']['maturity']['plasticity_type']);
         $this->assertSame([], $d['traits']);
         $this->assertNotEmpty($d['love_language_primary']);
@@ -394,10 +402,12 @@ final class RelDynTemperamentAutogenTest extends TestCase
         $this->fakeDb(['Lydia' => self::withClass('Warrior')]);
         $d = RelationshipDynamics::defaultDynamics();
         $d['inferred_temperament'] = 'Romantic';     // set earlier (editor / Sharmat)
-        $d['attachment_style'] = 'anxious';          // shifted by a divine-intervention arc
+        $d['profile_overrides']['attachment_style'] = 'anxious';   // the editor's explicit override
+        $d[RelationshipDynamics::ATTACHMENT_DRIFT_KEY] = ['anxiety' => -0.1, 'avoidance' => 0.0];   // experience so far
         RelationshipDynamics::ensureTemperamentProfile('Lydia', $d);
         $this->assertSame('Romantic', $d['inferred_temperament']);
-        $this->assertSame('anxious', $d['attachment_style']);
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($d));
+        $this->assertEqualsWithDelta(0.75, RelationshipDynamics::getAttachmentAxes($d)['anxiety'], 1e-9, 'override point + the drift kept');
         $this->assertSame('Growth', $d['dimensions']['maturity']['plasticity_type'], 'Romantic -> Growth');
         $this->assertSame('stored', $d['_profile_autogen']['temperament_source']);
     }
@@ -460,19 +470,25 @@ final class RelDynTemperamentAutogenTest extends TestCase
         $this->fakeDb(['Uthgerd the Unbroken' => self::withClass('Warrior')]);
         $d = RelationshipDynamics::defaultDynamics();
         RelationshipDynamics::ensureTemperamentProfile('Uthgerd the Unbroken', $d);
-        $this->assertSame(['Bold', 'secure', 'Resilient', []], [$d['inferred_temperament'], $d['attachment_style'],
+        $this->assertSame(['Bold', 'secure', 'Resilient', []], [$d['inferred_temperament'], RelationshipDynamics::getAttachmentStyle($d),
             $d['dimensions']['maturity']['plasticity_type'], $d['traits']]);
+        [$anx0, $avo0] = array_values(array_intersect_key(RelationshipDynamics::getAttachmentAxes($d), ['anxiety' => 1, 'avoidance' => 1]));
 
+        // Proud is a weak prior, and Proud brings the egocentric trait: a little more avoidance,
+        // still secure (the April map made every Proud NPC avoidant)
         $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'temperament', 'Proud'));
         $this->assertSame('Proud', $d['inferred_temperament']);
-        $this->assertSame('avoidant', $d['attachment_style']);
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($d));
+        $this->assertEqualsWithDelta($avo0 + 0.05 + 0.1, RelationshipDynamics::getAttachmentAxes($d)['avoidance'], 1e-9, 'Proud prior + egocentric');
+        $this->assertSame($anx0, RelationshipDynamics::getAttachmentAxes($d)['anxiety']);
         $this->assertSame('Brittle', $d['dimensions']['maturity']['plasticity_type']);
         $this->assertSame(['egocentric'], $d['traits']);
 
-        // An arc-shifted attachment is not an auto value any more: a later temperament edit keeps it.
-        $d['attachment_style'] = 'anxious';
+        // Drift (experience) is kept across a temperament edit; the base follows the profile
+        $d[RelationshipDynamics::ATTACHMENT_DRIFT_KEY] = ['anxiety' => 0.2, 'avoidance' => 0.0];
         $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'temperament', 'Bold'));
-        $this->assertSame('anxious', $d['attachment_style']);
+        $this->assertEqualsWithDelta($anx0 + 0.2, RelationshipDynamics::getAttachmentAxes($d)['anxiety'], 1e-9);
+        $this->assertEqualsWithDelta($avo0, RelationshipDynamics::getAttachmentAxes($d)['avoidance'], 1e-9);
 
         $this->assertFalse(RelationshipDynamics::setProfileOverride($d, 'temperament', 'Grumpy'));
         $this->assertFalse(RelationshipDynamics::setProfileOverride($d, 'maturity_type', 'Squishy'));

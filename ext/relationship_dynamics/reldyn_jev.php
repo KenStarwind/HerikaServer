@@ -18,7 +18,11 @@
  *   arousal          float  0..100      valence  float -100..100
  *   passion          float  0..100 (capped by the Attraction Matrix)
  *   jealousy         float  0..100      jealousy_rival ?string
- *   attachment       string secure|anxious|avoidant|toxic
+ *   attachment       string secure|anxious|avoidant|toxic (the style region of the axes; toxic =
+ *                           fearful, MDD Toxic/Disorganized)
+ *   attachment_anxiety, attachment_avoidance
+ *                    float  0..1 the two attachment axes (decisions §12, Fraley & Shaver): fear of
+ *                           abandonment; discomfort with closeness once someone is in
  *   temperament      ?string
  *   relationship_type string RelDyn type (RelationshipDynamics::getRelationshipType)
  *   core_type        ?string core relationships.Player.type
@@ -51,6 +55,8 @@ final class RelDynJev
         'attraction.modifier' => 'modifier(S), multiplier', 'attraction.gate_product' => '0 or 1',
         'attraction.passion_mult' => 'passion-gain multiplier', 'attraction.respect_mult' => 'respect-gain multiplier',
         'attraction.score' => '0..1',
+        'attachment_anxiety' => 'axis 0..1 (fear of abandonment)',
+        'attachment_avoidance' => 'axis 0..1 (discomfort with closeness once in)',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
     ];
 
@@ -99,6 +105,7 @@ final class RelDynJev
         }
 
         $boundary = $dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? 'none';
+        $axes = RelationshipDynamics::getAttachmentAxes($dynamics);
         $rival = trim((string) ($dynamics['jealousy_trigger_npc'] ?? ''));
         $out = [
             'npc' => $npcName,
@@ -112,7 +119,9 @@ final class RelDynJev
             'passion' => round(RelationshipDynamics::getPassion($dynamics), 2),
             'jealousy' => round(floatval($dynamics['jealousy_anger'] ?? 0), 2),
             'jealousy_rival' => $rival !== '' ? $rival : null,
-            'attachment' => RelationshipDynamics::getAttachmentStyle($dynamics),
+            'attachment' => RelationshipDynamics::attachmentStyleOf($axes['anxiety'], $axes['avoidance']),
+            'attachment_anxiety' => round($axes['anxiety'], 3),
+            'attachment_avoidance' => round($axes['avoidance'], 3),
             'temperament' => RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? null),
             'relationship_type' => (string) RelationshipDynamics::getRelationshipType($npcName, $dynamics),
             'core_type' => isset($dynamics['_core_rel_type']) ? (string) $dynamics['_core_rel_type'] : null,
@@ -144,7 +153,8 @@ final class RelDynJev
         $parts[] = 'jealousy=' . $f($s['jealousy']) . ($s['jealousy_rival'] !== null ? "(rival {$s['jealousy_rival']})" : '');
         $parts[] = 'resentment=' . $f($s['resentment']);
         $parts[] = 'mood=' . $f($s['arousal']) . '/' . $f($s['valence']);
-        $parts[] = "attachment={$s['attachment']}";
+        $parts[] = "attachment={$s['attachment']}(anxiety " . number_format($s['attachment_anxiety'], 2, '.', '')
+            . ' avoidance ' . number_format($s['attachment_avoidance'], 2, '.', '') . ')';
         if ($s['temperament'] !== null) $parts[] = "temperament={$s['temperament']}";
         $parts[] = "weather={$s['weather']}";
         $parts[] = 'conflict=' . ($s['open_conflict'] ? 'open' : 'none');

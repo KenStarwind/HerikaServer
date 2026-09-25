@@ -191,7 +191,7 @@ final class RelDynFacetPostgresTest extends TestCase
         }
         $dynamics = $extraDynamics + [
             'inferred_temperament' => 'Independent',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'traits' => [],
             'love_language_primary' => RelationshipDynamics::LL_TIME,
             'love_language_secondary' => RelationshipDynamics::LL_WORDS,

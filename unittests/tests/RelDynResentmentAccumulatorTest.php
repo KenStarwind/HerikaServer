@@ -40,7 +40,7 @@ final class RelDynResentmentAccumulatorTest extends TestCase
     {
         $d = $extra + [
             'inferred_temperament' => 'Stoic',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'jealousy_anger' => 0.0,
             'in_conflict' => false,
             'dimensions' => [],

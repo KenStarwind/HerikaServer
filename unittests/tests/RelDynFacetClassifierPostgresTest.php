@@ -485,7 +485,7 @@ final class RelDynFacetClassifierPostgresTest extends TestCase
     {
         $dynamics = [
             'inferred_temperament' => 'Romantic',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'love_language_primary' => RelationshipDynamics::LL_TIME,
             'love_language_secondary' => RelationshipDynamics::LL_WORDS,
             '_profile_autogen' => ['version' => 999],

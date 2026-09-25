@@ -26,7 +26,7 @@ $rdWarmth       = $rdDynamics['warmth_curve'] ?? '';
 $rdTemperament  = $rdDynamics['inferred_temperament'] ?? '';
 $rdRelPref      = $rdDynamics['relationship_preference'] ?? '';
 $rdOpenness     = $rdDynamics['openness'] ?? '';
-$rdAttachment   = $rdDynamics['attachment_style'] ?? '';
+$rdAttachment   = $rdDynamics['profile_overrides']['attachment_style'] ?? '';   // explicit override only (decisions §12)
 $rdSensitivity  = $rdDynamics['social_sensitivity_curve'] ?? '';
 $rdHomeLocation = $rdDynamics['home_location'] ?? '';
 $rdPassion      = floatval($rdDynamics['passion'] ?? 0);
@@ -431,11 +431,11 @@ if ($rdUiPos !== false) {
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px;">
             <div>
                 <label style="font-weight:700; color:rgb(242, 124, 17); display:block; margin-bottom:4px; font-size:0.85em;"
-                    title="Attachment style affects jealousy sensitivity, conflict patterns, and emotional volatility. Blank = derive from temperament.">
+                    title="Override: pins the NPC to this style's textbook point on the anxiety x avoidance axes. Blank = derived from class, traits, temperament (weak prior) and loss history, drifting with experience.">
                     Attachment Style
                 </label>
                 <select id="reldyn_attachment_style" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
-                    <option value=""<?= $rdAttachment === '' ? ' selected' : '' ?>>-- From temperament --</option>
+                    <option value=""<?= $rdAttachment === '' ? ' selected' : '' ?>>-- Derived (two axes) --</option>
                     <option value="secure"<?= $rdAttachment === 'secure' ? ' selected' : '' ?>>Secure</option>
                     <option value="avoidant"<?= $rdAttachment === 'avoidant' ? ' selected' : '' ?>>Avoidant</option>
                     <option value="anxious"<?= $rdAttachment === 'anxious' ? ' selected' : '' ?>>Anxious</option>

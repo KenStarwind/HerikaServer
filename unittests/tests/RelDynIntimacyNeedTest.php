@@ -166,7 +166,7 @@ final class RelDynIntimacyNeedTest extends TestCase
         $d = $this->derived(['Scholar' => self::scholar()], 'Scholar');
         $n = self::need($d);
         $this->assertSame('Guarded', $d['inferred_temperament']);
-        $this->assertSame('avoidant', $d['attachment_style']);
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($d), 'Guarded is not avoidant (decisions §12)');
         $this->assertGreaterThanOrEqual(0.6, $n['emotional'], 'Ken: Ashe is about the connection');
         $this->assertLessThanOrEqual(0.25, $n['physical'], 'less about the sex');
         $this->assertGreaterThanOrEqual(0.4, $n['emotional'] - $n['physical']);
@@ -344,6 +344,7 @@ final class RelDynIntimacyNeedTest extends TestCase
 
     public function testNoConnectionAtAllIsEmotionalDeprivationInHerOwnVoice(): void
     {
+        // The Guarded scholar is secure once close (decisions §12): she says she misses it
         $d = $this->derived(['Scholar' => self::scholar()], 'Scholar');
         RelDynFulfillment::ensure($d, RelDynFacets::neutralPreferences(), self::T0);
         $this->assertNull(RelDynIntimacy::feltText('Scholar', 'Kaida', $d, self::T0 + self::DAY), 'a day apart is nothing');
@@ -351,9 +352,14 @@ final class RelDynIntimacyNeedTest extends TestCase
         $this->assertSame(RelDynIntimacy::EMOTIONAL, RelDynIntimacy::deprivedAxis($d, $later));
         $text = RelDynIntimacy::feltText('Scholar', 'Kaida', $d, $later);
         $this->assertStringContainsString('Kaida', $text);
-        $this->assertStringContainsString('would never say it', $text, 'avoidant: kept behind a wall');
+        $this->assertStringContainsString('misses feeling close', $text);
         $this->assertDoesNotMatchRegularExpression('/\d/', $text);
         $this->assertStringNotContainsString('physical', strtolower($text));
+
+        // An avoidant one (the editor pinned it) keeps it behind a wall
+        $w = $this->derived(['Scholar' => self::scholar()], 'Scholar', ['profile_overrides' => ['attachment_style' => 'avoidant']]);
+        RelDynFulfillment::ensure($w, RelDynFacets::neutralPreferences(), self::T0);
+        $this->assertStringContainsString('would never say it', (string) RelDynIntimacy::feltText('Scholar', 'Kaida', $w, $later), 'avoidant: kept behind a wall');
     }
 
     public function testPhysicalDeprivationTextIsMFAwareAndMaturityAware(): void
@@ -394,7 +400,7 @@ final class RelDynIntimacyNeedTest extends TestCase
         $prefs = RelDynFacets::neutralPreferences();
         $levels = [];
         foreach (['avoidant', 'secure', 'toxic', 'anxious'] as $style) {
-            $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['attachment_style' => $style]);
+            $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['profile_overrides' => ['attachment_style' => $style]]);
             $this->assertSame($style, RelationshipDynamics::getAttachmentStyle($d));
             $this->assertTrue(RelDynFulfillment::ensure($d, $prefs, self::T0));
             $levels[$style] = RelDynFulfillment::levelsAt($d['_fulfillment'], self::T0 + 3 * self::DAY);
@@ -415,7 +421,7 @@ final class RelDynIntimacyNeedTest extends TestCase
             ['secure' => 1.0, 'avoidant' => 0.5, 'anxious' => 2.0, 'toxic' => 1.5], 'PR 13 values');
 
         // A late delivery (an eval item applied after the fact) lands decayed at the axis's own rate
-        $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['attachment_style' => 'anxious']);
+        $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['profile_overrides' => ['attachment_style' => 'anxious']]);
         RelDynFulfillment::ensure($d, $prefs, self::T0);
         RelDynFulfillment::deliver($d, [RelDynIntimacy::PHYSICAL => 0.0001], self::T0 + 3 * self::DAY);
         $other = array_values(array_diff(array_keys($d['_fulfillment']['w']), RelDynIntimacy::AXES))[0];

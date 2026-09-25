@@ -447,7 +447,7 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->dayTogether(2, 6, 'flirty');
         $this->assertGreaterThan($passion0 + 5.0, $this->passion(), 'the warrior earns passion');
         // rulings §11 / §9: passion x attraction modifier x required-pillar gates x attachment
-        // (Aela: Independent -> avoidant 0.7); a friendzoned player's gate is closed (x0)
+        // (Aela: secure-leaning since decisions §12, x0.91); a friendzoned player's gate is closed (x0)
         $att = $this->dynamics()['_attraction'];
         $this->assertGreaterThan(0.0, $att['passion_mult']);
         $this->assertEqualsWithDelta($att['passion']['modifier'] * $att['passion']['gate_product'] * $att['passion']['attachment'],
@@ -463,14 +463,21 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->assertSame('promotion', $this->reldyn()['core_type_change']['direction']);
         $this->assertSame('crush', $this->reldyn()['romance']['core_type'], 'published for the Sharmat handoff');
 
-        // ---- The next days: affinity climbs through the eval (RelDyn owns core aff) to the bonded tier
+        // ---- The next days: affinity climbs through the eval (RelDyn owns core aff) to the bonded tier.
+        // Affinity alone promotes nothing: below the bonded tier she stays a crush, whatever the
+        // evenings. At it, significant romantic moments carry the next rung; Aela is secure-leaning
+        // (decisions §12: momentum x1.29, x2.0 while she was avoidant), so the flirty evenings at
+        // the bonded tier may already do it before the confession below.
         for ($day = 4; $day <= 14 && intval($this->core()['aff']) < 78; $day++) {
             $this->dayTogether($day, 6, 'flirty');
+            if (intval($this->core()['aff']) < 76) {
+                $this->assertSame('crush', $this->core()['type'], "day {$day}: affinity alone promotes nothing");
+            }
         }
         $aff = intval($this->core()['aff']);
         $this->assertGreaterThan($aff0, $aff);
         $this->assertGreaterThanOrEqual(76, $aff, 'high affinity: the bonded tier');
-        $this->assertSame('crush', $this->core()['type'], 'affinity alone promotes nothing');
+        $this->assertContains($this->core()['type'], ['crush', 'romantic'], 'one rung at a time');
         $this->assertGreaterThan(8.0, $this->passion(), 'passion held through the days (XYZ pulls it toward its baseline)');
 
         // ---- A significant romantic exchange at high affinity: romantic
@@ -566,7 +573,9 @@ final class RelDynAttractionRomanceTest extends TestCase
 
         $this->assertLessThanOrEqual(20.0, $maxPassion, 'passion never above 20');
         $this->assertSame(0.0, floatval($this->dynamics()['_attraction']['passion_mult']), 'friendzoned: the gate is closed (rulings §11)');
-        $this->assertGreaterThan($aff0 + 5, intval($this->core()['aff']), 'she still grows fond of him');
+        // (absence between the days decays her at the secure-leaning rate, decisions §12: x0.86,
+        // x0.5 while she was avoidant)
+        $this->assertGreaterThanOrEqual($aff0 + 5, intval($this->core()['aff']), 'she still grows fond of him');
         $this->assertSame('platonic', $this->core()['type'], 'never promoted');
         $d = $this->dynamics();
         $this->assertTrue($d['_attraction']['friendzoned']);

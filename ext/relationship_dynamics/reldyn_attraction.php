@@ -264,7 +264,8 @@ class RelDynAttraction
                 // Passion points: not attracted at all (MDD 8.1 Unknown/Acquaintance passion ceiling)
                 'unattracted_cap' => 20,
                 // Attachment style (MDD 6.1) -> passion gain speed: anxious attaches fast,
-                // avoidant slow (rulings §9 "passion considers attachment style")
+                // avoidant slow (rulings §9 "passion considers attachment style"). Style corners:
+                // an NPC reads them blended at its attachment axes (decisions §12)
                 'attachment_mult' => ['anxious' => 1.3, 'secure' => 1.0, 'avoidant' => 0.7, 'toxic' => 1.2],
             ],
             // Plan §4: respect rate = (competence + status) / 2 on this NPC's pillar scores
@@ -875,8 +876,11 @@ class RelDynAttraction
         // ---- Passion (rulings §11: modifier x gates x attachment; rulings §9: Aela warms to a
         // warrior, feels no passion for a bard). The gates are the NPC's passion pillars met or
         // not (passionFactors); the outcome, the caps and the intimacy hint follow them.
-        $style = RelationshipDynamics::getAttachmentStyle($dynamics);
-        $pf = self::passionFactors($pillars, $score, $def, $style, $cfg);
+        $style = RelationshipDynamics::getAttachmentStyle($dynamics);   // for the log line only
+        $pc = array_replace(self::defaults()['passion'], (array) ($cfg['passion'] ?? []));
+        // attachment_mult's style corners read at the NPC's axes (decisions §12)
+        $attachmentMult = RelationshipDynamics::attachmentBlend($dynamics, (array) $pc['attachment_mult'], 1.0);
+        $pf = self::passionFactors($pillars, $score, $def, $attachmentMult, $cfg);
         $passionPass = $pf['gate_product'] > 0.0;
         // Plan §7: a balanced NPC's passion opens on its pillars OR the bond, whichever comes first
         $bondOpens = $gate === 'balanced' && $bonded;
@@ -997,12 +1001,13 @@ class RelDynAttraction
      *               miss within the openness margin, MDD 1.4), 0 when not; unknown / soft /
      *               irrelevant pillars add no gate
      *   tolerated = a gate was met only through the openness margin (the MDD 1.4 ceiling cut)
-     *   attachment = attachment_mult[style] (rulings §9)
+     *   attachment = attachment_mult blended at the NPC's attachment axes (rulings §9,
+     *                decisions §12; RelationshipDynamics::attachmentBlend), passed in
      *
      * @return array ['modifier', 'gates' => [pillar|'flexible' => 0|1], 'gate_product', 'tolerated',
      *   'attachment', 'bond_prebond_mult', 'friendzone_cap', 'unattracted_cap']
      */
-    private static function passionFactors(array $pillars, float $score, array $def, string $style, array $cfg): array
+    private static function passionFactors(array $pillars, float $score, array $def, float $attachmentMult, array $cfg): array
     {
         $pc = array_replace(self::defaults()['passion'], (array) ($cfg['passion'] ?? []));
         $margin = max(0.0, min(1.0, floatval(((array) $cfg['openness_margin'])[$def['openness']] ?? 0.0)));
@@ -1042,7 +1047,7 @@ class RelDynAttraction
             'gates' => $gates,
             'gate_product' => $product,
             'tolerated' => $tolerated && $product > 0.0,
-            'attachment' => floatval(((array) $pc['attachment_mult'])[$style] ?? 1.0),
+            'attachment' => round($attachmentMult, 6),
             'bond_prebond_mult' => floatval($pc['bond_prebond_mult']),
             'friendzone_cap' => floatval($pc['friendzone_cap']),
             'unattracted_cap' => floatval($pc['unattracted_cap']),
@@ -1228,7 +1233,7 @@ class RelDynAttraction
         $maturityPace = floatval($a['maturity_pace_min']) + (floatval($a['maturity_pace_max']) - floatval($a['maturity_pace_min'])) * $maturity / 100.0;
         $n = floatval(((array) $a['base_by_gate'])[$gate] ?? 4)
             * floatval(((array) $a['openness_pace'])[$openness] ?? 1.0)
-            * floatval(((array) $a['attachment_pace'])[RelationshipDynamics::getAttachmentStyle($dynamics)] ?? 1.0)
+            * RelationshipDynamics::attachmentBlend($dynamics, (array) $a['attachment_pace'], 1.0)   // at the NPC's axes
             * $maturityPace
             * ($tolerated ? floatval($cfg['tolerated_pace_mult']) : 1.0);
         return max(1, min(intval($a['max_needed']), (int) round($n)));

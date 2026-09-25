@@ -53,7 +53,7 @@ final class RelDynWalkawayTimersTest extends TestCase
     {
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
             'inferred_temperament' => 'Jealous',
-            'attachment_style' => 'anxious',
+            'profile_overrides' => ['attachment_style' => 'anxious'],
             '_accumulated_play_gamets' => self::PLAY,
         ]));
         $d['dimensions']['resentment']['x'] = 70.0;   // no early recovery
@@ -133,7 +133,7 @@ final class RelDynWalkawayTimersTest extends TestCase
     public function testFollowingALowResentmentWalkawayIsStillPermanent(): void
     {
         $d = $this->npc();
-        $d['attachment_style'] = 'secure';
+        $d['profile_overrides']['attachment_style'] = 'secure';
         $d['dimensions']['resentment']['x'] = 20.0;   // early-recovery range (< 50) ...
         $d['dimensions']['comfort']['x'] = 50.0;      // ... with comfort > 30
         RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'autonomy');
@@ -247,7 +247,7 @@ final class RelDynWalkawayTimersTest extends TestCase
     public function testALowResentmentToxicSleeperWaitsForItsHoover(): void
     {
         $d = $this->npc();
-        $d['attachment_style'] = 'toxic';
+        $d['profile_overrides']['attachment_style'] = 'toxic';
         $d['dimensions']['maturity']['x'] = 20.0;
         $d['dimensions']['resentment']['x'] = 20.0;
         $d['dimensions']['comfort']['x'] = 50.0;
@@ -267,7 +267,7 @@ final class RelDynWalkawayTimersTest extends TestCase
     public function testALowResentmentWalkawayLeftAloneRecoversEarly(): void
     {
         $d = $this->npc();
-        $d['attachment_style'] = 'secure';
+        $d['profile_overrides']['attachment_style'] = 'secure';
         $d['dimensions']['resentment']['x'] = 20.0;
         $d['dimensions']['comfort']['x'] = 50.0;
         RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'autonomy');
@@ -297,7 +297,7 @@ final class RelDynWalkawayTimersTest extends TestCase
     public function testHooverSleeperIsSeventyTwoToNinetySixGameCalendarHours(): void
     {
         $d = $this->npc();
-        $d['attachment_style'] = 'toxic';
+        $d['profile_overrides']['attachment_style'] = 'toxic';
         $d['dimensions']['maturity']['x'] = 30.0;
         RelationshipDynamics::initiateWalkaway($d, 'Lydia', 'resentment');
         RelationshipDynamics::processWalkawayTick($d, 'Lydia', 'Jealous');   // active
@@ -316,7 +316,7 @@ final class RelDynWalkawayTimersTest extends TestCase
     public function testToxicSleeperWaitsForItsHooverInsteadOfResolving(): void
     {
         $d = $this->npc();
-        $d['attachment_style'] = 'toxic';
+        $d['profile_overrides']['attachment_style'] = 'toxic';
         $d['dimensions']['maturity']['x'] = 30.0;
         $d = $this->inBoundaryTest($d);
 

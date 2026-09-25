@@ -119,7 +119,7 @@ final class RelDynAttractionFidelityTest extends TestCase
     /** Uthgerd reduced to one required pillar (rigid strength, read without a lens) at a chosen openness. */
     private function uthgerd(string $openness): array
     {
-        $d = $this->npc('Uthgerd the Unbroken', ['attachment_style' => 'secure']);
+        $d = $this->npc('Uthgerd the Unbroken', ['profile_overrides' => ['attachment_style' => 'secure']]);
         $d['attraction_overrides'] = [
             'rigidity' => ['beauty' => 'soft', 'strength' => 'rigid', 'status' => 'soft', 'competence' => 'soft'],
             'lens_share' => ['strength' => 0.0], 'openness' => $openness,
@@ -209,7 +209,7 @@ final class RelDynAttractionFidelityTest extends TestCase
         $d['attraction_overrides']['gate'] = 'balanced';
         $stranger = RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $d, $player);
         $this->assertFalse($stranger['passes'], $stranger['reason']);
-        $bonded = $this->npc('Uthgerd the Unbroken', ['attachment_style' => 'secure'], 80.0);
+        $bonded = $this->npc('Uthgerd the Unbroken', ['profile_overrides' => ['attachment_style' => 'secure']], 80.0);
         $bonded['attraction_overrides'] = $d['attraction_overrides'];
         $bonded['_attraction_state'] = ['depth' => 'devoted', 'romance' => 0, 'pending' => null, 'peak_core_aff' => 80.0,
             'grandfathered' => ['depth' => 'bonded', 'romance' => 0]];

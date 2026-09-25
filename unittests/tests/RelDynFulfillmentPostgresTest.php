@@ -371,6 +371,11 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $this->assertGreaterThan(0.4, $aelaBand);
         $this->assertLessThan(-0.5, $seranaBand);
 
+        // Their grace multipliers as they left: the absence itself moves attachment once neglect
+        // starts (decisions §12 drift), which does not reach back into the grace already served
+        $graceMult = ['Aela' => RelationshipDynamics::getNeglectProfile($this->dynamics('Aela'))['grace_mult'],
+                      'Serana' => RelationshipDynamics::getNeglectProfile($this->dynamics('Serana'))['grace_mult']];
+
         // Twelve game days away; time moves for both on other requests (the calendar scan)
         $neglectDays = ['Aela' => 0.0, 'Serana' => 0.0];
         for ($h = 6; $h <= 12 * 24; $h += 6) {
@@ -382,7 +387,7 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         }
         // Grace = bonded 3 game days x the NPC's grace_mult x 2^band at the last contact
         foreach (['Aela' => $aelaBand, 'Serana' => $seranaBand] as $name => $band) {
-            $grace = 3.0 * RelationshipDynamics::getNeglectProfile($this->dynamics($name))['grace_mult'] * 2 ** $band;
+            $grace = 3.0 * $graceMult[$name] * 2 ** $band;
             $this->assertEqualsWithDelta(12.0 - $grace, $neglectDays[$name], 0.01, "{$name}: neglect starts after a grace of {$grace} game days");
         }
         $neglect = function (string $name): float {

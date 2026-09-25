@@ -12,7 +12,8 @@
  *
  * Derivation (deterministic, config key 'intimacy_need'): base per axis, plus the rows that
  * match the NPC's race lifespan (core_npc_master.race), creature (vampire / werewolf),
- * temperament, attachment style, traits, love languages (slot-weighted), the attraction
+ * temperament, attachment (each style row x the NPC's corner weight, decisions §12), traits,
+ * love languages (slot-weighted), the attraction
  * intimacy gate (visceral / bond, RelDynAttraction::gateOf) and maturity (the maturity
  * baseline, 0..100, linear around 50); then the relationship preference's multipliers
  * (asexual: no physical need), then the per-axis floor, clamped 0..1. Per-NPC overrides
@@ -26,8 +27,8 @@
  * reassurance, praise, touch, confiding feed emotional) and the intimacy the plugin reports
  * (recordRequest: a Sharmat / OStim scene with the player covers physical in full, a VR touch
  * is half a delivery; PR 13 "OStim/Sharmat events -> fully satisfied"). The axes decay at the
- * fulfillment half-life on the game calendar x the attachment style's rate (decayRates; PR 13:
- * avoidant 0.5x, anxious 2x, toxic 1.5x). The deprived axis the NPC needs most gives
+ * fulfillment half-life on the game calendar x the attachment rate (decayRates; PR 13 corners:
+ * avoidant 0.5x, anxious 2x, toxic 1.5x, secure 1x, blended at the NPC's attachment axes). The deprived axis the NPC needs most gives
  * <intimacy_state> (feeling text, never numbers) while intimacy is in play with the player and
  * the bond weighs (feltText), and internal weather deprivation (weatherDeprivation).
  *
@@ -255,7 +256,8 @@ class RelDynIntimacy
             'creature'    => is_string($creature) && $creature !== '' ? strtolower($creature)
                 : (is_string($stored['creature'] ?? null) ? $stored['creature'] : null),
             'temperament' => RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null),
-            'attachment'  => RelationshipDynamics::getAttachmentStyle($dynamics),
+            // style corner => weight (RelationshipDynamics::attachmentWeights, sums to 1)
+            'attachment'  => RelationshipDynamics::attachmentWeights($dynamics),
             'traits'      => RelationshipDynamics::getTraits($dynamics),
             'love_language_primary'   => $dynamics['love_language_primary'] ?? null,
             'love_language_secondary' => $dynamics['love_language_secondary'] ?? null,
@@ -300,7 +302,11 @@ class RelDynIntimacy
         }
         if (!empty($in['creature'])) $add(((array) $cfg['creature'])[$in['creature']] ?? [], 1.0, "creature:{$in['creature']}");
         if (!empty($in['temperament'])) $add(((array) $cfg['temperament'])[$in['temperament']] ?? [], 1.0, "temperament:{$in['temperament']}");
-        if (!empty($in['attachment'])) $add(((array) $cfg['attachment'])[$in['attachment']] ?? [], 1.0, "attachment:{$in['attachment']}");
+        // attachment: a style name (a textbook NPC of it) or style => corner weight
+        $att = $in['attachment'] ?? null;
+        foreach (is_array($att) ? $att : (is_string($att) && $att !== '' ? [$att => 1.0] : []) as $style => $w) {
+            if (floatval($w) > 0.0) $add(((array) $cfg['attachment'])[$style] ?? [], floatval($w), "attachment:{$style}");
+        }
         foreach ((array) ($in['traits'] ?? []) as $trait) {
             $add(((array) $cfg['traits'])[strtolower((string) $trait)] ?? [], 1.0, "trait:{$trait}");
         }
@@ -451,15 +457,16 @@ class RelDynIntimacy
     }
 
     /**
-     * Decay rate of each intimacy axis (config attachment_decay_rate by the attachment style;
-     * PR 13), axis => rate, only rates other than 1 (the fulfillment default). Empty when off.
+     * Decay rate of each intimacy axis (config attachment_decay_rate, PR 13: the style corners
+     * blended at the NPC's attachment axes, decisions §12), axis => rate, only rates other
+     * than 1 (the fulfillment default). Rounded to 4 places so slow attachment drift does not
+     * rewrite the fulfillment state on every contact. Empty when off.
      */
     public static function decayRates(array $dynamics, ?array $cfg = null): array
     {
         $cfg = $cfg ?? self::config();
         if (empty($cfg['enabled'])) return [];
-        $rate = ((array) ($cfg['attachment_decay_rate'] ?? []))[RelationshipDynamics::getAttachmentStyle($dynamics)] ?? 1.0;
-        $rate = is_numeric($rate) ? max(0.0, floatval($rate)) : 1.0;
+        $rate = round(max(0.0, RelationshipDynamics::attachmentBlend($dynamics, (array) ($cfg['attachment_decay_rate'] ?? []), 1.0)), 4);
         return $rate == 1.0 ? [] : array_fill_keys(self::AXES, $rate);
     }
 

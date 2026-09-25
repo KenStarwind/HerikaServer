@@ -48,12 +48,22 @@ try {
                 }
             }
 
-            // Attachment Style (PR 10)
-            if (isset($input['attachment_style'])) {
-                $validStyles = ['secure', 'avoidant', 'anxious', 'toxic', ''];
+            // Attachment (decisions §12): an explicit per-NPC override, either both axes
+            // (attachment_anxiety / attachment_avoidance, 0..1) or a style label (its textbook
+            // point); '' clears it and the axes are derived again.
+            if (isset($input['attachment_anxiety'], $input['attachment_avoidance'])
+                && $input['attachment_anxiety'] !== '' && $input['attachment_avoidance'] !== '') {
+                $axes = ['anxiety' => $input['attachment_anxiety'], 'avoidance' => $input['attachment_avoidance']];
+                if (!RelationshipDynamics::setProfileOverride($dynamics, 'attachment_axes', $axes)) {
+                    error_log('[RelDyn] api_save_npc: attachment axes rejected (need two numbers 0..1)');
+                }
+            } elseif (isset($input['attachment_style'])) {
                 $style = $input['attachment_style'];
-                if (in_array($style, $validStyles, true)) {
-                    $dynamics['attachment_style'] = $style === '' ? null : $style;
+                if ($style === '') {
+                    RelationshipDynamics::setProfileOverride($dynamics, 'attachment_style', null);
+                    RelationshipDynamics::setProfileOverride($dynamics, 'attachment_axes', null);
+                } elseif (!RelationshipDynamics::setProfileOverride($dynamics, 'attachment_style', $style)) {
+                    error_log('[RelDyn] api_save_npc: unknown attachment style ignored');
                 }
             }
 

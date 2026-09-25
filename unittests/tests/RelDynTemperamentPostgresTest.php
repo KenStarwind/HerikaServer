@@ -205,7 +205,10 @@ final class RelDynTemperamentPostgresTest extends TestCase
 
         $s = $this->stored($id);
         $this->assertSame('Guarded', $s['inferred_temperament']);
-        $this->assertSame('avoidant', $s['attachment_style']);
+        // Decisions §12: Guarded is not avoidant; attachment is read from the axes, no label stored
+        $this->assertArrayNotHasKey('attachment_style', $s);
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($s));
+        $this->assertSame('derived', $s['_profile_autogen']['attachment_source']);
         $this->assertSame('Brittle', $s['dimensions']['maturity']['plasticity_type']);
         $this->assertSame([], $s['traits']);
         $this->assertSame('guarded', $s['warmth_curve']);
@@ -219,7 +222,7 @@ final class RelDynTemperamentPostgresTest extends TestCase
         $this->assertEquals(RelationshipDynamics::getTemperamentBaseline('Guarded', 'trust'), $again['dimensions']['trust']['x']);
         $this->assertEquals(RelationshipDynamics::getTemperamentBaseline('Guarded', 'self_confidence'), $again['dimensions']['self_confidence']['baseline']);
         $this->assertSame('Brittle', $again['dimensions']['maturity']['plasticity_type']);
-        $this->assertSame('avoidant', RelationshipDynamics::getAttachmentStyle($again));
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($again), 'Guarded is not avoidant (decisions §12)');
 
         // Dynamic profiles rewrite personality text; the stored profile stays put.
         pg_query_params($this->db->link, 'UPDATE core_npc_master SET personality = $1 WHERE id = $2',
@@ -248,7 +251,8 @@ final class RelDynTemperamentPostgresTest extends TestCase
         $this->seedNpc('Farengar Secret-Fire', 'Spell Vendor', 'Nord', 'sk_malecondescending',
             ['_decay_last_game_gamets' => $t0], '', $rel);
         $this->seedNpc('Wylandriah', 'Spell Vendor', 'Nord', 'sk_malecondescending',
-            ['_decay_last_game_gamets' => $t0, 'inferred_temperament' => 'Stoic', 'attachment_style' => 'avoidant'], '', $rel);
+            ['_decay_last_game_gamets' => $t0, 'inferred_temperament' => 'Stoic',
+             'profile_overrides' => ['attachment_style' => 'secure']], '', $rel);   // Farengar's derived point
 
         // The attraction matrix can friendzone one of them (a different type modifier); keep
         // it out so the temperament is the only difference between the two NPCs.
@@ -266,7 +270,9 @@ final class RelDynTemperamentPostgresTest extends TestCase
         }
         $derived = RelationshipDynamics::loadStoredDynamics('Farengar Secret-Fire');
         $this->assertSame('Guarded', $derived['inferred_temperament']);
-        $this->assertSame('avoidant', $derived['attachment_style'], 'same attachment as the control');
+        $control = RelationshipDynamics::loadStoredDynamics('Wylandriah');
+        $pick = fn(array $d) => array_intersect_key(RelationshipDynamics::getAttachmentAxes($d), ['anxiety' => 1, 'avoidance' => 1]);
+        $this->assertSame($pick($control), $pick($derived), 'same attachment as the control');
 
         $this->assertGreaterThan(0.0, $drop['Wylandriah'], 'the Stoic control decays too');
         // Everything but the temperament rate is identical, so the drops keep the rate ratio.
