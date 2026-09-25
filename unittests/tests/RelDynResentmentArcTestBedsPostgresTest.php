@@ -641,10 +641,16 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
             $this->felt['Lynly Star-Sung'][$gentle[0]]['resentment_reflection']);
         $after = $this->dynamics('Lynly Star-Sung');
         $trace = json_encode([$before, self::x($after, 'resentment_self'), $after['_resentment_arc'] ?? null]);
-        $this->assertLessThan($before - 25.0, self::x($after, 'resentment_self'), 'three confessions and the kindness: the recovery path ' . $trace);
+        // One confession (the draft's: she tells, after the reflection; the v0.14 review: once, not
+        // one per opening up) and the kindness beside it, the decay on the play clock
+        $this->assertLessThanOrEqual($before - 10.0, self::x($after, 'resentment_self'), 'the confession and the kindness: the recovery path ' . $trace);
+        $this->assertGreaterThan($before - 10.0 - 3 * 0.5 * 2.0, self::x($after, 'resentment_self'), 'one confession, not three ' . $trace);
+        $this->assertFalse($after['_resentment_arc']['self']['confess_open'] ?? false, 'told: nothing left open to confess ' . $trace);
         $this->assertSame('normal', $after['_walkaway_state'] ?? 'normal', $trace);
-        $this->assertLessThanOrEqual(30.0, self::x($after, 'resentment_self'), $trace);
-        // The next time they speak, the standing effects are lifted exactly (and the reflection re-armed)
+        // The rest of the way down is slow kindness (the decay; forgiveness has no eval tag yet):
+        // here the editor sets where it would end, and the next time they speak the standing
+        // effects are lifted exactly (and the reflection re-armed)
+        $this->editDynamics('Lynly Star-Sung', function (array &$dd): void { $dd['dimensions']['resentment_self']['x'] = 25.0; });
         $this->round($k + 4, 'Good evening, love.', ['Lynly Star-Sung']);
         $lifted = $this->dynamics('Lynly Star-Sung');
         $trace = json_encode($lifted['_resentment_arc'] ?? null);

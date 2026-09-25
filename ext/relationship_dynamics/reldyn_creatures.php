@@ -439,6 +439,8 @@ final class RelDynCreatures
         if ($key !== ($state['key'] ?? '|[]')) {
             if (!empty($state['applied']) && is_array($state['applied'])) {
                 RelationshipDynamics::reverseAppliedDeltas($dynamics, $state['applied'], 'RelDyn-CREATURE', 'creature ' . ($state['state'] ?? 'row'));
+                // taken back: no longer held (heldTemporaryOffset) while the new row is applied
+                $dynamics[self::STATE_KEY]['applied'] = [];
             }
             $applied = [];
             foreach ($cur['effects'] as $dim => $delta) {

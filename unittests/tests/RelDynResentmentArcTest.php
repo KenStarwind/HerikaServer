@@ -470,10 +470,16 @@ final class RelDynResentmentArcTest extends TestCase
         $this->assertSame(60.0, self::x($d, 'resentment_self'), 'not a positive exchange');
     }
 
-    /** A confession (opened up, met with care): -10 points, beside the decay. */
+    /**
+     * A confession (after the self-reflection was said to the player, she opens up and it is met
+     * with care): -10 points, beside the decay (RelDynReviewFixesV014Test: once, and not before
+     * the reflection).
+     */
     public function testAConfessionTakesTenPoints(): void
     {
         $d = $this->npc(['resentment_self' => 60.0, 'maturity' => 50.0, 'comfort' => 40.0]);
+        RelDynResentment::tickSelf('Lydia', $d);
+        $this->assertArrayHasKey('reflection', $this->felt($d), 'the reflection, said to the player');
         $f = RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confiding']]), $d);
         $this->assertEqualsWithDelta(60.0 - 0.75 - 10.0, self::x($d, 'resentment_self'), 1e-9);
         $this->assertEqualsWithDelta(10.75, $f['resentment_self_relief'], 1e-9);

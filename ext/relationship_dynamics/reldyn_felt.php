@@ -407,7 +407,7 @@ final class RelDynFelt
         // (the band and its salience read passion as it shows in this bond: the per-bond display
         // multiplier; the thresholds below, like every tension check, read the raw passion)
         $passion = RelationshipDynamics::getPassion($dynamics);
-        $shownPassion = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'passion', $passion);
+        $shownPassion = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'passion') ?? $passion;
         $pBand = RelationshipDynamics::getPassionBand($shownPassion);
         // Not that kind of pull (the Attraction Matrix: not attracted, or a hard zero), outside
         // a romance core already holds: the platonic reading of the same passion, no urge
@@ -802,8 +802,9 @@ final class RelDynFelt
             } else {
                 // As it reads toward the player: the per-bond display multiplier (bond type x
                 // affinity bonus) on the value and on its global baseline alike; 1.0 for the
-                // NPC's own (global) dimensions and resentment
-                $val = RelationshipDynamics::getEffectiveDimensionValue($dynamics, $dim, $x($dim));
+                // NPC's own (global) dimensions and resentment. The stored x: its held offsets
+                // (the guilt bleed, a creature row ...) show as they are, outside the multiplier
+                $val = RelationshipDynamics::getEffectiveDimensionValue($dynamics, $dim);
                 $base = RelationshipDynamics::getEffectiveDimensionValue($dynamics, $dim, floatval($dims[$dim]['baseline'] ?? $def['default_baseline']));
                 $band = RelationshipDynamics::getDimensionBand($dim, $val);
                 // Confidence without wisdom (dimension draft, Dimension 11): the arrogant override

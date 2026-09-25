@@ -37,8 +37,12 @@
  *               (traits design §1.2 route A; RelDynConcern reads it)},
  *    romantic_intent: additive to v1 (decisions §8), int 0..3, always written by this producer:
  *               how romantically the PLAYER approached the NPC in the exchange (0 none .. 3 open
- *               pursuit); the charisma tracker (MDD 5.1) and the Ick (MDD 6.3) read it. An item
- *               without it (older producer) feeds neither.
+ *               pursuit); the charisma tracker (MDD 5.1) and the Ick (MDD 6.3) read it, once per
+ *               applied item. An item without it (older producer) feeds neither.
+ *    reply_mood: additive to v1, written by code (never the LLM) when the job had one: the mood
+ *               the NPC answered this exchange in (core moods_issued at the postrequest that
+ *               queued it, lowercased); the Ick reads it to tell courting she answered in kind
+ *               from pressure. Absent: unknown.
  *    goal_addressed + goal_ref: additive to v1 (decisions §8), only when the eval was shown the
  *               NPC's active director goal: goal_addressed bool (the exchange served or settled
  *               it), goal_ref = RelationshipDynamics::directorGoalRef of the goal shown, so the
@@ -354,6 +358,8 @@ final class RelDynEval
                 'anchor_rowid' => $anchor,
                 'scored_through_rowid' => $scoredThrough,
                 'event_tags'   => self::eventTagsForRequest($gameRequest),
+                // the mood the NPC answered this exchange in (the Ick reads it from the item)
+                'reply_mood'   => self::currentMood($npcName),
             ];
             $jobId = self::enqueue($npcId, $npcName, $job);
             RelDynStorage::setKey($npcId, self::KEY_PRODUCER, [
@@ -1028,10 +1034,13 @@ final class RelDynEval
      * bands and the nearest preset, RelDynTraits::describe; traits phase 3, design D2), how they attach
      * (behaviour, never the style name: RelationshipDynamics::attachmentFeltText),
      * maturity / trust / comfort bands, passion, jealousy and resentment bands, current mood.
+     * Trust and comfort toward the player read as the actor plays them: the per-bond display
+     * value (RelationshipDynamics::getEffectiveDimensionValue), the one the felt text uses.
      */
     public static function stateSummary(string $npcName, array $dynamics): array
     {
         $dimX = static fn(string $dim) => floatval($dynamics['dimensions'][$dim]['x'] ?? 50);
+        $shown = static fn(string $dim) => RelationshipDynamics::getEffectiveDimensionValue($dynamics, $dim) ?? $dimX($dim);
         $band = static function (string $dim, float $x): string {
             $b = RelationshipDynamics::getDimensionBand($dim, $x);
             return $b ? $b['label'] . ($b['keywords'] !== '' ? " ({$b['keywords']})" : '') : 'unknown';
@@ -1047,8 +1056,8 @@ final class RelDynEval
             'Personality: ' . self::personalityText($dynamics)
                 . '; in closeness: ' . RelationshipDynamics::attachmentFeltText($dynamics),
             'Maturity: ' . $band('maturity', $dimX('maturity')),
-            'Trust in the player: ' . $band('trust', $dimX('trust')),
-            'Comfort with the player: ' . $band('comfort', $dimX('comfort')),
+            'Trust in the player: ' . $band('trust', $shown('trust')),
+            'Comfort with the player: ' . $band('comfort', $shown('comfort')),
             'Passion: ' . RelationshipDynamics::getPassionBand(RelationshipDynamics::getPassion($dynamics)),
             'Jealousy: ' . $jealousyBand . ($jealousyBand !== 'none' && $rival ? " (about {$rival})" : ''),
             'Resentment: ' . $band('resentment', floatval($dynamics['dimensions']['resentment']['x'] ?? 0)),
@@ -1295,6 +1304,7 @@ PROMPT;
             'positive_interaction' => $classified['positive_interaction'],
             'summary'              => $summary,
         ] + ($romanticIntent !== null ? ['romantic_intent' => $romanticIntent] : [])
+          + (is_string($job['reply_mood'] ?? null) && trim($job['reply_mood']) !== '' ? ['reply_mood' => strtolower(trim($job['reply_mood']))] : [])
           + $goal
           + ($masking !== null ? ['masking' => $masking] : [])
           + ($exposure !== null ? ['exposure' => $exposure] : []);

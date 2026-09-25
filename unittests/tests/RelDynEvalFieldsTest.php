@@ -256,8 +256,10 @@ final class RelDynEvalFieldsTest extends TestCase
 
         $catalyst = $feed($this->npc(), [[2, 8], [1, -6], [2, 8], [1, -6], [2, 8]]);
         $this->assertSame('catalyst', RelationshipDynamics::charismaStyle($catalyst), 'push-pull');
-        $rock = $feed($this->npc(), array_fill(0, 5, [0, 1]));
-        $this->assertSame('rock', RelationshipDynamics::charismaStyle($rock), 'steady, no romance');
+        $rock = $feed($this->npc(), [[1, 1], [0, 1], [0, 1], [1, 1], [0, 1]]);
+        $this->assertSame('rock', RelationshipDynamics::charismaStyle($rock), 'steady, little romance');
+        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), array_fill(0, 5, [0, 1]))),
+            'no romantic intent at all: no approach, no style (the ordinary player is not the Rock)');
         $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), array_fill(0, 4, [2, 3]))), 'too few exchanges yet');
 
         // The old heuristic's tracker is not evidence

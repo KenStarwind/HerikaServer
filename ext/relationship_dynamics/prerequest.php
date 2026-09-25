@@ -346,9 +346,10 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
         RelationshipDynamics::log("[RelDyn-PRE] Autonomy action filter: state={$autonomyEval['state']}, denied=" . implode(',', $deniedActions));
     }
 
-    // Initiate walkaway if state demands it and not already walking away
+    // Initiate walkaway when one is due and not already walking away (initiateWalkaway spends
+    // the return grace first; the evaluation already reads that hold, and walkaway_enabled)
     $currentWalkState = $dynamics['_walkaway_state'] ?? 'normal';
-    if ($autonomyEval['state'] === 'walkaway' && $currentWalkState === 'normal' && !empty($reldynCfg['walkaway_enabled'] ?? true)) {
+    if (!empty($autonomyEval['walkaway_due']) && $currentWalkState === 'normal' && !empty($reldynCfg['walkaway_enabled'] ?? true)) {
         // Why they leave; 'neglect' when it starts on the return from an absence (rulings §8)
         RelationshipDynamics::initiateWalkaway($dynamics, $npcName, RelationshipDynamics::walkawayReason($dynamics));
     }

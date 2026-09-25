@@ -989,7 +989,7 @@ class RelationshipDynamics
             'charisma_detection_enabled' => true,
             // PR 16: Autonomy Override + Walkaway + Hoover
             'autonomy_enabled' => true,
-            'walkaway_enabled' => true,              // not read by the engine yet (walkaway-boundary)
+            'walkaway_enabled' => true,              // off: no walkaway starts (evaluateAutonomyState stops at refusing; one under way carries on)
             'hoover_enabled' => true,
             // PR 39: Director-Assigned Goals (the hooks ran them unless switched off)
             'director_goals_enabled' => true,
@@ -7337,26 +7337,33 @@ class RelationshipDynamics
             $rangeMax = 100.0;
         }
 
+        // Held temporary offsets (heldTemporaryOffset: a creature row, physical states, the place,
+        // the guilt bleed) are not where the NPC is: the rubber band reads the value without them,
+        // so an offset taken back exactly leaves her where she would be without it (a nonlinear
+        // band under a held offset made the lift overshoot). Dimension points; 0 for affinity.
+        $held = $mirrorScale ? 0.0 : self::heldTemporaryOffset($dynamics, $dimensionId);
+        $xPhys = $x - $held;
+
         // --- Core physics application ---
         // Determine if the delta would cross the baseline (overshoot handling)
-        $xAfterRaw = $x + $rawDelta; // hypothetical end position without physics
-        $crossesBaseline = (($x >= $baseline && $xAfterRaw < $baseline) ||
-                            ($x <= $baseline && $xAfterRaw > $baseline)) &&
-                           abs($x - $baseline) > 0.0001;
+        $xAfterRaw = $xPhys + $rawDelta; // hypothetical end position without physics
+        $crossesBaseline = (($xPhys >= $baseline && $xAfterRaw < $baseline) ||
+                            ($xPhys <= $baseline && $xAfterRaw > $baseline)) &&
+                           abs($xPhys - $baseline) > 0.0001;
 
         $actualDelta = 0.0;
 
         if ($crossesBaseline) {
             // --- SPLIT at baseline crossing ---
             // Portion 1: from X to baseline
-            $deltaToBaseline = $baseline - $x;
+            $deltaToBaseline = $baseline - $xPhys;
             $remainingRaw = $rawDelta - $deltaToBaseline;
 
             // Portion 1 is always TOWARD baseline
-            $actual1 = self::applyPortionDelta($x, $baseline, $deltaToBaseline, $z, $yUp, $yDown, $invertRubberBand);
+            $actual1 = self::applyPortionDelta($xPhys, $baseline, $deltaToBaseline, $z, $yUp, $yDown, $invertRubberBand);
 
             // After applying portion 1, X is at (or very near) baseline
-            $xAtBaseline = $x + $actual1;
+            $xAtBaseline = $xPhys + $actual1;
 
             // Portion 2: from baseline onward (AWAY from baseline)
             $actual2 = self::applyPortionDelta($xAtBaseline, $baseline, $remainingRaw, $z, $yUp, $yDown, $invertRubberBand);
@@ -7364,7 +7371,7 @@ class RelationshipDynamics
             $actualDelta = $actual1 + $actual2;
         } else {
             // --- No crossing: single application ---
-            $actualDelta = self::applyPortionDelta($x, $baseline, $rawDelta, $z, $yUp, $yDown, $invertRubberBand);
+            $actualDelta = self::applyPortionDelta($xPhys, $baseline, $rawDelta, $z, $yUp, $yDown, $invertRubberBand);
         }
 
         // --- Decisions §13: a passion GAIN is x the attraction factor (the spark below 20, the
@@ -7388,8 +7395,8 @@ class RelationshipDynamics
             $actualDelta = max(-$maxAbs, min($maxAbs, $actualDelta));
         }
 
-        // --- Clamp to range ---
-        $newX = max($rangeMin, min($rangeMax, $x + $actualDelta));
+        // --- Clamp to range (the value without the held offsets, then with them) ---
+        $newX = max($rangeMin, min($rangeMax, max($rangeMin, min($rangeMax, $xPhys + $actualDelta)) + $held));
         $actualDelta = $newX - $x;
 
         // Back to mirror units: callers get the change of dimensions.affinity.x as before
@@ -8591,7 +8598,8 @@ class RelationshipDynamics
     /**
      * Contract v1 optional fields of decisions §8 (additive): romantic_intent (int 0..3),
      * goal_addressed + goal_ref (bool + the shown goal's directorGoalRef), masking {flag,
-     * slipped}. Only the fields the item carries, valid, come back; an invalid one is logged
+     * slipped}; and reply_mood (lowercased; written by code from core's moods_issued, never by
+     * the LLM). Only the fields the item carries, valid, come back; an invalid one is logged
      * and left out (the item still applies). An older item has none of them: its readers
      * (charisma, director goal, masking) get nothing from it.
      */
@@ -8611,6 +8619,15 @@ class RelationshipDynamics
                 $out['goal_ref'] = $item['goal_ref'];
             } else {
                 error_log("[RelDyn-EVAL] eval item for {$npc}: goal_addressed needs a boolean and the goal_ref it answers, ignored");
+            }
+        }
+        if (array_key_exists('reply_mood', $item)) {
+            // the mood the NPC answered that exchange in (code-written, RelDynEval job), for the Ick
+            $mood = is_string($item['reply_mood']) ? strtolower(trim($item['reply_mood'])) : '';
+            if ($mood !== '' && mb_strlen($mood) <= 40) {
+                $out['reply_mood'] = $mood;
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: reply_mood is not a mood name, ignored");
             }
         }
         if (array_key_exists('masking', $item) && $item['masking'] !== null) {
@@ -8778,7 +8795,9 @@ class RelationshipDynamics
     /**
      * The decisions §8 eval fields of one applied item (normalized), into their readers:
      *   romantic_intent  -> the charisma tracker (MDD 5.1: the player's style from romantic
-     *                       intent and the affinity raw signal, core points), charisma on;
+     *                       intent and the affinity raw signal, core points), charisma on; and
+     *                       the Ick (MDD 6.3, recordIckEvalAttempt, with the item's reply_mood:
+     *                       the mood the NPC answered that exchange in), the ick system on;
      *   goal_addressed   -> fulfils the director goal the eval was shown (goal_ref), when it is
      *                       still the active one (PR 39), director goals on;
      *   masking          -> the cost of a performed front (applyMaskingCost), and a slip of
@@ -8790,6 +8809,9 @@ class RelationshipDynamics
         $cfg = self::getConfig();
         if (isset($n['romantic_intent']) && !empty($cfg['charisma_detection_enabled'] ?? true)) {
             self::updateCharismaTracker($dynamics, intval($n['romantic_intent']), floatval($n['signals']['affinity'] ?? 0), $gamets);
+        }
+        if (isset($n['romantic_intent']) && !empty($cfg['ick_system_enabled'] ?? true)) {
+            self::recordIckEvalAttempt($npcName, $n, $dynamics);
         }
         if (($n['goal_addressed'] ?? false) === true && !empty($cfg['director_goals_enabled'])) {
             $goal = self::getActiveDirectorGoal($dynamics);
@@ -9725,15 +9747,21 @@ class RelationshipDynamics
      * A dimension as it reads toward the player (display time only): $value (default: the
      * stored x; pass a baseline to get the effective baseline) x perBondMultiplier(), clamped
      * to the dimension's range. Null when there is no value. Tension checks read the RAW value.
+     * The stored x's held temporary offsets (heldTemporaryOffset: the guilt bleed, a creature
+     * row, a physical state, the place) are states, not the bond: the multiplier scales the value
+     * without them and they are added back as they are, so a partner's guilt still shows (a
+     * saturating multiplier swallowed it). A $value passed in is read as it is.
      */
     public static function getEffectiveDimensionValue(array $dynamics, string $dimensionId, ?float $value = null, ?string $relationshipType = null): ?float
     {
+        $held = 0.0;
         if ($value === null) {
             $x = $dimensionId === 'passion' ? self::getPassion($dynamics) : ($dynamics['dimensions'][$dimensionId]['x'] ?? null);
             if (!is_numeric($x)) {
                 return null;
             }
             $value = floatval($x);
+            $held = $dimensionId === 'affinity' ? 0.0 : self::heldTemporaryOffset($dynamics, $dimensionId);
         }
         $mult = self::perBondMultiplier($dynamics, $dimensionId, $relationshipType);
         if ($mult === 1.0) {
@@ -9742,7 +9770,8 @@ class RelationshipDynamics
         $def = self::getDimensionDefinition($dimensionId);
         $min = $def ? floatval($def['range_min']) : 0.0;
         $max = $def ? floatval($def['range_max']) : 100.0;
-        return max($min, min($max, $value * $mult));
+        $own = max($min, min($max, $value - $held));
+        return max($min, min($max, max($min, min($max, $own * $mult)) + $held));
     }
 
     // ========== END RELATIONSHIP TYPE MODIFIERS (PR 5) ==========
@@ -11927,6 +11956,23 @@ class RelationshipDynamics
     }
 
     /**
+     * The bond level the affinity cascade reads for its target (propagateAffinityChange): the
+     * target's affinity toward the player on the mirror scale, (core + 100) / 2 in 0..100 (50 =
+     * a stranger), as before the eval path moved to core affinity (socialSensitivityBondLevel):
+     * word reaching a target who has never met the player still counts for something.
+     */
+    public static function cascadeBondLevel(array $targetDynamics): float
+    {
+        return max(0.0, min(100.0, (self::getCoreAffinity($targetDynamics) + 100.0) / 2.0));
+    }
+
+    /** A cascade delta (core affinity points) through the target's sensitivity curve at cascadeBondLevel. */
+    public static function cascadeSocialSensitivity(array $targetDynamics, float $delta, ?string $temperament): float
+    {
+        return $delta * self::socialSensitivityFactor($targetDynamics, 'affinity', $delta < 0, $temperament, self::cascadeBondLevel($targetDynamics));
+    }
+
+    /**
      * Social sensitivity multiplier (0..1) of a delta on $dimensionId from the player: the
      * NPC's curve (per-NPC override; else A22 through the trait engine at the NPC's vector;
      * else the temperament's curve) at the bond level ($bondLevel, core affinity 0..100; null =
@@ -12360,10 +12406,12 @@ class RelationshipDynamics
             return [];
         }
 
-        // Reverse previous environmental effects exactly (reverseAppliedDeltas).
+        // Reverse previous environmental effects exactly (reverseAppliedDeltas); taken back, they
+        // are no longer held (heldTemporaryOffset) while the new ones are applied.
         if (!empty($dynamics['_env_applied_effects']) && is_array($dynamics['_env_applied_effects'])) {
             self::reverseAppliedDeltas($dynamics, $dynamics['_env_applied_effects'], '', 'environment');
         }
+        $dynamics['_env_applied_effects'] = [];
 
         $appliedEffects = [];
         foreach ($effects as $dim => $val) {
@@ -15068,10 +15116,8 @@ class RelationshipDynamics
                 }
             }
 
-            // Apply social sensitivity curve
-            if (method_exists(self::class, 'applySocialSensitivity')) {
-                $cascadeDelta = self::applySocialSensitivity($targetDynamics, 'affinity', $cascadeDelta, $targetTemperament);
-            }
+            // Apply social sensitivity curve (at the target's bond on the mirror scale)
+            $cascadeDelta = self::cascadeSocialSensitivity($targetDynamics, $cascadeDelta, $targetTemperament);
 
             if (abs($cascadeDelta) < 1.0) continue; // Too small to matter
 
@@ -15281,14 +15327,23 @@ class RelationshipDynamics
 
     /**
      * Points currently held on $dimId's x by the temporary-offset pipeline, each taken back
-     * exactly when its state ends: the creature row (RelDynCreatures, _creature.applied) and the
-     * physical states (_applied_physical_deltas per state). Dimension points; 0 when none.
+     * exactly when its state ends: the creature row (RelDynCreatures, _creature.applied), the
+     * physical states (_applied_physical_deltas per state), the place and hour
+     * (_env_applied_effects) and, on comfort, the guilt bleed (RelDynResentment, guilt.applied).
+     * Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
+     * per-bond display read the value without them.
      */
     public static function heldTemporaryOffset(array $dynamics, string $dimId): float
     {
         $held = floatval($dynamics[RelDynCreatures::STATE_KEY]['applied'][$dimId] ?? 0.0);
         foreach ((array) ($dynamics['_applied_physical_deltas'] ?? []) as $applied) {
             if (is_array($applied)) $held += floatval($applied[$dimId] ?? 0.0);
+        }
+        if (is_array($dynamics['_env_applied_effects'] ?? null)) {
+            $held += floatval($dynamics['_env_applied_effects'][$dimId] ?? 0.0);
+        }
+        if ($dimId === 'comfort') {
+            $held += floatval($dynamics[RelDynResentment::STATE_KEY]['guilt']['applied'] ?? 0.0);
         }
         return $held;
     }
@@ -15348,6 +15403,9 @@ class RelationshipDynamics
      * baseline), at most max_from_origin points from its origin. The origin is where drift
      * started (_baseline_drift_origin: the seed, or the value an editor or a divine-intervention
      * arc last set; a baseline that no longer equals the value drift left is re-anchored there).
+     * The baseline read is the NPC's own: resentment_self's standing offset on it
+     * (RelDynResentment::baselineOffset, lifted exactly when the shame falls back) is a state, not
+     * a new origin, so drift runs without it and writes it back on top.
      * Gated by the game calendar: a day's evidence moves a baseline once, so a second diary eval
      * before a newer contact day has been sampled leaves it where the first one put it.
      * Returns dimension => ['old_baseline', 'new_baseline', 'drift'] (sample units).
@@ -15370,7 +15428,8 @@ class RelationshipDynamics
             if (count($list) < $minSamples) continue;
             $latestDay = intval($list[count($list) - 1]['day']);
             $recent = array_map(fn($s) => floatval($s['v']), array_slice($list, -$minSamples));
-            $baseline = self::driftBaseline($dynamics, $dimId);
+            $selfOffset = RelDynResentment::baselineOffset($dynamics, $dimId);   // held on the stored baseline
+            $baseline = self::driftBaseline($dynamics, $dimId) - $selfOffset;   // her own
 
             $above = min($recent) > $baseline + $tolerance;
             $below = max($recent) < $baseline - $tolerance;
@@ -15394,9 +15453,9 @@ class RelationshipDynamics
             $drift = $new - $baseline;
             if (abs($drift) < 1e-9) continue;   // at the bound
 
-            $dynamics['dimensions'][$dimId]['baseline'] = $new;
+            $dynamics['dimensions'][$dimId]['baseline'] = $new + $selfOffset;
             $origins[$dimId] = ['origin' => $origin, 'at' => $new, 'day' => $latestDay];
-            $results[$dimId] = ['old_baseline' => $baseline, 'new_baseline' => $new, 'drift' => $drift];
+            $results[$dimId] = ['old_baseline' => $baseline + $selfOffset, 'new_baseline' => $new + $selfOffset, 'drift' => $drift];
             self::log(sprintf('[DRIFT] %s %s: baseline %.2f -> %.2f (samples avg %.2f, origin %.2f%s)', $npcName, $dimId,
                 $baseline, $new, $avg, $origin, $dimId === 'affinity' ? ', core units' : ''));
         }
@@ -16122,15 +16181,22 @@ class RelationshipDynamics
         return false;
     }
 
+    /** Exchanges (raw gamets, as ints) the Ick remembers as counted attempts, newest last. */
+    const ICK_COUNTED_KEEP = 20;
+
     /**
-     * Update the ick rolling window tracker.
+     * Update the ick rolling window tracker: one interaction (postrequest), a romantic attempt
+     * when the local classification says so (touch she did not answer in kind). The eval's
+     * romantic_intent is counted per applied item (recordIckEvalAttempt), never peeked at here.
      *
-     * @param array  &$dynamics    NPC dynamics blob
-     * @param bool   $isRomantic   Was this a romantic attempt?
-     * @param string $temperament  NPC temperament
+     * @param array      &$dynamics    NPC dynamics blob
+     * @param bool       $isRomantic   Was this a romantic attempt?
+     * @param string     $temperament  NPC temperament
+     * @param float|null $gamets       raw game time of the exchange (remembered when counted,
+     *                                 so its eval item is not counted again)
      * @return bool True if ick state changed
      */
-    public static function updateIckTracker(&$dynamics, $isRomantic, $temperament)
+    public static function updateIckTracker(&$dynamics, $isRomantic, $temperament, ?float $gamets = null)
     {
         $cfg = self::getConfig();
         if (empty($cfg['ick_system_enabled'] ?? true)) {
@@ -16163,7 +16229,50 @@ class RelationshipDynamics
         $tracker['total_count']++;
         if ($isRomantic) {
             $tracker['romantic_count']++;
+            if ($gamets !== null) {
+                $tracker['counted_gamets'] = array_slice(array_merge((array) ($tracker['counted_gamets'] ?? []), [(int) round($gamets)]), -self::ICK_COUNTED_KEEP);
+            }
         }
+        unset($tracker);
+        return self::ickAfterInteraction($dynamics, (bool) $isRomantic, $temperament);
+    }
+
+    /**
+     * The eval's side of the Ick (MDD 6.3), once per applied item ($n: a normalized contract
+     * item with romantic_intent): clear courting (romantic_intent >= 2) that the NPC did not
+     * answer in kind (the item's reply_mood, the mood of that exchange's reply; isRomanticAttempt)
+     * counts as a romantic attempt of the interaction the postrequest already counted, unless
+     * that exchange was already counted (touch, or this item before) or the window has no
+     * uncounted interaction left to attribute it to. Returns true when the ick state changed.
+     */
+    public static function recordIckEvalAttempt(string $npcName, array $n, array &$dynamics): bool
+    {
+        if (!self::isRomanticAttempt(null, $n['reply_mood'] ?? null, $n)) {
+            return false;
+        }
+        $tracker = $dynamics['_ick_tracker'] ?? null;
+        $g = (int) round(floatval($n['gamets'] ?? 0));
+        if (!is_array($tracker)) {
+            self::log("[ICK] {$npcName}: eval attempt at gamets {$g} with no interaction counted: not counted");
+            return false;
+        }
+        if (in_array($g, array_map('intval', (array) ($tracker['counted_gamets'] ?? [])), true)) {
+            return false;   // this exchange is already counted
+        }
+        if (intval($tracker['romantic_count']) >= intval($tracker['total_count'])) {
+            self::log("[ICK] {$npcName}: eval attempt at gamets {$g}: every interaction of this window is counted already");
+            return false;
+        }
+        $dynamics['_ick_tracker']['romantic_count'] = intval($tracker['romantic_count']) + 1;
+        $dynamics['_ick_tracker']['counted_gamets'] = array_slice(array_merge((array) ($tracker['counted_gamets'] ?? []), [$g]), -self::ICK_COUNTED_KEEP);
+        self::log("[ICK] {$npcName}: courting she did not answer in kind (eval, gamets {$g}, reply mood " . ($n['reply_mood'] ?? 'unknown') . ')');
+        return self::ickAfterInteraction($dynamics, true, $dynamics['inferred_temperament'] ?? null);
+    }
+
+    /** After an interaction is counted: the continued attempt while the ick is active, or its trigger. */
+    private static function ickAfterInteraction(array &$dynamics, bool $isRomantic, $temperament): bool
+    {
+        $tracker = &$dynamics['_ick_tracker'];
 
         // If ick already active, accumulate resentment on continued romantic attempts
         if ($tracker['ick_active'] && $isRomantic) {
@@ -16454,7 +16563,8 @@ class RelationshipDynamics
             array_shift($tracker['recent_deltas']);
         }
 
-        // Detect style if enough samples
+        // Detect style if enough samples. A window that reads as no style (mixed, or no romantic
+        // intent at all) clears the old one: the label follows the evidence, it does not stick.
         if (count($tracker['recent_deltas']) >= self::CHARISMA_MIN_SAMPLES) {
             $detected = self::detectCharismaStyle($tracker['recent_intents'], $tracker['recent_deltas']);
             if ($detected !== null) {
@@ -16462,6 +16572,9 @@ class RelationshipDynamics
                 $tracker['style_confidence'] = $detected['confidence'];
                 $tracker['style_detected_gamets'] = $gamets ?? self::currentGamets();   // raw game time
                 unset($tracker['style_detected_at']);   // the old wall-clock stamp
+            } elseif (($tracker['detected_style'] ?? null) !== null) {
+                $tracker['detected_style'] = null;
+                $tracker['style_confidence'] = 0.0;
             }
         }
     }
@@ -16505,6 +16618,13 @@ class RelationshipDynamics
         // Calculate intent statistics
         $avgIntent = array_sum($intents) / $count;
         $highIntentCount = count(array_filter($intents, fn($i) => $i >= 2));
+
+        // MDD 5.1 "no press X to flirt": the style is the flavour of the player's approach. A
+        // window with no romantic intent at all is no approach (an ordinary, steady player was
+        // read as the Rock and a Bold NPC's every affinity signal cut to 0.7)
+        if ($intents === [] || max($intents) < 1) {
+            return null;
+        }
 
         // Detection logic:
         // Catalyst: high variance (push-pull), alternating positive/negative
@@ -16555,6 +16675,11 @@ class RelationshipDynamics
         // Catalyst special: ineffective against HIGH maturity regardless of temperament
         if ($style === 'catalyst' && $maturity > 60 && !$isEffective) {
             $isIneffective = true;
+        }
+        // MDD 5.1: the Rock is effective against Anxious and Overcast NPCs (internal weather)
+        if ($style === 'rock' && is_array($dynamics) && ($dynamics['_internal_weather'] ?? null) === 'overcast') {
+            $isEffective = true;
+            $isIneffective = false;
         }
 
         // Charmer special: diminishing returns — after many interactions becomes less effective
@@ -16844,8 +16969,22 @@ class RelationshipDynamics
             $state = 'walkaway';
         }
 
+        // A walkaway is due; it starts only when one can (walkawayHold: walkaway_enabled on, no
+        // return grace). Held, the NPC is not leaving, and nobody tells the LLM she is: the
+        // strongest state short of it (refusing; a people-pleaser swallows it)
+        $walkawayDue = ($state === 'walkaway');
+        $walkawayHeld = null;
+        $walking = !empty($dynamics['_walkaway_state']) && $dynamics['_walkaway_state'] !== 'normal';
+        if ($walkawayDue && !$walking) {
+            $walkawayHeld = self::walkawayHold($dynamics);
+            if ($walkawayHeld !== null) {
+                $state = $isPeoplePleaser ? 'compliant' : 'refusing';
+                $swallowed = $swallowed || $isPeoplePleaser;
+            }
+        }
+
         // If already in walkaway, stay in walkaway
-        if (!empty($dynamics['_walkaway_state']) && $dynamics['_walkaway_state'] !== 'normal') {
+        if ($walking) {
             $state = 'walkaway';
         }
 
@@ -16860,6 +16999,8 @@ class RelationshipDynamics
             'deny_actions'    => $deniedActions,
             'people_pleaser'  => $isPeoplePleaser,
             'swallowed'       => $swallowed,
+            'walkaway_due'    => $walkawayDue,     // a walkaway trigger holds (prerequest initiates it)
+            'walkaway_held'   => $walkawayHeld,    // null | 'grace' | 'disabled' (walkawayHold)
             'resentment_self_buildup' => $isPeoplePleaser ? round($score * self::PEOPLE_PLEASER_RESENTMENT_SELF_RATE, 2) : 0,
         ];
     }
@@ -16932,6 +17073,12 @@ class RelationshipDynamics
         $eval = self::evaluateAutonomyState($dynamics, $temperament);
         $state = $eval['state'];
 
+        // Back from a walkaway, inside the return grace: what the LLM hears is the return
+        if (($eval['walkaway_held'] ?? null) === 'grace') {
+            return "{$npcName} has returned because they chose to, not because they were summoned. "
+                 . "The air is fragile. They are watching to see if things have really changed.";
+        }
+
         if ($state === 'compliant') {
             // People-pleaser internalization
             if ($eval['people_pleaser'] && $eval['autonomy_score'] >= 30) {
@@ -16976,13 +17123,9 @@ class RelationshipDynamics
             return "{$npcName} has gone off alone, too ashamed to face anyone. "
                  . "Seeking them out now would only drive them further away.";
         }
-        if ($shame && $walkState !== 'recovery' && $walkState !== 'permanent') {
+        if ($shame && $walkState !== 'permanent') {
             return "{$npcName} cannot bear to be seen right now and is pulling away to be alone with it. "
                  . "Pressing them will only drive them further.";
-        }
-        if ($walkState === 'recovery') {
-            return "{$npcName} has returned because they chose to, not because they were summoned. "
-                 . "The air is fragile. They are watching to see if things have really changed.";
         }
         if ($walkState === 'permanent') {
             return "{$npcName} is done: cold, distant, answers only what must be answered. "
@@ -17038,6 +17181,28 @@ class RelationshipDynamics
             return 'shame';      // resentment_self crisis: the NPC isolates itself
         }
         return 'autonomy';
+    }
+
+    /**
+     * Why a walkaway that is due cannot start now, or null when it can: 'disabled'
+     * (walkaway_enabled off) or 'grace' (back from a resolved boundary test: the return grace
+     * holds contacts, _walkaway_return_grace, and the contact that spent the last one,
+     * _walkaway_grace_spent_contact = its _last_contact_gamets, is held too). Pure.
+     */
+    public static function walkawayHold(array $dynamics): ?string
+    {
+        if (!self::configValue('walkaway_enabled')) {
+            return 'disabled';
+        }
+        if (intval($dynamics['_walkaway_return_grace'] ?? 0) > 0) {
+            return 'grace';
+        }
+        $spent = $dynamics['_walkaway_grace_spent_contact'] ?? null;   // raw gamets
+        $contact = $dynamics['_last_contact_gamets'] ?? null;         // raw gamets
+        if (is_numeric($spent) && is_numeric($contact) && abs(floatval($spent) - floatval($contact)) < 1e-6) {
+            return 'grace';
+        }
+        return null;
     }
 
     /**
@@ -17105,8 +17270,13 @@ class RelationshipDynamics
         $grace = intval($dynamics['_walkaway_return_grace'] ?? 0);
         if ($grace > 0) {
             $dynamics['_walkaway_return_grace'] = $grace - 1;
+            // this contact is held to the end (walkawayHold), the next one may leave
+            $dynamics['_walkaway_grace_spent_contact'] = $dynamics['_last_contact_gamets'] ?? null;
             self::log("[WALKAWAY] {$npcName} holds off leaving again ({$reason}); return grace left: " . ($grace - 1));
             return;
+        }
+        if (self::walkawayHold($dynamics) === 'grace') {
+            return;   // the contact that spent the last grace
         }
 
         // Calculate boundary test duration (random within range, game-calendar hours)

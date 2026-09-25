@@ -430,7 +430,9 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         foreach (array_keys(self::BEDS) as $npc) {
             $d = $this->dynamics($npc);
             $this->assertSame(1.0, RelationshipDynamics::getSignalResistance($d['inferred_temperament'] ?? null, 'maturity', $d), $npc);
-            $d['dimensions']['maturity']['x'] = $d['dimensions']['maturity']['baseline'];
+            // at rest: her baseline, with whatever is held on it (Aela's beast blood), which the
+            // physics reads the value without (heldTemporaryOffset)
+            $d['dimensions']['maturity']['x'] = $d['dimensions']['maturity']['baseline'] + RelationshipDynamics::heldTemporaryOffset($d, 'maturity');
             $d['dimensions']['comfort']['x'] = 50;
             $r = RelationshipDynamics::applyEvalSignal($npc, $d, 'maturity', -4.0, [], 1.0);
             $this->assertEqualsWithDelta(-4.0 * RelationshipDynamics::effectiveMaturityY($d)['Y_down'], $r['actual'], 1e-3, "{$npc}: raw x P only (applyDelta rounds to 4 places)");

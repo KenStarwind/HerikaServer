@@ -352,19 +352,21 @@ if (!empty($reldynCfg['parasite_detection_enabled'])) {
     RelationshipDynamics::checkParasiteRecovery($npcName, $dynamics);
 }
 
-// A5: the eval readers below must only see this request's pending eval. With the
-// dimension engine off nothing consumes it, so pendingEvalForRequest() drops it.
-// Engine on: read-only peek of the latest queued eval; the inbox is consumed by
-// processPendingEvalDeltas below.
-$rdPendingEval = RelationshipDynamics::pendingEvalForRequest($npcName, $dynamics);
+// A5: with the dimension engine off nothing consumes the eval inbox, so
+// pendingEvalForRequest() drops it (engine on: a read-only peek, which nothing here reads:
+// the inbox is consumed by processPendingEvalDeltas below).
+RelationshipDynamics::pendingEvalForRequest($npcName, $dynamics);
 
 // ========== ICK TRACKER + CHARISMA DETECTION (PR 15) ==========
+// This interaction, and touch she did not answer in kind. The eval's romantic_intent reaches
+// the Ick once per applied item, with that exchange's reply mood (applyEvalExtraFields ->
+// recordIckEvalAttempt), not by peeking at the inbox the worker has usually emptied.
 if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
-    $evalPending = $rdPendingEval;
-    $isRomantic = RelationshipDynamics::isRomanticAttempt($classifiedLL, $lastMood, $evalPending);
+    $isRomantic = RelationshipDynamics::isRomanticAttempt($classifiedLL, $lastMood, []);
     $temperament = $dynamics['inferred_temperament'] ?? null;
-    $ickChanged = RelationshipDynamics::updateIckTracker($dynamics, $isRomantic, $temperament);
+    $ickChanged = RelationshipDynamics::updateIckTracker($dynamics, $isRomantic, $temperament,
+        floatval($GLOBALS['gameRequest'][2] ?? 0));   // raw gamets of this exchange (its eval item's)
     if ($ickChanged) {
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
     }

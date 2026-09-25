@@ -40,7 +40,12 @@
  * Baseline offsets are reversible: they lift exactly when resentment_self falls back.
  * Recovery (open issue: "no recovery path ... trapped in permanent guilt"): applied as
  * resentment_self points, not through the inverted rubber band that caused the trap:
- *   - confession: the NPC opens up and it is met with care (eval tag, self.recovery_tags);
+ *   - confession: the NPC tells what she is ashamed of and it is met with care (eval tag,
+ *     self.recovery_tags). The dimension draft's confession follows the self-reflection (the
+ *     Director's scene at 50, then she tells), so it opens only once the reflection was said to
+ *     the player, and it is made once (the MDD 15.5 addressed decay, like the confrontation's):
+ *     the next opening up is the decay again. The window closes when resentment_self is worked
+ *     through (reflection_rearm_at), and the next reflection opens the next one;
  *   - processResentmentSelfDecay: -0.5 x (1 + maturity/100) per positive interaction while
  *     comfort is above 20, at most once per self.decay_cooldown_play_minutes of played time.
  * The people-pleaser buildup (prerequest) only runs when the people-pleaser override swallowed a
@@ -51,7 +56,10 @@
  * guilt_bleed.above bleeds into comfort toward the player in proportion to the bond:
  *   bleed = min(cap, resentment_self x bond / 100),  bond = core affinity clamped 0..100
  * (a stranger barely registers, a partner haunts). A standing, bounded offset on comfort
- * (comfort points), moved to its target each tick and lifted exactly as the guilt fades.
+ * (comfort points), moved to its target each tick and lifted exactly as the guilt fades. It is
+ * one of the held temporary offsets (RelationshipDynamics::heldTemporaryOffset): the physics
+ * reads comfort without it (so lifting it leaves her where she would be without the guilt),
+ * the drift does not sample it as who she is, and the per-bond display shows it as it is.
  *
  * Felt text only for the LLM (feelings, never numbers); Jev gets the numbers (jev()).
  * State: $dynamics['_resentment_arc'] (state()). Units: resentment / resentment_self /
@@ -200,7 +208,8 @@ final class RelDynResentment
      *             ['mode' => mature|mixed|immature, 'style' => string, 'decided_gamets' => float]]
      *   self      ['baselines' => dimension => ['offset' => points, 'prior' => ?float],
      *             'reflect_armed' => bool, 'reflect_pending' => bool, 'last_decay_play' => ?float,
-     *             'last_buildup_play' => ?float]
+     *             'last_buildup_play' => ?float, 'confess_open' => bool (missing: false; the
+     *             reflection was said and she has not confessed yet)]
      *   guilt     ['applied' => comfort points currently taken off (<= 0)]
      */
     private static function &state(array &$dynamics): array
@@ -478,10 +487,21 @@ final class RelDynResentment
         } elseif ($rs <= floatval($cfg['self']['reflection_rearm_at'])) {
             $state['self']['reflect_armed'] = true;
             $state['self']['reflect_pending'] = false;
+            $state['self']['confess_open'] = false;   // worked through: nothing left to confess
         }
         unset($state);
         if ($events !== []) RelationshipDynamics::log("[RESENT-SELF] {$npcName}: " . implode(', ', $events) . ' (resentment_self ' . round($rs, 2) . ')');
         return $events;
+    }
+
+    /**
+     * resentment_self's standing offset on $dim's baseline right now (a baselines row applied
+     * by tickSelf; dimension points, 0 when none). Baseline drift reads the baseline without it
+     * (RelationshipDynamics::processBaselineDrift): a state on who she is, not a new origin.
+     */
+    public static function baselineOffset(array $dynamics, string $dim): float
+    {
+        return floatval($dynamics[self::STATE_KEY]['self']['baselines'][$dim]['offset'] ?? 0.0);
     }
 
     /**
@@ -501,7 +521,9 @@ final class RelDynResentment
      * The eval side of recovery for one applied contract item (positive exchanges only):
      *   - processResentmentSelfDecay: -(decay_base x (1 + maturity/100)) points while comfort
      *     is above decay_comfort_above, at most once per decay_cooldown_play_minutes of play;
-     *   - recovery_tags (confession: the NPC opened up and it was met with care): their points.
+     *   - recovery_tags (confession: the NPC opened up and it was met with care): their points,
+     *     only while the confession is open (the self-reflection was said to the player and she
+     *     has not confessed since), and once: the confession closes it.
      * Returns ['decay' => points, 'recovery' => points, 'tags' => string[]].
      */
     public static function onPositiveEval(string $npcName, array &$dynamics, array $tags): array
@@ -520,9 +542,10 @@ final class RelDynResentment
             $state['self']['last_decay_play'] = $play;
         }
         foreach ((array) $s['recovery_tags'] as $tag => $points) {
-            if (!in_array((string) $tag, $tags, true)) continue;
+            if (empty($state['self']['confess_open']) || !in_array((string) $tag, $tags, true)) continue;
             $out['recovery'] += self::relieveSelf($dynamics, floatval($points));
             $out['tags'][] = (string) $tag;
+            $state['self']['confess_open'] = false;   // told: the confession is made once
         }
         unset($state);
         if ($out['decay'] > 0 || $out['recovery'] > 0) {
@@ -653,8 +676,9 @@ final class RelDynResentment
             $text = strtr((string) ($t["confront_{$mode}"] ?? $t['confront_mature']),
                 $vars + ['{FUEL}' => implode('; ', $phrases), '{HOW}' => (string) ($sp['how'] ?? 'sharper than meant')]);
             unset($state);
-            // saying it: the MDD 15.5 addressed decay (a calm one also resolves; a blow-up does not)
-            $out['relief'] = -RelationshipDynamics::processResentmentConfrontation($dynamics, null, $mode !== 'immature', $now);
+            // saying it: the MDD 15.5 addressed decay; only a calm (mature) one also resolves: meant
+            // evenly but coming out in its style (mixed) is not calm, and a blow-up is not either
+            $out['relief'] = -RelationshipDynamics::processResentmentConfrontation($dynamics, null, $mode === 'mature', $now);
             $state = &self::state($dynamics);
             $state['confront']['pending'] = null;
             $state['confront']['count'] = intval($state['confront']['count']) + 1;
@@ -669,6 +693,7 @@ final class RelDynResentment
         }
         if (!empty($state['self']['reflect_pending'])) {
             $state['self']['reflect_pending'] = false;
+            $state['self']['confess_open'] = true;   // said to the player: what she tells next is the confession
             $out['lines'][] = ['key' => 'reflection', 'lane' => 'turn', 'salience' => 0.9, 'must' => true, 'intense' => false,
                 'text' => strtr((string) $t['reflection'], $vars)];
             $out['changed'] = true;
