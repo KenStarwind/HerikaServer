@@ -396,11 +396,13 @@ final class RelDynCalendarTimeTest extends TestCase
     {
         $cfg = RelationshipDynamics::defaultConfig();
         $days = 10.0;
+        // a mid-possessive NPC (Romantic, Po .55: neglect codependence T 0.5, traits phase 3 A20),
+        // so the bond type and the attachment are the only differences
         $neglect = function (string $type, string $style) use ($days): float {
-            $d = $this->npc(['relationship_type' => $type, 'profile_overrides' => ['attachment_style' => $style]]);
+            $d = $this->npc(['inferred_temperament' => 'Romantic', 'relationship_type' => $type, 'profile_overrides' => ['attachment_style' => $style]]);
             return RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + $days * self::DAY)['neglect_days'];
         };
-        $graceMult = fn(string $style) => RelationshipDynamics::getNeglectProfile($this->npc(['profile_overrides' => ['attachment_style' => $style]]))['grace_mult'];
+        $graceMult = fn(string $style) => RelationshipDynamics::getNeglectProfile($this->npc(['inferred_temperament' => 'Romantic', 'profile_overrides' => ['attachment_style' => $style]]))['grace_mult'];
 
         $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult('secure'), $neglect('bonded', 'secure'), 1e-9);
         $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult('anxious'), $neglect('bonded', 'anxious'), 1e-9);

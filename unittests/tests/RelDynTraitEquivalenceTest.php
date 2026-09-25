@@ -31,9 +31,16 @@ final class RelDynTraitEquivalenceTest extends TestCase
     private const DELIBERATE = [
         // MDD 15.4 edits (decisions §16 #6): R maturity retired, the Volatile row deleted
         'mdd_15_4_edits' => ['*/resistance/maturity', 'Volatile/resistance/*'],
+        // Attachment de-duplication (design §2.2): the Anxious anxiety residuals of A3 / A4 / A15h
+        // up and A18 absence decay are gone (the attachment carries them: a derived anxiety now
+        // lifts the reunion), A18 is owned by possessiveness, A20 codependence reads possessiveness
+        'attachment_dedup' => ['Anxious/reunion_mult', 'Anxious/jealousy_mult', 'Anxious/plasticity/trust/Y_up',
+            'Anxious/apply_delta/trust/*', 'Anxious/physical/injured/injured/trust', '*/e2e/reunion',
+            'Anxious/e2e/jealousy/*', 'Anxious/absence_decay', '*/neglect/*',
+            'Anxious/column/reunion_mult', 'Anxious/column/jealousy_mult', 'Anxious/column/y_trust_up', 'Anxious/column/absence_decay'],
     ];
 
-    /** Paths that differ from the base fixture, filled by the consumer comparison. */
+    /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */
     private array $changed = [];
 
     private static function deliberate(string $path): ?string
@@ -133,9 +140,15 @@ final class RelDynTraitEquivalenceTest extends TestCase
                 $this->assertSameShape($value, $now[$label][$consumer], "{$label}/{$consumer}");
             }
         }
-        // every deliberate change is real: each pattern matches at least one changed path
+        $this->assertEveryDeliberatePatternIsReal(false);
+    }
+
+    /** Every deliberate change is real: each pattern (consumer or column) matches a changed path. */
+    private function assertEveryDeliberatePatternIsReal(bool $columns): void
+    {
         foreach (self::DELIBERATE as $fix => $patterns) {
             foreach ($patterns as $pat) {
+                if (str_contains($pat, '/column/') !== $columns) continue;
                 $hit = array_filter($this->changed, fn($p) => fnmatch($pat, $p, FNM_NOESCAPE));
                 $this->assertNotEmpty($hit, "{$fix}: pattern {$pat} changes nothing (stale allow-list entry)");
             }
@@ -176,7 +189,10 @@ final class RelDynTraitEquivalenceTest extends TestCase
             $expect['healer_gate'] = isset($b['physical']['injured']['injured']['trust']) ? 1.0 : 0.0;
             $expect['warrior_gate'] = isset($b['physical']['bloody']['bloody']['respect']) ? 1.0 : 0.0;
             foreach ($expect as $col => $v) {
-                if (self::deliberate("{$p}/column/{$col}") !== null) continue;   // a phase-3 fix: its own test
+                if (self::deliberate("{$p}/column/{$col}") !== null) {   // a phase-3 fix: its own test
+                    if (abs($v - RelDynTraits::value($x, $col)) > 1e-9) $this->changed[] = "{$p}/column/{$col}";
+                    continue;
+                }
                 // (types are the consumers' business: the consumer-level test checks them)
                 $this->assertEqualsWithDelta($v, RelDynTraits::value($x, $col), 1e-9, "{$p} {$col}");
             }
@@ -197,6 +213,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
             $this->assertEqualsWithDelta($b['baseline']['self_confidence'], 100 * $x['C'], 1e-9, "{$p} C = self-confidence / 100");
             $this->assertEqualsWithDelta($b['baseline']['maturity'], $x['maturity_start'], 1e-9, "{$p} maturity_start");
         }
+        $this->assertEveryDeliberatePatternIsReal(true);
     }
 
     /** Design §3.3: rho <= d_min, so a preset's residual never reaches another preset. */

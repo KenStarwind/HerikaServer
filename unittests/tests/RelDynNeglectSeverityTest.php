@@ -73,9 +73,11 @@ final class RelDynNeglectSeverityTest extends TestCase
         return $this->spouse('Independent', 'secure', [], 80.0);
     }
 
-    private function furious(): array  // immature, anxious, proud, codependent
+    private function furious(): array  // immature, anxious, possessive (codependent), egocentric
     {
-        return $this->spouse('Proud', 'anxious', ['egocentric', 'insecure'], 20.0);
+        // traits phase 3 (A20): codependence is the attachment's anxiety plus possessiveness; the
+        // Proud / insecure version of this NPC is no longer counted codependent three times
+        return $this->spouse('Jealous', 'anxious', ['egocentric', 'insecure'], 20.0);
     }
 
     private function typical(): array  // secure, no pride, maturity 50
@@ -97,13 +99,15 @@ final class RelDynNeglectSeverityTest extends TestCase
 
         $this->assertEqualsWithDelta(0.0, $c('Independent', 'avoidant'), 1e-9, 'independent and avoidant: none');
         $this->assertEqualsWithDelta(0.5, $c('Romantic', 'secure'), 1e-9, 'the typical NPC sits in the middle');
-        $this->assertEqualsWithDelta(1.0, $c('Anxious', 'anxious', ['insecure']), 1e-9, 'clamped at 1');
+        // traits phase 3 (A20): the temperament term is possessiveness (the Jealous part); anxiety
+        // is the attachment term only, and the insecure tag no longer adds to it
+        $this->assertEqualsWithDelta(1.0, $c('Jealous', 'anxious', ['insecure']), 1e-9, 'the top: jealous and anxious');
         $this->assertLessThan($c('Romantic', 'secure'), $c('Independent', 'secure'), 'Independent temperament lowers it');
         $this->assertGreaterThan($c('Romantic', 'secure'), $c('Jealous', 'secure'), 'Jealous raises it');
         $this->assertGreaterThan($c('Romantic', 'secure'), $c('Romantic', 'anxious'), 'Anxious attachment raises it');
         $this->assertEqualsWithDelta($c('Romantic', 'anxious'), $c('Romantic', 'toxic'), 1e-9, 'Toxic is as high as Anxious');
         $this->assertLessThan($c('Romantic', 'secure'), $c('Romantic', 'avoidant'), 'Avoidant lowers it');
-        $this->assertGreaterThan($c('Romantic', 'secure'), $c('Romantic', 'secure', ['insecure']), 'insecure raises it');
+        $this->assertEqualsWithDelta($c('Romantic', 'secure'), $c('Romantic', 'secure', ['insecure']), 1e-12, 'insecure is not counted again');
     }
 
     public function testPrideComesFromProudAndEgocentric(): void
@@ -319,7 +323,11 @@ final class RelDynNeglectSeverityTest extends TestCase
             // who => [temperament, attachment, traits, maturity 0..100, withdrawn?]
             'independent, avoidant, immature' => ['Independent', 'avoidant', [], 20.0, false],
             'the typical NPC'                 => ['Romantic', 'secure', [], 50.0, false],
-            'anxious and anxious, average'    => ['Anxious', 'anxious', [], 50.0, true],
+            // traits phase 3 (A20): anxiety counts once (the attachment term): the Anxious
+            // temperament on an anxious attachment is hurt, not withdrawn; possessiveness is what
+            // makes it codependent
+            'anxious and anxious, average'    => ['Anxious', 'anxious', [], 50.0, false],
+            'jealous and anxious, average'    => ['Jealous', 'anxious', [], 50.0, true],
             'anxious and anxious, mature'     => ['Anxious', 'anxious', [], 95.0, false],
             'guarded, avoidant, egocentric'   => ['Guarded', 'avoidant', ['egocentric'], 50.0, false],
         ];

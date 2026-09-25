@@ -598,8 +598,11 @@ final class RelDynTraits
                 fn() => self::resistLossTable($signal));
         }
 
-        // A18 absence decay (core affinity points per tick; leaves temperament in phase 3), A19 tier retention
-        $add('absence_decay', 'A18', 'I', ['Po', 'W', 'G'], null, 'absence_decay',
+        // A18 absence decay (core affinity points per tick). Phase 3 (design §2.2): owned by
+        // possessiveness, Rule R over -(0.17 + 1.61 Po) (the old table fitted without its
+        // Anxious row, whose anxiety bump is gone: the attachment affinity_absence_mult applies
+        // on top in processAffinityDecay). A19 tier retention.
+        $add('absence_decay', 'A18', 'R', ['Po'], [-0.17, 'Po' => -1.61], 'absence_decay',
             fn() => self::fill($RD::TEMPERAMENT_DECAY_RATES, -0.5));
         $add('tier_retention', 'A19', 'R', ['D', 'Rs', 'Po'], [-11.7, 'D' => -10.8, 'Rs' => -9.1, 'Po' => 16.1], 'retention',
             fn() => self::fill($RD::TEMPERAMENT_TIER_RETENTION, -15));

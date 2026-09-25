@@ -470,4 +470,45 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         $this->assertSame('Muiri', array_key_first($loss), 'Muiri: the most betrayal-sensitive');
         $this->assertSame([], $this->db->failures);
     }
+
+    /**
+     * Phase 3, attachment de-duplication: absence decay and neglect codependence read each bed's
+     * possessiveness (not her label or her insecure tag), and anxiety reaches the reunion only
+     * through her attachment. Muiri, the most possessive (her priors), fades fastest; she and
+     * Lynly (anxious-leaning) are the codependent pair; Aela and Ashe (low possessiveness, secure
+     * to avoidant-leaning) fade the slowest and mind absence the least.
+     */
+    public function testPhaseThreeAnxietyCountedOnceOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $decay = $codep = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $x = RelDynTraits::readVector($d);
+            $decay[$npc] = RelDynTraits::param($d['inferred_temperament'], 'absence_decay', -0.5, $d);
+            if (RelDynTraits::nearestPreset($x)['distance'] >= RelDynTraits::residualReach()) {
+                $this->assertEqualsWithDelta(-(0.17 + 1.61 * $x['Po']), $decay[$npc], 1e-9, "{$npc}: the possessiveness model");
+            }
+            $prof = RelationshipDynamics::getNeglectProfile($d);
+            $codep[$npc] = $prof['codependence'];
+            $w = RelationshipDynamics::neglectSeverityDefaults()['codependence_attachment_weight'];
+            $a = RelationshipDynamics::attachmentBlend($d, RelationshipDynamics::neglectSeverityDefaults()['codependence_attachment'], 0.5);
+            $T = RelationshipDynamics::codependenceFromPossessiveness($x['Po'], RelationshipDynamics::neglectSeverityDefaults()['codependence_possessiveness']);
+            $this->assertEqualsWithDelta($w * $a + (1 - $w) * $T, $codep[$npc], 1e-9, "{$npc}: no tag bump");
+            $this->assertEqualsWithDelta(floatval(RelationshipDynamics::getAttachmentModifier($d, 'reunion_mult')),
+                1.0 + 0.4 * RelationshipDynamics::attachmentWeights($d)['anxious'], 1e-9, "{$npc}: the reunion's anxiety is the attachment's");
+        }
+        asort($decay);
+        $this->assertSame('Muiri', array_key_first($decay), 'Muiri fades fastest when left alone');
+        $this->assertEqualsCanonicalizing(['Aela the Huntress', 'Ashe'], array_slice(array_keys($decay), 2),
+            'the two low-possessive warriors fade the slowest');
+        // Muiri and Lynly (the anxious-leaning pair, and the more possessive) sit above the
+        // middle; the two warriors below it
+        arsort($codep);
+        $this->assertEqualsCanonicalizing(['Muiri', 'Lynly Star-Sung'], array_slice(array_keys($codep), 0, 2), json_encode($codep));
+        $this->assertGreaterThan(0.5, $codep['Muiri']);
+        $this->assertLessThan(0.4, $codep['Aela the Huntress']);
+        $this->assertLessThan(0.4, $codep['Ashe']);
+        $this->assertSame([], $this->db->failures);
+    }
 }
