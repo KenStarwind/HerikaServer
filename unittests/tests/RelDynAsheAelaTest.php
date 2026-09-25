@@ -378,9 +378,13 @@ final class RelDynAsheAelaTest extends TestCase
         $forestRead = [self::ASHE => $this->read(self::ASHE), self::AELA => $this->read(self::AELA)];
 
         // Auto-derived, not seeded: the core rows alone made these two people.
-        // (Ashe's temperament comes from the named-NPC preset table, which rulings §8 moves to
-        // Guarded on another lane; her facet preferences come from her class and skills either way.)
-        $this->assertSame('Independent', $this->dynamics(self::AELA)['inferred_temperament'], 'hunter class -> Independent (MDD 1.3)');
+        // (Personality traits phase 2: Aela's vector is resolved by the read assignment, from her
+        // priors here (this schema has no bio templates); Ashe's is her hand-set conclusion. Their
+        // facet preferences come from class and skills either way.)
+        $aela = $this->dynamics(self::AELA);
+        $this->assertSame('read', $aela['_trait_vector_src']['assignment']);
+        $this->assertSame($aela['trait_preset']['nearest'], $aela['inferred_temperament'], 'her label is her vector: nearest preset');
+        $this->assertSame('hand-set', $this->dynamics(self::ASHE)['_trait_vector_src']['auto_source']);
         $prefsAshe = $this->dynamics(self::ASHE)['_facet_prefs']['prefs'];
         $prefsAela = $this->dynamics(self::AELA)['_facet_prefs']['prefs'];
         $this->assertGreaterThan(0.5, $prefsAshe['scholarly']);

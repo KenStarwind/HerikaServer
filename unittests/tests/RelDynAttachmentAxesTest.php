@@ -58,6 +58,9 @@ final class RelDynAttachmentAxesTest extends TestCase
 
     protected function setUp(): void
     {
+        // Personality traits phase 2: this class pins the LABEL assignment (the phase-1 legacy path):
+        // its NPCs' temperaments are the old core-data vote's. The read assignment has its own tests.
+        RelDynTraits::$assignmentOverride = 'label';
         foreach (['db', 'gameRequest', 'PLAYER_NAME', 'RELDYN_PLAYER_NAME', 'RELDYN_INTERACTION_SIGNIFICANCE',
                   'RELDYN_ATTACHMENT_CONFLICT_PASSION'] as $k) {
             $this->saved[$k] = array_key_exists($k, $GLOBALS) ? [$GLOBALS[$k]] : null;
@@ -72,6 +75,7 @@ final class RelDynAttachmentAxesTest extends TestCase
 
     protected function tearDown(): void
     {
+        RelDynTraits::$assignmentOverride = null;
         foreach ($this->saved as $k => $v) {
             if ($v === null) unset($GLOBALS[$k]); else $GLOBALS[$k] = $v[0];
         }
@@ -271,8 +275,10 @@ final class RelDynAttachmentAxesTest extends TestCase
         $this->assertEqualsWithDelta(0.15 + 0.15, self::axes($jealous)[0], 1e-9);
         $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($jealous));
 
-        $ysolda = $this->derived(['Ysolda' => self::row('Ysolda', 'NordRace', 'Citizen', [], [])], 'Ysolda');
-        $this->assertSame('Anxious', $ysolda['inferred_temperament'], 'MDD 8.2 C preset');
+        // (Ysolda's MDD 8.2 C Anxious preset is dropped, decisions §16 #2: an editor-set Anxious stands in)
+        $ysolda = $this->derived(['Ysolda' => self::row('Ysolda', 'NordRace', 'Citizen', [], [])], 'Ysolda',
+            ['profile_overrides' => ['temperament' => 'Anxious']]);
+        $this->assertSame('Anxious', $ysolda['inferred_temperament'], 'editor preset');
         $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($ysolda));
 
         // A trait someone set on the NPC is evidence

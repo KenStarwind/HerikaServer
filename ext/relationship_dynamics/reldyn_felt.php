@@ -417,7 +417,7 @@ final class RelDynFelt
         // --- Reunion (temperament-aware; the checkReunion hours are game-calendar hours) ---
         if (!empty($dynamics['reunion_spike_given'])) {
             $text = RelationshipDynamics::getReunionText($npc, (string) ($dynamics['inferred_temperament'] ?? ''),
-                floatval($dynamics['_reunion_hours_apart'] ?? 0), $player);
+                floatval($dynamics['_reunion_hours_apart'] ?? 0), $player, $dynamics);
             if ($text) $lines[] = self::line('reunion', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['reunion']), $text);
         }
 
@@ -723,7 +723,7 @@ final class RelDynFelt
             if (!$def) continue;
             if ($dim === 'affinity') {
                 $val = RelationshipDynamics::getCoreAffinity($dynamics);   // core units
-                $base = floatval($dims['affinity']['baseline'] ?? RelationshipDynamics::getTemperamentBaseline($dynamics['inferred_temperament'] ?? null, 'affinity'));
+                $base = floatval($dims['affinity']['baseline'] ?? RelationshipDynamics::getTemperamentBaseline($dynamics['inferred_temperament'] ?? null, 'affinity', $dynamics));
                 $band = RelationshipDynamics::getAffinityBand($dynamics);
             } else {
                 $val = $x($dim);

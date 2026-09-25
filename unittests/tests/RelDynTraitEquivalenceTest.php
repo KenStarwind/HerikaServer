@@ -29,6 +29,9 @@ final class RelDynTraitEquivalenceTest extends TestCase
 
     protected function setUp(): void
     {
+        // Personality traits phase 2: this class pins the LABEL assignment (the phase-1 legacy path):
+        // its NPCs' temperaments are the old core-data vote's. The read assignment has its own tests.
+        RelDynTraits::$assignmentOverride = 'label';
         $this->savedDb = $GLOBALS['db'] ?? null;
         $this->savedRequest = $GLOBALS['gameRequest'] ?? null;
         unset($GLOBALS['db']);   // no stored config: shipped defaults, as the fixture was captured
@@ -37,6 +40,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
 
     protected function tearDown(): void
     {
+        RelDynTraits::$assignmentOverride = null;
         if ($this->savedDb !== null) $GLOBALS['db'] = $this->savedDb;
         if ($this->savedRequest !== null) $GLOBALS['gameRequest'] = $this->savedRequest; else unset($GLOBALS['gameRequest']);
         RelationshipDynamics::clearConfigCache();

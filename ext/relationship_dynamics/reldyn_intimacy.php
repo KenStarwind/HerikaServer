@@ -257,6 +257,8 @@ class RelDynIntimacy
             'creature'    => is_string($creature) && $creature !== '' ? strtolower($creature)
                 : (is_string($stored['creature'] ?? null) ? $stored['creature'] : null),
             'temperament' => RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null),
+            // read assignment: A26 reads the NPC's own vector (RelDynTraits::readVector)
+            'dynamics'    => RelDynTraits::readVector($dynamics) !== null ? $dynamics : null,
             // style corner => weight (RelationshipDynamics::attachmentWeights, sums to 1)
             'attachment'  => RelationshipDynamics::attachmentWeights($dynamics),
             'traits'      => RelationshipDynamics::getTraits($dynamics),
@@ -306,7 +308,7 @@ class RelDynIntimacy
         if (!empty($in['temperament'])) $add(RelDynTraits::rowParam($in['temperament'], (array) $cfg['temperament'], [
             'physical'  => ['R', [0.02, 'E' => 0.19, 'D' => -0.21]],
             'emotional' => ['R', [-0.64, 'W' => 0.96, 'G' => 0.54, 'E' => 0.18]],
-        ]), 1.0, "temperament:{$in['temperament']}");
+        ], 'offset', is_array($in['dynamics'] ?? null) ? $in['dynamics'] : null), 1.0, "temperament:{$in['temperament']}");
         // attachment: a style name (a textbook NPC of it) or style => corner weight
         $att = $in['attachment'] ?? null;
         foreach (is_array($att) ? $att : (is_string($att) && $att !== '' ? [$att => 1.0] : []) as $style => $w) {

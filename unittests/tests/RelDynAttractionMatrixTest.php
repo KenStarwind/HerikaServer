@@ -63,6 +63,9 @@ final class RelDynAttractionMatrixTest extends TestCase
 
     protected function setUp(): void
     {
+        // Personality traits phase 2: this class pins the LABEL assignment (the phase-1 legacy path):
+        // its NPCs' temperaments are the old core-data vote's. The read assignment has its own tests.
+        RelDynTraits::$assignmentOverride = 'label';
         $this->hadDb = array_key_exists('db', $GLOBALS);
         $this->savedDb = $GLOBALS['db'] ?? null;
         $this->db = new RelDynAttractionRowDb();
@@ -77,6 +80,7 @@ final class RelDynAttractionMatrixTest extends TestCase
 
     protected function tearDown(): void
     {
+        RelDynTraits::$assignmentOverride = null;
         ini_set('error_log', $this->prevErrorLog === false ? '' : (string) $this->prevErrorLog);
         @unlink($this->errorLog);
         if ($this->hadDb) $GLOBALS['db'] = $this->savedDb; else unset($GLOBALS['db']);
@@ -376,7 +380,9 @@ final class RelDynAttractionMatrixTest extends TestCase
             'Aela preset (memory: medium, not the Independent default low)');
         $this->assertSame('low', RelDynAttraction::definition('Farengar Secret-Fire', $this->npc('Farengar Secret-Fire'))['openness'],
             'MDD 1.3: Guarded = low');
-        $this->assertSame('high', RelDynAttraction::definition('Ysolda', $this->npc('Ysolda'))['openness'], 'MDD 1.3: Anxious = high');
+        // (Ysolda's own Anxious preset is dropped, decisions §16 #2: the editor's Anxious stands in)
+        $this->assertSame('high', RelDynAttraction::definition('Ysolda', $this->npc('Ysolda', ['inferred_temperament' => 'Anxious']))['openness'],
+            'MDD 1.3: Anxious = high');
         $this->assertSame('high', RelDynAttraction::definition(self::AELA, $this->npc(self::AELA, ['openness' => 'high']))['openness'], 'editor dropdown');
         $this->assertSame('low', RelDynAttraction::definition(self::AELA, $this->npc(self::AELA, ['openness' => 0.25]))['openness'], 'numeric -> nearest band');
     }

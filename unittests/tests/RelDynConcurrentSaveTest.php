@@ -76,6 +76,10 @@ final class RelDynConcurrentFakeDb
             $ns = $this->npcs[$id]['plugin_extended_data'][$params[1]] ?? null;
             return ['plugin_data' => $ns === null ? null : json_encode((object) $ns)];
         }
+        // ---- table probes (personality trait reads: bio templates / voice types): not in this fake ----
+        if ($sql === 'SELECT to_regclass($1) IS NOT NULL AS present') {
+            return ['present' => 'f'];
+        }
         // ---- pg advisory locks (session-level, re-entrant within one session, as in PostgreSQL) ----
         if (strpos($sql, 'SELECT pg_try_advisory_lock($1::int, $2::int)') === 0) {
             $k = $params[0] . ':' . $params[1];

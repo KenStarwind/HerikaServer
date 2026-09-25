@@ -22,6 +22,18 @@ chimRuntimeBootstrapIfNeeded($enginePath, [
 
 $db = $GLOBALS['db'];
 
+// Personality trait reads (phase 2): the reldyn_trait_reads table and the committed seed
+// (data/trait_reads_seed.json; idempotent: ON CONFLICT DO NOTHING, loaded once per seed file)
+require_once __DIR__ . '/relationship_dynamics.php';
+try {
+    RelDynTraitRead::ensureTable();
+    $n = RelDynTraitRead::ensureSeedLoaded();
+    echo "Trait reads: table ready, {$n} seed read(s) loaded.\n";
+} catch (\Throwable $e) {
+    error_log('[RelDyn-TRAITS] install: ' . $e->getMessage());
+    echo "Trait reads: not installed (" . $e->getMessage() . "); they install on first use.\n";
+}
+
 // Check if already installed
 $existing = $db->fetchOne("SELECT id FROM conf_opts WHERE id = 'relationship_dynamics_config' LIMIT 1");
 if (!empty($existing)) {

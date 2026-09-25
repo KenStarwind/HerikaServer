@@ -369,8 +369,11 @@ try {
 
             // Reset maturity to temperament-derived defaults
             $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
-            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'maturity');
-            $plasticityType = RelationshipDynamics::getMaturityPlasticityType($temperament);
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'maturity', $dynamics);
+            // read assignment: the automatic type (class rule or the traits' corner), as resolved
+            $plasticityType = RelDynTraits::readVector($dynamics) !== null && is_string($dynamics['_profile_autogen']['auto']['maturity_type'] ?? null)
+                ? $dynamics['_profile_autogen']['auto']['maturity_type']
+                : RelationshipDynamics::getMaturityPlasticityType($temperament, $dynamics);
 
             if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
             $dynamics['dimensions']['maturity'] = [
@@ -396,7 +399,7 @@ try {
 
             // Reset trust to temperament-derived defaults
             $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
-            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'trust');
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'trust', $dynamics);
 
             if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
             $dynamics['dimensions']['trust'] = [
@@ -420,7 +423,7 @@ try {
 
             // Reset respect to temperament-derived defaults
             $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
-            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'respect');
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'respect', $dynamics);
 
             if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
             $dynamics['dimensions']['respect'] = [
@@ -444,7 +447,7 @@ try {
 
             // Reset comfort to temperament-derived defaults
             $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
-            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'comfort');
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'comfort', $dynamics);
 
             if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
             $dynamics['dimensions']['comfort'] = [
@@ -469,7 +472,7 @@ try {
 
             // Reset coord_m to temperament-derived defaults
             $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
-            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'coord_m');
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'coord_m', $dynamics);
 
             if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
             $dynamics['dimensions']['coord_m'] = [
@@ -492,7 +495,7 @@ try {
 
             // Reset coord_f to temperament-derived defaults
             $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
-            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'coord_f');
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'coord_f', $dynamics);
 
             if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
             $dynamics['dimensions']['coord_f'] = [
@@ -556,7 +559,7 @@ try {
 
             // Reset self-confidence to temperament-derived defaults
             $temperament = $dynamics['inferred_temperament'] ?? 'Stoic';
-            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'self_confidence');
+            $baseline = RelationshipDynamics::getTemperamentBaseline($temperament, 'self_confidence', $dynamics);
 
             if (!isset($dynamics['dimensions'])) $dynamics['dimensions'] = [];
             $dynamics['dimensions']['self_confidence'] = [
