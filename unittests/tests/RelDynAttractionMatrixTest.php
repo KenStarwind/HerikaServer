@@ -217,11 +217,18 @@ final class RelDynAttractionMatrixTest extends TestCase
      * floor is the foot of a steep hill, not a zero. The scholar is on Farengar's hill; a
      * warrior's and a bard's strength, as a mage reads it, are far down it; Aela's lens sees
      * next to no strength in a bard. Only a non-negotiable is a zero (testPreferenceFilter,
-     * testGenderPreference).
+     * testGenderPreference, and a RIGID pillar below its bar: Farengar's competence and status
+     * are rigid, so the players here have the standing and deeds to pass them, isolating his
+     * flexible strength hill).
      */
     public function testAFarOffRequiredPillarIsTheFootOfTheHillNotAZero(): void
     {
-        $at = fn(string $kind) => RelationshipDynamics::attractionFor('Farengar Secret-Fire', $this->npc('Farengar Secret-Fire'), self::player($kind));
+        $at = function (string $kind) {
+            $p = self::player($kind);
+            $p['pillars']['status'] = 0.8;
+            $p['pillars']['competence'] = 0.8;
+            return RelationshipDynamics::attractionFor('Farengar Secret-Fire', $this->npc('Farengar Secret-Fire'), $p);
+        };
         $scholar = $at('scholar');
         $this->assertNull($scholar['hard_zero']);
         $this->assertGreaterThan(0.0, $scholar['passion_mult']);
@@ -338,22 +345,23 @@ final class RelDynAttractionMatrixTest extends TestCase
         $high = $at('high', $near);
         $this->assertTrue($high['pillars']['strength']['tolerated']);
 
-        // Passion: openness sets the floor (curve.floor_by_openness), so the same near miss is
-        // further down a low-openness NPC's hill; no cap at any band
-        $floors = RelDynAttraction::curveConfig()['floor_by_openness'];
-        foreach (['low' => $low, 'medium' => $medium, 'high' => $high] as $band => $r) {
-            $this->assertSame(floatval($floors[$band]), $r['passion']['units']['strength']['floor'], $band);
+        // Passion (strength RIGID here): low openness = the near miss fails its bar, the
+        // non-negotiable hard zero; medium / high tolerate it (the gate passes) with MDD 1.4's
+        // passion ceiling cut (medium 50%, high 20%). The floor is the NPC's, not the band's.
+        $this->assertSame('rigid:strength', $low['hard_zero'], $low['reason']);
+        $this->assertSame(0.0, $low['passion_mult']);
+        foreach (['medium' => [$medium, 50.0], 'high' => [$high, 80.0]] as $band => [$r, $ceiling]) {
+            $this->assertEquals(45.0, $r['passion']['units']['strength']['floor'], $band);
             $this->assertNull($r['hard_zero'], "{$band}: {$r['reason']}");
+            $this->assertTrue($r['passion']['units']['strength']['met'], $band);
             $this->assertGreaterThan(0.0, $r['passion_mult'], $band);
-            $this->assertArrayNotHasKey('passion_cap', $r, "{$band}: the MDD 1.4 ceiling cut is retired with the cap");
+            $this->assertArrayNotHasKey('passion_cap', $r, "{$band}: not the retired cap of 20");
+            $this->assertEquals($ceiling, $r['passion_ceiling'], "{$band}: MDD 1.4");
         }
-        $this->assertLessThan($medium['passion']['curve'], $low['passion']['curve']);
-        $this->assertLessThan($high['passion']['curve'], $medium['passion']['curve']);
 
         $farHigh = $at('high', $far);
-        $this->assertLessThan($high['passion']['curve'], $farHigh['passion']['curve'], 'far off the mark: further down, even at high openness');
-        $this->assertFalse($farHigh['passes'], 'very low: not attracted');
-        $this->assertGreaterThan(0.0, $farHigh['passion_mult'], 'but not a wall');
+        $this->assertSame('rigid:strength', $farHigh['hard_zero'], 'far off the mark: a rigid pillar fails even at high openness');
+        $this->assertFalse($farHigh['passes'], 'not attracted');
 
         // 2x the significant interactions to advance with a tolerated fail
         $plain = RelDynAttraction::interactionsNeeded($d, $medium['gate'], 'medium', false);
@@ -623,17 +631,27 @@ final class RelDynAttractionMatrixTest extends TestCase
     {
         $d = $this->aelaFor('bard');
         $this->assertTrue($d['_attraction']['friendzoned']);
-        RelationshipDynamics::addPassion($d, 50.0, 'love_match');
-        $this->assertSame(50.0, RelationshipDynamics::getPassion($d), 'addPassion (the writer after the factor)');
-        $this->assertGreaterThan(0.0, RelationshipDynamics::applyDelta('passion', $d, 30.0, $d['inferred_temperament']), 'applyDelta');
-        $this->assertGreaterThan(50.0, RelationshipDynamics::getPassion($d));
-        // The label begins while passion runs high: passion stays
+        RelationshipDynamics::addPassion($d, 30.0, 'love_match');
+        $this->assertSame(30.0, RelationshipDynamics::getPassion($d), 'addPassion (the writer after the factor)');
+        $this->assertGreaterThan(0.0, RelationshipDynamics::applyDelta('passion', $d, 30.0, $d['inferred_temperament']), 'applyDelta past 20');
+        $this->assertGreaterThan(30.0, RelationshipDynamics::getPassion($d));
+        // The only attraction bound left is MDD 1.4's ceiling for a pillar below its bar (Aela,
+        // medium: 50), never 20
+        $this->assertEquals(50.0, $d['_attraction']['passion_ceiling']);
+        RelationshipDynamics::setPassion($d, 50.0);
+        $this->assertSame(0.0, RelationshipDynamics::applyDelta('passion', $d, 30.0, $d['inferred_temperament']), 'at the MDD 1.4 ceiling');
+        // Passion running high while the player fails her bars: passion stays, and past the
+        // MDD 8.1 "Friendzone limit" she is won over (drawn), not friendzoned
         $e = $this->aelaFor('warrior');
         RelationshipDynamics::setPassion($e, 70.0);
         RelationshipDynamics::updateAttraction(self::AELA, $e, self::player('bard'));
-        $this->assertTrue($e['_attraction']['friendzoned']);
+        $this->assertFalse($e['_attraction']['friendzoned']);
+        $this->assertTrue($e['_attraction']['won_over']);
         $this->assertSame(70.0, RelationshipDynamics::getPassion($e));
-        // ...and ends when the player climbs her hill
+        // ...back under the spark it is the label again; past her bars no label at all
+        RelationshipDynamics::setPassion($e, 10.0);
+        RelationshipDynamics::updateAttraction(self::AELA, $e, self::player('bard'));
+        $this->assertTrue($e['_attraction']['friendzoned']);
         RelationshipDynamics::updateAttraction(self::AELA, $e, self::player('warrior'));
         $this->assertFalse($e['_attraction']['friendzoned']);
     }

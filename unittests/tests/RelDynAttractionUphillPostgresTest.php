@@ -402,7 +402,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
      */
     public function testSparkToTwentyForAPlainBardThenAboutATenth(): void
     {
-        $this->bardWith(30);
+        $this->bardWith(15);
         $this->turn('A song for the Huntress?');
         $d = $this->dynamics();
         $a = $this->attractionNow($d);
@@ -415,7 +415,9 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertNotNull($unit, json_encode($a['passion']));
         $this->assertSame(['strength'], $unit['pillars']);
         $this->assertSame(68.0, $unit['floor']);
-        $this->assertSame('openness:medium', RelDynAttraction::definition(self::AELA, $d)['sources']['floors']);
+        $def = RelDynAttraction::definition(self::AELA, $d);
+        $this->assertSame('preset', $def['sources']['floors.strength'], 'Ken: her floor is high 60s in martial');
+        $this->assertSame(45.0, $def['floors']['beauty'], "Aela's other pillars keep the default floor (Ken's generic 45)");
         $this->assertLessThan(20.0, $unit['score'], 'a bard is far down her martial hill: ' . json_encode($unit));
         // Ken: "you'd be heavily penalized for being outside her attraction zone": ~0.1..0.12
         $this->assertGreaterThanOrEqual(0.1, $a['passion']['curve']);
@@ -473,15 +475,20 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
     }
 
     /**
-     * Charm climbs the hill (MDD 2.5, decisions §13): the silver-tongued bard's effective
-     * martial score is higher, so his curve is a little better, and over many game days of
-     * courting his passion climbs past 20, slowly, a little faster than the plain bard's.
+     * Charm climbs the hill (MDD 2.5, decisions §13: "a super-charming bard can win an atypical
+     * interest, slowly"). The same bard, speechcraft 15 or 100, courts Aela one evening a game
+     * day. Charm does not change his martial score (it is not substance); it closes up to 15%
+     * of the gap between the foot of her hill and her floor, which on the hill's flat foot is
+     * what decides whether he climbs at all: the plain bard hovers at the spark, the silver
+     * tongue climbs, slowly, and after game months wins her over (MDD 8.1's "Friendzone
+     * limit"). Every visit comes after half an hour of play on the play clock (so the passion
+     * fade and the session's diminishing returns run as in play).
      */
-    public function testASilverTonguedBardIsSlightlyBetterAndClimbsSlowlyOverManyGameDays(): void
+    public function testASilverTongueClimbsFasterAndWinsHerOverSlowly(): void
     {
         $runs = [];
         [$g0, $r0] = [$this->gamets, $this->realTs];
-        foreach (['plain' => 30, 'silver' => 100] as $who => $speech) {
+        foreach (['plain' => [15, 30], 'silver' => [100, 150]] as $who => [$speech, $maxDays]) {
             // the same evenings for both: Aela's RelDyn state, the logs and the clocks start over
             pg_query_params($this->db->link, "UPDATE core_npc_master SET plugin_extended_data = '{}'::jsonb WHERE npc_name = $1", [self::AELA]);
             pg_query($this->db->link, 'DELETE FROM eventlog');
@@ -492,33 +499,63 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
             $this->turn('A song for the Huntress?');
             $d = $this->dynamics();
             $a = $this->attractionNow($d);
-            $runs[$who] = ['a' => $a, 'passion' => []];
+            $runs[$who] = ['a' => $a, 'passion' => [], 'won_day' => null];
             // The spark is behind them: passion at 20 (an older evening), then one visit a game
             // day (20 game hours apart: no absence fade), each with a passionate moment the eval scores
             $this->editDynamics(function (array &$d): void { RelationshipDynamics::setPassion($d, 20.0); });
-            for ($day = 1; $day <= 30; $day++) {
+            for ($day = 1; $day <= $maxDays; $day++) {
                 $this->gamets += 20 * self::DAY / 24;
                 $this->realTs += 3600;
+                // half an hour of play since the last visit (updatePlayTime credits real
+                // seconds, which a test run does not have)
+                $this->editDynamics(function (array &$d): void {
+                    $d['_accumulated_play_gamets'] = floatval($d['_accumulated_play_gamets'] ?? 0) + 0.5 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
+                });
                 $this->queueEval(['passion' => 12], ['quality_time']);
                 $this->turn('Walk with me a while?', 'default');
-                $runs[$who]['passion'][$day] = RelationshipDynamics::getPassion($this->dynamics());
+                $now = $this->dynamics();
+                $runs[$who]['passion'][$day] = RelationshipDynamics::getPassion($now);
+                if (!empty($now['_attraction']['won_over'])) {
+                    $runs[$who]['won_day'] = $day;
+                    break;
+                }
             }
         }
         $plain = $runs['plain'];
         $silver = $runs['silver'];
-        // Charm: a higher effective score, a slightly better curve (still far below her floor)
-        $this->assertGreaterThan($plain['a']['pillars']['strength']['score'], $silver['a']['pillars']['strength']['score']);
-        $this->assertGreaterThan($plain['a']['passion']['curve'], $silver['a']['passion']['curve'], 'charm helps');
-        $this->assertLessThan(1.5 * $plain['a']['passion']['curve'], $silver['a']['passion']['curve'], 'slightly: a silver tongue does not replace substance');
-        $this->assertLessThan(0.2, $silver['a']['passion']['curve']);
-        // Both climb past 20 (no wall), slowly; the silver tongue ends higher
-        foreach (['plain' => $plain, 'silver' => $silver] as $who => $run) {
-            $p = $run['passion'];
-            $this->assertGreaterThan(20.5, $p[30], "{$who}: past the spark over 30 game days " . json_encode($p));
-            $this->assertGreaterThan($p[10], $p[30], "{$who}: still climbing");
-            $this->assertLessThan(40.0, $p[30], "{$who}: slowly (an uphill): " . json_encode($p));
-        }
-        $this->assertGreaterThan($plain['passion'][30], $silver['passion'][30], 'charm climbs a little faster');
+        $why = json_encode(['plain' => $plain['passion'], 'silver' => $silver['passion']]);
+        // Charm climbs the hill: the same martial score, a better curve (15% of the gap to her
+        // floor), still far below her floor
+        $pu = $plain['a']['passion']['units']['flexible:visceral'];
+        $su = $silver['a']['passion']['units']['flexible:visceral'];
+        $this->assertSame($pu['score'], $su['score'], 'the curve reads the lens score before the speech lift');
+        $this->assertSame($pu['m_hill'], $su['m_hill']);
+        $this->assertEqualsWithDelta($su['m_hill'] + (1 - $su['m_hill']) * 0.15, $su['m'], 1e-3, 'speech 100 closes 15% of the gap');
+        $this->assertGreaterThan(1.5 * $plain['a']['passion']['curve'], $silver['a']['passion']['curve'], 'charm is a real lever, not 0.25%');
+        $this->assertLessThan(0.3, $silver['a']['passion']['curve'], 'a silver tongue does not replace substance');
+        $this->assertGreaterThan($plain['a']['pillars']['strength']['score'], $silver['a']['pillars']['strength']['score'],
+            'the pillar score keeps the MDD 2.5 lift (bars, tiers)');
+        // The plain bard: the spark, and the foot of her hill barely holds him above it
+        $this->assertNull($plain['won_day'], $why);
+        $this->assertLessThan(22.0, max($plain['passion']), 'the plain bard hovers at the spark: ' . $why);
+        // The silver tongue: past the spark and still climbing a month on, slowly
+        $p = $silver['passion'];
+        $this->assertGreaterThan($plain['passion'][30] + 3.0, $p[30], 'charm climbs: ' . $why);
+        $this->assertGreaterThan($p[10], $p[30], 'still climbing');
+        $this->assertLessThan(30.0, $p[30], 'slowly (an uphill): ' . $why);
+        // ... and wins her over after game months of courting (decisions §13): past the MDD 8.1
+        // "Friendzone limit" (40) her passion reads as drawn, not a friend's
+        $this->assertNotNull($silver['won_day'], 'won over within 150 game days: ' . $why);
+        $this->assertGreaterThan(60, $silver['won_day'], 'not quickly: ' . $why);
+        $this->assertGreaterThanOrEqual(40.0, end($p));
+        $won = $this->dynamics()['_attraction'];
+        $this->assertTrue($won['won_over'], json_encode($won));
+        $this->assertTrue($won['attracted']);
+        $this->assertFalse($won['friendzoned']);
+        $this->assertSame('drawn', $won['outcome'], 'her Companions standing unknown: her generic standing holds');
+        $this->assertLessThan(1.0, $won['passion']['curve'], 'still an uphill: being won over does not change the rate');
+        $this->assertEquals(50.0, $won['passion_ceiling'], 'MDD 1.4 medium: a failed pillar cuts the passion ceiling 50%');
+        $this->assertSame(2, $won['romance']['allowed'], 'the romance axis opens (her standing met); lifts still wait on significant moments');
         $this->assertNoDbFailures();
     }
 
@@ -635,17 +672,32 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
             $this->assertStringContainsString("hard zero: {$expect}", $this->errorLogText(), 'the passion log names why');
         }
 
-        // Not a wall above zero: one Companions quest is some standing, so the rigid pillar is
-        // no longer at 0 and the bond-gated Aela's passion opens (the spark; a steep hill after)
+        // A rigid pillar is a gate on its bar, not a hill (Ken: rigid, non-negotiable pillars
+        // stay a hard zero; memory "Rigid: must pass. Non-negotiable"): one Companions quest is
+        // some standing, still below her bar, so still exactly zero; enough standing to pass
+        // opens it, and a passed rigid pillar counts as her floor met (x1.0), not a hill
         $this->attractionConfig(function (array &$att): void {});
-        $this->corePlayer('The Companions Quests Completed', '1');
         $d = $this->dynamics();
         $d['attraction_overrides'] = ['gate' => 'bond'];
-        $one = $this->attractionNow($d);
-        $this->assertNull($one['hard_zero'], $one['reason']);
-        $this->assertGreaterThan(0.0, $one['spark_mult']);
-        $this->assertGreaterThan(0.0, $one['passion_mult']);
-        $this->assertLessThan(0.3, $one['passion']['units']['status']['m'], json_encode($one['passion']['units']));
+        foreach (['1' => false, '12' => true] as $quests => $opens) {
+            $this->corePlayer('The Companions Quests Completed', $quests);
+            $a = $this->attractionNow($d);
+            $status = $a['pillars']['status'];
+            $why = $a['reason'] . ' ' . json_encode([$status, $a['passion']['units']['status'] ?? null]);
+            $this->assertGreaterThan(0.0, $status['score'], $why);
+            if (!$opens) {
+                $this->assertFalse($status['pass'], $why);
+                $this->assertSame('rigid:status', $a['hard_zero'], "{$quests} quest(s): below the bar is a hard zero, not a steep hill: {$why}");
+                $this->assertSame(0.0, $a['spark_mult']);
+                $this->assertSame(0.0, $a['passion_mult']);
+                $this->assertFalse($a['passion']['units']['status']['met']);
+            } else {
+                $this->assertTrue($status['pass'], $why);
+                $this->assertNull($a['hard_zero'], $why);
+                $this->assertGreaterThan(0.0, $a['spark_mult']);
+                $this->assertGreaterThanOrEqual(1.0, $a['passion']['units']['status']['m'], 'a passed rigid pillar is met: ' . $why);
+            }
+        }
         $this->assertNoDbFailures();
     }
 
@@ -686,30 +738,67 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
     // ------------------------------------------------------------------ bond relief
 
     /**
-     * Balanced NPCs: the bond flattens the visceral hill, gradually, met at the bonded tier;
-     * the sociological hill stays. (Aela made balanced in the editor, her passion read on
-     * strength and her Companions standing.)
+     * A bond grown the way play grows it: core affinity moves, the Matrix re-evaluates with
+     * its tracked state (no grandfathering), and each lift it opens is earned through
+     * significant interactions (recordSignificance, as the eval consumer calls it).
      */
-    public function testBalancedNpcBondFlattensTheVisceralHillNotTheSociological(): void
+    private function growBondTo(array &$d, int $aff): array
     {
-        $this->bardWith(30, 1);
+        $this->setCoreAff($aff);
+        RelationshipDynamics::refreshAffinityMirror($d, $aff);
+        $a = $this->attractionNow($d);
+        for ($i = 0; $i < 60 && !empty($d['_attraction_state']['pending']); $i++) {
+            RelDynAttraction::recordSignificance(self::AELA, $d, 0.9, true);
+            $a = $this->attractionNow($d);
+        }
+        return $a;
+    }
+
+    /** Aela as a balanced, Guard-like NPC in the editor (plan §3 Guard row), floor 45 on strength. */
+    private function guardLike(array &$d, array $extra = []): void
+    {
+        $d['attraction_overrides'] = array_replace([
+            'gate' => 'balanced', 'openness' => 'low', 'floors' => ['strength' => 45.0],
+            'rigidity' => ['beauty' => 'soft', 'strength' => 'flexible', 'status' => 'soft', 'competence' => 'rigid'],
+        ], $extra);
+        unset($d['_attraction_state'], $d['_attraction']);
+    }
+
+    /**
+     * Balanced NPCs (decisions §13): the bond flattens the visceral hill, gradually, and the
+     * bond can actually get there in play: a balanced NPC's visceral pillars never hold its
+     * depth (plan §7 "visceral pass OR bonded tier"), so the bonded tier is reachable through
+     * earned lifts, not only grandfathered, and there the visceral pillar counts as met.
+     */
+    public function testBalancedNpcBondFlattensTheVisceralHillAndReachesBondedInPlay(): void
+    {
+        $this->bardWith(15);
         $this->turn('A song for the Huntress?');
         $d = $this->dynamics();
-        $d['attraction_overrides'] = ['gate' => 'balanced', 'passion_pillars' => ['strength', 'status'],
-            'rigidity' => ['strength' => 'flexible', 'status' => 'flexible']];
+        // Her competence rigid (the Guard row): the bard's deeds pass its bar (0.35) but not
+        // the bonded tier's 0.5, a SOCIOLOGICAL gate (MDD 2.6: tier advancement past Fond),
+        // which the bond does not replace: the bond stops at close friend, and so does relief
+        $this->guardLike($d);
+        foreach ([10, 45, 76, 90] as $aff) $a = $this->growBondTo($d, $aff);
+        $this->assertSame('', $a['grandfathered']['depth']);
+        $this->assertSame('close_friend', $a['allowed_tier'], $a['reason']);
+        $this->assertFalse(RelDynAttraction::definition(self::AELA, $d)['rigidity']['competence'] !== 'rigid');
+        $this->assertLessThan(1.0, $a['passion']['relief']);
+        $this->assertSame('friendzone', $a['outcome']);
+        // Competence soft: nothing sociological holds the bond, and the visceral side never did
+        $this->guardLike($d, ['rigidity' => ['beauty' => 'soft', 'strength' => 'flexible', 'status' => 'soft', 'competence' => 'soft']]);
         $rows = [];
         foreach ([10, 31, 45, 60, 70, 76, 90] as $aff) {
-            $x = $this->atAffinity($d, $aff);
-            $a = $x['_attraction'];
-            $this->assertSame('balanced', $a['gate']);
-            $rows[$aff] = ['vis' => $a['passion']['units']['flexible:visceral'], 'soc' => $a['passion']['units']['flexible:sociological'],
-                'relief' => $a['passion']['relief'], 'curve' => $a['passion']['curve']];
+            $a = $this->growBondTo($d, $aff);
+            $rows[$aff] = ['vis' => $a['passion']['units']['flexible:visceral'], 'relief' => $a['passion']['relief'],
+                'curve' => $a['passion']['curve'], 'allowed' => $a['allowed_tier'], 'eff' => $a['ceiling_tier'],
+                'outcome' => $a['outcome'], 'grandfathered' => $a['grandfathered']];
         }
         $why = json_encode($rows);
-        $this->assertLessThan(0.3, $rows[10]['soc']['m'], 'her Companions standing is well below her floor: ' . $why);
+        foreach ($rows as $r) $this->assertSame('', $r['grandfathered']['depth'], 'nothing grandfathered: ' . $why);
+        $this->assertFalse($rows[10]['vis']['met'], 'the bard fails her strength bar: ' . $why);
         $this->assertSame(0.0, $rows[10]['relief'], 'an acquaintance: no relief');
         $this->assertSame(0.0, $rows[31]['relief'], 'relief starts at the friend tier');
-        $this->assertSame($rows[10]['vis']['m'], $rows[31]['vis']['m']);
         $prev = null;
         foreach ([31, 45, 60, 70, 76] as $aff) {
             if ($prev !== null) {
@@ -718,22 +807,74 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
             }
             $prev = $aff;
         }
-        $this->assertSame(1.0, $rows[76]['relief'], 'bonded: met');
+        $this->assertSame(1.0, $rows[76]['relief'], 'the bonded tier, reached in play: ' . $why);
         $this->assertSame(1.0, $rows[76]['vis']['m'], 'at the bonded tier the visceral pillar counts as met');
         $this->assertSame(1.0, $rows[90]['vis']['m']);
-        foreach ($rows as $aff => $r) {
-            $this->assertSame($rows[10]['soc']['m'], $r['soc']['m'], "the sociological hill keeps its curve at {$aff}");
-            $this->assertSame($r['vis']['m_hill'], $rows[10]['vis']['m_hill'], 'the hill itself is unchanged; the bond eases its penalty');
+        foreach ($rows as $r) $this->assertSame($rows[10]['vis']['m_hill'], $r['vis']['m_hill'], 'the hill itself is unchanged; the bond eases its penalty');
+        foreach ([10, 31, 45, 60, 70] as $aff) $this->assertSame('friendzone', $rows[$aff]['outcome'], "the label holds below bonded ({$aff}): {$why}");
+        $this->assertSame('drawn', $rows[76]['outcome'], 'bonded: her visceral pillars count as met: ' . $why);
+
+        // The sociological hill keeps its curve: her passion read on strength and her
+        // Companions standing (one quest, far below her floor; soft, so it holds no depth and
+        // the bond can grow), the bond grown the same way
+        $this->bardWith(15, 1);
+        $d = $this->dynamics();
+        $this->guardLike($d, ['passion_pillars' => ['strength', 'status'],
+            'rigidity' => ['beauty' => 'soft', 'strength' => 'flexible', 'status' => 'soft', 'competence' => 'soft']]);
+        $soc = [];
+        foreach ([10, 45, 76, 90] as $aff) {
+            $a = $this->growBondTo($d, $aff);
+            $soc[$aff] = ['soc' => $a['passion']['units']['soft:sociological'] ?? null, 'vis' => $a['passion']['units']['flexible:visceral'],
+                'curve' => $a['passion']['curve'], 'relief' => $a['passion']['relief']];
         }
-        // So once bonded the curve is the sociological unit's alone (the weakest)
-        $this->assertEqualsWithDelta($rows[76]['soc']['m'], $rows[76]['curve'], 1e-4);
+        $why = json_encode($soc);
+        $this->assertNotNull($soc[10]['soc'], $why);
+        $this->assertLessThan(0.7, $soc[10]['soc']['m'], 'her Companions standing is well below her floor: ' . $why);
+        $this->assertSame(1.0, $soc[90]['relief'], $why);
+        foreach ($soc as $aff => $r) $this->assertSame($soc[10]['soc']['m'], $r['soc']['m'], "the sociological hill keeps its curve at {$aff}");
+        $this->assertGreaterThan($soc[10]['vis']['m'], $soc[45]['vis']['m'], 'the visceral hill eases: ' . $why);
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * The bond relief eases the RATE of passion, not the label (review: at core affinity 34 a
+     * relief of ~0.07 used to lift the curve over the friendzone line, switching off the
+     * friendzone, the friendzone type and Sharmat's consent block while the player still failed
+     * her visceral pass and romance stayed at 0). Below the bonded tier the balanced NPC stays
+     * friendzoned: no intimacy, the consent block holds, flirtation is kindly deflected.
+     */
+    public function testBalancedBondReliefEasesTheRateNotTheLabel(): void
+    {
+        $this->bardWith(15);
+        $this->turn('A song for the Huntress?');
+        $d = $this->dynamics();
+        $this->guardLike($d);
+        $prevMult = null;
+        foreach ([31, 33, 34, 36, 45, 60, 70, 75] as $aff) {
+            $a = $this->growBondTo($d, $aff);
+            $why = "aff {$aff}: {$a['reason']} " . json_encode($a['passion']);
+            $this->assertSame('friendzone', $a['outcome'], $why);
+            $this->assertTrue($a['friendzoned'], $why);
+            $this->assertFalse($a['attracted'], $why);
+            $this->assertFalse($a['intimacy_allowed'], $why);
+            $this->assertSame(0, $a['romance']['allowed'], $why);
+            $state = RelDynRomance::buildState(self::AELA, $d, null, null);
+            $this->assertTrue($state['consent_block'], $why);
+            $this->assertContains('friendzoned', $state['block_reasons'], $why);
+            $this->assertFalse($state['attraction_pass'], $why);
+            $felt = (string) RelDynAttraction::feltText(self::AELA, $d['_attraction'], ['tier' => 2, 'passion' => 15.0]);
+            $this->assertStringContainsString('kind deflection', $felt, $why);
+            if ($aff >= 34 && $prevMult !== null) $this->assertGreaterThan($prevMult, $a['passion_mult'], 'the rate eases: ' . $why);
+            $prevMult = $a['passion_mult'];
+        }
+        $this->assertGreaterThan(0.9, $d['_attraction']['passion']['relief'], 'nearly bonded: the rate nearly met, the label still holds');
         $this->assertNoDbFailures();
     }
 
     /** Visceral-type NPCs get no bond relief (decisions §13): Aela as she is, the bard bonded or not. */
     public function testVisceralNpcGetsNoBondRelief(): void
     {
-        $this->bardWith(30);
+        $this->bardWith(15);
         $this->turn('A song for the Huntress?');
         $d = $this->dynamics();
         $low = $this->atAffinity($d, 10)['_attraction'];
@@ -744,6 +885,240 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertSame($low['passion']['units']['flexible:visceral']['m'], $high['passion']['units']['flexible:visceral']['m'],
             'devoted or a stranger, her martial hill is the same');
         $this->assertLessThan(0.13, $high['passion']['curve']);
+        $this->assertNoDbFailures();
+    }
+
+    // ------------------------------------------------------------------ review fixes (rigid, floors, label, ceiling)
+
+    /**
+     * A rigid pillar is a gate on its MDD bar, not a steep hill (Ken: rigid, non-negotiable
+     * pillars stay a hard zero; memory: "Rigid: must pass. Non-negotiable."). Aela's beauty is
+     * rigid: at low openness (no tolerance) a described player with none of her words fails
+     * its bar = exactly 0, spark included; one of her words passes it and the unit counts as
+     * met (x1.0, surplus above its floor), not as a hill.
+     */
+    public function testARigidPillarBelowItsBarIsAHardZeroAndAPassedOneIsMet(): void
+    {
+        $this->warriorAtStep(5);
+        $this->corePlayer('appearance', 'A quiet man with ink-stained fingers and a soft voice.');
+        $this->turn('Good hunting today.');
+        $d = $this->dynamics();
+        $d['attraction_overrides'] = ['openness' => 'low'];
+        $a = $this->attractionNow($d);
+        $why = $a['reason'] . ' ' . json_encode([$a['pillars']['beauty'], $a['passion']['units']]);
+        $this->assertGreaterThan(0.0, $a['pillars']['beauty']['score'], 'above zero, below the bar: ' . $why);
+        $this->assertFalse($a['pillars']['beauty']['pass'], $why);
+        $this->assertSame('rigid:beauty', $a['hard_zero'], $why);
+        $this->assertSame(0.0, $a['spark_mult']);
+        $this->assertSame(0.0, $a['passion_mult']);
+        $this->assertFalse($a['attracted']);
+        RelationshipDynamics::setPassion($d, 0.0);
+        $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 10.0, 'reunion'), 'no spark either');
+
+        // One of her words: the bar is passed, the gate is open and met (55 points, floor 45: x1.10)
+        $this->corePlayer('appearance', 'A rugged man with ink-stained fingers.');
+        $a = $this->attractionNow($d);
+        $why = $a['reason'] . ' ' . json_encode($a['passion']['units']);
+        $this->assertTrue($a['pillars']['beauty']['pass'], $why);
+        $this->assertNull($a['hard_zero'], $why);
+        $this->assertTrue($a['passion']['units']['beauty']['met']);
+        $this->assertEqualsWithDelta(1.10, $a['passion']['units']['beauty']['m'], 1e-4, $why);
+        $this->assertSame('drawn', $a['outcome'], $why);
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * Each pillar has its own floor: Ken's 68 is Aela's martial floor only; beauty keeps the
+     * default (45), and a rigid beauty that passes its bar is met whatever its floor. A warrior
+     * well past her martial floor reads as drawn whether or not an appearance text exists
+     * (review: with every pillar on 68, one keyword hit, 55, friendzoned him).
+     */
+    public function testAWarriorPastHerMartialFloorIsDrawnWhateverHisLooksText(): void
+    {
+        $this->warriorAtStep(5);
+        $this->turn('Good hunting today.');
+        $d = $this->dynamics();
+        $def = RelDynAttraction::definition(self::AELA, $d);
+        $this->assertSame(68.0, $def['floors']['strength']);
+        foreach (['beauty', 'status', 'competence'] as $p) $this->assertSame(45.0, $def['floors'][$p], $p);
+        $outcomes = [];
+        foreach (['none' => null, 'no words' => 'A tall man with dark hair and a calm voice.',
+                     'one word' => 'A rugged man with dark hair.', 'two words' => 'A rugged, scarred man.'] as $label => $text) {
+            pg_query_params($this->db->link, 'DELETE FROM core_player WHERE id = $1', ['appearance']);
+            if ($text !== null) $this->corePlayer('appearance', $text);
+            $a = $this->attractionNow($d);
+            $why = "{$label}: {$a['reason']} " . json_encode($a['passion']['units']);
+            $this->assertSame('drawn', $a['outcome'], $why);
+            $this->assertFalse($a['friendzoned'], $why);
+            $this->assertGreaterThanOrEqual(1.0, $a['passion']['curve'], "past her martial floor, beauty met: {$why}");
+            $outcomes[$label] = $a['passion']['curve'];
+        }
+        $this->assertGreaterThan($outcomes['one word'], $outcomes['two words'], 'more of her words: surplus above the beauty floor');
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * The attraction label is the MDD bar, not a tuned constant (review: friendzone_below 0.15
+     * was chosen to sort the fixtures). A growing warrior reads as attracted exactly when his
+     * passion unit reaches its bar, and the curve there is the hill's own value at the bar.
+     */
+    public function testTheLabelIsTheUnitsBarNotATunedConstant(): void
+    {
+        $cc = RelDynAttraction::curveConfig();
+        foreach (['friendzone_below', 'floor_by_openness', 'rigid_m_min'] as $gone) {
+            $this->assertArrayNotHasKey($gone, $cc, "{$gone}: retired");
+        }
+        $this->assertEquals(45.0, $cc['floor'], "Ken's generic floor: 'at 45 you get 1x'");
+        // A stricter bar in the settings (pass_threshold 0.8: flexible bar 0.48), so the green
+        // sellsword starts below it; low openness: no near-miss tolerance, never won over
+        $this->attractionConfig(function (array &$att): void { $att['pass_threshold'] = 0.8; });
+        $this->warriorAt(0.0);
+        $this->turn('I heard the Companions take on sellswords.');
+        $d = $this->dynamics();
+        $d['attraction_overrides'] = ['openness' => 'low'];
+        $seen = [];
+        for ($k = 0.0; $k <= 3.0001; $k += 0.25) {
+            $this->warriorAt($k);
+            $a = $this->attractionNow($d);
+            $u = $a['passion']['units']['flexible:visceral'];
+            $why = "k {$k}: {$a['reason']} " . json_encode([$u, $a['pillars']['strength']]);
+            $this->assertSame($u['met'], $a['attracted'], $why);
+            $this->assertSame(!$u['met'], $a['friendzoned'] || $a['outcome'] === 'unattracted', $why);
+            $seen[$u['met'] ? 'met' : 'below'] = true;
+        }
+        $this->assertCount(2, $seen, 'the warrior crosses her bar on the way: ' . json_encode($seen));
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * MDD 1.4's "Failed Pillar Effect" stays (only MDD 6.2's cap of 20 was retired): while a
+     * passion pillar is below its bar, medium openness cuts passion's ceiling 50%, high 20%,
+     * low none (a hard block: never won over). Gains stop at the ceiling on every path; passion
+     * already above it is not cut. Past her bars there is no ceiling.
+     */
+    public function testTheMdd14CeilingForAPillarBelowItsBar(): void
+    {
+        $this->bardWith(15);
+        $this->turn('A song for the Huntress?');
+        $d = $this->dynamics();
+        foreach (['medium' => 50.0, 'high' => 80.0, 'low' => null] as $openness => $ceiling) {
+            $d['attraction_overrides'] = ['openness' => $openness];
+            $a = $this->attractionNow($d);
+            $this->assertEquals($ceiling, $a['passion_ceiling'], "{$openness}: {$a['reason']}");
+            if ($ceiling === null) continue;
+            RelationshipDynamics::setPassion($d, $ceiling - 0.5);
+            $gain = RelationshipDynamics::gainPassion(self::AELA, $d, 100.0, 'reunion');
+            $this->assertEqualsWithDelta(0.5, $gain, 1e-9, "{$openness}: up to the ceiling");
+            $this->assertEqualsWithDelta($ceiling, RelationshipDynamics::getPassion($d), 1e-9);
+            $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 5.0, 'repair'), "{$openness}: at the ceiling");
+            $this->assertSame(0.0, RelationshipDynamics::applyEvalSignal(self::AELA, $d, 'passion', 10.0, ['quality_time'], 0.9)['actual']);
+            $this->assertSame(0.0, RelationshipDynamics::applyDelta('passion', $d, 5.0, 'Guarded'));
+            // Passion above it (an older save) is not cut, it only stops rising
+            RelationshipDynamics::setPassion($d, $ceiling + 5.0);
+            $this->assertSame($ceiling + 5.0, RelationshipDynamics::getPassion($d));
+            $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 5.0, 'repair'));
+            $this->assertEqualsWithDelta($ceiling + 5.0, RelationshipDynamics::getPassion($d), 1e-9);
+        }
+        $this->assertStringContainsString('at the MDD 1.4 passion ceiling 50', $this->errorLogText(), 'the log names why');
+        // Low openness: no ceiling, the uphill still scales gains, and never won over
+        RelationshipDynamics::setPassion($d, 60.0);
+        $low = $this->attractionNow($d);
+        $this->assertFalse($low['won_over'], $low['reason']);
+        $this->assertSame('friendzone', $low['outcome']);
+        $this->assertGreaterThan(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 5.0, 'repair'));
+        // A warrior past her bars: no ceiling
+        unset($d['attraction_overrides']);
+        $this->warriorAtStep(5);
+        $w = $this->attractionNow($d);
+        $this->assertTrue($w['pillars']['strength']['pass'] && !$w['pillars']['strength']['tolerated'], $w['reason']);
+        $this->assertNull($w['passion_ceiling'], $w['reason']);
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * No contradiction in the felt context (review: with the cap of 20 gone, a friendzoned
+     * Aela at passion 65 got "drifts closer ... wanting to close it" and "idealizes Kaida" next
+     * to "meets flirtation with warm, kind deflection"). Not drawn = a friend's intensity, never
+     * desire; won over = drawn, and the desire lines agree with it.
+     */
+    public function testFeltPassionAgreesWithTheAttractionLine(): void
+    {
+        $this->bardWith(15);
+        $this->turn('A song for the Huntress?');
+        $d = $this->dynamics();
+        $d['love_language_primary'] = 'physical_touch';
+        $d['dimensions']['trust']['x'] = 30.0;   // with affinity high: infatuation's shape
+        $lines = function (array $dyn): array {
+            $out = [];
+            foreach (RelDynFelt::compose(self::AELA, self::PLAYER, $dyn, $this->gamets, [])['lines'] as $l) $out[$l['key']] = $l['text'];
+            return $out;
+        };
+        $desire = '/touch|close it|gaze|idealizes|voice drops|excuses/i';
+
+        // Low openness (a hard block): never won over, however high passion has climbed
+        $low = $d;
+        $low['attraction_overrides'] = ['openness' => 'low'];
+        foreach ([65.0, 85.0] as $p) {
+            RelationshipDynamics::setPassion($low, $p);
+            $a = $this->attractionNow($low);
+            $this->assertSame('friendzone', $a['outcome'], $a['reason']);
+            $l = $lines($low);
+            $all = implode(' | ', $l);
+            $this->assertStringContainsString('kind deflection', $l['attraction'] ?? '', $all);
+            $this->assertArrayHasKey('passion', $l, $all);
+            $this->assertMatchesRegularExpression('/(not|nothing) romantic/', $l['passion'], 'a friend intensity: ' . $all);
+            $this->assertDoesNotMatchRegularExpression($desire, $all, "passion {$p}: no desire next to a deflection");
+        }
+
+        // An attraction hard zero with passion from an older save: the same, never desire
+        $hz = $d;
+        $hz['attraction_overrides'] = ['gender_pref' => 'heterosexual'];
+        $this->corePlayer('gender', 'female');
+        RelationshipDynamics::setPassion($hz, 70.0);
+        $a = $this->attractionNow($hz);
+        $this->assertSame('orientation', $a['hard_zero']);
+        $this->assertDoesNotMatchRegularExpression($desire, implode(' | ', $lines($hz)));
+        pg_query_params($this->db->link, 'DELETE FROM core_player WHERE id = $1', ['gender']);
+
+        // Medium openness at 65: won over, drawn; the desire lines and the attraction line agree
+        $won = $d;
+        RelationshipDynamics::setPassion($won, 65.0);
+        $a = $this->attractionNow($won);
+        $this->assertTrue($a['won_over'], $a['reason']);
+        $this->assertSame('drawn', $a['outcome']);
+        $l = $lines($won);
+        $all = implode(' | ', $l);
+        $this->assertStringContainsString('won', $l['attraction'] ?? '', $all);
+        $this->assertStringNotContainsString('deflection', $all);
+        $this->assertMatchesRegularExpression('/drifts closer/', $l['passion'] ?? '', $all);
+        foreach ($l as $t) $this->assertDoesNotMatchRegularExpression('/\d/', $t, 'feelings, never numbers');
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * A hard zero takes passion, not the friendship (review: MDD 1.1 makes passion the affinity
+     * speed, so an asexual or orientation-mismatched NPC idled every affinity gain at x0.3
+     * forever). The drive reads the spark instead (what anyone else gets freely).
+     */
+    public function testAHardZeroDoesNotIdleTheFriendship(): void
+    {
+        $this->warriorAtStep(5);
+        $this->turn('Good hunting today.');
+        $this->attractionConfig(function (array &$att): void {}, ['type_filter_enabled' => true]);
+        $d = $this->dynamics();
+        $d['relationship_preference'] = 'asexual';
+        RelationshipDynamics::setPassion($d, 0.0);
+        $a = $this->attractionNow($d);
+        $this->assertSame('preference:asexual', $a['hard_zero'], $a['reason']);
+        $this->assertTrue($a['attracted'], 'asexual (romance_max 2) still judges the player; only passion is zero');
+        $drive = RelationshipDynamics::affinityModifiers($d, 5.0, ['quality_time'])['rows']['passion_drives_gains'] ?? null;
+        $this->assertEqualsWithDelta(0.3 + 0.017 * 20.0, $drive, 1e-9, 'the drive at the spark, not idling at x0.3');
+        $this->assertEqualsWithDelta(0.3 + 1.7 * 0.2, RelationshipDynamics::getAffinityGainMultiplier($d), 1e-9);
+        // The same NPC with no hard zero and no passion: MDD 1.1's idle x0.3 as written
+        unset($d['relationship_preference']);
+        $open = $this->attractionNow($d);
+        $this->assertNull($open['hard_zero']);
+        $this->assertEqualsWithDelta(0.3, RelationshipDynamics::affinityModifiers($d, 5.0, ['quality_time'])['rows']['passion_drives_gains'], 1e-9);
         $this->assertNoDbFailures();
     }
 
@@ -897,6 +1272,13 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertArrayNotHasKey('gate_product', $ja);
         $this->assertMatchesRegularExpression('/attraction=friendzone curve=0\.1\d\[flexible:visceral [0-9.]+\/68 x0\.1\d\] spark=20\(x[0-9.]+\) passion_mult=0\.\d\d/', $jev['text']);
         $this->assertArrayHasKey('attraction.spark', $jev['units']);
+        // the review fixes' factors: won over, the MDD 1.4 ceiling, charm, each unit's bar
+        $this->assertFalse($ja['won_over']);
+        $this->assertEquals(50.0, $ja['passion_ceiling'], 'MDD 1.4 medium: her martial bar failed');
+        $this->assertEqualsWithDelta(0.30, $ja['charm'], 1e-4, 'speechcraft 30');
+        $this->assertFalse($ja['units']['flexible:visceral']['met']);
+        $this->assertStringContainsString(' passion_ceiling=50', $jev['text']);
+        $this->assertArrayHasKey('attraction.passion_ceiling', $jev['units']);
         $this->assertNoDbFailures();
     }
 }

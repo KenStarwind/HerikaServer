@@ -22,32 +22,37 @@
  *          blended with the generic economic footprint / property / standing by status_share;
  *        - beauty is keyword overlap of the player's appearance text with the NPC's beauty
  *          keywords (MDD 2.1, auto-generated from class); no appearance text = unknown.
- *      Speech lifts every pillar up to ~15% (MDD 2.5).
+ *      Speech lifts every pillar score up to ~15% (MDD 2.5).
  *   2. Does the player pass? Each pillar has a rigidity (rigid / flexible / soft / irrelevant).
  *      Openness (MDD 1.4) tolerates near misses: low = hard block, medium / high = a tolerated
  *      fail that takes twice the effort to advance. These bars drive the type / depth filter
- *      (MDD 2.6: visceral / sociological pass, the tier ceilings), not passion.
+ *      (MDD 2.6: visceral / sociological pass, the tier ceilings), the rigid passion gate and
+ *      the attraction label; the curve sets how fast passion grows.
  *   3. What may grow? Passion (decisions §13, "an uphill, not a wall"; supersedes the §11 gates):
  *        below the spark (20 points): gain = raw x attachment            (open to anyone)
  *        from the spark:              gain = raw x curve x attachment [x prebond]
  *      curve: each of the NPC's passion pillars (MDD 8.3: archetype passion_pillars, else the
- *      intimacy gate's gate_pillars) has a floor in pillar points (0..100, from the NPC's
- *      openness; Aela's martial floor 68). Below it the multiplier is < 1 and steep (about 0.1
- *      far below, 1.0 at the floor, config exponent); above it +1% per point, capped at 1.25;
- *      several units combine with the weakest setting the scale (passionCurve, combineUnits).
- *      Speech lifts every pillar score (MDD 2.5), so a charming bard climbs a little faster.
+ *      intimacy gate's gate_pillars) has a floor in pillar points (0..100; default 45, Ken's
+ *      generic example; Aela's martial floor 68). Below it the multiplier is < 1 and steep
+ *      (about 0.1 far below, 1.0 at the floor, config exponent); above it +1% per point, capped
+ *      at 1.25; several units combine with the weakest setting the scale (passionCurve,
+ *      combineUnits). Charm climbs the hill: Speech closes up to 15% of the gap to her floor.
  *      Hard zero, spark included, only for the non-negotiable: orientation, a passion-free or
  *      romance-free preference (asexual, aromantic, not interested) and a rigid passion pillar
- *      at 0 ("100 x 0 is still 0"). A balanced NPC's bond eases the visceral hill (1.0 at the
- *      bonded tier; sociological units keep theirs); a visceral NPC gets no relief. Every
- *      passion writer (legacy, eval signal, reunion, combat, repair, hoover, place floor, the
- *      stage floor) goes through the same factor (gainFactor via
- *      RelationshipDynamics::attractionPassionFactor, passionStageFloor). There is no passion
- *      cap for attraction reasons: the MDD 6.2 hard cap of 20 is retired (decisions §13).
- *      Outcomes: attracted (curve at least friendzone_below) = drawn (sociological pass too) or
- *      hookup; not attracted with the sociological pillars met = friendzone (a label),
- *      otherwise unattracted. The relationship preference (demisexual, asexual, aromantic, ...)
- *      filters the romance axis.
+ *      below its bar ("Rigid: must pass. Non-negotiable"; "100 x 0 is still 0"). A balanced
+ *      NPC's bond eases the visceral hill (1.0 at the bonded tier, which its bond can reach:
+ *      the visceral pillars never hold its depth; sociological units keep theirs); a visceral
+ *      NPC gets no relief. Every passion writer (legacy, eval signal, reunion, combat, repair,
+ *      hoover, place floor, the stage floor) goes through the same factor (gainFactor via
+ *      RelationshipDynamics::attractionPassionFactor, passionStageFloor). The MDD 6.2 hard cap
+ *      of 20 is retired (decisions §13); the MDD 1.4 ceiling cut for a passion pillar below its
+ *      bar (medium 50%, high 20%) stays, as a bound on gains.
+ *      Outcomes: attracted (every passion unit at its MDD bar; or a balanced NPC at the bonded
+ *      tier; or won over: passion climbed on the uphill to the MDD 8.1 "Friendzone limit" 40,
+ *      never at low openness) = drawn (sociological pass too) or hookup; not attracted with
+ *      the sociological pillars met = friendzone (a label: the curve is "very low", below the
+ *      hill's value at her bars), otherwise unattracted. The relationship preference
+ *      (demisexual, asexual, aromantic, ...) filters the romance axis.
  *   4. How high can it go now? The tier ceiling (MDD 8, plan §5): a newly met threshold LIFTS
  *      the ceiling, but advancing to it takes significant interactions (eval significance);
  *      openness, attachment and maturity set how many. Only a bouncer can hold a lift: an NPC
@@ -220,9 +225,17 @@ class RelDynAttraction
             // How far below a pillar's bar a fail is still tolerated, as a FRACTION of that bar
             // (near is relative: a flexible bar is lower than a rigid one). Low = hard block
             // (MDD 1.4); medium / high tolerate near misses only. The bars and this margin drive
-            // the type / depth filter (MDD 2.6, tier ceilings); passion follows the curve
-            // (config 'curve', decisions §13), whose floors carry MDD 1.4's openness instead
+            // the type / depth filter (MDD 2.6, tier ceilings), the rigid passion gate and the
+            // attraction label; the rate of passion follows the curve (config 'curve', §13)
             'openness_margin' => ['low' => 0.0, 'medium' => 0.25, 'high' => 0.5],
+            // MDD 1.4 "Failed Pillar Effect": while a passion pillar is below its bar (failed or
+            // a tolerated near miss), passion's ceiling is cut by this fraction of passion_max:
+            // medium "passion ceiling reduced 50%", high "20% passion ceiling reduction". Low is
+            // the MDD's "hard block, type transition completely unavailable": no ceiling cut (the
+            // uphill still scales its gains, decisions §13), and it cannot be won over
+            // (curve.won_over_openness). A gain never lifts passion past the ceiling (gainFactor);
+            // passion already above it is not cut, it decays. Not the retired MDD 6.2 cap of 20.
+            'openness_passion_ceiling_cut' => ['low' => 0.0, 'medium' => 0.5, 'high' => 0.2],
             // MDD 1.4: low openness triggers the Ick faster when the player pushes past a failed
             // check (multiplier on the Ick threshold; lower = faster)
             'openness_ick_mult' => ['low' => 0.6, 'medium' => 1.0, 'high' => 1.3],
@@ -252,57 +265,77 @@ class RelDynAttraction
                 'attachment_mult' => ['anxious' => 1.3, 'secure' => 1.0, 'avoidant' => 0.7, 'toxic' => 1.2],
             ],
             // Decisions §13, "an uphill, not a wall" (supersedes the §11 gates). Units: passion
-            // points (0..passion_max) for spark; pillar points (the NPC's lens score x 100,
-            // 0..100) for floors and surplus; the rest are unitless multipliers.
+            // points (0..passion_max) for spark and won_over_passion; pillar points (the NPC's
+            // lens score x 100, 0..100) for floors and surplus; the rest are unitless.
             //   passion below spark: gain = raw x attachment (anyone; no attraction factor)
             //   passion from spark:  gain = raw x curve x attachment [x bond_prebond_mult]
+            //   (a gain never lifts passion past the MDD 1.4 ceiling, openness_passion_ceiling_cut)
             //   curve = min(1, min_u m_u) x mean_u max(1, m_u) over the NPC's passion units
-            //   (pillarMult); no unit: 1.0
-            //   m_u(s) below its floor F = m_min + (1 - m_min) x (s / F) ^ steepness
-            //          at / above F      = min(surplus_max, 1 + surplus_per_point x (s - F))
+            //   (combineUnits); no unit: 1.0
+            //   flexible / soft unit, score s (before the MDD 2.5 speech lift), floor F:
+            //     hill(s) below F = m_min + (1 - m_min) x (s / F) ^ steepness
+            //             from F  = min(surplus_max, 1 + surplus_per_point x (s - F))
+            //     charm (hill below 1 only) = hill + (1 - hill) x charm_hill_max x speech (0..1)
+            //     relief (balanced NPC, visceral unit, below 1 only) = m + (1 - m) x bond relief
+            //   rigid unit (a gate, "Rigid: must pass. Non-negotiable"): its bar failed = the
+            //     hard zero (no spark, no gain); met (or a tolerated near miss) = max(1, surplus)
             // Units: each rigid passion pillar alone; the flexible (and the soft) passion pillars
             // as one group per axis (visceral, sociological) on the weighted mean score against
             // the weighted mean floor ("distribution doesn't matter"). Unknown and irrelevant
-            // pillars are no unit. A rigid pillar at 0 is the non-negotiable hard zero (with the
-            // orientation and the passion-free preferences): no spark, no gain at all.
+            // pillars are no unit.
             'curve' => [
                 // Passion points open to anyone at the normal rate (decisions §13: "a spark is
                 // open to anyone"; MDD 8.1 Unknown / Acquaintance ceiling 20)
                 'spark' => 20.0,
-                // Pillar points (0..100): the NPC's floor on a required pillar, by openness (MDD
-                // 1.4 attraction tolerance: the pickier the NPC, the higher the hill). Medium 68:
-                // Ken "Aela ... her floor is high 60s or so in martial" (Aela: medium openness).
-                // Per NPC / pillar: 'floors' in npc_overrides or attraction_overrides, or the
-                // editor's attraction_profile.pillar_floors.
-                'floor_by_openness' => ['low' => 75.0, 'medium' => 68.0, 'high' => 55.0],
-                // Multiplier far below the floor (Ken: "about 0.1"), for flexible units
+                // Pillar points (0..100): the floor of every pillar unless the NPC names its own.
+                // Ken's generic example: "until you hit the 45 your gains are less than 1 ... at
+                // 45 you get 1x, at 50 1.05, 55 1.10". Per NPC / pillar: 'floors' in npc_overrides
+                // (Aela's martial 68) or attraction_overrides, or the editor's
+                // attraction_profile.pillar_floors.
+                'floor' => 45.0,
+                // Multiplier far below the floor (Ken: "about 0.1"; ".1, .15, .25 until the floor
+                // is met"), for flexible units
                 'm_min' => 0.1,
                 // ... for soft units (MDD / memory "soft: contributes, compensated by other
                 // pillars"): a gentle hill that never drops below half
                 'soft_m_min' => 0.5,
-                // ... for rigid units: the hill falls to exactly 0 at a score of 0 (non-negotiable,
-                // "100 x 0 = 0") and is continuous above it
-                'rigid_m_min' => 0.0,
                 // Exponent of the hill: 3 fits Ken's examples at F = 68: s 20 -> 0.12,
                 // s 45 -> 0.36, s 60 -> 0.72 ("steep and far below")
                 'steepness' => 3.0,
                 // Above the floor: +1% per pillar point of surplus (Ken: "at 45 you get 1x, at 50
                 // 1.05, 55 1.10")
                 'surplus_per_point' => 0.01,
-                // Cap on the surplus multiplier (reached 25 points above the floor). With the
-                // fastest attachment (anxious 1.3) the most attraction ever speeds passion is
-                // 1.25 x 1.3 = 1.63, under the MDD 1.1 passion drive redline (2.0x), so attraction
-                // stacked on attachment never outruns what full passion itself does to affinity
+                // Cap on the surplus multiplier, reached 25 points above the floor. RelDyn's pick,
+                // not Ken's or the MDD's: the surplus rewards a player past her standard, it is
+                // not a chemistry accelerator (memory: "the Matrix is a bouncer"). 1.25 keeps it
+                // below the smallest MDD 1.2 step (secondary love language / interests x1.5), so
+                // how the player loves her always outweighs how far past her floor he is. The
+                // MDD 1.1 drive (0.3..2.0) reads the passion POOL (0..100), not the gain rate:
+                // the surplus only fills the pool at most 25% faster than a player at her floor,
+                // it never raises the drive's 2.0 redline.
                 'surplus_max' => 1.25,
-                // Label only (no cap, decisions §13): the curve below this reads as not attracted
-                // ("friendzoned" when the sociological pillars are met, MDD 2.6 / 6.2). 0.15 = a
-                // flexible pillar at ~43% of its floor (29 of Aela's 68): the plain bard (~0.10)
-                // and a green sellsword (~0.11) read as not attracted, a bard with a formed druid
-                // side (~0.19, decisions §10: "can pass Aela's test") as drawn
-                'friendzone_below' => 0.15,
+                // Charm climbs the hill (decisions §13; MDD 2.5 "up to ~15%"): below the floor
+                // Speech closes up to this fraction of the gap between the hill and 1.0 (her
+                // floor). On the hill's flat foot a 15% lift of the SCORE is worth almost nothing
+                // (the hill is cubic), so charm acts where the climb is: the multiplier. It never
+                // reaches the floor on its own ("doesn't replace substance"), and it adds no
+                // surplus above it. The pillar scores (bars, tiers, respect) keep the MDD 2.5
+                // score lift (speech_boost_max).
+                'charm_hill_max' => 0.15,
+                // Won over (decisions §13: "a super-charming bard can win an atypical interest,
+                // slowly"): passion climbed on the uphill to this many points reads as attracted
+                // (the romance axis opens; tier lifts still wait for significant interactions).
+                // 40 = MDD 8.1's Friendly / Platonic ceiling, the "Friendzone limit": past it the
+                // pull is no longer a friend's. Held until passion falls back under the spark.
+                'won_over_passion' => 40.0,
+                // MDD 1.4: low openness is a "hard block, type transition completely unavailable":
+                // it is never won over; medium ("soft block, type available") and high can be
+                'won_over_openness' => ['low' => false, 'medium' => true, 'high' => true],
                 // Balanced NPCs (decisions §13): the bond eases the visceral units' penalty,
                 // linearly in core affinity from this tier's floor to the bond_gate_tier's floor
-                // (met there: 1.0); sociological units keep their hill; other gates: no relief
+                // (met there: 1.0); sociological units keep their hill; other gates: no relief.
+                // A balanced NPC's bond is its visceral substitute (plan §7 "visceral pass OR
+                // bonded tier"), so its visceral pillars never hold the depth axis.
                 'bond_relief_from_tier' => 'friend',
             ],
             // Plan §4: respect rate = (competence + status) / 2 on this NPC's pillar scores
@@ -374,8 +407,11 @@ class RelDynAttraction
             // status_share, beauty_keywords, floors (pillar => pillar points 0..100).
             'npc_overrides' => [
                 // Memory (attraction design): "Aela is not high openness ... medium to medium-low"
-                // MDD 2.3: "Aela: only Companions rank"
-                'aela the huntress' => ['openness' => 'medium', 'status_share' => 1.0],
+                // MDD 2.3: "Aela: only Companions rank". Floors: Ken (decisions §13) "to use Aela
+                // it'd be a substantial uphill; let's say her floor is high 60s or so in
+                // martial" -> her strength (martial, read through her lens) floor 68; her
+                // other pillars keep the default floor
+                'aela the huntress' => ['openness' => 'medium', 'status_share' => 1.0, 'floors' => ['strength' => 68.0]],
                 // Ken (rulings §10): "Ashe is less about the sex and more about the connection":
                 // commitment first, whatever class core registered her with
                 'ashe' => ['gate' => 'bond'],
@@ -444,7 +480,7 @@ class RelDynAttraction
      * pillar_floors), then $dynamics['attraction_overrides'] (rigidity, gate, weights, lens,
      * lens_share, openness, gender_pref, status_markers, status_share, beauty_keywords, floors).
      * $dynamics['openness'] (editor dropdown) beats the temperament default. Passion floors
-     * (pillar points 0..100, decisions §13) default to the openness band's curve.floor_by_openness.
+     * (pillar points 0..100, decisions §13) default to curve.floor on every pillar.
      */
     public static function definition(string $npcName, array $dynamics, ?array $prefs = null): array
     {
@@ -540,12 +576,11 @@ class RelDynAttraction
         }
         if (!in_array($band, self::OPENNESS_BANDS, true)) $band = 'medium';
 
-        // Passion floors (decisions §13), pillar points 0..100: the openness band's floor on every
+        // Passion floors (decisions §13), pillar points 0..100: the default floor on every
         // pillar, then per pillar the named preset, the editor's pillar_floors, the override
         $cc = self::curveConfig($cfg);
-        $bandFloor = floatval(((array) $cc['floor_by_openness'])[$band] ?? 68.0);
-        $floors = array_fill_keys(self::PILLARS, max(1.0, min(100.0, $bandFloor)));
-        $sources['floors'] = "openness:{$band}";
+        $floors = array_fill_keys(self::PILLARS, max(1.0, min(100.0, floatval($cc['floor']))));
+        $sources['floors'] = 'default';
         foreach ([['preset', $preset['floors'] ?? null], ['editor', $editor['pillar_floors'] ?? null], ['override', $over['floors'] ?? null]] as [$src, $table]) {
             if (!is_array($table)) continue;
             foreach (self::PILLARS as $p) {
@@ -792,7 +827,8 @@ class RelDynAttraction
         return [
             'score' => 1.0, 'passes' => true, 'friendzoned' => false, 'pillars' => $pillars,
             'ceiling_tier' => null, 'reason' => $reason,
-            'enabled' => false, 'visceral_pass' => true, 'sociological_pass' => true, 'gender_pass' => true,
+            'enabled' => false, 'visceral_pass' => true, 'visceral_met' => true, 'sociological_pass' => true, 'gender_pass' => true,
+            'won_over' => false, 'passion_ceiling' => null,
             'gate' => 'balanced', 'openness' => 'medium', 'preference' => null, 'prebond' => false,
             'tolerated' => false, 'failed' => false, 'passion_mult' => 1.0,
             'spark' => floatval(self::curveConfig()['spark']), 'spark_mult' => 1.0, 'hard_zero' => null,
@@ -839,6 +875,7 @@ class RelDynAttraction
             };
             $known = $raw !== null;
             $mix = null;
+            $base = null;   // the lens score before the MDD 2.5 speech lift (the passion curve's input)
             if (!$known) {
                 $score = max(0.0, min(1.0, floatval($p === 'beauty' ? $cfg['beauty_unknown_score'] : $cfg['unknown_pillar_score'])));
             } else {
@@ -856,6 +893,7 @@ class RelDynAttraction
                     $share = $def['lens_share'][$p];
                     $score = (1.0 - $share) * $score + $share * $fit;
                 }
+                $base = $score;
                 $score = min(1.0, $score * $boost);
             }
             $pillarBar = ($rig === 'flexible') ? $bar * floatval($cfg['flexible_factor']) : $bar;
@@ -871,6 +909,7 @@ class RelDynAttraction
             $pillars[$p] = [
                 'score' => round($score, 4), 'weight' => round($def['weights'][$p], 4), 'rigidity' => $rig,
                 'pass' => $pass, 'known' => $known, 'tolerated' => $tolerated, 'bar' => round($pillarBar, 4),
+                'base_score' => $base === null ? null : round($base, 4),
             ];
             if ($mix !== null) $pillars[$p]['mix'] = $mix;   // archetype => lens x magnitude (Jev / logs)
         }
@@ -898,18 +937,45 @@ class RelDynAttraction
         $coreAff = RelationshipDynamics::getCoreAffinity($dynamics);
         $tierNow = RelationshipDynamics::getCurrentTier($coreAff);
         $state = is_array($dynamics['_attraction_state'] ?? null) ? $dynamics['_attraction_state'] : null;
+        $romanceCapable = $genderPass && intval($prefRow['romance_max'] ?? self::ROMANCE_FULL) > self::ROMANCE_NONE;
+        // Plan §7 intimacy gate; demisexual: the bond comes first whatever the archetype
+        $gate = $def['preference'] === 'demisexual' ? 'bond' : $def['gate'];
 
-        // ---- Depth axis (allowed): pillar walk capped by the MDD 2.6 filter
+        // ---- The NPC's passion units on their MDD bars (decisions §13): a failed rigid unit is
+        // the non-negotiable hard zero; the units' bars are the attraction label's line
+        $cc = self::curveConfig($cfg);
+        $pu = self::passionUnits($pillars, $def, $cc, $margin);
+        // Non-negotiables (decisions §13): orientation, a rigid passion pillar below its bar, a
+        // preference with no romance (aromantic, not interested) or no passion (asexual)
+        $hardZero = !$genderPass ? 'orientation' : $pu['hard_zero'];
+        if ($hardZero === null && !$romanceCapable) $hardZero = 'preference:' . ($def['preference'] ?? 'none');
+        if ($hardZero === null && ($prefRow['passion'] ?? true) === false) $hardZero = "preference:{$def['preference']}";
+        // Won over (decisions §13: "a super-charming bard can win an atypical interest, slowly"):
+        // below her bars, passion climbed on the uphill to won_over_passion (MDD 8.1's
+        // "Friendzone limit"), held until it falls back under the spark. Never at low openness
+        // (MDD 1.4 hard block) or for a hard zero.
+        $passionNow = RelationshipDynamics::getPassion($dynamics);
+        $wonOver = !$pu['bars_met'] && $hardZero === null && $romanceCapable
+            && !empty(((array) $cc['won_over_openness'])[$def['openness']])
+            && ($passionNow >= floatval($cc['won_over_passion'])
+                || (!empty($state['won_over']) && $passionNow >= floatval($cc['spark'])));
+
+        // ---- Depth axis (allowed): pillar walk capped by the MDD 2.6 filter. Visceral pillars
+        // that count as met here: a won-over NPC looks past them; a balanced NPC's bond is its
+        // visceral substitute (plan §7 "visceral pass OR bonded tier"), so while the
+        // sociological pillars pass, the bond may grow to the bonded tier without them
+        $visceralDepth = $visceral || $wonOver || ($gate === 'balanced' && $sociological);
+        $skipDepth = ($visceralDepth && !$visceral) ? self::VISCERAL : [];
         $walk = 'acquaintance';
         foreach (array_reverse(self::DEPTH_TIERS) as $tier) {
             $req = ((array) $cfg['tier_requirements'])[$tier] ?? null;
-            if ($tier === 'acquaintance' || ($req !== null && self::meetsRequirements((array) $req, $pillars))) { $walk = $tier; break; }
+            if ($tier === 'acquaintance' || ($req !== null && self::meetsRequirements((array) $req, $pillars, $skipDepth))) { $walk = $tier; break; }
         }
-        if ($visceral && $sociological) {
+        if ($visceralDepth && $sociological) {
             $cap = null;
         } elseif ($sociological) {
             $cap = (string) $cfg['depth_cap_friendzone'];
-        } elseif ($visceral) {
+        } elseif ($visceralDepth) {
             $cap = (string) $cfg['depth_cap_without_sociological'];
         } else {
             $cap = (string) $cfg['depth_cap_neither'];
@@ -932,40 +998,40 @@ class RelDynAttraction
         if (!$gating) $earnedDepth = 'devoted';   // follows the allowed ceiling (effective = allowed)
         $depthEff = self::depthRank($earnedDepth) < self::depthRank($depthAllowed) ? $earnedDepth : $depthAllowed;
 
-        // ---- Gate and bond (plan §7). The bond is the tier on core affinity within the
-        // ceiling; demisexual: the bond comes first whatever the archetype, at bond_core_aff.
-        $gate = $def['gate'];
+        // ---- Bond (plan §7): the tier on core affinity within the ceiling; demisexual: at
+        // bond_core_aff.
         $bondTier = (string) $cfg['bond_gate_tier'];
         $tierEff = RelationshipDynamics::tierRank($tierNow) > RelationshipDynamics::tierRank($depthEff) ? $depthEff : $tierNow;
         $bonded = RelationshipDynamics::tierRank($tierEff) >= RelationshipDynamics::tierRank($bondTier);
         if ($def['preference'] === 'demisexual') {
-            $gate = 'bond';
             $bonded = $coreAff >= floatval($prefRow['bond_core_aff'] ?? 60);
             if (!$bonded) $romanceMax = self::ROMANCE_NONE;
         }
-        $romanceCapable = $genderPass && intval($prefRow['romance_max'] ?? self::ROMANCE_FULL) > self::ROMANCE_NONE;
 
         // ---- Passion (decisions §13: an uphill, not a wall; rulings §9: Aela warms to a warrior,
         // a bard climbs a long hill). The curve over the NPC's passion units (passionCurve)
         // scales gains above the spark; the spark is open to anyone; non-negotiables zero both.
         $style = RelationshipDynamics::getAttachmentStyle($dynamics);   // for the log line only
         $pc = array_replace(self::defaults()['passion'], (array) ($cfg['passion'] ?? []));
-        $cc = self::curveConfig($cfg);
         // attachment_mult's style corners read at the NPC's axes (decisions §12)
         $attachmentMult = RelationshipDynamics::attachmentBlend($dynamics, (array) $pc['attachment_mult'], 1.0);
         // A balanced NPC's bond eases the visceral hill (decisions §13; plan §7 "visceral pass OR
         // bonded tier"): 0 below bond_relief_from_tier, 1 at the bond tier
         $relief = $gate === 'balanced' ? self::bondRelief($coreAff, $tierEff, $bondTier, $cc) : 0.0;
-        $curve = self::passionCurve($pillars, $def, $cc, $relief);
-        // Non-negotiables (decisions §13): orientation, a rigid passion pillar at 0, a preference
-        // with no romance (aromantic, not interested) or no passion (asexual): no spark, no gain
-        $hardZero = !$genderPass ? 'orientation' : $curve['hard_zero'];
-        if ($hardZero === null && !$romanceCapable) $hardZero = 'preference:' . ($def['preference'] ?? 'none');
-        if ($hardZero === null && ($prefRow['passion'] ?? true) === false) $hardZero = "preference:{$def['preference']}";
-        // Attracted: the curve reads as more than "very low" (friendzone_below, a label, no cap),
-        // for someone this NPC can feel romantically about at all. A passion-free preference
-        // (asexual) still judges the player; only passion is zero.
-        $attracted = $romanceCapable && $curve['hard_zero'] === null && $curve['m'] >= floatval($cc['friendzone_below']);
+        $charm = self::speechLevel($profile);
+        $curve = self::passionCurve($pu['units'], $cc, $relief, $charm);
+        // At the bonded tier a balanced NPC's visceral pillars count as met (decisions §13)
+        $bondMet = $gate === 'balanced' && $relief >= 1.0;
+        // Attracted (the label; decisions §13 "friendzoned remains as a label when the multiplier
+        // is very low"): every passion unit at least at its MDD bar. "Very low" is thus the
+        // hill's own value at the bar of each unit (pass_threshold, flexible_factor,
+        // openness_margin: config), so the label and the MDD 2.6 filter agree by construction.
+        // Bond relief eases the RATE only; it counts for the label once full (the bonded tier).
+        // Or won over. For someone this NPC can feel romantically about at all; a passion-free
+        // preference (asexual) still judges the player, only passion is zero.
+        $attracted = $romanceCapable && $pu['hard_zero'] === null && ($pu['bars_met'] || $bondMet || $wonOver);
+        // The visceral pillars as the romance axis reads them (MDD 2.6: crush / romantic)
+        $visceralMet = $visceral || $wonOver || $bondMet;
         // Bond-gated, attracted, the bond not there yet: a slow burn, not a friendzone
         $prebond = $attracted && $gate === 'bond' && !$bonded;
         $passes = $attracted && !$prebond;
@@ -975,12 +1041,27 @@ class RelDynAttraction
         $bondFactor = ($gate === 'bond' && !$bonded) ? floatval($pc['bond_prebond_mult']) : 1.0;
         $sparkMult = $hardZero !== null ? 0.0 : $attachmentMult;
         $mult = $hardZero !== null ? 0.0 : $curve['m'] * $attachmentMult * $bondFactor;
+        // MDD 1.4 passion ceiling: a passion unit below its bar (failed, or a tolerated near
+        // miss) at medium / high openness; the bonded tier meets a balanced NPC's visceral units
+        $short = false;
+        foreach ($pu['units'] as $u) {
+            if ($bondMet && $u['axis'] === 'visceral') continue;
+            $short = $short || !$u['met'] || $u['tolerated'];
+        }
+        $ceiling = null;
+        if ($hardZero === null && $short) {
+            $cut = max(0.0, min(1.0, floatval(((array) ($cfg['openness_passion_ceiling_cut'] ?? []))[$def['openness']] ?? 0.0)));
+            $passionMax = floatval(RelationshipDynamics::getConfig()['passion_max'] ?? 100.0);
+            if ($cut > 0.0) $ceiling = round($passionMax * (1.0 - $cut), 4);
+        }
 
         // ---- Romance axis: open only to someone the NPC can feel passion for (now, or after
-        // the bond); crush with the visceral pass, full romance (commitment) with the
-        // sociological pass too (MDD 2.6), then the preference filter.
+        // the bond); crush with the visceral pass (or won over / a balanced NPC's bond),
+        // full romance (commitment) with the sociological pass too (MDD 2.6), then the
+        // preference filter.
         $romanceAllowed = self::ROMANCE_NONE;
-        if (($passes || $prebond) && $visceral && self::meetsRequirements((array) $cfg['romance_requirements'], $pillars)) {
+        $skipRomance = ($visceralMet && !$visceral) ? self::VISCERAL : [];
+        if (($passes || $prebond) && $visceralMet && self::meetsRequirements((array) $cfg['romance_requirements'], $pillars, $skipRomance)) {
             $romanceAllowed = $sociological ? self::ROMANCE_FULL : self::ROMANCE_CRUSH;
         }
         $romanceAllowed = min(max($romanceAllowed, $floorRomance), $romanceMax);
@@ -1013,12 +1094,13 @@ class RelDynAttraction
         $outcome = $passes ? ($sociological ? 'drawn' : 'hookup')
             : ($prebond ? 'prebond' : ($friendzoned ? 'friendzone' : 'unattracted'));
         $failedNames = array_keys(array_filter($pillars, fn($r) => !$r['pass']));
-        $reason = sprintf('%s: %s%s (gate %s, openness %s, %s attachment%s, curve x%.2f%s)%s',
-            $npcName, $outcome,
+        $reason = sprintf('%s: %s%s%s (gate %s, openness %s, %s attachment%s, curve x%.2f%s%s)%s',
+            $npcName, $outcome, $wonOver ? ' (won over)' : '',
             $failedNames ? ' - fails ' . implode(', ', $failedNames) : '',
             $gate, $def['openness'], $style,
             $def['preference'] !== null ? ", {$def['preference']}" : '',
             $curve['m'], $hardZero !== null ? ", hard zero: {$hardZero}" : '',
+            $ceiling !== null ? ", passion ceiling {$ceiling}" : '',
             $genderPass ? '' : '; gender preference not met');
 
         return [
@@ -1032,6 +1114,9 @@ class RelDynAttraction
             'enabled'           => true,
             'outcome'           => $outcome,
             'visceral_pass'     => $visceral,
+            // the visceral pillars as the romance axis reads them: passed, won over, or a
+            // balanced NPC at the bonded tier
+            'visceral_met'      => $visceralMet,
             'sociological_pass' => $sociological,
             'gender_pass'       => $genderPass,
             'gate'              => $gate,
@@ -1048,12 +1133,18 @@ class RelDynAttraction
             'spark_mult'        => round($sparkMult, 6),
             'hard_zero'         => $hardZero,
             'attracted'         => $attracted,
+            // below her bars, passion climbed past won_over_passion (held down to the spark)
+            'won_over'          => $wonOver,
+            // MDD 1.4 passion ceiling (passion points; null = none): gains stop there (gainFactor)
+            'passion_ceiling'   => $ceiling,
             // attracted, but below this NPC's floor: the uphill (felt text)
             'below_floor'       => $attracted && $curve['m'] < 1.0,
-            // the factors (Jev / logs): the curve and its units, attachment, prebond, bond relief
+            // the factors (Jev / logs): the curve and its units, attachment, prebond, bond
+            // relief, charm (speech 0..1)
             'passion'           => ['curve' => round($curve['m'], 4), 'units' => $curve['units'],
                                     'attachment' => round($attachmentMult, 6), 'bond' => $bondFactor,
-                                    'relief' => round($relief, 4), 'pillars' => $def['passion_pillars'] ?? self::PILLARS],
+                                    'relief' => round($relief, 4), 'charm' => round($charm, 4),
+                                    'pillars' => $def['passion_pillars'] ?? self::PILLARS],
             'respect_rate'      => self::respectRate($pillars),
             'respect_mult'      => self::respectMult(self::respectRate($pillars), $cfg),
             'allowed_tier'      => $depthAllowed,
@@ -1068,22 +1159,24 @@ class RelDynAttraction
     }
 
     /**
-     * Decisions §13: the passion curve of one evaluation (config 'curve'; see defaults()).
-     * Units over the NPC's passion pillars (definition passion_pillars), known pillars only:
-     *   - each rigid pillar alone (m_min rigid_m_min; a score of 0 is the hard zero);
+     * Decisions §13: the NPC's passion units of one evaluation, on their MDD bars. Units over
+     * the NPC's passion pillars (definition passion_pillars), known pillars only:
+     *   - each rigid pillar alone: a gate on its own bar (the pillar's pass / tolerated verdict;
+     *     "Rigid: must pass. Non-negotiable."): failed = the hard zero 'rigid:<pillar>';
      *   - the flexible pillars as one group per axis (visceral: beauty, strength; sociological:
-     *     status, competence), m_min m_min; the soft ones likewise, m_min soft_m_min. A group
-     *     reads its weighted mean score against its weighted mean floor (equal weights when
-     *     every pillar in it weighs 0): "distribution doesn't matter";
+     *     status, competence), the soft ones likewise. A group reads its weighted mean against
+     *     its weighted mean floor and bar (equal weights when every pillar in it weighs 0):
+     *     "distribution doesn't matter". A flexible group meets its bar at the mean bar, a near
+     *     miss within openness_margin is tolerated; a soft group always meets it;
      *   - irrelevant and unknown pillars are no unit (unknown is not absent).
-     * Scores and floors in pillar points (0..100). $relief (0..1, bondRelief) eases a visceral
-     * unit's penalty: m + (1 - m) x relief below the floor, nothing above it, never a hard zero.
-     * curve = combineUnits(m of every unit); no unit: 1.0.
+     * Unit score and floor in pillar points (0..100); the score is the lens score before the
+     * MDD 2.5 speech lift (charm acts on the hill, passionCurve); the bar reads the lifted
+     * pillar scores (0..1) like every MDD 2 bar.
      *
-     * @return array ['m' => curve, 'units' => [key => ['pillars', 'rigidity', 'axis', 'score', 'floor',
-     *   'm_hill' (before relief), 'm']], 'hard_zero' => ?string 'rigid:<pillar>']
+     * @return array ['units' => [key => ['pillars', 'rigidity', 'axis', 'score', 'floor', 'met',
+     *   'tolerated']], 'hard_zero' => ?string, 'bars_met' => bool (every unit met, no unit: true)]
      */
-    private static function passionCurve(array $pillars, array $def, array $cc, float $relief): array
+    private static function passionUnits(array $pillars, array $def, array $cc, float $margin): array
     {
         $units = [];
         $groups = [];
@@ -1091,49 +1184,79 @@ class RelDynAttraction
             $row = $pillars[$p] ?? null;
             if ($row === null || !$row['known'] || !in_array($row['rigidity'], ['rigid', 'flexible', 'soft'], true)) continue;
             $axis = in_array($p, self::VISCERAL, true) ? 'visceral' : 'sociological';
-            $points = 100.0 * floatval($row['score']);
-            $floor = floatval($def['floors'][$p] ?? ((array) $cc['floor_by_openness'])['medium'] ?? 68.0);
+            $points = 100.0 * floatval($row['base_score'] ?? $row['score']);
+            $floor = floatval($def['floors'][$p] ?? $cc['floor']);
             if ($row['rigidity'] === 'rigid') {
-                $units[$p] = ['pillars' => [$p], 'rigidity' => 'rigid', 'axis' => $axis, 'score' => $points, 'floor' => $floor];
+                $units[$p] = ['pillars' => [$p], 'rigidity' => 'rigid', 'axis' => $axis, 'score' => round($points, 2),
+                    'floor' => round($floor, 2), 'met' => (bool) $row['pass'], 'tolerated' => (bool) $row['tolerated']];
                 continue;
             }
             $key = "{$row['rigidity']}:{$axis}";
             $w = max(0.0, floatval($row['weight']));
             $g = $groups[$key] ?? ['pillars' => [], 'rigidity' => $row['rigidity'], 'axis' => $axis,
-                'ws' => 0.0, 'wf' => 0.0, 'w' => 0.0, 's' => 0.0, 'f' => 0.0];
+                'w' => 0.0, 'ws' => 0.0, 'wf' => 0.0, 'wl' => 0.0, 'wb' => 0.0, 's' => 0.0, 'f' => 0.0, 'l' => 0.0, 'b' => 0.0];
             $g['pillars'][] = $p;
-            $g['ws'] += $w * $points;
-            $g['wf'] += $w * $floor;
+            foreach (['s' => $points, 'f' => $floor, 'l' => floatval($row['score']), 'b' => floatval($row['bar'])] as $k => $v) {
+                $g[$k] += $v;
+                $g["w{$k}"] += $w * $v;
+            }
             $g['w'] += $w;
-            $g['s'] += $points;
-            $g['f'] += $floor;
             $groups[$key] = $g;
         }
         foreach ($groups as $key => $g) {
             $n = count($g['pillars']);
-            [$score, $floor] = $g['w'] > 0 ? [$g['ws'] / $g['w'], $g['wf'] / $g['w']] : [$g['s'] / $n, $g['f'] / $n];
-            $units[$key] = ['pillars' => $g['pillars'], 'rigidity' => $g['rigidity'], 'axis' => $g['axis'], 'score' => $score, 'floor' => $floor];
+            $mean = fn(string $k) => $g['w'] > 0 ? $g["w{$k}"] / $g['w'] : $g[$k] / $n;
+            [$lifted, $bar] = [$mean('l'), $mean('b')];
+            $met = $g['rigidity'] === 'soft' || $lifted >= $bar;
+            $near = !$met && $margin > 0.0 && $lifted >= $bar * (1.0 - min(1.0, $margin));
+            $units[$key] = ['pillars' => $g['pillars'], 'rigidity' => $g['rigidity'], 'axis' => $g['axis'],
+                'score' => round($mean('s'), 2), 'floor' => round($mean('f'), 2), 'met' => $met || $near, 'tolerated' => $near];
         }
         $hardZero = null;
-        $ms = [];
+        $barsMet = true;
         foreach ($units as $key => $u) {
-            $mMin = floatval($cc[['rigid' => 'rigid_m_min', 'flexible' => 'm_min', 'soft' => 'soft_m_min'][$u['rigidity']]]);
-            $hill = self::pillarMult($u['score'], $u['floor'], $mMin, $cc);
-            if ($u['rigidity'] === 'rigid' && $u['score'] <= 0.0) {
-                $hill = 0.0;   // "100 x 0 is still 0", whatever rigid_m_min says
-                $hardZero = $hardZero ?? "rigid:{$key}";
+            $barsMet = $barsMet && $u['met'];
+            if ($u['rigidity'] === 'rigid' && !$u['met']) $hardZero = $hardZero ?? "rigid:{$key}";
+        }
+        return ['units' => $units, 'hard_zero' => $hardZero, 'bars_met' => $barsMet];
+    }
+
+    /**
+     * Decisions §13: the passion curve over the units of passionUnits (config 'curve'; see
+     * defaults()), unitless. Per unit:
+     *   rigid: failed = 0 (the hard zero, the whole curve 0); met = max(1, pillarMult) (a gate
+     *     passed counts as her floor met; surplus above it);
+     *   flexible / soft: hill = pillarMult(score, floor, m_min | soft_m_min);
+     *   charm (below 1): m + (1 - m) x charm_hill_max x $charm (speech 0..1);
+     *   relief (a visceral unit below 1): m + (1 - m) x $relief (0..1, bondRelief).
+     * curve = combineUnits(m of every unit); no unit: 1.0.
+     *
+     * @return array ['m' => curve, 'units' => units with 'm_hill', 'm_charm', 'm']
+     */
+    private static function passionCurve(array $units, array $cc, float $relief, float $charm): array
+    {
+        $zero = false;
+        $ms = [];
+        $charmMax = max(0.0, min(1.0, floatval($cc['charm_hill_max'] ?? 0.0))) * max(0.0, min(1.0, $charm));
+        foreach ($units as $key => $u) {
+            if ($u['rigidity'] === 'rigid') {
+                $hill = $u['met'] ? max(1.0, self::pillarMult($u['score'], $u['floor'], null, $cc)) : 0.0;
+                $zero = $zero || !$u['met'];
+            } else {
+                $mMin = floatval($cc[$u['rigidity'] === 'soft' ? 'soft_m_min' : 'm_min']);
+                $hill = self::pillarMult($u['score'], $u['floor'], $mMin, $cc);
             }
-            $m = $hill;
-            if ($u['axis'] === 'visceral' && $relief > 0.0 && $hill > 0.0 && $hill < 1.0) {
-                $m = $hill + (1.0 - $hill) * min(1.0, $relief);
+            $charmed = ($hill > 0.0 && $hill < 1.0) ? $hill + (1.0 - $hill) * $charmMax : $hill;
+            $m = $charmed;
+            if ($u['axis'] === 'visceral' && $relief > 0.0 && $m > 0.0 && $m < 1.0) {
+                $m = $m + (1.0 - $m) * min(1.0, $relief);
             }
-            $units[$key]['score'] = round($u['score'], 2);
-            $units[$key]['floor'] = round($u['floor'], 2);
             $units[$key]['m_hill'] = round($hill, 4);
+            $units[$key]['m_charm'] = round($charmed, 4);
             $units[$key]['m'] = round($m, 4);
             $ms[] = $m;
         }
-        return ['m' => $hardZero !== null ? 0.0 : self::combineUnits($ms), 'units' => $units, 'hard_zero' => $hardZero];
+        return ['m' => $zero ? 0.0 : self::combineUnits($ms), 'units' => $units];
     }
 
     /**
@@ -1203,10 +1326,24 @@ class RelDynAttraction
      *   to_spark = spark - passion; raw it takes = to_spark / spark_mult
      *   factor = (to_spark + (raw - raw it takes) x passion_mult) / raw   (crossing)
      * A hard zero (spark_mult 0) is 0 everywhere. A summary from before the spark existed
-     * reads as passion_mult everywhere. Every passion writer uses this one factor
+     * reads as passion_mult everywhere. The MDD 1.4 passion ceiling (passion_ceiling, points)
+     * bounds the result: a gain never lifts passion past it (at or above it: 0); passion
+     * already above it is not cut. Every passion writer uses this one factor
      * (RelationshipDynamics::attractionPassionFactor).
      */
     public static function gainFactor(array $summary, float $passion, float $raw): float
+    {
+        $factor = self::sparkSplitFactor($summary, $passion, $raw);
+        $ceiling = $summary['passion_ceiling'] ?? null;
+        if ($factor > 0.0 && $raw > 0.0 && is_numeric($ceiling)) {
+            $room = floatval($ceiling) - $passion;
+            $factor = $room <= 0.0 ? 0.0 : min($factor, $room / $raw);
+        }
+        return $factor;
+    }
+
+    /** gainFactor before the ceiling: the spark split (see gainFactor). */
+    private static function sparkSplitFactor(array $summary, float $passion, float $raw): float
     {
         $above = is_numeric($summary['passion_mult'] ?? null) ? max(0.0, floatval($summary['passion_mult'])) : 1.0;
         if (!is_numeric($summary['spark_mult'] ?? null)) return $above;
@@ -1340,10 +1477,15 @@ class RelDynAttraction
         return [self::depthRank($depth) > 0 ? $depth : '', $romance];
     }
 
-    /** Every requirement is met by a pillar that does not gate (soft / irrelevant / unknown) or scores enough. */
-    private static function meetsRequirements(array $req, array $pillars): bool
+    /**
+     * Every requirement is met by a pillar that does not gate (soft / irrelevant / unknown), one
+     * in $countAsMet (pillars the caller counts as met: won over, a balanced NPC's bond), or one
+     * that scores enough.
+     */
+    private static function meetsRequirements(array $req, array $pillars, array $countAsMet = []): bool
     {
         foreach ($req as $p => $min) {
+            if (in_array($p, $countAsMet, true)) continue;
             $row = $pillars[$p] ?? null;
             if ($row === null || !$row['known'] || !in_array($row['rigidity'], ['rigid', 'flexible'], true)) continue;
             if ($row['score'] < floatval($min)) return false;
@@ -1469,6 +1611,11 @@ class RelDynAttraction
         } else {
             $state['pending'] = null;
         }
+        // Won over is held until passion falls back under the spark (evaluate)
+        if (!empty($r['won_over']) !== !empty($state['won_over'])) {
+            RelationshipDynamics::log("[ATTRACTION] {$npcName}: " . (!empty($r['won_over']) ? 'won over' : 'no longer won over') . " ({$r['reason']})");
+        }
+        $state['won_over'] = !empty($r['won_over']);
         $dynamics['_attraction_state'] = $state;
         $r = self::evaluate($npcName, $dynamics, $profile, $def);
         self::storeSummary($npcName, $dynamics, $r);
@@ -1485,6 +1632,8 @@ class RelDynAttraction
             'preference' => $r['preference'], 'gate' => $r['gate'],
             'passion_mult' => $r['passion_mult'], 'spark' => $r['spark'], 'spark_mult' => $r['spark_mult'],
             'hard_zero' => $r['hard_zero'], 'attracted' => $r['attracted'], 'below_floor' => $r['below_floor'],
+            'won_over' => $r['won_over'] ?? false, 'passion_ceiling' => $r['passion_ceiling'] ?? null,
+            'visceral_met' => $r['visceral_met'] ?? true,
             'passion' => $r['passion'] ?? null, 'respect_mult' => $r['respect_mult'] ?? 1.0,
             'respect_rate' => $r['respect_rate'] ?? null,
             'ceiling_tier' => $r['ceiling_tier'], 'allowed_tier' => $r['allowed_tier'],
@@ -1647,8 +1796,11 @@ class RelDynAttraction
             && is_numeric($summary['spark'] ?? null) && floatval($ctx['passion'] ?? 0.0) > floatval($summary['spark'])) {
             $lines[] = "Lately {$npcName}'s deflections come a beat slower; something about {$P} has begun to get through.";
         }
-        // The uphill (decisions §13): drawn, but below what this NPC usually wants
-        if (!empty($summary['below_floor']) && in_array($summary['outcome'] ?? null, ['drawn', 'hookup', 'prebond'], true)) {
+        // Won over (decisions §13: the uphill climbed): not the kind she is drawn to, and drawn all the same
+        if (!empty($summary['won_over']) && in_array($summary['outcome'] ?? null, ['drawn', 'hookup', 'prebond'], true)) {
+            $lines[] = "{$npcName} never expected to want someone like {$P}; {$P} has won {$npcName} over all the same.";
+        } elseif (!empty($summary['below_floor']) && in_array($summary['outcome'] ?? null, ['drawn', 'hookup', 'prebond'], true)) {
+            // The uphill (decisions §13): drawn, but below what this NPC usually wants
             $lines[] = "Something about {$P} falls short of what {$npcName} usually wants; {$npcName} chooses to look past it.";
         }
         $prefLines = [

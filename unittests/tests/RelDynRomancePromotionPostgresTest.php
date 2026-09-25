@@ -357,17 +357,17 @@ final class RelDynRomancePromotionPostgresTest extends TestCase
     public function testABardSheToleratesIsNeverPromoted(): void
     {
         // Sociological pillars pass (a Circle member who hunts), the visceral ones do not
-        // (no sword arm). Decisions §13 / MDD 2.6: far below her floors he is at the foot of her
-        // hill: the tolerated state, the friendzone label (no passion cap); the romance axis
-        // stays shut, so crush never opens and he is never promoted.
+        // (no sword arm). Decisions §13 / MDD 2.6: her strength is rigid here, and he is far
+        // below its bar: the non-negotiable hard zero on passion; the friendzone label; the
+        // romance axis stays shut, so crush never opens and he is never promoted.
         $this->playerStats(self::BARD);
         $id = $this->seedAela(90, 'platonic');
 
         $a = RelationshipDynamics::attractionFor(self::NPC, RelationshipDynamics::getDynamics(self::NPC));
         $this->assertFalse($a['pillars']['strength']['pass']);
         $this->assertTrue($a['pillars']['competence']['pass']);
-        $this->assertNull($a['hard_zero'], json_encode($a['passion']));
-        $this->assertLessThan(0.1, $a['passion_mult'], json_encode($a['passion']));
+        $this->assertSame('rigid:strength', $a['hard_zero'], json_encode($a['passion']));
+        $this->assertSame(0.0, $a['passion_mult'], json_encode($a['passion']));
         $this->assertFalse($a['attracted']);
         $this->assertTrue($a['friendzoned'], $a['reason']);
         $this->assertSame(0, $a['romance']['allowed'], 'no crush without the visceral pass');

@@ -366,7 +366,10 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         // The level-10 sellsword: far down her martial hill; the Companion is past her floor
         // (the curve x Aela's near-secure attachment 0.91, decisions §12)
         $this->assertLessThan(0.15, $steps[0]['passion_mult'], json_encode($steps[0]['passion']));
-        $this->assertFalse($steps[0]['attracted'], 'very low: reads as not attracted (a label, no cap)');
+        // The label is her bar (MDD 2 flexible bar 0.24, the review fix): the sellsword clears
+        // it, drawn from far down her hill
+        $this->assertSame($steps[0]['passion']['units']['flexible:visceral']['met'], $steps[0]['attracted'], json_encode($steps[0]['passion']));
+        if ($steps[0]['attracted']) $this->assertTrue($steps[0]['below_floor']);
         $this->assertGreaterThan(5.0 * $steps[0]['passion_mult'], $steps[5]['passion_mult']);
         $this->assertGreaterThan(1.0, $steps[5]['passion']['curve'], 'past her floor: a surplus');
         $this->assertLessThanOrEqual(RelDynAttraction::curveConfig()['surplus_max'], $steps[5]['passion']['curve'], 'the surplus is capped');
@@ -378,7 +381,7 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         // Felt, never numbers (decisions §3): the pull grows in the words too (as behavior, never
         // a verdict: a polite distance for the sellsword, lingering looks and eager answers for the
         // Companion; the felt lane's wording)
-        $this->assertMatchesRegularExpression('/polite distance|pass without an answer/', $felt[0]);
+        $this->assertMatchesRegularExpression('/polite distance|pass without an answer|in a passing glance|flirts back lightly|passing, appraising look/', $felt[0]);
         $this->assertMatchesRegularExpression('/linger there|flirts back boldly/', $felt[5]);
         foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\bis (only faintly |strongly )?drawn to\b/', $text, "step {$k}");
         foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\d/', $text, "step {$k}");
@@ -546,17 +549,21 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         RelationshipDynamics::setPassion($d, 0.0);
         $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 25.0, 'reunion'));
 
-        // One Companions quest is some standing: no longer a zero, the bottom of a steep hill;
-        // three climb it
+        // One Companions quest is some standing, still below her bar: a rigid pillar is a gate
+        // on its bar (Ken: rigid, non-negotiable pillars stay a hard zero), not a steep hill.
+        // Enough standing passes it: open, and met (x1.0 at least)
         $this->corePlayer('The Companions Quests Completed', '1');
         $one = $this->attractionNow($d);
-        $this->assertNull($one['hard_zero'], json_encode($one['pillars']['status']));
-        $this->assertGreaterThan(0.0, $one['passion_mult']);
-        $this->assertLessThan(0.3, $one['passion']['units']['status']['m']);
-        $this->corePlayer('The Companions Quests Completed', '3');
+        $this->assertGreaterThan(0.0, $one['pillars']['status']['score']);
+        $this->assertFalse($one['pillars']['status']['pass'], json_encode($one['pillars']['status']));
+        $this->assertSame('rigid:status', $one['hard_zero'], json_encode($one['pillars']['status']));
+        $this->assertSame(0.0, $one['passion_mult']);
+        $this->corePlayer('The Companions Quests Completed', '12');
         $b = $this->attractionNow($d);
-        $this->assertGreaterThan($one['passion']['units']['status']['m'], $b['passion']['units']['status']['m'], json_encode($b['pillars']['status']));
-        $this->assertGreaterThan($one['passion_mult'], $b['passion_mult']);
+        $this->assertTrue($b['pillars']['status']['pass'], json_encode($b['pillars']['status']));
+        $this->assertNull($b['hard_zero'], $b['reason']);
+        $this->assertGreaterThanOrEqual(1.0, $b['passion']['units']['status']['m'], json_encode($b['passion']['units']));
+        $this->assertGreaterThan(0.0, $b['passion_mult']);
         $this->assertNoDbFailures();
     }
 

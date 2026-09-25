@@ -39,10 +39,15 @@
  *                     'spark_mult' => gain multiplier below the spark (attachment; 0 for a hard zero),
  *                     'passion_mult' => gain multiplier from the spark = curve x attachment [x prebond],
  *                     'hard_zero' => ?string (orientation | preference:<type> | rigid:<pillar>),
- *                     'attracted' => bool (curve at least the friendzone label line),
+ *                     'attracted' => bool (every passion unit at its MDD bar, a balanced NPC
+ *                                at the bonded tier, or won over),
+ *                     'won_over' => bool (below her bars, passion climbed past won_over_passion),
+ *                     'passion_ceiling' => ?float passion points (MDD 1.4: a passion pillar below
+ *                                its bar at medium / high openness; gains stop there),
+ *                     'charm' => 0..1 (speech; closes up to charm_hill_max of the gap to her floor),
  *                     'relief' => 0..1 (a balanced NPC's bond easing the visceral hill),
  *                     'units' => [unit => ['score' => pillar points 0..100, 'floor' => pillar points,
- *                                'm' => multiplier]],
+ *                                'met' => bool (at its MDD bar), 'm' => multiplier]],
  *                     'respect_mult' => respect-gain multiplier (0.5..2.0, 1 at the neutral pillar score),
  *                     'friendzoned' => bool (a label; no passion cap)]
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
@@ -62,7 +67,8 @@ final class RelDynJev
         'attraction.spark_mult' => 'passion-gain multiplier below the spark',
         'attraction.passion_mult' => 'passion-gain multiplier from the spark', 'attraction.respect_mult' => 'respect-gain multiplier',
         'attraction.units.score' => 'pillar points 0..100', 'attraction.units.floor' => 'pillar points 0..100',
-        'attraction.relief' => '0..1',
+        'attraction.relief' => '0..1', 'attraction.charm' => 'speech 0..1',
+        'attraction.passion_ceiling' => 'passion points (null = none)',
         'attraction.score' => '0..1',
         'attachment_anxiety' => 'axis 0..1 (fear of abandonment)',
         'attachment_avoidance' => 'axis 0..1 (discomfort with closeness once in)',
@@ -89,7 +95,7 @@ final class RelDynJev
         $units = [];
         foreach ((array) ($a['passion']['units'] ?? []) as $key => $u) {
             $units[(string) $key] = ['score' => round(floatval($u['score'] ?? 0), 2), 'floor' => round(floatval($u['floor'] ?? 0), 2),
-                'm' => round(floatval($u['m'] ?? 1.0), 4)];
+                'met' => (bool) ($u['met'] ?? true), 'm' => round(floatval($u['m'] ?? 1.0), 4)];
         }
         $passionMult = round(floatval($a['passion_mult'] ?? $dynamics['_attraction_passion_mult'] ?? 1.0), 4);
         $attraction = [
@@ -101,6 +107,9 @@ final class RelDynJev
             'passion_mult' => $passionMult,
             'hard_zero' => isset($a['hard_zero']) ? (string) $a['hard_zero'] : null,
             'attracted' => empty($a['enabled']) ? true : !empty($a['attracted']),
+            'won_over' => !empty($a['won_over']),
+            'passion_ceiling' => is_numeric($a['passion_ceiling'] ?? null) ? round(floatval($a['passion_ceiling']), 2) : null,
+            'charm' => round(floatval($a['passion']['charm'] ?? 0.0), 4),
             'relief' => round(floatval($a['passion']['relief'] ?? 0.0), 4),
             'units' => $units,
             'respect_mult' => round(floatval($a['respect_mult'] ?? 1.0), 4),
@@ -189,7 +198,9 @@ final class RelDynJev
                 . ($unitText ? '[' . implode(', ', $unitText) . ']' : '')
                 . ' spark=' . $f($a['spark']) . '(x' . number_format($a['spark_mult'], 2, '.', '') . ')'
                 . ' passion_mult=' . number_format($a['passion_mult'], 2, '.', '')
-                . ($a['hard_zero'] !== null ? " hard_zero={$a['hard_zero']}" : '');
+                . ($a['hard_zero'] !== null ? " hard_zero={$a['hard_zero']}" : '')
+                . ($a['won_over'] ? ' won_over' : '')
+                . ($a['passion_ceiling'] !== null ? ' passion_ceiling=' . $f($a['passion_ceiling']) : '');
         }
         if ($s['place'] !== null) {
             $parts[] = 'place=' . number_format($s['place']['valence'], 2, '.', '') . ($s['place']['dominant'] !== null ? "({$s['place']['dominant']})" : '');

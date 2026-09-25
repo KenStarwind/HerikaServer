@@ -202,6 +202,17 @@ final class RelDynFelt
             'stirring' => "a small smile when they come near, quickly hidden",
             'faint'    => "an odd, unexamined glance their way now and then",
         ],
+        // The same passion toward someone the NPC is not drawn to (attraction: friendzone /
+        // unattracted, or an attraction hard zero; decisions §13 lets passion climb there on the
+        // uphill): a friend's intensity, never desire, and no urge, so the passion line agrees
+        // with the attraction line's deflection.
+        'passion_platonic' => [
+            'burning'  => "fiercely glad of them, seeks them out at every turn; a loyal, fierce affection, and nothing romantic in it",
+            'intense'  => "lights up when they come near and wants their company; warm and loyal, not romantic",
+            'warm'     => "brightens when they speak, glad of their company",
+            'stirring' => "a small, easy smile when they come near",
+            'faint'    => "an odd, unexamined glance their way now and then",
+        ],
         // The urge that rides on passion (from warm up), by primary love language.
         'urge' => [
             'words_of_affirmation' => "the words for what they mean to {NAME} are right there, wanting out",
@@ -371,10 +382,16 @@ final class RelDynFelt
         // --- Passion toward the player, with the urge its love language gives it ---
         $passion = RelationshipDynamics::getPassion($dynamics);
         $pBand = RelationshipDynamics::getPassionBand($passion);
-        if (isset($t['passion'][$pBand])) {
-            $text = self::fill((string) $t['passion'][$pBand], $vars);
+        // Not that kind of pull (the Attraction Matrix: not attracted, or a hard zero), outside
+        // a romance core already holds: the platonic reading of the same passion, no urge
+        $att = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
+        $coreRomance = in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) $cfg['romantic_types'], true);
+        $platonic = !empty($att['enabled']) && (!empty($att['hard_zero']) || (($att['attracted'] ?? true) === false && !$coreRomance));
+        $pTable = $platonic && isset($t['passion_platonic']) ? 'passion_platonic' : 'passion';
+        if (isset($t[$pTable][$pBand])) {
+            $text = self::fill((string) $t[$pTable][$pBand], $vars);
             $primary = $dynamics['love_language_primary'] ?? null;
-            if ($passion >= 40 && is_string($primary) && isset($t['urge'][$primary])) {
+            if (!$platonic && $passion >= 40 && is_string($primary) && isset($t['urge'][$primary])) {
                 $text .= ', ' . self::fill((string) $t['urge'][$primary], $vars);
             }
             $lines[] = self::line('passion', self::SCOPE_BOND, self::LANE_CORE,
@@ -537,8 +554,7 @@ final class RelDynFelt
 
         // --- Emergent emotions (dimension combinations), romance-only ones inside a romance ---
         $emotions = RelationshipDynamics::detectEmergentEmotions($dynamics);
-        $romantic = in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) $cfg['romantic_types'], true)
-            || $passion >= floatval($cfg['emergent_romantic_passion_min']);
+        $romantic = $coreRomance || (!$platonic && $passion >= floatval($cfg['emergent_romantic_passion_min']));
         $emotions = array_values(array_filter($emotions,
             fn($e) => $romantic || !in_array($e, (array) $cfg['emergent_romantic_only'], true)));
         if ($emotions !== []) {

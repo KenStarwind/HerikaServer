@@ -571,10 +571,13 @@ final class RelDynAttractionRomanceTest extends TestCase
             'summary' => 'he told her he loves her; she smiled and called him a dear friend']);
         $maxPassion = max($maxPassion, $this->passion());
 
-        $this->assertLessThan(30.0, $maxPassion, 'past the spark only slowly: the foot of her hill');
+        // past the spark only slowly: the foot of her hill; his silver tongue (speech 95) helps
+        // him climb, but a week is far from winning her over (the MDD 8.1 friendzone limit, 40)
+        $this->assertLessThan(35.0, $maxPassion, 'past the spark only slowly: the foot of her hill');
+        $this->assertFalse($this->dynamics()['_attraction']['won_over']);
         $mult = floatval($this->dynamics()['_attraction']['passion_mult']);
         $this->assertGreaterThan(0.0, $mult, 'an uphill, not a wall (decisions §13)');
-        $this->assertLessThan(0.15, $mult);
+        $this->assertLessThan(0.25, $mult);
         // (absence between the days decays her at the secure-leaning rate, decisions §12: x0.86,
         // x0.5 while she was avoidant)
         $this->assertGreaterThanOrEqual($aff0 + 5, intval($this->core()['aff']), 'she still grows fond of him');

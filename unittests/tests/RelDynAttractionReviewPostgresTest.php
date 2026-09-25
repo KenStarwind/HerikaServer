@@ -429,7 +429,9 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         $this->turn('Another verse, then.');
         $a = $this->dynamics()['_attraction'];
         $this->assertArrayNotHasKey('passion_cap', $a);
-        $this->assertLessThan(0.15, floatval($a['passion_mult']), json_encode($a));
+        // the foot of her hill (m_hill ~0.1); his silver tongue closes 15% of the gap (charm)
+        $this->assertLessThan(0.12, floatval($a['passion']['units']['flexible:visceral']['m_hill']), json_encode($a));
+        $this->assertLessThan(0.25, floatval($a['passion_mult']), json_encode($a));
         $this->walkedAwayToxic(100);
 
         $this->gamets += 7 * self::HOUR;   // past the calendar step interval
@@ -484,7 +486,8 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         foreach (['scholar', 'bard', 'prisoner'] as $kind) {
             $this->assertFalse($seen[$kind]['passes'], $why($kind));
             $this->assertNull($seen[$kind]['hard_zero'], $why($kind));
-            $this->assertLessThan(0.12, $seen[$kind]['passion_mult'], $why($kind) . ': the foot of her martial hill (decisions §13)');
+            $this->assertLessThan(0.12, $seen[$kind]['passion']['units']['flexible:visceral']['m_hill'], $why($kind) . ': the foot of her martial hill (decisions §13)');
+            $this->assertLessThan(0.25, $seen[$kind]['passion_mult'], $why($kind) . ': charm closes at most 15% of the gap');
             $this->assertSame(0, $seen[$kind]['romance']['allowed'], $why($kind));
             $this->assertStringNotContainsString('eyes keep finding ' . self::PLAYER, $seen[$kind]['ctx']);
             $this->assertStringNotContainsString('exactly what', $seen[$kind]['ctx'], 'no "bond with the wild" for a scholar');
@@ -661,12 +664,17 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
         $this->assertTrue($courtier['pillars']['beauty']['known']);
         $this->assertLessThan(0.4, $courtier['pillars']['beauty']['score'], 'none of her words');
         $this->assertTrue(!$courtier['passes'] || $courtier['tolerated'], 'beauty (rigid for her) now weighs: ' . $courtier['reason']);
-        // Decisions §13: beauty is a rigid unit of her passion curve; none of her words puts him
-        // far below her floor (the weakest unit sets the curve), not at zero, and uncapped
-        $this->assertGreaterThanOrEqual(1.0, $rugged['passion']['units']['beauty']['m'], json_encode($rugged['passion']));
-        $this->assertLessThan(0.2, $courtier['passion']['units']['beauty']['m'], json_encode($courtier['passion']));
+        // Decisions §13: beauty is a rigid unit of her passion curve, a gate on its bar ("Rigid:
+        // must pass"): none of her words is a near miss her medium openness tolerates, so the
+        // gate passes (met, x1.0) under MDD 1.4's passion ceiling (50); her words in his looks
+        // are surplus above the beauty floor (45), with no ceiling
+        $this->assertGreaterThan(1.0, $rugged['passion']['units']['beauty']['m'], json_encode($rugged['passion']));
+        $this->assertNull($rugged['passion_ceiling']);
+        $this->assertTrue($courtier['pillars']['beauty']['tolerated'], json_encode($courtier['pillars']['beauty']));
+        $this->assertSame(1.0, $courtier['passion']['units']['beauty']['m'], json_encode($courtier['passion']));
         $this->assertNull($courtier['hard_zero']);
         $this->assertArrayNotHasKey('passion_cap', $courtier);
+        $this->assertEquals(50.0, $courtier['passion_ceiling'], $courtier['reason']);
         $this->assertLessThan($rugged['passion_mult'], $courtier['passion_mult']);
         $this->assertLessThan($rugged['passion']['curve'], $courtier['passion']['curve'], 'her words in his looks lift the curve');
         $this->assertNoDbFailures();

@@ -3134,8 +3134,8 @@ class RelationshipDynamics
      * none (positive exchanges piling up stages never lift passion the NPC cannot feel at
      * all); the part of a floor above the spark holds only while the NPC's curve is met
      * (passion_mult of at least 1: at or past her floors), since above the spark she only
-     * warms as fast as the uphill allows. A summary from before the spark: 0 when its
-     * passion_mult is 0.
+     * warms as fast as the uphill allows; never above the MDD 1.4 passion ceiling. A summary
+     * from before the spark: 0 when its passion_mult is 0.
      */
     public static function passionStageFloor(array $dynamics): float
     {
@@ -3147,6 +3147,8 @@ class RelationshipDynamics
         if (is_numeric($sparkMult) && floatval($sparkMult) <= 0.0) return 0.0;
         $spark = is_numeric($a['spark'] ?? null) ? floatval($a['spark']) : 0.0;
         if ($floor > $spark && floatval($a['passion_mult'] ?? 1.0) < 1.0) return $spark;
+        // never above the MDD 1.4 passion ceiling (RelDynAttraction::gainFactor)
+        if (is_numeric($a['passion_ceiling'] ?? null)) $floor = min($floor, floatval($a['passion_ceiling']));
         return $floor;
     }
 
@@ -3375,7 +3377,30 @@ class RelationshipDynamics
     public static function getAffinityGainMultiplier($dynamics)
     {
         $passion = floatval($dynamics['passion'] ?? 0);
+        $a = is_array($dynamics) ? ($dynamics['_attraction'] ?? null) : null;
+        if (is_array($a) && !empty($a['enabled']) && !empty($a['hard_zero']) && is_numeric($a['spark'] ?? null)) {
+            $passion = max($passion, floatval($a['spark']));   // see affinityDrivePassion
+        }
         return 0.3 + ($passion / 100.0) * 1.7;
+    }
+
+    /**
+     * The passion (points) the MDD 1.1 affinity drive reads ("0 passion = x0.3 gain, 100 =
+     * x2.0"): the NPC's passion, except under an attraction hard zero (orientation, a rigid
+     * pillar below its bar, asexual / aromantic / not interested; decisions §13). There passion
+     * is structurally 0 (no spark, no gain), which is no verdict on the friendship: the drive
+     * reads at least the spark, the passion anyone else gets freely, so a friendship with an
+     * NPC who cannot feel passion for the player grows like one at the spark, not idling at
+     * x0.3 forever.
+     */
+    public static function affinityDrivePassion(array $dynamics): float
+    {
+        $passion = self::getPassion($dynamics);
+        $a = $dynamics['_attraction'] ?? null;
+        if (is_array($a) && !empty($a['enabled']) && !empty($a['hard_zero']) && is_numeric($a['spark'] ?? null)) {
+            return max($passion, floatval($a['spark']));
+        }
+        return $passion;
     }
 
     // =========================================================================
@@ -7430,7 +7455,7 @@ class RelationshipDynamics
             case 'jealousy':
                 return floatval($dynamics['jealousy_anger'] ?? 0);
             case 'passion':
-                return self::getPassion($dynamics);
+                return self::affinityDrivePassion($dynamics);
             case 'resentment':
                 return floatval($dynamics['dimensions']['resentment']['x'] ?? 0);
             case 'maturity':
@@ -7648,7 +7673,8 @@ class RelationshipDynamics
             self::attractionPassionMult((string) $npcName, $dynamics);   // this request's summary
             if (RelDynAttraction::gainFactor((array) $dynamics['_attraction'], self::getPassion($dynamics), $raw) <= 0.0) {
                 self::attractionPassionFactor((string) $npcName, $dynamics, $raw, 'eval');   // logged: why
-                $result['line'] = sprintf('%s %+.2f%s%s -> 0 (attraction hard zero)', $signal, $rawIn, $clampNote, $steps);
+                $why = isset($dynamics['_attraction']['hard_zero']) ? 'attraction hard zero' : 'at the attraction passion ceiling';
+                $result['line'] = sprintf('%s %+.2f%s%s -> 0 (%s)', $signal, $rawIn, $clampNote, $steps, $why);
                 return $result;
             }
         }
@@ -13309,7 +13335,9 @@ class RelationshipDynamics
         $passion = self::getPassion($dynamics);
         $factor = RelDynAttraction::gainFactor((array) ($dynamics['_attraction'] ?? []), $passion, $raw);
         self::log(sprintf('[ATTRACTION] %s passion +%.4f at %.2f x%.4f%s', $label, $raw, $passion, $factor,
-            ($factor <= 0.0 && $raw > 0.0) ? ' (hard zero: ' . ($dynamics['_attraction']['hard_zero'] ?? 'none') . ')' : ''));
+            ($factor <= 0.0 && $raw > 0.0) ? (isset($dynamics['_attraction']['hard_zero'])
+                ? ' (hard zero: ' . $dynamics['_attraction']['hard_zero'] . ')'
+                : ' (at the MDD 1.4 passion ceiling ' . ($dynamics['_attraction']['passion_ceiling'] ?? 'none') . ')') : ''));
         return $factor;
     }
 

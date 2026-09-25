@@ -32,10 +32,12 @@
  *        - core affinity at the step's RelDyn tier (MDD tiers on core units: crush at
  *          close_friend = core Fond 56, core's own romance gate; romantic at bonded 76);
  *        - attraction (attractionFor): passes, not friendzoned (MDD 6.2: never promote a
- *          friendzoned NPC; decisions §13: passes = attracted, the passion curve at least
- *          curve.friendzone_below, no hard zero, not a bond-gated NPC before the bond;
- *          friendzoned = a label for not attracted with the sociological pillars met, no
- *          longer a passion cap), the attraction's romance axis has opened AND earned the
+ *          friendzoned NPC; decisions §13: passes = attracted (every passion unit at its
+ *          MDD bar, a balanced NPC at the bonded tier, or won over: passion climbed on the
+ *          uphill to the MDD 8.1 "Friendzone limit"), no hard zero, not a bond-gated NPC
+ *          before the bond; friendzoned = a label for not attracted with the sociological
+ *          pillars met, no longer a passion cap; bond relief below the bonded tier eases
+ *          only the passion rate, never the label), the attraction's romance axis has opened AND earned the
  *          step's type (not in blocked_types), its depth ceiling at least the step's, and
  *          for 'romantic' the sociological pillars too (MDD 2.6: visceral only = crush).
  *   3. Momentum (sum of moment weights, each 0..1 significance) must reach
