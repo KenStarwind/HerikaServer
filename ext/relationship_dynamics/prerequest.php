@@ -295,21 +295,8 @@ if (!empty($reldynCfg['creature_moodifications_enabled'])) {
 }
 
 // ========== SOCIAL MASKING (PR 14) ==========
-if (!empty($reldynCfg['social_masking_enabled'])) {
-    $isMasking = RelationshipDynamics::shouldMask($npcName, $dynamics);
-    $dynamics['_was_masking'] = $isMasking;
-
-    if ($isMasking) {
-        RelationshipDynamics::applyMaskingCost($npcName, $dynamics);
-        $performedState = RelationshipDynamics::calculatePerformedState($dynamics);
-        $dynamics['_performed_state_cache'] = $performedState;
-        $GLOBALS['RELDYN_MASKING_ACTIVE'] = true;
-        $GLOBALS['RELDYN_PERFORMED_STATE'] = $performedState;
-    } else {
-        $dynamics['_performed_state_cache'] = null;
-        $GLOBALS['RELDYN_MASKING_ACTIVE'] = false;
-    }
-}
+// Decided in the context hook (RelDynFelt::compose -> RelationshipDynamics::maskingTurn): the
+// audience is core's CACHE_PEOPLE, which main.php sets only after the prerequest hooks.
 
 // ========== ICK RECOVERY CHECK (PR 15) ==========
 if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
@@ -471,12 +458,13 @@ if (!empty($reldynCfg['director_goals_enabled'] ?? true)) {
             $lastBridgedHash = $dynamics['_director_goal_last_bridge_hash'] ?? '';
             $currentHash = md5($chimGoals);
             if ($currentHash !== $lastBridgedHash) {
+                $goalCfg = RelationshipDynamics::directorGoalConfig();
                 RelationshipDynamics::setDirectorGoal(
                     $dynamics,
                     $chimGoals,
                     'director',       // source: CHIM Director/SNQE
-                    7200,             // 2h gamets — director quests are longer-lived
-                    0.4               // moderate priority — bio goals are background
+                    floatval($goalCfg['bridge_max_age_play_hours']),   // play hours: director quests are longer-lived
+                    floatval($goalCfg['bridge_priority'])              // background: bio goals
                 );
                 $dynamics['_director_goal_last_bridge_hash'] = $currentHash;
                 RelationshipDynamics::log("[RelDyn-PRE] Bridged CHIM goals -> director goal for {$npcName}: " . substr($chimGoals, 0, 80));
@@ -487,14 +475,10 @@ if (!empty($reldynCfg['director_goals_enabled'] ?? true)) {
 
 // ========== DIRECTOR GOAL EXPIRY CHECK (PR 39, Step 3) ==========
 if (!empty($reldynCfg['director_goals_enabled'] ?? true)) {
-    $activeGoal = RelationshipDynamics::getActiveDirectorGoal($dynamics);
-    if ($activeGoal) {
-        $currentGamets = RelationshipDynamics::getPlayGamets($dynamics);
-        $goalAge = $currentGamets - floatval($activeGoal['created_gamets'] ?? 0);
-        $maxAge = floatval($activeGoal['max_age_gamets'] ?? 3600);
-        if ($goalAge > $maxAge) {
-            RelationshipDynamics::expireDirectorGoal($dynamics);
-        }
+    // A goal past its play-hour age (getActiveDirectorGoal no longer returns it) goes to history
+    if (!empty($dynamics['_director_goal']['active']) && RelationshipDynamics::getActiveDirectorGoal($dynamics) === null
+        && empty($dynamics['_director_goal_disabled'])) {
+        RelationshipDynamics::expireDirectorGoal($dynamics);
     }
     $GLOBALS['RELDYN_DIRECTOR_GOAL'] = RelationshipDynamics::getActiveDirectorGoal($dynamics);
 }

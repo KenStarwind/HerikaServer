@@ -34,7 +34,19 @@
  *    exposure: optional (additive to v1), only when flagged: {flag, kinds [rival_exposure|
  *               place|vice|danger|company], intensity 1..3, when today|last_night|earlier,
  *               disclosed: true}: the player told the NPC about something it was not there for
- *               (traits design §1.2 route A; RelDynConcern reads it)}
+ *               (traits design §1.2 route A; RelDynConcern reads it)},
+ *    romantic_intent: additive to v1 (decisions §8), int 0..3, always written by this producer:
+ *               how romantically the PLAYER approached the NPC in the exchange (0 none .. 3 open
+ *               pursuit); the charisma tracker (MDD 5.1) and the Ick (MDD 6.3) read it. An item
+ *               without it (older producer) feeds neither.
+ *    goal_addressed + goal_ref: additive to v1 (decisions §8), only when the eval was shown the
+ *               NPC's active director goal: goal_addressed bool (the exchange served or settled
+ *               it), goal_ref = RelationshipDynamics::directorGoalRef of the goal shown, so the
+ *               consumer fulfils that goal and never a newer one (PR 39),
+ *    masking: additive to v1 (decisions §8), only when social masking is on, the NPC had the
+ *               Mask up in front of others (RelationshipDynamics::maskingTurn) and kept a face
+ *               for them: {flag: true, slipped bool} (slipped = the real feelings showed through
+ *               the front; MDD 11)
  *
  * Classification: tags are the one interaction classification source. TAG_LOVE_LANGUAGE /
  * LOVE_LANGUAGE_TAGS translate between tags and RelDyn's love-language constants, and
@@ -83,6 +95,9 @@ final class RelDynEval
     /** Max characters kept of summary (logs) and grievance kind. */
     const SUMMARY_MAX_CHARS = 200;
     const KIND_MAX_CHARS = 40;
+
+    /** romantic_intent upper bound (0 none, 1 light warmth / flirt, 2 clear courting, 3 open pursuit). */
+    const ROMANTIC_INTENT_MAX = 3;
 
     /** Source tags (decisions 2026-09-23 §1 plus reassurance, apology and confession: rulings §9 romance) with the definitions the LLM sees. */
     const TAG_DEFINITIONS = [
@@ -178,6 +193,7 @@ final class RelDynEval
             'jobs_per_run'     => 25,    // jobs one worker process handles before it exits
             'autostart_worker' => true,  // start the worker process after queueing
             'apply_in_worker'  => true,  // the worker applies the NPC's eval inbox right after filling it; false = the NPC's next postrequest does
+            'goal_max_chars'   => 240,   // characters of the NPC's director goal shown to the eval (goal_addressed)
         ];
     }
 
@@ -750,7 +766,24 @@ final class RelDynEval
         }
 
         $dynamics = RelationshipDynamics::getDynamics($npc);   // fresh read, no cache
-        $messages = self::buildMessages($npc, $player, $window, self::stateSummary($npc, $dynamics), (array) ($job['event_tags'] ?? []));
+        $witnesses = self::witnesses($window['current'], $npc, $player);
+        // Additive v1 questions (decisions §8): the goal the eval is shown travels with the job
+        // (goal_ref), so the consumer fulfils that goal and never one set since
+        $rdCfg = RelationshipDynamics::getConfig();
+        $extras = [];
+        $goal = !empty($rdCfg['director_goals_enabled']) ? RelationshipDynamics::getActiveDirectorGoal($dynamics) : null;
+        if (is_array($goal)) {
+            $job['goal_ref'] = RelationshipDynamics::directorGoalRef($goal);
+            $extras['goal'] = mb_substr(trim(preg_replace('/\s+/u', ' ', (string) $goal['text']) ?? ''), 0, max(1, intval($cfg['goal_max_chars'])));
+        }
+        // Masking: asked when the NPC had the Mask up for this exchange (the context's decision,
+        // RelationshipDynamics::maskingTurn) in front of others; the eval judges whether the
+        // front held or slipped
+        if (!empty($rdCfg['social_masking_enabled']) && !empty($dynamics['_was_masking']) && $witnesses !== []) {
+            $job['masking_asked'] = true;
+            $extras['audience'] = $witnesses;
+        }
+        $messages = self::buildMessages($npc, $player, $window, self::stateSummary($npc, $dynamics), (array) ($job['event_tags'] ?? []), $extras);
         $raw = $llm($messages, ['MAX_TOKENS' => intval($cfg['max_tokens'])]);
         if (!is_string($raw) || trim($raw) === '') {
             throw new RuntimeException('eval LLM returned no response');
@@ -762,7 +795,7 @@ final class RelDynEval
             error_log("[RelDyn-EVAL] ERROR malformed eval output for {$npc} dropped ({$reason}): " . substr(str_replace("\n", ' ', $raw), 0, 300));
             return ['drop' => 'malformed'];
         }
-        $item['witnesses'] = self::witnesses($window['current'], $npc, $player);
+        $item['witnesses'] = $witnesses;
         return ['item' => $item];
     }
 
@@ -1020,6 +1053,12 @@ final class RelDynEval
             'Jealousy: ' . $jealousyBand . ($jealousyBand !== 'none' && $rival ? " (about {$rival})" : ''),
             'Resentment: ' . $band('resentment', floatval($dynamics['dimensions']['resentment']['x'] ?? 0)),
         ];
+        // MDD 11: the eval sees the front and the truth under it, and scores the truth
+        if (!empty($dynamics['_was_masking'])) {
+            $performed = is_array($dynamics['_performed_state_cache'] ?? null)
+                ? $dynamics['_performed_state_cache'] : RelationshipDynamics::calculatePerformedState($dynamics);
+            $lines[] = 'In front of others: keeps up a front of ease; underneath: ' . RelationshipDynamics::maskHiddenText($dynamics, $performed);
+        }
         $mood = self::currentMood($npcName);
         if ($mood !== null) {
             $lines[] = "Current mood: {$mood}";
@@ -1044,8 +1083,13 @@ final class RelDynEval
         return $mood !== '' ? $mood : null;
     }
 
-    /** @return list<array{role:string,content:string}> system + user messages for the eval LLM */
-    public static function buildMessages(string $npc, string $player, array $window, array $state, array $eventTags): array
+    /**
+     * @param array $extras additive v1 questions (decisions §8), each asked only when it applies:
+     *                      'goal' => the NPC's active director goal text (asks goal_addressed),
+     *                      'audience' => names present besides the NPC and the player (asks masking)
+     * @return list<array{role:string,content:string}> system + user messages for the eval LLM
+     */
+    public static function buildMessages(string $npc, string $player, array $window, array $state, array $eventTags, array $extras = []): array
     {
         $fmt = static function (array $lines): string {
             $out = [];
@@ -1069,6 +1113,26 @@ final class RelDynEval
         $stateText = implode("\n", array_map(static fn($s) => "- {$s}", $state));
         $tagText = implode("\n", $tagDefs);
         $signalText = implode(', ', $signalSpec);
+
+        // Additive v1 questions (decisions §8): romantic_intent always; goal_addressed only with
+        // a goal shown; masking only with others present
+        $goal = trim((string) ($extras['goal'] ?? ''));
+        $audience = array_values(array_filter(array_map(fn($a) => trim((string) $a), (array) ($extras['audience'] ?? [])), fn($a) => $a !== ''));
+        $max = self::ROMANTIC_INTENT_MAX;
+        $extraSpec = "ROMANTIC_INTENT: 0..{$max}, how romantically {$player} approached {$npc} in this exchange, whatever {$npc} made of it: "
+            . "0 none, 1 light warmth or a playful flirt, 2 clear flirting or courting, 3 open romantic pursuit (a confession, a proposition).";
+        $extraShape = ', "romantic_intent": 0';
+        if ($goal !== '') {
+            $extraSpec .= "\n{$npc}'S CURRENT PURPOSE: {$goal}\n"
+                . "GOAL_ADDRESSED: true only when this exchange clearly served that purpose or settled it ({$player} helped with it, agreed to it, or it got done); talk around it is false.";
+            $extraShape .= ', "goal_addressed": false';
+        }
+        if ($audience !== []) {
+            $who = implode(', ', $audience);
+            $extraSpec .= "\nMASKING (others were present: {$who}): flag true when {$npc} put on a face for them, showing a feeling {$npc} did not have or hiding the one {$npc} had; "
+                . "slipped true when {$npc}'s real feelings showed through that front in this exchange. Score the signals from what {$npc} really felt, not the front.";
+            $extraShape .= ', "masking": {"flag": false, "slipped": false}';
+        }
 
         $system = "You score how one exchange changed a Skyrim character's feelings toward the player. "
             . "You judge from the character's point of view: what they actually felt, which can differ from what they said. "
@@ -1106,9 +1170,10 @@ JEALOUSY: flag true when {$npc} felt jealous of a rival because of this exchange
 EXPOSURE: flag true only when {$player} tells {$npc} about something {$npc} was not there for that put {$player} near rivals or at risk. kinds, any of: rival_exposure (out where others could court {$player}, e.g. a tavern night with single company), place (a risky place: a tavern late at night among strangers, a skooma den), vice (drinking, skooma), danger (a fight, a deadly place), company (bad company: bandits, criminals). intensity 1 mild .. 3 serious. when: today, last_night or earlier.
 SIGNIFICANCE: 0..1, how much this exchange matters to {$npc} (small talk 0.1, meaningful 0.5, life-changing 1).
 SUMMARY: one short line saying what happened in this exchange, as an event (who did what). No numbers, no scores, no signal names, no feelings named (not "she trusts {$player} more").
+{$extraSpec}
 
 Reply with exactly this JSON shape:
-{"signals": {{$signalText}}, "tags": [], "grievance": {"flag": false, "kind": null, "severity": 0}, "jealousy": {"flag": false, "rival": null, "intensity": 0}, "exposure": {"flag": false, "kinds": [], "intensity": 0, "when": null}, "significance": 0.2, "summary": "one short line"}
+{"signals": {{$signalText}}, "tags": [], "grievance": {"flag": false, "kind": null, "severity": 0}, "jealousy": {"flag": false, "rival": null, "intensity": 0}, "exposure": {"flag": false, "kinds": [], "intensity": 0, "when": null}, "significance": 0.2, "summary": "one short line"{$extraShape}}
 PROMPT;
 
         return [
@@ -1204,6 +1269,11 @@ PROMPT;
             $summary = mb_substr(trim(preg_replace('/\s+/u', ' ', $data['summary']) ?? ''), 0, self::SUMMARY_MAX_CHARS);
         }
 
+        // Additive v1 (decisions §8): a malformed one is logged and left out, never the item
+        $romanticIntent = self::parseRomanticIntent($data, $npc);
+        $goal = self::parseGoalAddressed($data, $job, $npc);
+        $masking = self::parseMasking($data, $job, $npc);
+
         foreach ((array) ($job['event_tags'] ?? []) as $t) {
             if (is_string($t) && isset(self::TAG_DEFINITIONS[$t])) {
                 $tags[$t] = true;
@@ -1224,7 +1294,73 @@ PROMPT;
             'significance'         => round($significance, 3),
             'positive_interaction' => $classified['positive_interaction'],
             'summary'              => $summary,
-        ] + ($exposure !== null ? ['exposure' => $exposure] : []);
+        ] + ($romanticIntent !== null ? ['romantic_intent' => $romanticIntent] : [])
+          + $goal
+          + ($masking !== null ? ['masking' => $masking] : [])
+          + ($exposure !== null ? ['exposure' => $exposure] : []);
+    }
+
+    /** romantic_intent 0..ROMANTIC_INTENT_MAX (absent: 0, the producer always asks); null when malformed (logged). */
+    private static function parseRomanticIntent(array $data, string $npc): ?int
+    {
+        $v = $data['romantic_intent'] ?? 0;
+        if (!is_int($v) && !is_float($v)) {
+            error_log("[RelDyn-EVAL] eval output for {$npc}: romantic_intent is not a number, left out");
+            return null;
+        }
+        return (int) max(0, min(self::ROMANTIC_INTENT_MAX, round($v)));
+    }
+
+    /**
+     * goal_addressed + goal_ref when the job showed the eval a goal ($job['goal_ref']); [] when
+     * it did not (an answer about a goal nobody was shown is ignored) or the value is malformed
+     * (logged). Absent with a goal shown: false.
+     */
+    private static function parseGoalAddressed(array $data, array $job, string $npc): array
+    {
+        $ref = $job['goal_ref'] ?? null;
+        if (!is_string($ref) || $ref === '') {
+            return [];
+        }
+        $v = $data['goal_addressed'] ?? false;
+        if ($v === 0 || $v === 1) {
+            $v = (bool) $v;
+        }
+        if (!is_bool($v)) {
+            error_log("[RelDyn-EVAL] eval output for {$npc}: goal_addressed is not a boolean, left out");
+            return [];
+        }
+        return ['goal_addressed' => $v, 'goal_ref' => $ref];
+    }
+
+    /**
+     * masking {flag: true, slipped} when the job asked it ($job['masking_asked']: others were
+     * present) and the NPC put on a face (a slip is a front that cracked, so it is a mask too);
+     * null otherwise, or when malformed (logged).
+     */
+    private static function parseMasking(array $data, array $job, string $npc): ?array
+    {
+        if (empty($job['masking_asked']) || !array_key_exists('masking', $data) || $data['masking'] === null) {
+            return null;
+        }
+        $m = $data['masking'];
+        if (!is_array($m) || ($m !== [] && array_is_list($m))) {
+            error_log("[RelDyn-EVAL] eval output for {$npc}: masking is not an object, left out");
+            return null;
+        }
+        $out = [];
+        foreach (['flag', 'slipped'] as $k) {
+            $v = $m[$k] ?? false;
+            if ($v === 0 || $v === 1) {
+                $v = (bool) $v;
+            }
+            if (!is_bool($v)) {
+                error_log("[RelDyn-EVAL] eval output for {$npc}: masking.{$k} is not a boolean, left out");
+                return null;
+            }
+            $out[$k] = $v;
+        }
+        return ($out['flag'] || $out['slipped']) ? ['flag' => true, 'slipped' => $out['slipped']] : null;
     }
 
     /** grievance / jealousy object: {flag bool, <textKey> string|null, <levelKey> 0..3}; null = malformed. */

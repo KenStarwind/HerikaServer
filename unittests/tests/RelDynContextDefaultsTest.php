@@ -12,12 +12,17 @@ final class RelDynContextFakeDb
 {
     /** @var array<string, array> lower(npc_name) => plugin_extended_data */
     public array $plugin = [];
+    /** The stored RelDyn config row (conf_opts), null = none (the shipped defaults). */
+    public ?string $config = null;
 
     private function key(int $id): ?string { return array_keys($this->plugin)[$id - 1] ?? null; }
 
     public function fetchOne($sql, $params = [])
     {
         $sql = preg_replace('/\s+/', ' ', trim((string)$sql));
+        if ($this->config !== null && strpos($sql, "FROM conf_opts WHERE id = 'relationship_dynamics_config'") !== false) {
+            return ['value' => $this->config];
+        }
         if (strpos($sql, 'SELECT id FROM core_npc_master WHERE lower(npc_name) = lower($1)') === 0) {
             $i = array_search(strtolower((string)$params[0]), array_keys($this->plugin), true);
             return $i === false ? [] : ['id' => (string)($i + 1)];
@@ -186,14 +191,73 @@ final class RelDynContextDefaultsTest extends TestCase
         $this->assertNoNumbers($blocks, 'memories');
     }
 
+    /**
+     * dimensional-memory: at the MDD 15.5 confrontation threshold (resentment 50) the stored
+     * stings become the list of grievances the NPC is ready to bring up (the draft's
+     * "confrontation fuel"), distinct events, most significant first, cleaned text only; the
+     * memory line keeps what is not already there. Below the threshold only the memory line.
+     */
+    public function testConfrontationFuelSpeaksAtResentmentFifty(): void
+    {
+        $mem = [
+            ['dim' => 'trust', 'delta' => -12.0, 'abs_delta' => 12.0, 'reason' => 'Kaida lied about the artifact', 'bond' => 'Kaida', 'gamets' => 5000],
+            ['dim' => 'affinity', 'delta' => -9.0, 'abs_delta' => 9.0, 'reason' => 'Kaida lied about the artifact', 'bond' => 'Kaida', 'gamets' => 5000],
+            ['dim' => 'respect', 'delta' => -6.0, 'abs_delta' => 6.0, 'reason' => 'Kaida walked away mid-conversation (respect -6)', 'bond' => 'Kaida', 'gamets' => 7000],
+            ['dim' => 'comfort', 'delta' => 5.0, 'abs_delta' => 5.0, 'reason' => 'shared a quiet night by the fire', 'bond' => 'Kaida', 'gamets' => 9000],
+        ];
+        $this->assertSame(['Kaida lied about the artifact', 'Kaida walked away mid-conversation'],
+            RelationshipDynamics::getConfrontationFuel(['dimensional_memory' => $mem], 'Kaida'), 'distinct events, strongest first, cleaned');
+
+        $calm = $this->baseState(90.0, ['resentment' => 20.0], ['dimensional_memory' => $mem]);
+        $this->contextFor($calm);
+        $this->assertArrayNotHasKey('grievances', RelDynFelt::lastRendered(), 'below 50: no confrontation');
+
+        $blocks = $this->contextFor($this->baseState(90.0, ['resentment' => 55.0], ['dimensional_memory' => $mem]));
+        $felt = RelDynFelt::lastRendered();
+        $this->assertArrayHasKey('grievances', $felt, json_encode(array_keys($felt)));
+        $this->assertStringContainsString("'Kaida lied about the artifact'; 'Kaida walked away mid-conversation'", $felt['grievances']);
+        $this->assertStringNotContainsString('lied about the artifact', (string) ($felt['memory'] ?? ''), 'said once');
+        $this->assertNoNumbers($blocks, 'grievances');
+    }
+
+    /**
+     * MDD 11 (social-masking): the Mask is worn by an NPC to whom status matters (pride) with a
+     * Toxic / Avoidant attachment, in front of someone she does not trust. The context decides
+     * it, where core's CACHE_PEOPLE is set (never in prerequest, which runs before core sets
+     * it), and the next turn alone with the player drops it.
+     */
     public function testSocialMaskingShipsOffAndItsTextIsFeltWhenOn(): void
     {
         $this->assertFalse(RelationshipDynamics::defaultConfig()['social_masking_enabled'], 'a gameplay call, unchanged');
-        $state = $this->baseState(80.0, ['resentment' => 70.0, 'comfort' => 20.0, 'maturity' => 70.0]);
-        $GLOBALS['RELDYN_MASKING_ACTIVE'] = true;
+        // Proud (pride 0.9) and avoidant: she wears the Mask; Isran has no bond with her
+        $state = $this->baseState(80.0, ['resentment' => 70.0, 'comfort' => 20.0, 'maturity' => 70.0],
+            ['inferred_temperament' => 'Proud', 'profile_overrides' => ['attachment_style' => 'avoidant']]);
         $GLOBALS['CACHE_PEOPLE'] = '|Serana|Kaida|Isran|';
+        $this->assertStringNotContainsString('performs ease', implode("\n", $this->contextFor($state)), 'shipped off');
+
+        $this->db->config = json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['social_masking_enabled' => true]));
+        RelationshipDynamics::clearConfigCache();
         $blocks = $this->contextFor($state);
         $this->assertStringContainsString('In front of Isran, Serana performs ease', implode("\n", $blocks));
         $this->assertNoNumbers($blocks, 'social masking');
+        $stored = $this->db->plugin['serana']['reldyn']['dynamics'];
+        $this->assertTrue($stored['_was_masking'], 'the turn\'s mask is recorded for the next turn and the eval');
+
+        // Next turn, alone with the player: the mask drops, once
+        $GLOBALS['CACHE_PEOPLE'] = '|Serana|Kaida|';
+        $blocks = $this->contextFor($stored);
+        $this->assertStringContainsString('Serana lets the mask fall now that they are alone with Kaida', implode("\n", $blocks));
+        $this->assertNoNumbers($blocks, 'mask drop');
+        $blocks = $this->contextFor($this->db->plugin['serana']['reldyn']['dynamics']);
+        $this->assertStringNotContainsString('lets the mask fall', implode("\n", $blocks), 'a drop is a one-shot');
+
+        // Same audience, but no Mask to wear: a secure Proud NPC, an avoidant Gentle one (pride 0.2)
+        $GLOBALS['CACHE_PEOPLE'] = '|Serana|Kaida|Isran|';
+        foreach ([['Proud', 'secure'], ['Gentle', 'avoidant']] as [$temperament, $style]) {
+            $other = $this->baseState(80.0, ['resentment' => 70.0, 'comfort' => 20.0, 'maturity' => 70.0],
+                ['inferred_temperament' => $temperament, 'profile_overrides' => ['attachment_style' => $style]]);
+            $this->assertStringNotContainsString('performs ease', implode("\n", $this->contextFor($other)), "{$temperament} {$style}");
+        }
+        $this->db->config = null;
     }
 }

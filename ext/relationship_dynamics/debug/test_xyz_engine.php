@@ -5697,7 +5697,7 @@ try {
         'maturity' => ['x' => 70, 'baseline' => 70],
         'resentment' => ['x' => 0, 'baseline' => 0],
     ]);
-    $an5Dyn['_charisma_tracker'] = ['detected_style' => 'catalyst', 'style_confidence' => 0.8];
+    $an5Dyn['_charisma_tracker'] = ['source' => 'eval', 'detected_style' => 'catalyst', 'style_confidence' => 0.8];
     $an5Dyn['interaction_count'] = 0;
     // maturity 70 → normal threshold = 0.5 * 1.7 = 0.85
     // catalyst penalty: 0.85 * 0.7 = 0.595
@@ -5728,12 +5728,12 @@ try {
 // AN8: Charisma context only for maturity >= 55
 try {
     $an8Low = makeMultiDynamics(['maturity' => ['x' => 40, 'baseline' => 40]]);
-    $an8Low['_charisma_tracker'] = ['detected_style' => 'catalyst', 'style_confidence' => 0.9];
+    $an8Low['_charisma_tracker'] = ['source' => 'eval', 'detected_style' => 'catalyst', 'style_confidence' => 0.9];
     $ctxLow = RelationshipDynamics::getCharismaContext($an8Low, 'TestNpc');
     check('AN8a: Maturity 40 → no charisma awareness context', $ctxLow, null);
 
     $an8High = makeMultiDynamics(['maturity' => ['x' => 70, 'baseline' => 70]]);
-    $an8High['_charisma_tracker'] = ['detected_style' => 'catalyst', 'style_confidence' => 0.9];
+    $an8High['_charisma_tracker'] = ['source' => 'eval', 'detected_style' => 'catalyst', 'style_confidence' => 0.9];
     $ctxHigh = RelationshipDynamics::getCharismaContext($an8High, 'TestNpc');
     $hasContext = ($ctxHigh !== null && strpos($ctxHigh, 'recognized') !== false);
     check('AN8b: Maturity 70 → charisma awareness with "recognized"', $hasContext, true);
