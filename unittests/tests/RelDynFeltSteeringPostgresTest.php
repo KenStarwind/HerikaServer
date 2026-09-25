@@ -559,15 +559,17 @@ final class RelDynFeltSteeringPostgresTest extends TestCase
         $this->assertArrayHasKey('boundary', $jev);
         $this->assertArrayHasKey('walkaway', $jev);
         $this->assertIsFloat($jev['fulfillment']['band']);
-        // Rulings §11: the modifier and the gate as separate numbers, and their product
+        // Decisions §13: the curve, the spark and its rate, the rate above it, the hard zero
         $att = $d['_attraction'];
         $this->assertTrue($jev['attraction']['enabled']);
-        $this->assertEqualsWithDelta(floatval($att['passion']['modifier']), $jev['attraction']['modifier'], 1e-4, 'modifier(S)');
-        $this->assertEqualsWithDelta(floatval($att['passion']['gate_product']), $jev['attraction']['gate_product'], 1e-4, 'gates');
-        $this->assertSame(!empty($att['passes']), $jev['attraction']['gate'], 'the passion gate is open');
+        $this->assertEqualsWithDelta(floatval($att['passion']['curve']), $jev['attraction']['curve'], 1e-4, 'the passion curve');
+        $this->assertEqualsWithDelta(floatval($att['spark']), $jev['attraction']['spark'], 1e-4, 'the spark (passion points)');
+        $this->assertEqualsWithDelta(floatval($att['spark_mult']), $jev['attraction']['spark_mult'], 1e-4, 'below the spark');
+        $this->assertSame($att['hard_zero'], $jev['attraction']['hard_zero']);
+        $this->assertSame(!empty($att['attracted']), $jev['attraction']['attracted']);
         $this->assertEqualsWithDelta(floatval($att['passion_mult']), $jev['attraction']['passion_mult'], 1e-4, 'passion-gain multiplier');
         $this->assertEqualsWithDelta(floatval($att['respect_mult']), $jev['attraction']['respect_mult'], 1e-4, 'respect-gain multiplier');
-        $this->assertMatchesRegularExpression('/modifier=\d\.\d+ gate=(open|closed)\(\d\.\d+\) passion_mult=\d\.\d+/', $jev['text']);
+        $this->assertMatchesRegularExpression('/curve=\d\.\d+(\[[^\]]*\])? spark=\d+(\.\d)?\(x\d\.\d+\) passion_mult=\d\.\d+/', $jev['text']);
         $this->assertArrayHasKey('units', $jev);
         // The compact text carries the numbers (Jev conditions on them directly).
         $this->assertMatchesRegularExpression('/affinity=-?\d/', $jev['text']);

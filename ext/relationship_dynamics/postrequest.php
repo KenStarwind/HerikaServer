@@ -417,8 +417,9 @@ if ($evalOwnsExchange) {
     $passionGain = $rawPassionGain * $topicBonus * $flirtBonus;
     $positiveExchange = $passionGain > 0;
 
-    // ========== ATTRACTION MODIFIER x GATES x ATTACHMENT (rulings §11, §9) ==========
-    $matrixPassionMult = RelationshipDynamics::attractionPassionMult($npcName, $dynamics);
+    // ========== ATTRACTION: THE SPARK, THEN THE UPHILL x ATTACHMENT (decisions §13, rulings §9) ==========
+    $matrixPassionMult = $passionGain > 0
+        ? RelationshipDynamics::attractionPassionFactor($npcName, $dynamics, $passionGain, 'love_match') : 1.0;
     if ($passionGain > 0) {
         $passionGain *= $matrixPassionMult;
     }
@@ -543,11 +544,10 @@ if ($positiveExchange && !empty($dynamics['in_conflict'])) {
 
 skip_conflict:
 
-// ========== ATTRACTION TIER CEILING + PASSION HARD CAP (MDD 8 / 6.2) ==========
+// ========== ATTRACTION TIER CEILING (MDD 8) ==========
 // The Matrix gates tier progression (getRelationshipType, attractionAllowsType), not affinity:
-// affinity can still grow. Passion never ends a request above the attraction cap
-// (friendzone / unattracted 20, a tolerated fail's reduced ceiling).
-RelDynAttraction::enforcePassionCap($dynamics);
+// affinity can still grow. Passion has no attraction cap (decisions §13 retired the MDD 6.2
+// hard cap of 20): the uphill scales its gains instead (attractionPassionFactor).
 
 // ========== INTERACTION PATTERN TRACKING (PR 12) ==========
 if (!empty($reldynCfg['parasite_detection_enabled'])) {

@@ -498,7 +498,7 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
         // (a), (b): drawn, and she knows what she values
         foreach (['warrior' => 'warrior', 'druid' => 'druid'] as $kind => $valued) {
             $this->assertTrue($seen[$kind]['a']['passes'], $why($kind));
-            $this->assertNull($seen[$kind]['a']['passion_cap'], $why($kind));
+            $this->assertArrayNotHasKey('passion_cap', $seen[$kind]['a'], $why($kind));
             $this->assertSame($valued, $seen[$kind]['a']['valued'], $why($kind));
             $this->assertStringContainsString('eyes keep finding ' . self::PLAYER, $seen[$kind]['ctx']);
         }
@@ -512,17 +512,24 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
         $this->assertGreaterThan(RelDynPlayer::config()['archetype_identity_floor'], $nb['p']['archetype_raw']['druid'],
             'a formed druid side: ' . $why('nature_bard'));
         $this->assertTrue($nb['a']['passes'], $why('nature_bard'));
-        $this->assertNull($nb['a']['passion_cap'], $why('nature_bard'));
+        $this->assertTrue($nb['a']['below_floor'], 'drawn, still well below her martial floor (decisions §13): ' . $why('nature_bard'));
+        // the hill itself (before charm: both bards are silver-tongued, MDD 2.5 / decisions §13)
+        $hill = fn(array $a) => $a['passion']['units']['flexible:visceral']['m_hill'];
+        $this->assertGreaterThan(1.5 * $hill($seen['bard']['a']), $hill($nb['a']), 'the druid side lifts him up her hill');
+        $this->assertGreaterThan($seen['bard']['a']['passion_mult'], $nb['a']['passion_mult']);
         $this->assertSame('druid', $nb['a']['valued'], $why('nature_bard'));
         $this->assertArrayHasKey('druid', $nb['a']['pillars']['strength']['mix']);
         $this->assertStringContainsString('eyes keep finding ' . self::PLAYER, $nb['ctx']);
         $this->assertStringContainsString('bond with the wild', $nb['ctx']);
 
-        // (d) the same bard without the wild, and a scholar: tolerated, no passion
+        // (d) the same bard without the wild, and a scholar: tolerated, the foot of her hill
         foreach (['bard', 'scholar'] as $kind) {
             $this->assertFalse($seen[$kind]['a']['passes'], $why($kind));
             $this->assertContains($seen[$kind]['a']['outcome'], ['friendzone', 'unattracted'], $why($kind));
-            $this->assertSame(20.0, floatval($seen[$kind]['a']['passion_cap']), $why($kind));
+            // the foot of her hill; speech closes up to 15% of the gap (charm, decisions §13)
+            $this->assertLessThan(0.12, $seen[$kind]['a']['passion']['units']['flexible:visceral']['m_hill'], $why($kind));
+            $this->assertLessThan(0.25, $seen[$kind]['a']['passion_mult'], $why($kind));
+            $this->assertNull($seen[$kind]['a']['hard_zero'], $why($kind));
             $this->assertSame(0, $seen[$kind]['a']['romance']['allowed'], $why($kind));
             $this->assertNotSame('druid', $seen[$kind]['a']['valued'], $why($kind));
             $this->assertStringNotContainsString('eyes keep finding ' . self::PLAYER, $seen[$kind]['ctx']);
@@ -540,7 +547,8 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
         $this->assertLessThan(0.1, $c['p']['archetype_raw']['druid'], $why('conjurer'));
         $this->assertLessThan(0.1, $c['p']['derivation']['archetypes']['druid']['spells'], 'a novice familiar among the daedra is no nature magic');
         $this->assertFalse($c['a']['passes'], $why('conjurer'));
-        $this->assertSame(20.0, floatval($c['a']['passion_cap']), $why('conjurer'));
+        $this->assertLessThan(0.12, $c['a']['passion']['units']['flexible:visceral']['m_hill'], $why('conjurer'));
+        $this->assertLessThan(0.25, $c['a']['passion_mult'], $why('conjurer'));
         $this->assertNotSame('druid', $c['a']['valued'], $why('conjurer'));
         $this->assertStringNotContainsString('bond with the wild', $c['ctx']);
         $this->assertNoDbFailures();
@@ -575,9 +583,10 @@ final class RelDynArchetypeBlendPostgresTest extends TestCase
             $this->assertLessThan(0.1, $p['archetype_raw']['druid'], $why);
             $this->assertNotSame('druid', $a['valued'], $why);
             $this->assertStringNotContainsString('bond with the wild', $ctx, $why);
-            if ($kind !== 'herbalist') {   // the bard and the conjurer-scholar stay tolerated, no passion
+            if ($kind !== 'herbalist') {   // the bard and the conjurer-scholar stay tolerated, at the foot of her hill
                 $this->assertFalse($a['passes'], $why);
-                $this->assertSame(20.0, floatval($a['passion_cap']), $why);
+                $this->assertLessThan(0.12, $a['passion']['units']['flexible:visceral']['m_hill'], $why);
+                $this->assertLessThan(0.25, $a['passion_mult'], $why);
                 $this->assertStringNotContainsString('eyes keep finding ' . self::PLAYER, $ctx, $why);
             }
         }
