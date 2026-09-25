@@ -283,11 +283,7 @@ final class RelDynFelt
             'fighting'     => "{NAME} fights beside {PLAYER}: watches their back, calls out threats, moves in step with them",
             'after'        => "the fight is barely over; adrenaline still in {NAME}'s hands, the shared danger hanging in the air",
         ],
-        'creature' => [
-            'vampire_night'  => "{NAME}'s vampiric nature is ascendant: sharper, hungrier, the mask of humanity thinner",
-            'werewolf_moon'  => "the full moon pulls at {NAME}'s beast blood: fighting for control, everything raw and immediate",
-            'werewolf_night' => "{NAME}'s beast blood stirs in the dark: sharper senses, shorter patience",
-        ],
+        // creature lines: RelDynCreatures config felt_text (reldyn_creatures.php)
         'memory'       => "Still carries: {ITEMS}.",
         'memory_warm'  => "still warm",
         'memory_sting' => "still stings",
@@ -604,17 +600,10 @@ final class RelDynFelt
         $intimacy = RelDynIntimacy::feltText($npc, $player, $dynamics, $now);
         if ($intimacy) $lines[] = self::line('intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['intimacy']), $intimacy);
 
-        // --- Creature state ---
-        $creature = RelationshipDynamics::detectCreatureType($npc, $dynamics);
-        if ($creature) {
-            $isNight = RelationshipDynamics::isGameNight();
-            $k = null;
-            if ($creature === 'vampire' && $isNight) $k = 'vampire_night';
-            elseif ($creature === 'werewolf' && RelationshipDynamics::isFullMoon()) $k = 'werewolf_moon';
-            elseif ($creature === 'werewolf' && $isNight) $k = 'werewolf_night';
-            if ($k !== null) {
-                $lines[] = self::line('creature', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['creature']), self::fill((string) $t['creature'][$k], $vars));
-            }
+        // --- Creature state (night / day / Skyrim's moon; the shame after the change) ---
+        $creature = RelDynCreatures::feltText($npc, $dynamics, $vars, $now > 0 ? $now : null);
+        if ($creature !== null) {
+            $lines[] = self::line('creature', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['creature']), $creature);
         }
 
         // --- Emergent emotions (dimension combinations), romance-only ones inside a romance ---

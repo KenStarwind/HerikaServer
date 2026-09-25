@@ -387,17 +387,7 @@ class RelationshipDynamics
     // Weather, its modifiers and deprivation live in RelDynFacets (config facet_appraisal).
 
     // ========== VAMPIRE/WEREWOLF MOODIFICATIONS (PR 13) ==========
-
-    const VAMPIRE_NIGHT_MODIFIERS = [
-        'arousal' => 10, 'comfort' => -5, 'maturity' => -3, 'passion' => 5, 'coord_m' => 5,
-    ];
-
-    const WEREWOLF_MOON_MODIFIERS = [
-        'arousal' => 15, 'valence' => -10, 'maturity' => -8,
-        'comfort' => -10, 'self_confidence' => 5, 'coord_m' => 10, 'coord_f' => -5,
-    ];
-
-    const CREATURE_DAY_INVERSION = 0.3;
+    // Rows, moon and detection live in RelDynCreatures (config 'creatures', reldyn_creatures.php).
 
     /**
      * Consumable effect definitions.
@@ -1227,6 +1217,10 @@ class RelationshipDynamics
             // Physical / emotional axes from a trait combo, fulfillment axes, deprivation text
             // (reldyn_intimacy.php, RelDynIntimacy::configDefaults()).
             'intimacy_need' => RelDynIntimacy::configDefaults(),
+            // ===== Creature moodifications (feedback_creature_moodifications, decisions §7) =====
+            // Detection, Skyrim's moon cycle, the night / day / moon rows, the return from
+            // beast form, felt text (reldyn_creatures.php, RelDynCreatures::configDefaults()).
+            'creatures' => RelDynCreatures::configDefaults(),
             // ===== Romance promotion + Sharmat handoff (rulings 2026-09-24 §9) =====
             // Ladder, moment thresholds, momentum per NPC (reldyn_romance.php).
             'romance_promotion' => RelDynRomance::configDefaults(),
@@ -4015,17 +4009,21 @@ class RelationshipDynamics
             // Reconcile a save load (RelDynTimeline::reconcileIfLoaded) on the first poll after
             // core restored it, instead of on the first dialogue turn.
             'save_load' => true,
+            // Note NPCs the plugin reports in beast / vampire lord form (RelDynCreatures::observeForms,
+            // one conf_opts row, no bond touched), so a change between two turns is not missed.
+            'creature_forms' => true,
         ];
     }
 
     /**
      * RelDyn's whole work for one poll: the save-load reconcile, then the play heartbeat beat,
-     * each behind its 'poll' switch. No bond is read or written and no global is published;
-     * while core is still restoring a load, nothing runs (as for a dialogue entry). Its own
-     * request scope, closed on return.
+     * then the creature form watch, each behind its 'poll' switch. No bond is read or written and
+     * no global is published; while core is still restoring a load, nothing runs (as for a
+     * dialogue entry). Its own request scope, closed on return.
      *
      * @return array ['enabled' => bool, 'reconcile' => ?array (reconcileIfLoaded's result),
-     *                'play' => ?float (heartbeat total, play gamets; null = no beat)]
+     *                'play' => ?float (heartbeat total, play gamets; null = no beat),
+     *                'creature_forms' => int (NPCs in a beast / vampire lord form now; absent when off)]
      */
     public static function onPollRequest(): array
     {
@@ -4049,6 +4047,13 @@ class RelationshipDynamics
             }
             if (!empty($cfg['play_clock'])) {
                 $out['play'] = self::beatPlayClock();
+            }
+            if (!empty($cfg['creature_forms'])) {
+                try {
+                    $out['creature_forms'] = RelDynCreatures::observeForms();
+                } catch (Throwable $e) {
+                    self::logError('creature form watch on poll', $e);
+                }
             }
             return $out;
         } finally {
@@ -12199,7 +12204,7 @@ class RelationshipDynamics
      * delta), clamped to the dimension's range. Not a new experience through applyDelta's
      * physics (rubber band, resistance), which would leave a residue on every on/off cycle.
      */
-    private static function reverseAppliedDeltas(array &$dynamics, array $applied, string $logTag, string $what): void
+    public static function reverseAppliedDeltas(array &$dynamics, array $applied, string $logTag, string $what): void
     {
         foreach ($applied as $dim => $val) {
             $def = self::getDimensionDefinition($dim);
@@ -15405,92 +15410,28 @@ class RelationshipDynamics
     // ========== VAMPIRE/WEREWOLF MOODIFICATIONS (PR 13) ==========
 
     /**
-     * Get creature dimension modifiers based on time/moon.
-     * Returns array of dimId => modifier value, or empty array.
+     * The creature row's offsets for the NPC now (dimension => points; RelDynCreatures::rowFor),
+     * [] for a non-creature or with creature_moodifications_enabled off.
      */
-    public static function getCreatureModifiers(string $npcName, array $dynamics): array
+    public static function getCreatureModifiers(string $npcName, array $dynamics, ?float $gamets = null): array
     {
-        $config = self::getConfig();
-        if (empty($config['creature_moodifications_enabled'])) return [];
-
-        $creatureType = self::detectCreatureType($npcName, $dynamics);
-        if (!$creatureType) return [];
-
-        $isNight = self::isGameNight();
-        $isFullMoon = self::isFullMoon();
-        $modifiers = [];
-
-        if ($creatureType === 'vampire') {
-            $base = self::VAMPIRE_NIGHT_MODIFIERS;
-            if ($isNight) {
-                $modifiers = $base;
-            } else {
-                foreach ($base as $dim => $val) {
-                    $modifiers[$dim] = -$val * self::CREATURE_DAY_INVERSION;
-                }
-            }
-        } elseif ($creatureType === 'werewolf') {
-            $base = self::WEREWOLF_MOON_MODIFIERS;
-            if ($isFullMoon) {
-                $modifiers = $base;
-            } elseif ($isNight) {
-                foreach ($base as $dim => $val) {
-                    $modifiers[$dim] = $val * 0.5;
-                }
-            } else {
-                foreach ($base as $dim => $val) {
-                    $modifiers[$dim] = -$val * self::CREATURE_DAY_INVERSION;
-                }
-            }
-        }
-
-        return $modifiers;
+        if (!RelDynCreatures::enabled()) return [];
+        return RelDynCreatures::current($npcName, $dynamics, $gamets)['effects'];
     }
 
     /**
-     * Apply creature modifiers to dimensions (scaled x0.1 per interaction).
+     * Hold the creature row's offsets (RelDynCreatures::update: applied once, taken back when the
+     * row changes; never re-added per request) and notice a return from beast form.
      */
     public static function applyCreatureModifiers(string $npcName, array &$dynamics, string $temperament): void
     {
-        $modifiers = self::getCreatureModifiers($npcName, $dynamics);
-        foreach ($modifiers as $dimId => $delta) {
-            $scaledDelta = $delta * 0.1;
-            self::applyDelta($dimId, $dynamics, $scaledDelta, $temperament);
-        }
+        RelDynCreatures::update($npcName, $dynamics, $temperament);
     }
 
-    /**
-     * Detect vampire/werewolf from NPC factions or creature_type field.
-     */
+    /** vampire | werewolf | null from core data (RelDynCreatures::detect). */
     public static function detectCreatureType(string $npcName, array $dynamics): ?string
     {
-        // Check dynamics field first (manual override or cached)
-        $creature = $dynamics['creature_type'] ?? null;
-        if ($creature) return $creature;
-
-        // Check factions from DB
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if (!$db) return null;
-
-            $escaped = $db->escape($npcName);
-            $row = $db->fetchOne("SELECT extended_data FROM core_npc_master WHERE lower(npc_name) = lower('{$escaped}') LIMIT 1");
-            if ($row && !empty($row['extended_data'])) {
-                $ext = json_decode($row['extended_data'], true) ?: [];
-                $factions = $ext['factions'] ?? [];
-                foreach ($factions as $faction) {
-                    $name = strtolower($faction['name'] ?? '');
-                    if (strpos($name, 'vampire') !== false || strpos($name, 'volkihar') !== false) {
-                        return 'vampire';
-                    }
-                    if (strpos($name, 'werewolf') !== false) {
-                        return 'werewolf';
-                    }
-                }
-            }
-        } catch (\Throwable $e) { self::logError('detectCreatureType', $e); }
-
-        return null;
+        return RelDynCreatures::detect($npcName, $dynamics)['type'];
     }
 
     /**
@@ -15503,17 +15444,11 @@ class RelationshipDynamics
         return ($gameHour >= 20 || $gameHour < 5);
     }
 
-    /**
-     * Estimate full moon (every 5th game day).
-     */
+    /** Full moon in Skyrim's 24-day cycle (RelDynCreatures::moonPhase); false when the clock is unknown. */
     public static function isFullMoon(?float $gamets = null): bool
     {
-        $gamets = $gamets ?? self::currentGamets();
-        if ($gamets <= 0) return false;
-
-        $gameDays = $gamets / self::GAMETS_PER_DAY;
-        $dayInCycle = fmod($gameDays, 5);
-        return ($dayInCycle >= 4 && $dayInCycle < 5);
+        $phase = RelDynCreatures::moonPhase($gamets ?? self::currentGamets());
+        return $phase !== null && $phase['full'];
     }
 
     // ========== END INTERNAL WEATHER ENGINE (PR 13) ==========
@@ -18091,3 +18026,5 @@ require_once __DIR__ . '/reldyn_jev.php';
 require_once __DIR__ . '/reldyn_concern.php';
 // Resentment threshold events: the MDD 15.5 confrontation, resentment_self, guilt bleed; defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_resentment.php';
+// Creature moodifications (vampires, werewolves; Skyrim's moon cycle)
+require_once __DIR__ . '/reldyn_creatures.php';
