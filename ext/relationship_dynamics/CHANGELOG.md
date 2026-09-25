@@ -3,6 +3,35 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.14 — What she carries, what the moon does to her, and who she slowly becomes
+A grievance is now said out loud. When resentment builds past her own point (an anxious partner speaks early, an
+avoidant one holds it long), she brings it up to your face, naming what actually happened, never a score. How it
+comes out is who she is: a mature partner says it calmly, once; one in between means to say it evenly and it comes
+out in her style; an immature one blows up, and it can happen again. Saying it takes some of the weight off. If you
+keep doing it after a mature partner has spoken, she draws the one calm boundary, and then steps back from the
+romance. A people-pleaser never says it: she turns it on herself, the guilt seeps into how safe she feels with you,
+and when you ask gently and she opens up, it lifts. Walking away now closes the door in core too: a romance ends as
+an ex, a friendship as estranged.
+Vampires and werewolves follow Skyrim's real moon. Aela and the Circle carry the beast blood, read from their
+factions: by day it only simmers, on other nights it stirs, and under the full moon it takes her composure, so the
+same grievance she would mean to say evenly by day can come out as a blow-up that night. Coming back from beast form
+leaves her ashamed. Serana is sharp and hungry at night and worn by day. None of this touches anyone who is not a
+creature, and none of it changes who she is underneath: a full moon or a wound is taken back exactly when it ends,
+and it no longer counts toward the slow drift of her character.
+That drift is new: days of real contact slowly move who she is toward the bond you share, within limits, while
+waiting and sleeping move nothing. How close you are now colours how a feeling reads (the same trust feels high
+with a partner and low after a betrayal) without changing what is stored. The same words land differently by
+closeness and by who she is: a guarded woman shrugs off a stranger's insult that would wound an open-hearted one.
+The eval now also tells whether you were courting her, whether you served what she is set on, and whether she was
+keeping up a front: your charm is judged from what you actually did, her goals last the evening instead of seconds
+and only the one you helped with is fulfilled, and a proud, guarded woman can keep a mask of ease in front of people
+she does not trust, which costs her and can slip (still switched off by default). Memories keep only the event.
+Fights count for the one who fought: witnesses feel less, a kill streak builds, a fall is met with fight or with
+fear by temperament, and the afterglow fades with play instead of lasting forever. When you are badly hurt, everyone
+near you feels it, indoors or out, and it lifts when you heal.
+Where these meet, one voice is kept: the confrontation is the only place grievances are raised, and a worry beside
+a calm boundary stays calm even on a night the moon has her.
+
 ## reldyn-v0.13 — Who she is decides what she wants, what she forgives and what she worries about
 Her standards come from her own personality now: a selective, mature, self-assured woman sets a high bar on every
 pillar of attraction and a shy, open one sets a low bar, instead of everyone sharing the same line. An asexual NPC
