@@ -269,13 +269,24 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         return json_decode($r['plugin_extended_data'], true)['reldyn']['dynamics'] ?? [];
     }
 
-    public function testTheFourTestBedsDivergeThroughTheRealHooks(): void
+    /** The four meet the player at Jorrvaskr: two lines each through the real hooks. */
+    private function meetAll(): void
     {
         pg_query_params($this->db->link, 'INSERT INTO eventlog (type, data, sess, gamets, localts, ts, people, location) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
             ['infoloc', '(Context location: Jorrvaskr ,Hold: Whiterun, Buildings to go:, Current Date in Skyrim World: Morndas, 10:00 AM, 17th of Last Seed, 4E 201, current weather: Pleasant)',
              'pending', (int) $this->gamets, $this->realTs, (int) $this->gamets, '|' . implode('|', array_keys(self::BEDS)) . '|', '']);
         foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'Well met. Have a moment?');
         foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'How have you been keeping?');
+    }
+
+    private function npcId(string $npc): int
+    {
+        return intval(pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT id FROM core_npc_master WHERE npc_name = $1', [$npc]))['id']);
+    }
+
+    public function testTheFourTestBedsDivergeThroughTheRealHooks(): void
+    {
+        $this->meetAll();
 
         $seed = RelDynTraitRead::loadSeedFile();
         $d = [];
@@ -374,5 +385,34 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         arsort($rs);
         $this->assertSame('Lynly Star-Sung', array_key_first($rs), 'Lynly: "remarkable resilience"');
         $this->assertSame('bio', $d['Lynly Star-Sung']['_trait_vector_src']['traits']['resilience']['source']);
+    }
+
+    /**
+     * Phase 3, decisions §16 #5: the stacked romance momentum (attachment x temperament) is
+     * capped at 2.5x, on each bed's own stored state through requiredMomentum. Ashe, the most
+     * guarded, needs the most momentum (her 1.6 from guard x her moderate avoidance); the cap
+     * is what an avoidant Ashe would hit.
+     */
+    public function testPhaseThreeMomentumCapOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $cfg = RelDynRomance::config();
+        $req = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $m = RelDynRomance::momentumMult($d, $cfg);
+            $this->assertLessThanOrEqual(2.5 + 1e-12, $m['mult'], $npc);
+            $req[$npc] = RelDynRomance::requiredMomentum($d, $this->npcId($npc), $cfg);
+            $this->assertEqualsWithDelta(floatval($cfg['momentum_required']) * $m['mult'], $req[$npc], 1e-9, "{$npc}: no step-back");
+        }
+        arsort($req);
+        $this->assertSame('Ashe', array_key_first($req), 'Ashe needs the most momentum');
+        $ashe = $this->dynamics('Ashe');
+        $this->assertEqualsWithDelta(1.6, RelDynRomance::momentumMult($ashe, $cfg)['temperament'], 1e-9);
+        $ashe['profile_overrides']['attachment_style'] = 'avoidant';
+        $m = RelDynRomance::momentumMult($ashe, $cfg);
+        $this->assertEqualsWithDelta(3.2, $m['stacked'], 1e-9, 'an avoidant Ashe: 1.6 x 2.0');
+        $this->assertEqualsWithDelta(2.5, $m['mult'], 1e-9, 'capped');
+        $this->assertSame([], $this->db->failures);
     }
 }

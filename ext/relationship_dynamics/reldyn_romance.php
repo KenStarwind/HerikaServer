@@ -41,7 +41,7 @@
  *          step's type (not in blocked_types), its depth ceiling at least the step's, and
  *          for 'romantic' the sociological pillars too (MDD 2.6: visceral only = crush).
  *   3. Momentum (sum of moment weights, each 0..1 significance) must reach
- *        required = momentum_required x attachment mult x temperament mult
+ *        required = momentum_required x min(attachment mult x temperament mult, momentum_stack_cap)
  *                   (x stepback_momentum_mult after a step-back out of romance)
  *      so a Guarded or avoidant NPC needs several meaningful moments and a single
  *      significant one wins a secure NPC (attraction design: speed depends on who they
@@ -119,6 +119,9 @@ final class RelDynRomance
             'momentum_required' => 1.0,
             'momentum_attachment_mult' => ['anxious' => 0.5, 'avoidant' => 2.0],
             'momentum_temperament_mult' => ['Guarded' => 2.0],
+            // Cap on attachment mult x temperament mult (unitless; decisions §16 #5): Guarded x2
+            // with avoidant x2 was 4x, now 2.5x. Applies only upward, before the step-back mult.
+            'momentum_stack_cap' => 2.5,
             'stepback_momentum_mult' => 3.0,
             // 'boundary': a mature boundary is pending or on probation (fulfillment lane)
             'block_states' => ['walkaway', 'conflict', 'ick', 'withdrawn', 'boundary'],
@@ -440,16 +443,29 @@ final class RelDynRomance
         return $out;
     }
 
+    /**
+     * Who this NPC is, as a momentum multiplier (unitless): the attachment mult (style corners
+     * read at the NPC's axes, decisions §12) x the temperament mult (A25 through the trait
+     * engine: hinge 1 + 4 max(0, G - 0.6), Guarded G .85 -> 2.0), the product capped at
+     * momentum_stack_cap (decisions §16 #5: Guarded x avoidant was 4x, now 2.5x).
+     * Returns ['attachment', 'temperament', 'stacked' (uncapped product), 'mult' (capped)].
+     */
+    public static function momentumMult(array $dynamics, array $cfg): array
+    {
+        $attachment = RelationshipDynamics::attachmentBlend($dynamics, (array) $cfg['momentum_attachment_mult'], 1.0);
+        $temperament = (string) ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? '');
+        $tempMult = floatval(RelDynTraits::tableParam($temperament, (array) $cfg['momentum_temperament_mult'], 1.0, 'R',
+            fn(array $x) => 1.0 + 4.0 * max(0.0, $x['G'] - 0.6), 'mult', $dynamics));
+        $stacked = $attachment * $tempMult;
+        $cap = $cfg['momentum_stack_cap'] ?? null;
+        $mult = is_numeric($cap) ? min($stacked, max(0.0, floatval($cap))) : $stacked;
+        return ['attachment' => $attachment, 'temperament' => $tempMult, 'stacked' => $stacked, 'mult' => $mult];
+    }
+
     /** Momentum (sum of moment weights) this NPC needs for one step. */
     public static function requiredMomentum(array $dynamics, int $npcId, array $cfg): float
     {
-        $required = floatval($cfg['momentum_required']);
-        // style corners read at the NPC's attachment axes (decisions §12)
-        $required *= RelationshipDynamics::attachmentBlend($dynamics, (array) $cfg['momentum_attachment_mult'], 1.0);
-        $temperament = (string) ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? '');
-        // A25 through the trait engine: hinge 1 + 4 max(0, G - 0.6) (Guarded G .85 -> 2.0)
-        $required *= floatval(RelDynTraits::tableParam($temperament, (array) $cfg['momentum_temperament_mult'], 1.0, 'R',
-            fn(array $x) => 1.0 + 4.0 * max(0.0, $x['G'] - 0.6), 'mult', $dynamics));
+        $required = floatval($cfg['momentum_required']) * self::momentumMult($dynamics, $cfg)['mult'];
 
         // After a deliberate step-back out of romance, in this game timeline (a save loaded
         // from before it restores core's type through core's own timeline snapshot).
