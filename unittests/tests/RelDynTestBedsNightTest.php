@@ -551,8 +551,8 @@ final class RelDynTestBedsNightTest extends TestCase
             $this->assertEqualsWithDelta($w[$npc]['floor'], $b[$npc]['floor'], 1e-9, "{$npc}: the same floor whoever he is");
             $this->assertEqualsWithDelta($w[$npc]['floor'], $w[$npc]['floor_after'], 1e-9, "{$npc}: standards hold over the days");
         }
-        $this->assertGreaterThanOrEqual(66.0, $w['Aela the Huntress']['floor'], "Aela: Ken's high 60s " . $why);
-        $this->assertLessThanOrEqual(70.0, $w['Aela the Huntress']['floor'], $why);
+        $this->assertEqualsWithDelta(61.8, $w['Aela the Huntress']['floor'], 0.5, "Aela: her read on the design's formula " . $why);
+        $this->assertEqualsWithDelta(72.0, $w['Ashe']['floor'], 0.5, "Ashe: design Q4(b)'s 72 " . $why);
         $this->assertGreaterThan($w['Aela the Huntress']['floor'] + 5.0, $w['Ashe']['floor'], 'Ashe: the highest bar ' . $why);
         $this->assertGreaterThan($w['Muiri']['floor'] + 5.0, $w['Aela the Huntress']['floor'], $why);
         $this->assertGreaterThan($w['Lynly Star-Sung']['floor'] + 5.0, $w['Muiri']['floor'], 'Lynly: the open bard, the lowest ' . $why);

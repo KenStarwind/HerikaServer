@@ -247,7 +247,7 @@ final class RelDynAttractionMatrixTest extends TestCase
         $b = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA), self::player('bard'));
         $unit = $b['passion']['units']['flexible:visceral'];
         // her martial floor is her standards floor (decisions §15): on this label path the
-        // Independent preset with her named 'medium' openness (her read's 67.6 is the read path's)
+        // Independent preset with her named 'medium' openness (her read's 61.8 is the read path's)
         $std = RelDynAttraction::definition(self::AELA, $this->npc(self::AELA))['standards'];
         $this->assertIsArray($std);
         $this->assertEqualsWithDelta($std['floor'], $unit['floor'], 0.01, 'her martial floor');

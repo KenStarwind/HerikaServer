@@ -677,7 +677,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
      *   - the plain bard hovers at the spark and is never won over;
      *   - a pure silver tongue climbs (charm is a real lever) but levels off in the mid 30s,
      *     below the won-over line of 40, in 150 game days: charm alone does not get there;
-     *   - strong charm plus a partial martial fit (a green sellsword, far below her floor of 68)
+     *   - strong charm plus a partial martial fit (a green sellsword, far below her floor in the 60s)
      *     draws her: attracted from the first evening, below her floor, and passion past 40
      *     only after weeks of courting; the same fighter without the charm is still short of
      *     40 after two months.
@@ -701,12 +701,13 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertSame('read', $src['assignment']);
         $this->assertSame('read', $src['auto_source']);
         $this->assertSame('medium', RelDynAttraction::definition(self::AELA, $plain['d'])['openness'], 'openness from her traits: the won-over switch is on');
-        // her floor falls out of her traits (decisions §15, design §6.2: 66-70), on every pillar
+        // her floor falls out of her traits (decisions §15, design §5.1's formula and weights), on
+        // every pillar: her centred read (o .462, M 54.5, C .736) gives 61.8, below the design's
+        // assumed-vector 67.6 (design §6.2's 66-70 was that vector's; flagged for Ken)
         $def = RelDynAttraction::definition(self::AELA, $plain['d']);
         $this->assertSame('standards', $def['sources']['floors']);
         $this->assertArrayNotHasKey('floors.strength', $def['sources'], 'no hand-set floor');
-        $this->assertGreaterThanOrEqual(66.0, $def['floors']['strength']);
-        $this->assertLessThanOrEqual(70.0, $def['floors']['strength']);
+        $this->assertEqualsWithDelta(61.8, $def['floors']['strength'], 0.5);
         $this->assertEqualsWithDelta($def['floors']['strength'], $charmFit['a']['passion']['units']['flexible:visceral']['floor'], 0.01, 'the unit reads it');
         $this->assertGreaterThan(0.8, RelDynTraits::value(RelDynTraits::readVector($plain['d']), 'y_passion_down'));
 
@@ -725,7 +726,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertTrue($charmFit['a']['attracted'], $charmFit['a']['reason']);
         $this->assertSame('drawn', $charmFit['a']['outcome'], $charmFit['a']['reason']);
         $this->assertTrue($charmFit['a']['below_floor']);
-        $this->assertLessThan(45.0, $u['score'], 'a partial fit: far below her martial floor in the high 60s');
+        $this->assertLessThan(45.0, $u['score'], 'a partial fit: far below her martial floor in the 60s');
         $first40 = array_key_first(array_filter($charmFit['passion'], fn($p) => $p >= 40.0));
         $this->assertNotNull($first40, 'strong charm plus partial fit gets there: ' . $why);
         $this->assertGreaterThan(20, $first40, 'steep: weeks of courting: ' . $why);

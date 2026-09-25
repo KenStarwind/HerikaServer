@@ -29,11 +29,12 @@ final class RelDynStandardsFloorConfigDb
  * Decisions 2026-09-23 §15 / traits design §5.1: attraction floors scale with standards.
  * Ken: floors are "scaled by openness, something like standards; more mature know what they
  * want". The flat curve.floor 45 and Aela's hand-set 68 are replaced by
- *   floor = clamp(45 + 16 z_sel + 27 z_mat + 27 z_self, 25, 85)   pillar points
+ *   floor = clamp(45 + 12 z_sel + 20 z_mat + 20 z_self, 25, 85)   pillar points
  * z_sel from the effective openness (0.6 centre, 0.3 span), z_mat from the maturity BASELINE
- * (50 / 50), z_self from max(confidence, pride) (0.5 / 0.5). The design's 12 / 20 / 20 shape,
- * scaled so Aela's committed read lands in Ken's "high 60s" (the four test beds' floors,
- * Aela's among them, come out of their reads in RelDynStandardsTestBedsPostgresTest).
+ * (50 / 50), z_self from max(confidence, pride) (0.5 / 0.5): the design's formula with its own
+ * weights, the ones Ken approved with it (Q4(b): Ashe's floor 72). The four test beds' floors
+ * come out of their reads in RelDynStandardsTestBedsPostgresTest (Aela's centred read lands
+ * below the design's assumed-vector 67.6; that is her read, not a re-scaled formula).
  *
  * Plus the openness band's hysteresis around the won-over switch (0.45): a band read from the
  * traits holds until the openness is 0.02 past the boundary, so an NPC a hair from the edge
@@ -104,15 +105,20 @@ final class RelDynStandardsFloorTest extends TestCase
     public function testKensGenericFloorIsTheCentreAndTheSpanIsClamped(): void
     {
         $this->assertSame(45.0, floatval(RelDynAttraction::curveConfig()['floor']), "F0: Ken's generic 45");
+        // design §5.1's weights, exactly (no re-scaling: no ruling covers one)
+        $sc = RelDynAttraction::defaults()['standards'];
+        $this->assertSame([12.0, 20.0, 20.0], [$sc['sel_points'], $sc['mat_points'], $sc['self_points']]);
         $this->assertSame(45.0, self::floorOf(0.6, 50.0, 0.5, 0.5), 'a middling NPC: Ken\'s 45');
         $r = RelDynAttraction::standardsFloor(['o' => 0.45, 'M' => 75.0, 'C' => 0.75]);
         $this->assertEqualsWithDelta(['sel' => 0.5, 'mat' => 0.5, 'self' => 0.5], $r['z'], 1e-9);
-        $this->assertEqualsWithDelta(['sel' => 8.0, 'mat' => 13.5, 'self' => 13.5], $r['points'], 1e-9);
-        $this->assertEqualsWithDelta(80.0, $r['floor'], 1e-9);
+        $this->assertEqualsWithDelta(['sel' => 6.0, 'mat' => 10.0, 'self' => 10.0], $r['points'], 1e-9);
+        $this->assertEqualsWithDelta(71.0, $r['floor'], 1e-9);
+        // the design's worked Aela (its assumed vector: o .399, M 59.1, C .772): 67.6
+        $this->assertEqualsWithDelta(67.6, self::floorOf(0.399, 59.1, 0.772), 0.05, 'design §5.1 worked example');
         // each z saturates at +-1, and the sum is clamped to 25..85
         $this->assertSame(85.0, self::floorOf(0.0, 100.0, 1.0), 'the most selective, mature, self-assured: capped');
         $this->assertSame(25.0, self::floorOf(1.0, 0.0, 0.0), 'the least: the bottom of the clamp');
-        $this->assertEqualsWithDelta(45.0 + 16.0, self::floorOf(0.1, 50.0, 0.5), 1e-9, 'z_sel saturates at 1 (o 0.3 below the centre)');
+        $this->assertEqualsWithDelta(45.0 + 12.0, self::floorOf(0.1, 50.0, 0.5), 1e-9, 'z_sel saturates at 1 (o 0.3 below the centre)');
     }
 
     public function testMonotoneInOpennessMaturityAndSelfRegard(): void
@@ -169,8 +175,9 @@ final class RelDynStandardsFloorTest extends TestCase
     }
 
     /**
-     * Ashe (decisions §16 #4: "high floor"): Serene's hand-set vector (config, never read)
-     * with maturity 75 (MDD 15.4) gives the highest of the four test beds' floors.
+     * Ashe (decisions §16 #4: "high floor"; design Q4(b), which Ken approved: "floor 72"):
+     * Serene's hand-set vector (config, never read) with maturity 75 (MDD 15.4) gives 72, the
+     * highest of the four test beds' floors.
      */
     public function testAshesHandSetVectorGivesHerAHighFloor(): void
     {
@@ -181,8 +188,7 @@ final class RelDynStandardsFloorTest extends TestCase
         $this->assertSame('standards', $def['sources']['floors']);
         $this->assertSame('low', $def['openness'], 'the least open of the four');
         $this->assertEqualsWithDelta(self::floorOf($def['openness_o'], 75.0, 0.65, 0.40), $def['floors']['strength'], 1e-9);
-        $this->assertGreaterThan(78.0, $def['floors']['strength']);
-        $this->assertLessThan(85.0, $def['floors']['strength'], 'not at the clamp');
+        $this->assertEqualsWithDelta(72.0, $def['floors']['strength'], 0.5, 'Q4(b): floor 72');
         foreach (RelDynAttraction::PILLARS as $p) {
             $this->assertSame($def['floors']['strength'], $def['floors'][$p], "{$p}: one floor on every pillar");
         }

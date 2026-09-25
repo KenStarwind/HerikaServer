@@ -350,18 +350,19 @@ class RelDynAttraction
             //   z_sel  = clamp((sel_center - o) / sel_span, -1, 1)     o: effective openness (0..1)
             //   z_mat  = clamp((M - mat_center) / mat_span, -1, 1)    M: maturity BASELINE (0..100)
             //   z_self = clamp((max(C, Pd) - self_center) / self_span, -1, 1)   confidence / pride
-            // F0 = curve.floor (Ken's generic 45). The design's shape (12 / 20 / 20) was
-            // calibrated so Aela lands in Ken's "high 60s" on the design's assumed vector (o .40,
-            // M 59, C .77); her committed bio read is more centred (ruling §16 #10: o .462, M
-            // 54.5, C .736), so the same shape is scaled x1.35 (16 / 27 / 27) to land her real
-            // read at 67.6, the design's worked value. Maturity reads the baseline, not the live
-            // x: standards do not wobble with a bad day. An NPC with no trait vector keeps the
-            // flat curve.floor. enabled false = the flat curve.floor for everyone.
+            // F0 = curve.floor (Ken's generic 45). The weights are the design's (12 / 20 / 20),
+            // the ones Ken approved with it (Q4(b): Ashe's floor 72); they were calibrated on the
+            // design's assumed Aela (o .40, M 59, C .77 -> 67.6). Her committed bio read is more
+            // centred (ruling §16 #10: o .462, M 54.5, C .736) and lands lower on the same
+            // formula: that is her read, not a reason to re-scale everyone. Maturity reads the
+            // baseline, not the live x: standards do not wobble with a bad day. An NPC with no
+            // trait vector keeps the flat curve.floor. enabled false = the flat curve.floor for
+            // everyone.
             'standards' => [
                 'enabled' => true,
-                'sel_points' => 16.0, 'sel_center' => 0.6, 'sel_span' => 0.3,
-                'mat_points' => 27.0, 'mat_center' => 50.0, 'mat_span' => 50.0,
-                'self_points' => 27.0, 'self_center' => 0.5, 'self_span' => 0.5,
+                'sel_points' => 12.0, 'sel_center' => 0.6, 'sel_span' => 0.3,
+                'mat_points' => 20.0, 'mat_center' => 50.0, 'mat_span' => 50.0,
+                'self_points' => 20.0, 'self_center' => 0.5, 'self_span' => 0.5,
                 'min' => 25.0, 'max' => 85.0,
             ],
             // Hysteresis on the openness band read from an NPC's traits (0..1 openness units):
@@ -459,7 +460,7 @@ class RelDynAttraction
                 // Memory (attraction design): "Aela is not high openness ... medium to medium-low"
                 // MDD 2.3: "Aela: only Companions rank". Her floor (Ken, decisions §13: "high 60s
                 // or so in martial") falls out of her traits now (config 'standards', decisions
-                // §15: 67.6 from her read); the hand-set 68 is gone.
+                // §15: the design's formula on her read); the hand-set 68 is gone.
                 // Ruling §16 #8: under the read assignment her openness comes from her traits
                 // (openness_from_traits); 'medium' stays for the label assignment (phase 1 legacy).
                 'aela the huntress' => ['openness' => 'medium', 'openness_from_traits' => true, 'status_share' => 1.0],

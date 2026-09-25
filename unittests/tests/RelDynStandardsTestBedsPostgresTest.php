@@ -64,9 +64,11 @@ final class RelDynStandardsBedsPgDb
  *
  * Standards floors (decisions §15, design §5.1): each NPC's pillar floor falls out of her
  * traits (effective openness, maturity baseline, max(confidence, pride)); the flat 45 and
- * Aela's hand-set 68 are gone. From the reads (the numbers the batch report gives):
- *   Ashe 81.5 (Serene's hand-set vector, maturity 75, the least open)  >  Aela 67.6 (Ken's
- *   "high 60s")  >  Muiri 57.7  >  Lynly 47.2 (the open bard, near Ken's generic 45).
+ * Aela's hand-set 68 are gone. Design §5.1's formula with its own weights (12 / 20 / 20), from
+ * the reads:
+ *   Ashe 72.2 (Serene's hand-set vector, maturity 75, the least open; design Q4(b) "floor 72")
+ *   >  Aela 61.8 (her centred read; the design's 67.6 was its assumed vector)  >  Muiri 54.4
+ *   >  Lynly 46.7 (the open bard, near Ken's generic 45).
  *
  * Asexual (decisions §15): passion is emotional, not zero. It grows through the emotional
  * channels (quality time, words, reassurance, confiding, non-sexual touch) at each NPC's own
@@ -381,13 +383,14 @@ final class RelDynStandardsTestBedsPostgresTest extends TestCase
         }
         $why = json_encode($floor);
 
-        // Aela: Ken's "high 60s", from her traits (design §6.2: 66-70)
-        $this->assertGreaterThanOrEqual(66.0, $floor['Aela the Huntress'], $why);
-        $this->assertLessThanOrEqual(70.0, $floor['Aela the Huntress'], $why);
+        // Aela: from her centred read on the design's formula, 61.8 (the design's 67.6, Ken's
+        // "high 60s", was its assumed vector o .40 / M 59 / C .77; flagged for Ken, not re-scaled)
+        $this->assertEqualsWithDelta(61.8, $floor['Aela the Huntress'], 0.5, $why);
         $this->assertSame('medium', $this->dynamics('Aela the Huntress')['_attraction_state']['openness_band'], 'her read 0.462: medium, the won-over switch on');
-        // Ashe (ruling §16 #4: "high floor"): the highest; Lynly, the open bard, the lowest, near Ken's 45
+        // Ashe (ruling §16 #4: "high floor"; design Q4(b), approved: "floor 72"): the highest;
+        // Lynly, the open bard, the lowest, near Ken's 45
         $this->assertSame('low', $this->dynamics('Ashe')['_attraction_state']['openness_band']);
-        $this->assertGreaterThan(78.0, $floor['Ashe'], $why);
+        $this->assertEqualsWithDelta(72.0, $floor['Ashe'], 0.5, $why);
         $this->assertEqualsWithDelta(45.0, $floor['Lynly Star-Sung'], 5.0, $why);
         // they diverge: every pair at least 5 pillar points apart, in the standards order
         $this->assertGreaterThan($floor['Aela the Huntress'] + 5.0, $floor['Ashe'], $why);
@@ -502,6 +505,55 @@ final class RelDynStandardsTestBedsPostgresTest extends TestCase
         $this->assertNull($d['_attraction']['passion_channel']);
         $this->assertNotContains('intimacy_not_allowed', $this->ped('Aela the Huntress')['reldyn']['romance']['block_reasons']);
         $this->assertGreaterThan(RelationshipDynamics::getEffectiveDisposition(10, ['passion' => 0.0]), RelationshipDynamics::getEffectiveDisposition(10, $d));
+        $this->assertNoDbFailures();
+    }
+
+    /**
+     * Decisions §15: an asexual partner's intimacy is emotional, and that is the axis she keeps.
+     * A romance left alone for sixteen game days deprives it, and she says she misses the
+     * closeness (the emotional <intimacy_state> text, by attachment), on every test bed; the
+     * physical text never speaks for her. With no preference the same gap speaks too (the
+     * physical or the emotional line, whichever she needs most).
+     */
+    public function testAsexualPartnerStillMissesClosenessWhenItIsDeprived(): void
+    {
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->setCore($npc, 80, 'romantic');
+            $this->turn($npc, 'Well met.');
+            $this->editDynamics($npc, function (array &$d): void {
+                $d['relationship_preference'] = 'asexual';
+                RelationshipDynamics::setPassion($d, 45.0);
+            });
+            $this->passionFrom($npc, ['quality_time', 'confiding'], 4.0);
+        }
+        $this->gamets += 16 * self::DAY;
+        $emotional = (array) RelDynIntimacy::config()['felt_text']['emotional'];
+        $physical = (array) RelDynIntimacy::config()['felt_text']['physical'];
+        $said = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->turn($npc, 'I am back. It has been a while.');
+            $d = $this->dynamics($npc);
+            $this->assertSame('emotional', $d['_attraction']['passion_channel'], $npc);
+            $this->assertFalse(RelDynIntimacy::physicalInPlay($d), "{$npc}: the physical paths stay closed");
+            $axes = RelDynIntimacy::axesAt($d, $this->gamets);
+            $this->assertArrayNotHasKey(RelDynIntimacy::PHYSICAL, $axes, "{$npc}: no physical axis at all");
+            $this->assertTrue($axes[RelDynIntimacy::EMOTIONAL]['deprived'] ?? false, "{$npc}: " . json_encode($axes));
+            $this->assertSame(RelDynIntimacy::EMOTIONAL, RelDynIntimacy::deprivedAxis($d, $this->gamets), $npc);
+            $felt = [];
+            $fd = $d;
+            foreach (RelDynFelt::compose($npc, self::PLAYER, $fd, $this->gamets, [])['lines'] as $l) $felt[$l['key']] = $l['text'];
+            $this->assertArrayHasKey('intimacy', $felt, "{$npc}: she misses the closeness: " . json_encode(array_keys($felt)));
+            $style = RelationshipDynamics::getAttachmentStyle($d);
+            $expect = str_replace(['{NAME}', '{PLAYER}'], [$npc, self::PLAYER], (string) ($emotional[$style] ?? $emotional['default']));
+            $this->assertSame($expect, $felt['intimacy'], "{$npc}: the emotional text ({$style})");
+            foreach ($physical as $text) {
+                $this->assertNotSame(str_replace(['{NAME}', '{PLAYER}'], [$npc, self::PLAYER], (string) $text), $felt['intimacy'], $npc);
+            }
+            $this->assertDoesNotMatchRegularExpression('/\d/', $felt['intimacy'], $npc);
+            $said[$npc] = $felt['intimacy'];
+        }
+        // attachment tells them apart: not one line for all four
+        $this->assertGreaterThan(1, count(array_unique($said)), json_encode($said));
         $this->assertNoDbFailures();
     }
 

@@ -35,7 +35,8 @@
  * the bond weighs (feltText), and internal weather deprivation (weatherDeprivation).
  *
  * State: $dynamics['_intimacy_need'] (ensureNeed): the core race / creature read once, the
- * stored derivation and the physical in-play latch. Units: need weights and coverage are
+ * stored derivation and the in-play latches (in_play: the romance's intimacy, either axis;
+ * physical_in_play: the physical paths). Units: need weights and coverage are
  * unitless (0..1, -1..+1); passion and maturity in their dimension points (0..100).
  */
 
@@ -373,6 +374,7 @@ class RelDynIntimacy
         $state['emotional'] = $d['emotional'];
         $state['signals'] = $d['signals'];
         $state['preset'] = self::presetOf($npcName, $cfg);
+        $state['in_play'] = self::inPlay($dynamics, $cfg);
         $state['physical_in_play'] = self::physicalInPlay($dynamics, $cfg);
         $dynamics[self::STATE_KEY] = $state;
         if ($before[0] !== $state) {
@@ -440,25 +442,37 @@ class RelDynIntimacy
     }
 
     /**
-     * Physical intimacy is in play with the player (module doc): never while friendzoned; a
-     * romance core type; else attracted (decisions §13 lets passion climb past 20 on the
-     * uphill, but a curve under the friendzone line is not that kind of pull) with passion at
-     * min_passion; a latched NPC stays in play down to release_passion. Pure (the latch is
-     * the stored physical_in_play).
+     * Intimacy is in play with the player (module doc): never while friendzoned; a romance
+     * core type; else attracted (decisions §13 lets passion climb past 20 on the uphill, but a
+     * curve under the friendzone line is not that kind of pull) with passion at min_passion; a
+     * latched NPC stays in play down to release_passion. This is the romance's intimacy, of
+     * either axis: an asexual partner's is emotional (decisions §15), and it is in play for her
+     * too. Pure (the latch is the stored in_play; state stored before it carries only the
+     * physical_in_play latch, which read the same rule).
      */
-    public static function physicalInPlay(array $dynamics, ?array $cfg = null): bool
+    public static function inPlay(array $dynamics, ?array $cfg = null): bool
     {
         $cfg = $cfg ?? self::config();
         if (!empty($dynamics['_attraction']['friendzoned'])) return false;
-        // decisions §15: an asexual NPC's passion is emotional; the physical paths stay closed
-        if (($dynamics['_attraction']['passion_channel'] ?? null) === 'emotional') return false;
         $p = (array) $cfg['physical_in_play'];
         $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         if ($core !== '' && in_array($core, array_map('strtolower', (array) ($p['core_types'] ?? [])), true)) return true;
         if (!empty($dynamics['_attraction']['enabled']) && ($dynamics['_attraction']['attracted'] ?? true) === false) return false;
         $passion = RelationshipDynamics::getPassion($dynamics);
-        $latched = !empty($dynamics[self::STATE_KEY]['physical_in_play']);
+        $state = (array) ($dynamics[self::STATE_KEY] ?? []);
+        $latched = !empty($state['in_play'] ?? $state['physical_in_play'] ?? false);
         return $passion >= floatval($p[$latched ? 'release_passion' : 'min_passion'] ?? 30);
+    }
+
+    /**
+     * Physical intimacy is in play with the player: intimacy is in play (inPlay) and her
+     * passion is not the emotional channel (decisions §15: an asexual NPC's passion is
+     * emotional; the physical paths stay closed). Pure.
+     */
+    public static function physicalInPlay(array $dynamics, ?array $cfg = null): bool
+    {
+        if (($dynamics['_attraction']['passion_channel'] ?? null) === 'emotional') return false;
+        return self::inPlay($dynamics, $cfg);
     }
 
     /**
@@ -599,15 +613,17 @@ class RelDynIntimacy
      * M/F-aware (coord_m / coord_f) with a low-maturity variant, emotional follows the
      * attachment style. Null when nothing is deprived, when the bond is not one whose neglect
      * weighs (neglectBond; the weather reads 0 then too), and while intimacy is not in play with
-     * the player (physicalInPlay: the texts are a romance's; a housecarl, a sister or a friend
-     * who misses the closeness says so through the fulfillment text). Never numbers.
+     * the player (inPlay: the texts are a romance's; a housecarl, a sister or a friend who
+     * misses the closeness says so through the fulfillment text). The physical text also needs
+     * physical intimacy in play (physicalInPlay); an asexual partner's emotional axis speaks
+     * (decisions §15). Never numbers.
      */
     public static function feltText(string $npcName, string $playerName, array $dynamics, float $now): ?string
     {
         $cfg = self::config();
-        if (RelationshipDynamics::neglectBond($dynamics) === null || !self::physicalInPlay($dynamics, $cfg)) return null;
+        if (RelationshipDynamics::neglectBond($dynamics) === null || !self::inPlay($dynamics, $cfg)) return null;
         $axis = self::deprivedAxis($dynamics, $now, $cfg);
-        if ($axis === null) return null;
+        if ($axis === null || ($axis === self::PHYSICAL && !self::physicalInPlay($dynamics, $cfg))) return null;
         $felt = (array) $cfg['felt_text'];
         $dims = $dynamics['dimensions'] ?? [];
         if ($axis === self::PHYSICAL) {
