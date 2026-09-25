@@ -113,6 +113,76 @@ final class RelDynTraitBlendTest extends TestCase
         }
     }
 
+    /**
+     * Rule R's residual kernel has zero slope at its preset (reviewed issue, phase 2): the
+     * residual adds no kink, so every Rule-R column is differentiable at every preset. The
+     * one-sided slopes along +e and -e are opposite (D+ + D- = 0); with the old (1-u)^2
+     * kernel they differ by -4 r / rho (r = the preset's residual), a cone at the preset.
+     * Along a trait the column does not own, the slope at the preset is 0 (flat, not a cone).
+     */
+    public function testRuleRKernelHasZeroSlopeAtEveryPreset(): void
+    {
+        $h = 1e-6;   // small enough that the curvature term (k''(0) r h) is far under the tolerance
+        $checked = 0;
+        foreach (RelDynTraits::columns() as $col => $spec) {
+            if ($spec['rule'] !== 'R') continue;
+            foreach (RelDynTraits::points() as $name => $p) {
+                $at = floatval(RelDynTraits::value($p, $col));
+                foreach (RelDynTraits::TRAITS as $code => $_) {
+                    if ($p[$code] - $h < 0.0 || $p[$code] + $h > 1.0) continue;
+                    $up = $p; $up[$code] += $h;
+                    $dn = $p; $dn[$code] -= $h;
+                    $vUp = floatval(RelDynTraits::value($up, $col));
+                    $vDn = floatval(RelDynTraits::value($dn, $col));
+                    [$lo, $hi] = RelDynTraits::CLAMPS[$spec['unit']];
+                    if (min($vUp, $vDn, $at) <= $lo + 1e-9 || max($vUp, $vDn, $at) >= $hi - 1e-9) continue;   // clamp edge
+                    $dPlus = ($vUp - $at) / $h;
+                    $dMinus = ($vDn - $at) / $h;
+                    $scale = max(1.0, abs($at));
+                    // the model's own kink (the exact A17 formula switches base at L = 0.5) is not the residual's
+                    $m = $spec['model'];
+                    $f = is_callable($m) ? fn(array $x) => floatval($m($x)) : function (array $x) use ($m) {
+                        $v = floatval($m[0] ?? 0.0);
+                        foreach ($m as $k => $c) if ($k !== 0) $v += floatval($c) * floatval($x[$k]);
+                        return $v;
+                    };
+                    $modelKink = ($f($up) + $f($dn) - 2.0 * $f($p)) / $h;
+                    $this->assertEqualsWithDelta($modelKink, $dPlus + $dMinus, 1e-2 * $scale, "{$col} has a kink at {$name} along {$code}");
+                    if (!in_array($code, $spec['owners'], true) && !is_callable($spec['model'])) {
+                        $this->assertEqualsWithDelta(0.0, $dPlus, 1e-2 * $scale, "{$col} is flat at {$name} along non-owner {$code}");
+                    }
+                    $checked++;
+                }
+            }
+        }
+        $this->assertGreaterThan(1000, $checked);
+        // still exact at every preset (the engine's own value there, and the formula's limit)
+        foreach (RelDynTraits::points() as $name => $p) {
+            $near = $p;
+            $near['W'] += ($near['W'] < 0.5 ? 1e-9 : -1e-9);
+            $this->assertEqualsWithDelta(floatval(RelDynTraits::table('jealousy_mult')[$name]), RelDynTraits::value($near, 'jealousy_mult'), 1e-6, $name);
+        }
+    }
+
+    /**
+     * Walking through a preset along an owner the value keeps its direction. Humble's A1
+     * residual (+0.16 passion mult) against the E slope 0.81: the old (1-u)^2 kernel falls
+     * 2r/rho = 1.02 per unit E just past Humble, so passion dropped as expressiveness rose
+     * (a cone); the zero-slope kernel's largest pull, 1.54 r / rho = 0.78, stays under 0.81.
+     */
+    public function testRuleRIsMonotoneThroughAPresetAlongItsOwner(): void
+    {
+        $h = self::point('Humble');
+        $prev = null;
+        for ($t = -0.25; $t <= 0.2501; $t += 0.01) {
+            $x = $h;
+            $x['E'] = $h['E'] + $t;
+            $v = RelDynTraits::value($x, 'passion_mult');
+            if ($prev !== null) $this->assertGreaterThan($prev, $v, sprintf('passion rises with E at %+.2f from Humble', $t));
+            $prev = $v;
+        }
+    }
+
     /** Away from every preset (beyond rho) Rule R is the pure model: monotone in each owner. */
     public function testRuleRIsMonotoneInItsOwnersAwayFromThePresets(): void
     {

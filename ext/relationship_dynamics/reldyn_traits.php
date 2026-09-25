@@ -11,7 +11,8 @@
  * Every temperament-keyed parameter is a column. A column reads its owning traits through a
  * model f_P and is made exact at the 13 presets by one of two rules (§3.3):
  *   Rule R (well-explained columns): clamp( f(x) + sum_p k(|x-p|/rho) (T[p] - f(p)) ),
- *          k(u) = (1-u)^2 for u < 1, rho = min(residual_reach, d_min); the residual is computed
+ *          k(u) = (1-u^2)^2 for u < 1 (zero slope at the preset: residualKernel(); the
+ *          design's (1-u)^2 made cones), rho = min(residual_reach, d_min); the residual is computed
  *          at runtime from today's table, so rounding the coefficients cannot break exactness.
  *   Rule I (low R^2 columns): inverse-distance blend of the table, w_p = |x-p|^-4; a convex
  *          combination, bounded by the table.
@@ -246,6 +247,23 @@ final class RelDynTraits
     }
 
     /**
+     * Rule R residual kernel, u = distance / rho in [0, 1): k(u) = (1 - u^2)^2.
+     * k(0) = 1 and k(u >= 1) = 0 keep every preset exact (the next preset is at least d_min >= rho
+     * away), and k'(0) = 0 means the residual adds no kink at its preset. The design's first
+     * kernel, (1 - u)^2 (design §3.3), has slope -2 there: a column whose residual r is large
+     * against its model slope became a cone (Humble's A1 passion fell as expressiveness rose,
+     * 2r/rho = 1.02 > 0.81). Phase 2 fix (review, 2026-09-24): with (1 - u^2)^2 the largest
+     * residual pull is 1.54 r / rho at u = 1/sqrt(3), k'(1) = 0 as well (the fade-out is smooth),
+     * and values at the presets are unchanged.
+     */
+    public static function residualKernel(float $u): float
+    {
+        if ($u >= 1.0) return 0.0;
+        $w = 1.0 - $u * $u;
+        return $w * $w;
+    }
+
+    /**
      * A column's value at $x from its per-preset table (every preset present).
      * rule 'R' needs $model; rule 'I' ignores it. At a preset: the table value itself.
      */
@@ -261,10 +279,7 @@ final class RelDynTraits
                 foreach ($pts as $name => $p) {
                     $u = self::distance($x, $p) / $rho;
                     if ($u >= 1.0) continue;
-                    // k(u) = (1-u)^2 as specified (design §3.3). Its slope at u=0 is nonzero, so a
-                    // large residual makes a cone around its preset; open question for phase 2
-                    // (a zero-slope kernel such as (1-u^2)^2 would stay exact at the presets).
-                    $v += (1.0 - $u) * (1.0 - $u) * (floatval($table[$name]) - self::evalModel($model, $p));
+                    $v += self::residualKernel($u) * (floatval($table[$name]) - self::evalModel($model, $p));
                 }
             }
             return self::clampUnit($v, $unit);
