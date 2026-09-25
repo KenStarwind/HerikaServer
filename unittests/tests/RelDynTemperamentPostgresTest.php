@@ -75,6 +75,9 @@ final class RelDynTemperamentPostgresTest extends TestCase
 
     protected function setUp(): void
     {
+        // Personality traits phase 2: this class pins the LABEL assignment (the phase-1 legacy path):
+        // its NPCs' temperaments are the old core-data vote's. The read assignment has its own tests.
+        RelDynTraits::$assignmentOverride = 'label';
         $dsn = getenv('RELDYN_TEST_PG_DSN');
         if (!$dsn || !function_exists('pg_connect')) {
             $this->markTestSkipped('RELDYN_TEST_PG_DSN not set (opt-in test against a throwaway PostgreSQL)');
@@ -150,6 +153,7 @@ final class RelDynTemperamentPostgresTest extends TestCase
 
     protected function tearDown(): void
     {
+        RelDynTraits::$assignmentOverride = null;
         if (!isset($this->schema)) {
             return;
         }
@@ -304,17 +308,18 @@ final class RelDynTemperamentPostgresTest extends TestCase
 
     public function testPerNpcOverrideSurvivesTheSaveAndBeatsTheNamedPreset(): void
     {
-        $id = $this->seedNpc('Ysolda', 'Food Vendor', 'Nord', 'sk_femaleyoungeager');
-        $d = RelationshipDynamics::getDynamics('Ysolda');
-        $this->assertSame('Anxious', $d['inferred_temperament'], 'MDD preset');
+        // (Ysolda's MDD 8.2 C preset is dropped, decisions §16 #2: Ashe's Guarded is the named preset here)
+        $id = $this->seedNpc('Ashe', 'Food Vendor', 'Nord', 'sk_femaleyoungeager');
+        $d = RelationshipDynamics::getDynamics('Ashe');
+        $this->assertSame('Guarded', $d['inferred_temperament'], 'MDD preset');
         $this->assertSame('preset', $d['_profile_autogen']['temperament_source']);
-        $this->assertSame(['insecure'], RelationshipDynamics::getTraits($d));
+        $this->assertSame([], RelationshipDynamics::getTraits($d));
 
         $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'temperament', 'Playful'));
         $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'traits', ['egocentric']));
-        $this->assertTrue(RelationshipDynamics::saveDynamics('Ysolda', $d));
+        $this->assertTrue(RelationshipDynamics::saveDynamics('Ashe', $d));
 
-        $again = RelationshipDynamics::getDynamics('Ysolda');
+        $again = RelationshipDynamics::getDynamics('Ashe');
         $this->assertSame('Playful', $again['inferred_temperament']);
         $this->assertSame(['egocentric'], RelationshipDynamics::getTraits($again));
         $this->assertEquals(['temperament' => 'Playful', 'traits' => ['egocentric']], $this->stored($id)['profile_overrides']);

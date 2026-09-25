@@ -449,7 +449,7 @@ final class RelDynRomance
         $temperament = (string) ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? '');
         // A25 through the trait engine: hinge 1 + 4 max(0, G - 0.6) (Guarded G .85 -> 2.0)
         $required *= floatval(RelDynTraits::tableParam($temperament, (array) $cfg['momentum_temperament_mult'], 1.0, 'R',
-            fn(array $x) => 1.0 + 4.0 * max(0.0, $x['G'] - 0.6), 'mult'));
+            fn(array $x) => 1.0 + 4.0 * max(0.0, $x['G'] - 0.6), 'mult', $dynamics));
 
         // After a deliberate step-back out of romance, in this game timeline (a save loaded
         // from before it restores core's type through core's own timeline snapshot).

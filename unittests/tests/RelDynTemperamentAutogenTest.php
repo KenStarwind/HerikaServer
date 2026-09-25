@@ -45,6 +45,10 @@ final class RelDynTemperamentRowDb
  * ll-temperament-autogen / npc-trait-tags: temperament (MDD 1.3), attachment style (MDD 6.1),
  * maturity type (MDD 15.6) and trait tags (decisions 2026-09-23 §1) come from CHIM core data
  * on vanilla 3.4.1, where MARAS and Sharmat are absent.
+ *
+ * Personality traits phase 2: these are the LABEL assignment's tests (the phase-1 legacy path,
+ * config traits.assignment 'label'), pinned in setUp. The read assignment has its own tests
+ * (RelDynTraitAssignTest, RelDynTraitQueuePostgresTest, RelDynTraitTestBedsPostgresTest).
  */
 final class RelDynTemperamentAutogenTest extends TestCase
 {
@@ -57,10 +61,12 @@ final class RelDynTemperamentAutogenTest extends TestCase
         $this->savedDb = $GLOBALS['db'] ?? null;
         unset($GLOBALS['db']);   // getConfig() -> defaults
         RelationshipDynamics::clearConfigCache();
+        RelDynTraits::$assignmentOverride = 'label';   // the legacy vote path (see class doc)
     }
 
     protected function tearDown(): void
     {
+        RelDynTraits::$assignmentOverride = null;
         if ($this->hadDb) $GLOBALS['db'] = $this->savedDb; else unset($GLOBALS['db']);
         RelationshipDynamics::clearConfigCache();
     }
@@ -290,8 +296,15 @@ final class RelDynTemperamentAutogenTest extends TestCase
             'Mikael' => ['Mikael', 'maturity_type', 'Volatile'],
             'Serana' => ['Serana', 'maturity_type', 'Growth'],
             'Nazeem' => ['Nazeem', 'maturity_type', 'Rigid'],
-            'Ysolda' => ['Ysolda', 'temperament', 'Anxious'],
         ];
+    }
+
+    /** Decisions §16 #2: Ysolda's hand-set Anxious (MDD 8.2 C) is dropped; her own evidence decides. */
+    public function testYsoldaHasNoPresetAnyMore(): void
+    {
+        $p = RelationshipDynamics::deriveNpcProfile('Ysolda', self::withClass('Food Vendor'));
+        $this->assertNotSame('preset', $p['sources']['temperament']);
+        $this->assertArrayNotHasKey('ysolda', RelationshipDynamics::getTemperamentAutogenConfig()['npc_overrides']);
     }
 
     #[DataProvider('namedPresets')]
@@ -346,7 +359,9 @@ final class RelDynTemperamentAutogenTest extends TestCase
 
     public function testAnxiousIsInsecureAndBoldHasNoTraits(): void
     {
-        $this->assertSame(['insecure'], RelationshipDynamics::deriveNpcProfile('Ysolda', self::coreRow())['traits']);
+        $shy = RelationshipDynamics::deriveNpcProfile('Shy Girl', self::coreRow(['personality' => 'A shy, timid and nervous girl.']));
+        $this->assertSame('Anxious', $shy['temperament']);
+        $this->assertSame(['insecure'], $shy['traits']);
         $this->assertSame([], RelationshipDynamics::deriveNpcProfile('Guard', self::withClass('Warrior'))['traits']);
     }
 

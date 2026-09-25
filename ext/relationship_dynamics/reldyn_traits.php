@@ -21,25 +21,63 @@
  * Label-valued surfaces (reunion text, love language, curve names, tags) use the nearest preset.
  * Clamps are per unit (§2.4), never to a column's own span.
  *
- * PHASE 1 (this file's contract): assignment is unchanged. The consumer's own temperament
- * label (auto-derived or overridden, with its own 'Stoic' fallback or null handling, §3.6) is
- * mapped to its preset point by EXACT name; any other label (null, '', a lower-case or
- * unknown name) gets the consumer's current default or legacy table lookup, unchanged. So at
- * every textbook preset every parameter equals the old table value, and NPCs without a
- * temperament behave as before. $dynamics['trait_vector'] mirrors the label's preset point
- * (storage for phase 2); profile_overrides.trait_vector is accepted and stored but not read
- * by assignment until phase 2 (traits.assignment = 'read').
+ * ASSIGNMENT (config traits.assignment, default 'read' since phase 2):
+ *   'read'  (phase 2): the NPC's own vector, stored as trait_vector and read by every consumer
+ *           that is given the NPC's state ($dynamics): the auto vector (RelDynTraitAssign:
+ *           config preset or hand-set > Sharmat > bio read blended over the priors > priors)
+ *           composed with the editor's preset and per-trait override (composeRead). The label
+ *           (inferred_temperament) is the preset or the vector's nearest preset: display, eval,
+ *           Jev and label-valued surfaces only. A consumer asking about a label that is not the
+ *           NPC's own (a seed comparison, a textbook value) passes no $dynamics and gets the
+ *           preset point.
+ *   'label' (phase 1, the legacy path): the consumer's own temperament label (auto-derived or
+ *           overridden, with its own 'Stoic' fallback or null handling, §3.6) is mapped to its
+ *           preset point by EXACT name; any other label keeps the consumer's default or legacy
+ *           table lookup. trait_vector mirrors the label's preset point and is not read.
+ * Either way a textbook preset reproduces every old table value exactly.
  *
  * Units: traits 0..1 (unitless); every column's unit is listed in columns() and §2.4.
  */
 
 final class RelDynTraits
 {
-    /** Bump when the stored vector's shape changes. */
-    const VERSION = 1;
+    /** Bump when the stored vector's shape changes. 2: phase 2 (auto vector, read state in _trait_vector_src). */
+    const VERSION = 2;
 
-    /** Phase 1: the vector is the preset point of the consumer's temperament label. */
-    const ASSIGNMENT = 'label';
+    /**
+     * Default assignment (config traits.assignment): 'read' (phase 2) = override > preset >
+     * bio read blended over the priors > priors (RelDynTraitAssign); 'label' (phase 1, the legacy
+     * path) = the preset point of the old temperament vote's label.
+     */
+    const ASSIGNMENT = 'read';
+
+    /**
+     * Pins the assignment regardless of config ('read' | 'label' | null = config). For tests that
+     * exercise the phase-1 label path (legacy) without a config row, and for tools.
+     */
+    public static $assignmentOverride = null;
+
+    /** Config traits.assignment ('read' | 'label'), read fresh. */
+    public static function assignment(): string
+    {
+        if (self::$assignmentOverride === 'read' || self::$assignmentOverride === 'label') return self::$assignmentOverride;
+        $cfg = class_exists('RelationshipDynamics') ? (RelationshipDynamics::getConfig()['traits'] ?? null) : null;
+        $a = is_array($cfg) ? strtolower(trim((string) ($cfg['assignment'] ?? self::ASSIGNMENT))) : self::ASSIGNMENT;
+        return in_array($a, ['read', 'label'], true) ? $a : self::ASSIGNMENT;
+    }
+
+    /**
+     * The NPC's own vector under the read assignment: its stored trait_vector when the read
+     * assignment wrote it (_trait_vector_src.assignment 'read'), else null. Codes + maturity_start.
+     */
+    public static function readVector(?array $dynamics): ?array
+    {
+        if (!is_array($dynamics) || self::assignment() !== 'read') return null;
+        $v = $dynamics['trait_vector'] ?? null;
+        $src = $dynamics['_trait_vector_src'] ?? null;
+        if (!is_array($v) || !is_array($src) || ($src['assignment'] ?? null) !== 'read') return null;
+        return self::fromStored($v);
+    }
 
     /** Trait code => storage name (design §1, §4.2 output keys). Order is the vector order. */
     const TRAITS = [
@@ -140,13 +178,17 @@ final class RelDynTraits
     }
 
     /**
-     * The trait vector a consumer reads. Phase 1 (ASSIGNMENT 'label'): the preset point of the
-     * consumer's own label; the stored trait_vector mirrors it and is not read. $label defaults
-     * to $dynamics['inferred_temperament'].
+     * The trait vector a consumer reads. Read assignment (phase 2): the NPC's own stored vector
+     * when $dynamics carries one (readVector), else the preset point of the label. Label
+     * assignment (phase 1): the preset point of the consumer's own label; the stored
+     * trait_vector mirrors it and is not read. $label defaults to $dynamics['inferred_temperament'].
+     * A consumer that asks about a label other than the NPC's own passes no $dynamics.
      */
     public static function vectorFor($label = self::FROM_DYNAMICS, ?array $dynamics = null): ?array
     {
         if ($label === self::FROM_DYNAMICS) $label = $dynamics['inferred_temperament'] ?? null;
+        $own = self::readVector($dynamics);
+        if ($own !== null) return $own;
         return self::presetPoint($label);
     }
 
@@ -634,9 +676,9 @@ final class RelDynTraits
      * A numeric config table (preset => number) for a label. At a preset: the table value as
      * stored (or $default); in between (phase 2): Rule R with $model, or Rule I.
      */
-    public static function tableParam($label, array $table, $default, string $rule = 'I', $model = null, ?string $unit = null)
+    public static function tableParam($label, array $table, $default, string $rule = 'I', $model = null, ?string $unit = null, ?array $dynamics = null)
     {
-        $x = self::vectorFor($label);
+        $x = self::vectorFor($label, $dynamics);
         if ($x === null) return self::legacyLookup($table, $label, $default);
         return self::tableAt($x, $table, $default, $rule, $model, $unit);
     }
@@ -658,9 +700,9 @@ final class RelDynTraits
      * additive consumers read it) for a label. At a preset: the stored row itself (or []);
      * in between: each key by its rule ($rules key => [rule, model]; default Rule I).
      */
-    public static function rowParam($label, array $table, array $rules = [], string $unit = 'offset'): array
+    public static function rowParam($label, array $table, array $rules = [], string $unit = 'offset', ?array $dynamics = null): array
     {
-        $x = self::vectorFor($label);
+        $x = self::vectorFor($label, $dynamics);
         if ($x === null) return (array) self::legacyLookup($table, $label, []);
         return self::rowAt($x, $table, $rules, $unit);
     }
@@ -688,9 +730,9 @@ final class RelDynTraits
     }
 
     /** A label-valued table (preset => label/text/list) for a label: nearest preset's value. */
-    public static function labelParam($label, array $table, $default = null)
+    public static function labelParam($label, array $table, $default = null, ?array $dynamics = null)
     {
-        $x = self::vectorFor($label);
+        $x = self::vectorFor($label, $dynamics);
         if ($x === null) return self::legacyLookup($table, $label, $default);
         return self::labelAt($x, $table, $default);
     }
@@ -699,9 +741,9 @@ final class RelDynTraits
      * Membership of a label in a set of preset names, 0..1: exact 1 / 0 at a preset (Rule I of
      * the indicator in between); for a label that is not a preset, today's strict in_array.
      */
-    public static function membership($label, array $names): float
+    public static function membership($label, array $names, ?array $dynamics = null): float
     {
-        $x = self::vectorFor($label);
+        $x = self::vectorFor($label, $dynamics);
         if ($x === null) return in_array($label, $names, true) ? 1.0 : 0.0;
         $ind = [];
         foreach (self::PRESET_TRAITS as $name => $_) $ind[$name] = in_array($name, $names, true) ? 1.0 : 0.0;
@@ -751,12 +793,35 @@ final class RelDynTraits
     }
 
     /**
-     * Write trait_vector, _trait_vector_src, trait_preset and trait_vector_version from the
-     * NPC's temperament label (phase 1: the label's preset point, or null without one). The
+     * Write trait_vector, _trait_vector_src, trait_preset and trait_vector_version. The
      * 'traits' tag list is not touched. Returns the updated state.
+     *
+     * Read assignment, once the NPC has an auto vector (_trait_vector_src.auto, written by
+     * RelationshipDynamics::ensureTemperamentProfile): composeRead() of the auto vector, the
+     * editor's preset, a label written on the NPC since, and the per-trait override. Pure, so
+     * setting or clearing an override and every save recompose the same way.
+     * Otherwise (label assignment, or no auto vector yet): the label's preset point, or null
+     * without one (phase 1 behaviour, source marked assignment 'label').
      */
     public static function syncStored(array $dynamics): array
     {
+        $src = $dynamics['_trait_vector_src'] ?? null;
+        if (self::assignment() === 'read' && is_array($src) && is_array($src['auto'] ?? null)) {
+            $label = $dynamics['inferred_temperament'] ?? null;
+            $c = self::composeRead(self::fromStored($src['auto']), $src['auto_label'] ?? null, $label,
+                $dynamics['profile_overrides']['temperament'] ?? null, $dynamics['profile_overrides']['trait_vector'] ?? null);
+            $near = self::nearestPreset($c['x']);
+            $src['assignment'] = 'read';
+            $src['label'] = is_string($label) ? $label : null;
+            $src['composed'] = $c['source'];
+            $src['preset_override'] = $c['preset'];
+            $src['overridden'] = $c['overridden'];
+            $dynamics['trait_vector'] = self::toStored($c['x']);
+            $dynamics['_trait_vector_src'] = $src;
+            $dynamics['trait_preset'] = ['nearest' => $near['name'], 'distance' => round($near['distance'], 4)];
+            $dynamics['trait_vector_version'] = self::VERSION;
+            return $dynamics;
+        }
         $label = $dynamics['inferred_temperament'] ?? null;
         $x = self::presetPoint($label);
         if ($x === null) {
@@ -765,11 +830,43 @@ final class RelDynTraits
             $dynamics['trait_preset'] = null;
         } else {
             $dynamics['trait_vector'] = self::toStored($x);
-            $dynamics['_trait_vector_src'] = ['source' => 'preset', 'preset' => $label, 'assignment' => self::ASSIGNMENT];
+            $dynamics['_trait_vector_src'] = ['source' => 'preset', 'preset' => $label, 'assignment' => 'label'];
             $dynamics['trait_preset'] = ['nearest' => $label, 'distance' => 0.0];
         }
         $dynamics['trait_vector_version'] = self::VERSION;
         return $dynamics;
+    }
+
+    /**
+     * Precedence 1-2 over the auto vector (design §4.1): the editor's preset
+     * ($presetOverride = profile_overrides.temperament) > a preset label written on the NPC that
+     * is not the auto label (editor save, Sharmat, an arc) > the auto vector (config preset or
+     * hand-set, Sharmat, bio read, priors); then the per-trait override on top.
+     * Returns ['x' => codes + maturity_start, 'source' => override|stored|auto, 'preset' => ?name,
+     * 'overridden' => storage names set by the per-trait override].
+     */
+    public static function composeRead(array $auto, $autoLabel, $label, $presetOverride, $traitOverride): array
+    {
+        $x = $auto;
+        $source = 'auto';
+        $preset = null;
+        if (self::isPreset($presetOverride)) {
+            $preset = $presetOverride;
+            $source = 'override';
+        } elseif (self::isPreset($label) && $label !== $autoLabel) {
+            $preset = $label;
+            $source = 'stored';
+        }
+        if ($preset !== null) $x = self::points()[$preset];
+        $overridden = [];
+        $over = self::validOverride($traitOverride);
+        foreach ((array) $over as $name => $v) {
+            $code = array_search($name, self::TRAITS, true);
+            $x[$code] = $v;
+            $overridden[] = $name;
+        }
+        if (!isset($x['maturity_start'])) $x['maturity_start'] = $auto['maturity_start'] ?? null;
+        return ['x' => $x, 'source' => $source, 'preset' => $preset, 'overridden' => $overridden];
     }
 
     /**

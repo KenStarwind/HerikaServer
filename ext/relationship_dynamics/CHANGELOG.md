@@ -3,6 +3,15 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.12 — Personality read from each NPC's own bio
+Each NPC's personality now comes from her own CHIM bio: one read turns it into the ten traits, each backed by a short
+quote from the bio, blended with small hints from her voice, class, faction, skills and (a little) race. Reads stay
+near the middle unless the bio is clear. Around 100 key NPCs come pre-read; anyone else is read in the background
+the first time you meet her, after the conversation work, and keeps her hints until then. Ashe is never read: she is
+Serene's hand-set, spoiler-free conclusion (Stoic-leaning, resilient, slow to warm, maturity 75). Ysolda is no longer
+forced to be Anxious. Between the old temperaments the blend is now smooth (no spikes at a preset). The old
+class-based vote is still there as a switch (traits.assignment 'label').
+
 ## reldyn-v0.11 — Personality engine under the hood
 Temperaments are now presets inside a trait engine (guard, expressiveness, confidence, pride, resilience, reactivity,
 warmth, restraint, possessiveness, protectiveness). Nothing behaves differently yet: every NPC still sits exactly on

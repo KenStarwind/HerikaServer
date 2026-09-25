@@ -262,7 +262,7 @@ class RelDynFulfillment
             // An attachment rule adds its weights x how far the NPC sits toward that style's
             // corner (decisions §12: the axes, not a yes/no label)
             $scale = (isset($rule['trait']) && in_array(strtolower((string) $rule['trait']), $traits, true))
-                || (isset($rule['temperament']) && RelDynTraits::membership($temperament, [$rule['temperament']]) >= 0.5)   // A27 via the trait engine
+                || (isset($rule['temperament']) && RelDynTraits::membership($temperament, [$rule['temperament']], $dynamics) >= 0.5)   // A27 via the trait engine
                 ? 1.0 : (isset($rule['attachment']) ? floatval($attachment[$rule['attachment']] ?? 0.0) : 0.0);
             if ($scale <= 0.0) continue;
             foreach ((array) ($rule['axes'] ?? []) as $axis => $v) {

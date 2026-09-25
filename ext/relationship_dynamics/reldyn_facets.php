@@ -638,7 +638,8 @@ class RelDynFacets
         $temperament = RelationshipDynamics::validTemperament($profile['temperament'] ?? null);
         if ($temperament !== null) {
             // A28 through the trait engine (Rule I; place tastes leave temperament in phase 3)
-            $add(RelDynTraits::rowParam($temperament, (array) ($cfg['temperament_prefs'] ?? [])), 1.0, "temperament:{$temperament}");
+            $add(RelDynTraits::rowParam($temperament, (array) ($cfg['temperament_prefs'] ?? []), [], 'offset',
+                is_array($profile['dynamics'] ?? null) ? $profile['dynamics'] : null), 1.0, "temperament:{$temperament}");
         }
         foreach ((array) ($profile['traits'] ?? []) as $trait) {
             $trait = strtolower(trim((string) $trait));
@@ -654,18 +655,22 @@ class RelDynFacets
     /** What the stored derivation depends on besides the core row: profile and config. */
     private static function preferenceBasis(array $dynamics, array $cfg): string
     {
-        return md5(json_encode([
+        $basis = [
             self::PREFS_VERSION,
             RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? null),
             RelationshipDynamics::getTraits($dynamics),
             $cfg,
-        ]));
+        ];
+        $vector = RelDynTraits::readVector($dynamics);
+        if ($vector !== null) $basis[] = $vector;   // read assignment: the NPC's own vector
+        return md5(json_encode($basis));
     }
 
     /** The profile the derivation reads from RelDyn state. */
     private static function preferenceProfile(array $dynamics): array
     {
-        return ['temperament' => $dynamics['inferred_temperament'] ?? null, 'traits' => RelationshipDynamics::getTraits($dynamics)];
+        return ['temperament' => $dynamics['inferred_temperament'] ?? null, 'traits' => RelationshipDynamics::getTraits($dynamics),
+                'dynamics' => RelDynTraits::readVector($dynamics) !== null ? $dynamics : null];
     }
 
     /**

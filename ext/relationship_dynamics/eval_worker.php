@@ -36,6 +36,11 @@ try {
 
     $stats = RelDynEval::runWorker();
     error_log('[RelDyn-EVAL] worker done: ' . json_encode($stats));
+
+    // Personality trait reads (design §4.7): only after the eval, only with no eval job
+    // pending and no switch pending; their own queue and lock, never the eval's way.
+    $traits = RelDynEval::drainTraitReadsAfterEval($stats);
+    if ($traits !== null) error_log('[RelDyn-TRAITS] worker done: ' . json_encode($traits));
     exit(0);
 } catch (\Throwable $e) {
     error_log('[RelDyn-EVAL] ERROR worker: ' . get_class($e) . ': ' . $e->getMessage());

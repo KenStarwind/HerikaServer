@@ -106,6 +106,9 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
 
     protected function setUp(): void
     {
+        // Personality traits phase 2: this class pins the LABEL assignment (the phase-1 legacy path):
+        // its NPCs' temperaments are the old core-data vote's. The read assignment has its own tests.
+        RelDynTraits::$assignmentOverride = 'label';
         $dsn = getenv('RELDYN_TEST_PG_DSN');
         if (!$dsn || !function_exists('pg_connect')) {
             $this->markTestSkipped('RELDYN_TEST_PG_DSN not set (opt-in test against a throwaway PostgreSQL)');
@@ -186,6 +189,7 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
 
     protected function tearDown(): void
     {
+        RelDynTraits::$assignmentOverride = null;
         if (!isset($this->schema)) return;
         ini_set('error_log', $this->prevErrorLog === false ? '' : (string) $this->prevErrorLog);
         @unlink($this->errorLog);

@@ -61,6 +61,9 @@ final class RelDynIntimacyNeedTest extends TestCase
 
     protected function setUp(): void
     {
+        // Personality traits phase 2: this class pins the LABEL assignment (the phase-1 legacy path):
+        // its NPCs' temperaments are the old core-data vote's. The read assignment has its own tests.
+        RelDynTraits::$assignmentOverride = 'label';
         foreach (['db', 'gameRequest', 'PLAYER_NAME', 'RELDYN_PLAYER_NAME', 'RELDYN_INTERACTION_SIGNIFICANCE'] as $k) {
             $this->saved[$k] = array_key_exists($k, $GLOBALS) ? [$GLOBALS[$k]] : null;
             unset($GLOBALS[$k]);
@@ -73,6 +76,7 @@ final class RelDynIntimacyNeedTest extends TestCase
 
     protected function tearDown(): void
     {
+        RelDynTraits::$assignmentOverride = null;
         foreach ($this->saved as $k => $v) {
             if ($v === null) unset($GLOBALS[$k]); else $GLOBALS[$k] = $v[0];
         }

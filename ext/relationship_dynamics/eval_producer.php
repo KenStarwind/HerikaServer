@@ -578,6 +578,26 @@ final class RelDynEval
         return $stats;
     }
 
+    /**
+     * The eval worker's tail (design §4.7): drain personality trait reads only after the eval
+     * worker returned, only when it was neither locked out nor paused by a switch, and only when
+     * no eval job is pending. Their own table and lock (RelDynTraitRead::drain); a failed read
+     * never touches reldyn_eval_queue. Returns the trait drain's stats, or null when skipped.
+     */
+    public static function drainTraitReadsAfterEval(array $evalStats, ?callable $llm = null): ?array
+    {
+        if (!empty($evalStats['locked']) || !empty($evalStats['paused']) || self::switchPending()) return null;
+        if (!class_exists('RelDynTraitRead')) return null;
+        try {
+            self::ensureQueueTable();
+            if (self::pendingCount([], []) > 0) return null;
+            return RelDynTraitRead::drain($llm);
+        } catch (\Throwable $e) {
+            error_log('[RelDyn-TRAITS] ERROR trait read drain: ' . get_class($e) . ': ' . $e->getMessage());
+            return null;
+        }
+    }
+
     private static function pendingCount(array $excludeIds, array $excludeNpcs): int
     {
         $row = self::db()->fetchOne(

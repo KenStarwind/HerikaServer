@@ -411,7 +411,9 @@ class RelDynAttraction
                 // it'd be a substantial uphill; let's say her floor is high 60s or so in
                 // martial" -> her strength (martial, read through her lens) floor 68; her
                 // other pillars keep the default floor
-                'aela the huntress' => ['openness' => 'medium', 'status_share' => 1.0, 'floors' => ['strength' => 68.0]],
+                // Ruling §16 #8: under the read assignment her openness comes from her traits
+                // (openness_from_traits); 'medium' stays for the label assignment (phase 1 legacy).
+                'aela the huntress' => ['openness' => 'medium', 'openness_from_traits' => true, 'status_share' => 1.0, 'floors' => ['strength' => 68.0]],
                 // Ken (rulings §10): "Ashe is less about the sex and more about the connection":
                 // commitment first, whatever class core registered her with
                 'ashe' => ['gate' => 'bond'],
@@ -574,7 +576,10 @@ class RelDynAttraction
             ? RelDynTraits::opennessAt($vector, (array) $cfg['temperament_openness'], (array) $cfg['openness_levels'])['band']
             : (((array) $cfg['temperament_openness'])[$temperament ?? ''] ?? 'medium');
         $sources['openness'] = $temperament !== null ? "temperament:{$temperament}" : 'fallback';
-        foreach ([['preset', $preset['openness'] ?? null], ['editor', $dynamics['openness'] ?? null], ['override', $over['openness'] ?? null]] as [$src, $o]) {
+        // A preset marked openness_from_traits keeps its band for the label assignment only; under
+        // the read assignment the NPC's own vector decides (decisions §16 #8, Aela)
+        $presetOpenness = (!empty($preset['openness_from_traits']) && RelDynTraits::readVector($dynamics) !== null) ? null : ($preset['openness'] ?? null);
+        foreach ([['preset', $presetOpenness], ['editor', $dynamics['openness'] ?? null], ['override', $over['openness'] ?? null]] as [$src, $o]) {
             $b = self::opennessBand($o, $cfg);
             if ($b !== null) { $band = $b; $sources['openness'] = $src; }
         }
