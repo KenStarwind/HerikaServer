@@ -261,6 +261,9 @@ final class RelDynTraits
                 foreach ($pts as $name => $p) {
                     $u = self::distance($x, $p) / $rho;
                     if ($u >= 1.0) continue;
+                    // k(u) = (1-u)^2 as specified (design §3.3). Its slope at u=0 is nonzero, so a
+                    // large residual makes a cone around its preset; open question for phase 2
+                    // (a zero-slope kernel such as (1-u^2)^2 would stay exact at the presets).
                     $v += (1.0 - $u) * (1.0 - $u) * (floatval($table[$name]) - self::evalModel($model, $p));
                 }
             }

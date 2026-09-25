@@ -237,6 +237,39 @@ final class RelDynTraitEquivalenceTest extends TestCase
         $this->assertArrayNotHasKey('trait_vector', $d['profile_overrides']);
     }
 
+    /**
+     * Setting or clearing profile_overrides.trait_vector must not re-run the profile resolution:
+     * a stored temperament that is not an override (editor, Sharmat, an arc) stays, and so do a
+     * hand-changed maturity type and trait tag list. Only the override field itself changes.
+     */
+    public function testTraitVectorOverrideLeavesAStoredNonOverrideProfileAlone(): void
+    {
+        $d = RelationshipDynamics::migrateDimensions(RelationshipDynamics::defaultDynamics());
+        $d['inferred_temperament'] = 'Proud';   // stored by something else, not in profile_overrides
+        RelationshipDynamics::ensureTemperamentProfile('Nobody In Particular', $d);
+        $this->assertSame('Proud', $d['inferred_temperament']);
+        $this->assertSame('Stoic', $d['_profile_autogen']['base_temperament']);
+        $this->assertArrayNotHasKey('temperament', (array) ($d['profile_overrides'] ?? []));
+        // dependents changed since the resolution, also by something else
+        $d['dimensions']['maturity']['plasticity_type'] = 'Volatile';
+        $d['traits'] = ['egocentric'];
+        $d = RelDynTraits::syncStored($d);
+        $before = $d;
+        $this->assertSame(0.8, RelDynTraits::param($d['inferred_temperament'], 'passion_mult', 1.0, $d));
+
+        $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'trait_vector', ['guard' => 0.4]));
+        $this->assertSame(['guard' => 0.4], $d['profile_overrides']['trait_vector']);
+        $expect = $before;
+        $expect['profile_overrides'] = ['trait_vector' => ['guard' => 0.4]] + (array) ($before['profile_overrides'] ?? []);
+        $this->assertSame($expect, $d, 'only profile_overrides.trait_vector changes');
+        $this->assertSame(0.8, RelDynTraits::param($d['inferred_temperament'], 'passion_mult', 1.0, $d));
+
+        $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'trait_vector', null));
+        $this->assertSame((array) ($before['profile_overrides'] ?? []), $d['profile_overrides']);
+        unset($d['profile_overrides'], $before['profile_overrides']);
+        $this->assertSame($before, $d, 'clearing it changes nothing else');
+    }
+
     /** Decisions §16.4: Ashe keeps the Guarded preset (and her Resilient maturity override). */
     public function testAsheKeepsTheGuardedPreset(): void
     {

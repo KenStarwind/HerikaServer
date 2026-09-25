@@ -2894,7 +2894,8 @@ class RelationshipDynamics
     /**
      * Set (or with null, clear) a per-NPC override for temperament, attachment_style (a label:
      * that style's textbook point), attachment_axes (['anxiety' => 0..1, 'avoidance' => 0..1]),
-     * maturity_type or traits, and apply it. Changing the temperament re-derives the
+     * maturity_type or traits, and apply it; trait_vector (a partial trait map) is only stored
+     * in phase 1 and changes nothing else. Changing the temperament re-derives the
      * dependents that still hold their automatic value. The two attachment overrides replace
      * each other; the attachment drift offset stays (experience is kept, the base moves).
      * Returns false and changes nothing for an unknown field or value.
@@ -2920,6 +2921,10 @@ class RelationshipDynamics
         if ($value !== null && $field === 'attachment_style') unset($overrides['attachment_axes']);
         if ($value !== null && $field === 'attachment_axes') unset($overrides['attachment_style']);
         $dynamics['profile_overrides'] = $overrides;
+        // Phase 1: the trait_vector override is stored for phase 2 and read by nothing, so it
+        // must not re-run the resolution below (that would reset a stored non-override
+        // temperament, maturity type or tag list to the auto-generated one).
+        if ($field === 'trait_vector') return true;
 
         $autogen = (array) ($dynamics['_profile_autogen'] ?? []);
         $prevAuto = (array) ($autogen['auto'] ?? []);

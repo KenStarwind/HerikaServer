@@ -250,4 +250,27 @@ final class RelDynTraitStoragePostgresTest extends TestCase
         $this->assertSame(0.6, RelDynTraits::param($again['inferred_temperament'], 'passion_mult', 1.0, $again));
         $this->assertSame(20.0, RelationshipDynamics::getTemperamentBaseline($again['inferred_temperament'], 'trust'));
     }
+
+    /** A label the editor stored directly (not an override) survives a trait_vector override round trip. */
+    public function testTraitVectorOverrideKeepsAnEditorStoredLabel(): void
+    {
+        $id = $this->seedNpc('Farengar Secret-Fire', 'Spell Vendor', 'Nord', 'sk_malecondescending');
+        $d = RelationshipDynamics::getDynamics('Farengar Secret-Fire');
+        $this->assertSame('Guarded', $d['_profile_autogen']['base_temperament']);
+        $d['inferred_temperament'] = 'Proud';   // api_save_npc writes the label, not profile_overrides
+        $this->assertTrue(RelationshipDynamics::saveDynamics('Farengar Secret-Fire', $d));
+
+        $d = RelationshipDynamics::getDynamics('Farengar Secret-Fire');
+        $this->assertSame('Proud', $d['inferred_temperament']);
+        $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'trait_vector', ['guard' => 0.4]));
+        $this->assertTrue(RelationshipDynamics::saveDynamics('Farengar Secret-Fire', $d));
+
+        $s = $this->stored($id);
+        $this->assertSame('Proud', $s['inferred_temperament']);
+        $this->assertSame(['guard' => 0.4], $s['profile_overrides']['trait_vector']);
+        $this->assertEqualsWithDelta(RelDynTraits::toStored(RelDynTraits::points()['Proud']), $s['trait_vector'], 1e-12);
+        $again = RelationshipDynamics::getDynamics('Farengar Secret-Fire');
+        $this->assertSame('Proud', $again['inferred_temperament']);
+        $this->assertSame(0.8, RelDynTraits::param($again['inferred_temperament'], 'passion_mult', 1.0, $again));
+    }
 }
