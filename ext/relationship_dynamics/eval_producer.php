@@ -43,6 +43,9 @@
  *               the NPC answered this exchange in (core moods_issued at the postrequest that
  *               queued it, lowercased); the Ick reads it to tell courting she answered in kind
  *               from pressure. Absent: unknown.
+ *    reported_intimacy: additive to v1, written by code (never the LLM) when the request was
+ *               intimacy the game or Sharmat reports (RelDynIntimacy::requestKind: 'scene',
+ *               'intimate_touch'); inside a romance the Ick never counts that exchange as pressure.
  *    goal_addressed + goal_ref: additive to v1 (decisions §8), only when the eval was shown the
  *               NPC's active director goal: goal_addressed bool (the exchange served or settled
  *               it), goal_ref = RelationshipDynamics::directorGoalRef of the goal shown, so the
@@ -361,6 +364,9 @@ final class RelDynEval
                 // the mood the NPC answered this exchange in (the Ick reads it from the item)
                 'reply_mood'   => self::currentMood($npcName),
             ];
+            // intimacy the game or Sharmat reported with this request (the Ick reads it from the item)
+            $reported = RelDynIntimacy::requestKind($gameRequest, $playerName);
+            if ($reported !== null) $job['reported_intimacy'] = $reported;
             // A duty exchange (MDD 9, RelDynQuests): its negative signals land dampened
             $duty = $GLOBALS['RELDYN_DUTY_FACTOR'] ?? null;
             if (is_numeric($duty) && floatval($duty) < 1.0) {
@@ -1310,6 +1316,7 @@ PROMPT;
             'summary'              => $summary,
         ] + ($romanticIntent !== null ? ['romantic_intent' => $romanticIntent] : [])
           + (is_string($job['reply_mood'] ?? null) && trim($job['reply_mood']) !== '' ? ['reply_mood' => strtolower(trim($job['reply_mood']))] : [])
+          + (is_string($job['reported_intimacy'] ?? null) && $job['reported_intimacy'] !== '' ? ['reported_intimacy' => $job['reported_intimacy']] : [])
           + (is_numeric($job['duty_factor'] ?? null) ? ['duty_factor' => max(0.0, min(1.0, floatval($job['duty_factor'])))] : [])
           + $goal
           + ($masking !== null ? ['masking' => $masking] : [])

@@ -8667,7 +8667,8 @@ class RelationshipDynamics
      * Contract v1 optional fields of decisions §8 (additive): romantic_intent (int 0..3),
      * goal_addressed + goal_ref (bool + the shown goal's directorGoalRef), masking {flag,
      * slipped}; and reply_mood (lowercased; written by code from core's moods_issued, never by
-     * the LLM). Only the fields the item carries, valid, come back; an invalid one is logged
+     * the LLM) and reported_intimacy (a RelDynIntimacy request kind, written by code from the
+     * request). Only the fields the item carries, valid, come back; an invalid one is logged
      * and left out (the item still applies). An older item has none of them: its readers
      * (charisma, director goal, masking) get nothing from it.
      */
@@ -8696,6 +8697,16 @@ class RelationshipDynamics
                 $out['reply_mood'] = $mood;
             } else {
                 error_log("[RelDyn-EVAL] eval item for {$npc}: reply_mood is not a mood name, ignored");
+            }
+        }
+        if (array_key_exists('reported_intimacy', $item)) {
+            // intimacy the game or Sharmat reported for that exchange (code-written, RelDynEval job:
+            // RelDynIntimacy::requestKind), for the Ick
+            $kind = is_string($item['reported_intimacy']) ? trim($item['reported_intimacy']) : '';
+            if ($kind !== '' && array_key_exists($kind, (array) (RelDynIntimacy::config()['requests'] ?? []))) {
+                $out['reported_intimacy'] = $kind;
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: reported_intimacy is not a reported intimacy kind, ignored");
             }
         }
         if (array_key_exists('masking', $item) && $item['masking'] !== null) {
@@ -15859,10 +15870,12 @@ class RelationshipDynamics
     ];
     // (Tunable in config protocols.ick, whose defaults are these constants.)
 
-    // Moods that count as romantic/flirtatious from the NPC's perspective
+    // Moods in which the NPC answers courting in kind (the default of config
+    // protocols.ick.reciprocal_moods): core 3.4.1's own (lib/emote_moods.php: sexy, lovely,
+    // seductive, playful, teasing), then older and custom mood names
     const ROMANTIC_MOODS = [
-        'flirty', 'romantic', 'playful', 'teasing', 'charmed',
-        'smitten', 'coy', 'seductive', 'affectionate', 'flustered',
+        'sexy', 'lovely', 'seductive', 'playful', 'teasing',
+        'flirty', 'romantic', 'charmed', 'smitten', 'coy', 'affectionate', 'flustered', 'loving', 'aroused',
     ];
 
     /**
@@ -15870,9 +15883,10 @@ class RelationshipDynamics
      * the Desperation Tracker: "flirt attempts vs. the NPC's current state")?
      *
      * $mood is the mood the NPC answered in (moods_issued: the NPC's own reply). An NPC that
-     * answers flirty, romantic, charmed ... is reciprocating: that exchange is mutual, never
-     * pressure, whatever the player said. Otherwise physical touch counts, and so does a high
-     * eval romantic_intent.
+     * answers in one of protocols.ick.reciprocal_moods (sexy, lovely, playful ...) is
+     * reciprocating: that exchange is mutual, never pressure, whatever the player said. Otherwise
+     * physical touch counts, and so does a high eval romantic_intent. (Intimacy the game reports
+     * inside a romance is never pressure either: RelDynProtocols::ickAttemptOfRequest.)
      *
      * @param string|null $interactionLL  Love language classification (LL_TOUCH, LL_WORDS, etc.)
      * @param string|null $mood           The NPC's own last mood (its reply)
@@ -15882,7 +15896,8 @@ class RelationshipDynamics
     public static function isRomanticAttempt($interactionLL, $mood, $evalResult = [])
     {
         // She flirted back: reciprocated, not the Ick's business
-        if (!empty($mood) && in_array(strtolower((string) $mood), self::ROMANTIC_MOODS, true)) {
+        $reciprocal = array_map('strtolower', (array) RelDynProtocols::config()['ick']['reciprocal_moods']);
+        if (!empty($mood) && in_array(strtolower(trim((string) $mood)), $reciprocal, true)) {
             return false;
         }
 
@@ -15961,15 +15976,23 @@ class RelationshipDynamics
      * answer in kind (the item's reply_mood, the mood of that exchange's reply; isRomanticAttempt)
      * counts as a romantic attempt of the interaction the postrequest already counted, unless
      * that exchange was already counted (touch, or this item before) or the window has no
-     * uncounted interaction left to attribute it to. Returns true when the ick state changed.
+     * uncounted interaction left to attribute it to. Intimacy the game reported for that exchange
+     * (the item's reported_intimacy, code-written) inside a romance is never pressure
+     * (RelDynProtocols::ickReportedIntimacy). An item carrying its own grievance leaves that
+     * exchange's resentment to the grievance (ickAfterInteraction). Returns true when the ick
+     * state changed.
      */
     public static function recordIckEvalAttempt(string $npcName, array $n, array &$dynamics): bool
     {
         if (!self::isRomanticAttempt(null, $n['reply_mood'] ?? null, $n)) {
             return false;
         }
-        $tracker = $dynamics['_ick_tracker'] ?? null;
         $g = (int) round(floatval($n['gamets'] ?? 0));
+        if (RelDynProtocols::ickReportedIntimacy($dynamics, is_string($n['reported_intimacy'] ?? null) ? $n['reported_intimacy'] : null)) {
+            self::log("[ICK] {$npcName}: intimacy the game reported at gamets {$g}, inside the romance: not pressure");
+            return false;
+        }
+        $tracker = $dynamics['_ick_tracker'] ?? null;
         if (!is_array($tracker)) {
             self::log("[ICK] {$npcName}: eval attempt at gamets {$g} with no interaction counted: not counted");
             return false;
@@ -15984,7 +16007,8 @@ class RelationshipDynamics
         $dynamics['_ick_tracker']['romantic_count'] = intval($tracker['romantic_count']) + 1;
         $dynamics['_ick_tracker']['counted_gamets'] = array_slice(array_merge((array) ($tracker['counted_gamets'] ?? []), [$g]), -self::ICK_COUNTED_KEEP);
         self::log("[ICK] {$npcName}: courting she did not answer in kind (eval, gamets {$g}, reply mood " . ($n['reply_mood'] ?? 'unknown') . ')');
-        return self::ickAfterInteraction($dynamics, true, $dynamics['inferred_temperament'] ?? null, $g > 0 ? (float) $g : null);
+        return self::ickAfterInteraction($dynamics, true, $dynamics['inferred_temperament'] ?? null, $g > 0 ? (float) $g : null,
+            !empty($n['grievance']['flag']));
     }
 
     /**
@@ -15992,9 +16016,11 @@ class RelationshipDynamics
      * and builds resentment (config protocols.ick, points through applyDelta) and anything else
      * is a quiet interaction (the player backing off, read by the recovery); otherwise its trigger,
      * stamped with the exchange's game time ($gamets, raw; default the game clock) and the play
-     * clock, never the wall clock.
+     * clock, never the wall clock. $grievanceOwnsResentment: the eval item of this exchange
+     * carries its own grievance, which is the exchange's resentment (the resentment flow): the
+     * attempt's resentment is not added on top of it.
      */
-    private static function ickAfterInteraction(array &$dynamics, bool $isRomantic, $temperament, ?float $gamets = null): bool
+    private static function ickAfterInteraction(array &$dynamics, bool $isRomantic, $temperament, ?float $gamets = null, bool $grievanceOwnsResentment = false): bool
     {
         $ick = RelDynProtocols::config()['ick'];
         unset($dynamics['_ick_tracker']['ick_triggered_at']);   // the April wall-clock stamp, never read
@@ -16005,9 +16031,10 @@ class RelationshipDynamics
                 return false;
             }
             $dynamics['_ick_tracker']['quiet'] = 0;
-            $r = self::applyDelta('resentment', $dynamics, floatval($ick['resentment_per_attempt']), $temperament);
+            $r = $grievanceOwnsResentment ? 0.0 : self::applyDelta('resentment', $dynamics, floatval($ick['resentment_per_attempt']), $temperament);
             $c = self::applyDelta('comfort', $dynamics, floatval($ick['comfort_per_attempt']), $temperament);
-            self::log(sprintf('[ICK] Continued romantic attempt while ick active: resentment %+.2f, comfort %+.2f', $r, $c));
+            self::log(sprintf('[ICK] Continued romantic attempt while ick active: resentment %+.2f%s, comfort %+.2f', $r,
+                $grievanceOwnsResentment ? ' (the grievance carries it)' : '', $c));
             return false; // State didn't change
         }
 
@@ -16099,6 +16126,13 @@ class RelationshipDynamics
             return false; // NPC is receptive — no ick
         }
 
+        // Inside a romance the floors alone are not her coldness (a fresh start's seed reads
+        // below them): her comfort must have been pushed below where she rests (RelDynProtocols::ickColdIsHers)
+        if (!RelDynProtocols::ickColdIsHers(is_array($dynamics) ? $dynamics : [], ['ick' => $ick])) {
+            self::log('[ICK] romantic pressure on a partner at her own resting ease: not the Ick');
+            return false;
+        }
+
         return true;
     }
 
@@ -16135,7 +16169,7 @@ class RelationshipDynamics
 
         if ($comfortOk && $passionOk && ($resentmentOk || $confrontationOccurred)) {
             $tracker['ick_active'] = false;
-            $tracker['ick_cooldown_until_play_gamets'] = self::getPlayGamets($dynamics) + self::ICK_COOLDOWN_PLAY_GAMETS;
+            $tracker['ick_cooldown_until_play_gamets'] = self::getPlayGamets($dynamics) + floatval($ick['cooldown_play_gamets']);
             unset($tracker['ick_cooldown_until']); // legacy wall-clock value
             $tracker['romantic_count'] = 0;
             $tracker['total_count'] = 0;
@@ -16208,8 +16242,9 @@ class RelationshipDynamics
             $base .= "{$npcName} gets flustered and prickly, unsure whether the problem is the player or themselves.";
         }
 
-        // Resentment escalation
-        if ($resentment >= 50) {
+        // Resentment escalation (the design's "confrontation at resentment 50"); with the resentment
+        // arc on, its confrontation is the one voice for it (RelDynResentment::voicesConfrontation)
+        if ($resentment >= 50 && !RelDynResentment::voicesConfrontation()) {
             $base .= " Close to snapping about the unwanted advances; the next one gets a sharp answer.";
         }
 
