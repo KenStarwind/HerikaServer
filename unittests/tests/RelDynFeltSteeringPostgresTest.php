@@ -369,9 +369,11 @@ final class RelDynFeltSteeringPostgresTest extends TestCase
         $this->turn('Mjoll the Lioness', 'Morning, Mjoll.');
         $now = $this->gamets;
         $this->patchDynamics('Mjoll the Lioness', function (array $d) use ($now): array {
-            $this->assertIsArray($d[RelDynFulfillment::STATE_KEY] ?? null, 'the first request created the fulfillment state');
-            $d[RelDynFulfillment::STATE_KEY]['boundary'] = ['state' => 'probation', 'decided_gamets' => $now - 2 * self::DAY,
+            $this->assertIsArray(RelDynFulfillment::pairState($d) ?? null, 'the first request created the fulfillment state');
+            $f = RelDynFulfillment::pairState($d);
+            $f['boundary'] = ['state' => 'probation', 'decided_gamets' => $now - 2 * self::DAY,
                 'started_gamets' => $now - self::DAY, 'until_gamets' => $now + 6 * self::DAY, 'streak' => 0];
+            RelDynFulfillment::setPairState($d, RelDynFulfillment::PLAYER, $f);
             return $d;
         });
         $out['mature_partner_on_probation'] = ['npc' => 'Mjoll the Lioness'] + $this->turn('Mjoll the Lioness', 'I brought you something.');

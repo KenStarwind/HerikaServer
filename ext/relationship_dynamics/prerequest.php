@@ -220,7 +220,11 @@ if (($reldynCfg['conflict_enabled'] ?? true) && $GLOBALS['RELDYN_PRE_AFF'] !== n
 // Needs vector refreshed on contact, day-end samples, unfulfilled neglect, the mature boundary
 // (a failed probation steps core's type back), and the band this contact leaves behind for
 // the next absence. After core's type snapshot above, before weather and contact below.
-RelationshipDynamics::advanceFulfillment($npcName, $dynamics, RelationshipDynamics::currentGamets(), true);
+// Fulfillment is per relationship pair (rulings §11): today counts as a day of the player pair
+// only when this request is an interaction within it (the player speaking to this NPC, or
+// intimacy with the player), not an NPC's own remark.
+RelationshipDynamics::advanceFulfillment($npcName, $dynamics, RelationshipDynamics::currentGamets(), true,
+    RelationshipDynamics::isPairInteraction($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'))));
 
 // The reunion is measured before contact is marked; its passion is applied after this
 // request's attraction (below): a reunion spike is a passion gain like any other (rulings §11)

@@ -156,7 +156,7 @@ final class RelDynJev
             $goal = ['text' => trim((string) $g['text']), 'priority' => round(floatval($g['priority'] ?? 0.5), 2)];
         }
 
-        $boundary = $dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? 'none';
+        $boundary = RelDynFulfillment::pairState($dynamics)['boundary']['state'] ?? 'none';
         $axes = RelationshipDynamics::getAttachmentAxes($dynamics);
         $traitVector = RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $dynamics);
         $rival = trim((string) ($dynamics['jealousy_trigger_npc'] ?? ''));

@@ -2,9 +2,10 @@
 /**
  * Relationship Dynamics — fulfillment spider graph (read-only JSON, rulings 2026-09-24 §9).
  *
- * GET ?npc=<name>  ->  {"ok": true, "npc", "known", "gamets", "band", "trend", "low",
+ * GET ?npc=<name>[&target=<name>]  ->  {"ok": true, "npc", "target", "known", "gamets", "band", "trend", "low",
  *                       "axes": [{"axis", "kind", "label", "need", "coverage"}], "boundary": {...}}
- * (RelationshipDynamics::fulfillmentGraph / RelDynFulfillment::graph). For the P5 UI; it
+ * (RelationshipDynamics::fulfillmentGraph / RelDynFulfillment::graph). Fulfillment is per
+ * relationship pair (rulings §11): target defaults to the player ('Player'). For the P5 UI; it
  * writes nothing. Numbers are for the page, never for the LLM.
  */
 
@@ -29,8 +30,11 @@ if ($npcName === '') {
     exit;
 }
 
+$target = trim((string) ($_GET['target'] ?? ''));
+if ($target === '') $target = RelDynFulfillment::PLAYER;
+
 try {
-    echo json_encode(['ok' => true] + RelationshipDynamics::fulfillmentGraph($npcName), JSON_UNESCAPED_UNICODE);
+    echo json_encode(['ok' => true] + RelationshipDynamics::fulfillmentGraph($npcName, null, $target), JSON_UNESCAPED_UNICODE);
 } catch (\Throwable $e) {
     error_log("[RelDyn] ERROR api_fulfillment for {$npcName}: " . $e->getMessage());
     http_response_code(500);

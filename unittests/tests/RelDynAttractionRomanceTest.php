@@ -504,12 +504,12 @@ final class RelDynAttractionRomanceTest extends TestCase
             }
         }
         $this->assertNotNull($stated, 'a boundary was stated within two game weeks of low fulfillment: '
-            . json_encode($this->dynamics()['_fulfillment']['boundary'] ?? null));
+            . json_encode(RelDynFulfillment::pairState($this->dynamics())['boundary'] ?? null));
         $this->assertStringContainsString('has thought about this calmly', $boundaryText);
         $this->assertDoesNotMatchRegularExpression('/\d/', $boundaryText, 'a feeling, never a number');
         $f = RelationshipDynamics::fulfillment(self::AELA, $this->dynamics(), $stated);
         $this->assertLessThan(-0.25, $f['band'], 'low fulfillment is what she is answering');
-        $this->assertSame('probation', $this->dynamics()['_fulfillment']['boundary']['state']);
+        $this->assertSame('probation', RelDynFulfillment::pairState($this->dynamics())['boundary']['state']);
         $this->assertSame('romantic', $this->core()['type'], 'stating it changes nothing yet');
 
         // ---- The probation: one warm evening, then the old pattern. It does not hold.

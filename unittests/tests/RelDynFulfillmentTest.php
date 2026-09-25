@@ -148,7 +148,7 @@ final class RelDynFulfillmentTest extends TestCase
 
         // Real eval consumer path: a full-significance quality-time exchange at T0 + 1 h
         RelationshipDynamics::processEvalContractItem('Aela', $this->item(self::T0 + self::HOUR, ['quality_time']), $d);
-        $lv = $d['_fulfillment']['lv'];
+        $lv = RelDynFulfillment::pairState($d)['lv'];
         $decayed = 1.5 * 0.5 ** ((1 / 24) / 3);
         $this->assertEqualsWithDelta($decayed + 1.0, $lv['quality_time'], 1e-3, 'quality_time: +1 unit');
         $this->assertEqualsWithDelta($decayed, $lv['words_of_affirmation'], 1e-3, 'untouched axis only decayed');
@@ -156,20 +156,20 @@ final class RelDynFulfillmentTest extends TestCase
 
         // Significance scales the delivery: 0.3 + 0.7 x 0.5 = 0.65 units of praise to words
         RelationshipDynamics::processEvalContractItem('Aela', $this->item(self::T0 + self::HOUR, ['praise'], 0.5), $d);
-        $this->assertEqualsWithDelta($decayed + 0.65, $d['_fulfillment']['lv']['words_of_affirmation'], 1e-3);
+        $this->assertEqualsWithDelta($decayed + 0.65, RelDynFulfillment::pairState($d)['lv']['words_of_affirmation'], 1e-3);
 
         // An insult takes it away again (and more)
         RelationshipDynamics::processEvalContractItem('Aela', $this->item(self::T0 + self::HOUR, ['insult'], 1.0,
             ['signals' => ['affinity' => -10, 'trust' => 0, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0]]), $d);
-        $this->assertEqualsWithDelta($decayed - 0.35, $d['_fulfillment']['lv']['words_of_affirmation'], 1e-3);
+        $this->assertEqualsWithDelta($decayed - 0.35, RelDynFulfillment::pairState($d)['lv']['words_of_affirmation'], 1e-3);
 
         // A 'gift' in a grievance exchange is not a gift: its positive delivery is dropped
-        $before = $d['_fulfillment']['lv'];
+        $before = RelDynFulfillment::pairState($d)['lv'];
         $amounts = RelDynFulfillment::evalItemAmounts(RelationshipDynamics::normalizeEvalContractItem($this->item(self::T0, ['gift', 'criticism'], 1.0,
             ['grievance' => ['flag' => true, 'kind' => 'disrespect', 'severity' => 1]])));
         $this->assertArrayNotHasKey('gifts', $amounts);
         $this->assertEqualsWithDelta(-0.5, $amounts['words_of_affirmation'], 1e-9);
-        $this->assertSame($before, $d['_fulfillment']['lv']);
+        $this->assertSame($before, RelDynFulfillment::pairState($d)['lv']);
 
         // A pleasant exchange without tags is still some time together
         $this->assertEqualsWithDelta(0.3, RelDynFulfillment::evalItemAmounts(RelationshipDynamics::normalizeEvalContractItem(
@@ -181,11 +181,11 @@ final class RelDynFulfillmentTest extends TestCase
         $d = $this->npc();
         RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
         RelDynFulfillment::deliver($d, ['combat' => 0.0001], self::T0 + 3 * self::DAY);   // levels now as of day 3
-        $at3 = $d['_fulfillment']['lv']['quality_time'];
+        $at3 = RelDynFulfillment::pairState($d)['lv']['quality_time'];
         // An exchange from day 0 applied only now (the worker was behind): one half-life old
         RelDynFulfillment::deliver($d, ['quality_time' => 1.0], self::T0);
-        $this->assertEqualsWithDelta($at3 + 0.5, $d['_fulfillment']['lv']['quality_time'], 1e-3);
-        $this->assertEquals(self::T0 + 3 * self::DAY, $d['_fulfillment']['gamets'], 'the clock never goes back');
+        $this->assertEqualsWithDelta($at3 + 0.5, RelDynFulfillment::pairState($d)['lv']['quality_time'], 1e-3);
+        $this->assertEquals(self::T0 + 3 * self::DAY, RelDynFulfillment::pairState($d)['gamets'], 'the clock never goes back');
     }
 
     public function testPlacesAndExperiencesSharedCoverFacetNeeds(): void
@@ -194,16 +194,16 @@ final class RelDynFulfillmentTest extends TestCase
         RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
         $woods = ['nature' => 1.0, 'wild' => 0.8];
         RelDynFacets::placeTurn('Aela', $d, 'Fallowstone Woods', $woods, $this->prefs(), self::T0);                  // arrival
-        $natureAt0 = $d['_fulfillment']['lv']['nature'];
+        $natureAt0 = RelDynFulfillment::pairState($d)['lv']['nature'];
         RelDynFacets::placeTurn('Aela', $d, 'Fallowstone Woods', $woods, $this->prefs(), self::T0 + 2 * self::HOUR); // 2 h there
         $decay = 0.5 ** ((2 / 24) / 3);
-        $this->assertEqualsWithDelta($natureAt0 * $decay + 1.0 * 2 * 0.5, $d['_fulfillment']['lv']['nature'], 1e-3,
+        $this->assertEqualsWithDelta($natureAt0 * $decay + 1.0 * 2 * 0.5, RelDynFulfillment::pairState($d)['lv']['nature'], 1e-3,
             'nature weight 1 x 2 game hours x 0.5 units per hour');
 
         // A fight together (RelDyn's combat activity facets): combat 1.0 x 0.5 units
-        $combatBefore = RelDynFulfillment::levelsAt($d['_fulfillment'], self::T0 + 3 * self::HOUR)['combat'];
+        $combatBefore = RelDynFulfillment::levelsAt(RelDynFulfillment::pairState($d), self::T0 + 3 * self::HOUR)['combat'];
         RelDynFacets::experienceThing('Aela', $d, 'activity', 'combat', $this->prefs(), self::T0 + 3 * self::HOUR);
-        $this->assertEqualsWithDelta($combatBefore + 0.5, $d['_fulfillment']['lv']['combat'], 1e-3);
+        $this->assertEqualsWithDelta($combatBefore + 0.5, RelDynFulfillment::pairState($d)['lv']['combat'], 1e-3);
     }
 
     public function testNoStateNoDelivery(): void
@@ -222,7 +222,7 @@ final class RelDynFulfillmentTest extends TestCase
         $d = $this->npc();
         RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
         RelDynFulfillment::tick($d, self::T0 + 4 * self::DAY + self::HOUR);
-        $this->assertCount(4, $d['_fulfillment']['days'], 'one sample per game-day end');
+        $this->assertCount(4, RelDynFulfillment::pairState($d)['days'], 'one sample per game-day end');
         $f = RelDynFulfillment::compute($d, [], self::T0 + 4 * self::DAY);
         $this->assertLessThan(0.0, $f['trend'], 'getting worse every day');
         $this->assertSame(0.0, RelDynFulfillment::trend([[1, 0.2]], RelDynFulfillment::config()));
@@ -265,7 +265,7 @@ final class RelDynFulfillmentTest extends TestCase
         for ($h = 12; $h <= 6 * 24 + 12; $h += 12) {
             RelDynFulfillment::tick($d, self::T0 + $h * self::HOUR);
         }
-        $this->assertSame('pending', $d['_fulfillment']['boundary']['state']);
+        $this->assertSame('pending', RelDynFulfillment::pairState($d)['boundary']['state']);
 
         // Said once, on her next turn, calmly; the probation window starts then
         $now = self::T0 + 6.5 * self::DAY;
@@ -275,7 +275,7 @@ final class RelDynFulfillmentTest extends TestCase
         $this->assertStringContainsString('consistently', $said['texts']['boundary']);
         $this->assertStringContainsString('real time together', $said['texts']['boundary'], 'names what she misses most');
         $this->assertDoesNotMatchRegularExpression('/\d/', $said['texts']['boundary'], 'a feeling, never a number');
-        $this->assertSame('probation', $d['_fulfillment']['boundary']['state']);
+        $this->assertSame('probation', RelDynFulfillment::pairState($d)['boundary']['state']);
         $again = RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', $now + self::HOUR);
         $this->assertArrayNotHasKey('boundary', $again['texts'], 'stated once');
         $this->assertArrayHasKey('probation', $again['texts']);
@@ -285,7 +285,7 @@ final class RelDynFulfillmentTest extends TestCase
             $this->goodDay($d, $now + ($k + 0.1) * self::DAY);
             RelDynFulfillment::tick($d, $now + ($k + 1) * self::DAY);
         }
-        $this->assertSame('none', $d['_fulfillment']['boundary']['state'], 'resolved');
+        $this->assertSame('none', RelDynFulfillment::pairState($d)['boundary']['state'], 'resolved');
         $relief = RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', $now + 4 * self::DAY);
         $this->assertArrayHasKey('resolved', $relief['texts']);
         $this->assertArrayNotHasKey('resolved', RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', $now + 4 * self::DAY)['texts']);
@@ -299,12 +299,12 @@ final class RelDynFulfillmentTest extends TestCase
         $d['_concern'] = ['v' => 1, 'level' => 0.0, 'incidents' => [], 'say' => [],
             'boundary' => ['state' => 'probation', 'channel' => 'protective', 'kind' => 'place', 'until_gamets' => self::T0 + 30 * self::DAY]];
         for ($h = 12; $h <= 6 * 24 + 12; $h += 12) RelDynFulfillment::tick($d, self::T0 + $h * self::HOUR);
-        $this->assertSame('none', $d['_fulfillment']['boundary']['state'] ?? 'none', 'the values boundary is running');
-        $this->assertArrayHasKey('low_since_gamets', $d['_fulfillment'], 'the low stretch is still tracked');
+        $this->assertSame('none', RelDynFulfillment::pairState($d)['boundary']['state'] ?? 'none', 'the values boundary is running');
+        $this->assertArrayHasKey('low_since_gamets', RelDynFulfillment::pairState($d), 'the low stretch is still tracked');
         // it closes (resolved): the fulfillment boundary follows on the next tick
         $d['_concern']['boundary'] = ['state' => 'none', 'resolved_gamets' => self::T0 + 6.6 * self::DAY];
         RelDynFulfillment::tick($d, self::T0 + 6.7 * self::DAY);
-        $this->assertSame('pending', $d['_fulfillment']['boundary']['state']);
+        $this->assertSame('pending', RelDynFulfillment::pairState($d)['boundary']['state']);
     }
 
     public function testOneGoodDayDoesNotPassTheProbation(): void
@@ -313,14 +313,14 @@ final class RelDynFulfillmentTest extends TestCase
         RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
         $now = self::T0 + 7.5 * self::DAY;
         RelDynFulfillment::tick($d, $now);
-        $this->assertSame('pending', $d['_fulfillment']['boundary']['state'], 'low from the day-2 end, 5 game days sustained');
+        $this->assertSame('pending', RelDynFulfillment::pairState($d)['boundary']['state'], 'low from the day-2 end, 5 game days sustained');
         RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', $now);   // stated: probation starts
         $this->goodDay($d, $now + 0.5 * self::DAY);                    // one big effort
         $this->goodDay($d, $now + 0.6 * self::DAY);
         $t = RelDynFulfillment::tick($d, $now + 7 * self::DAY);        // then the old pattern
-        $this->assertSame('failed', $d['_fulfillment']['boundary']['state']);
+        $this->assertSame('failed', RelDynFulfillment::pairState($d)['boundary']['state']);
         $this->assertContains('step_back_due', $t['events']);
-        $this->assertGreaterThan(0, max(array_column($d['_fulfillment']['days'], 1)), 'there was a good day');
+        $this->assertGreaterThan(0, max(array_column(RelDynFulfillment::pairState($d)['days'], 1)), 'there was a good day');
     }
 
     public function testImmatureOrUnboundNpcsStateNoBoundary(): void
@@ -328,7 +328,7 @@ final class RelDynFulfillmentTest extends TestCase
         $d = $this->npc([], 30.0);   // immature: festers instead (neglect), still misses what she needs
         RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
         RelDynFulfillment::tick($d, self::T0 + 10 * self::DAY);
-        $this->assertSame('none', $d['_fulfillment']['boundary']['state']);
+        $this->assertSame('none', RelDynFulfillment::pairState($d)['boundary']['state']);
         $this->assertArrayHasKey('unmet', RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', self::T0 + 10 * self::DAY)['texts']);
 
         // A stranger (core neutral, no affinity): no bond to step back from, and no needs of
@@ -336,7 +336,7 @@ final class RelDynFulfillmentTest extends TestCase
         $d = $this->npc(['_core_rel_type' => 'neutral']);
         RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
         RelDynFulfillment::tick($d, self::T0 + 10 * self::DAY);
-        $this->assertSame('none', $d['_fulfillment']['boundary']['state']);
+        $this->assertSame('none', RelDynFulfillment::pairState($d)['boundary']['state']);
         $this->assertSame([], RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', self::T0 + 10 * self::DAY)['texts']);
         $this->assertSame(0.0, RelDynFulfillment::weatherDeprivation($d, self::T0 + 10 * self::DAY));
         $stranger = $this->npc(['_core_rel_type' => 'neutral']);

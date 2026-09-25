@@ -371,7 +371,7 @@ final class RelDynIntimacyNeedTest extends TestCase
         $d = $this->derived(['Huntress' => self::huntress()], 'Huntress');
         RelDynIntimacy::setNeedOverride($d, 'emotional', 0.0);   // the physical axis alone speaks
         RelDynFulfillment::ensure($d, RelDynFacets::neutralPreferences(), self::T0);
-        $this->assertArrayNotHasKey(RelDynIntimacy::EMOTIONAL, $d['_fulfillment']['w'], 'an overridden-away need is no axis');
+        $this->assertArrayNotHasKey(RelDynIntimacy::EMOTIONAL, RelDynFulfillment::pairState($d)['w'], 'an overridden-away need is no axis');
         $later = self::T0 + 5 * self::DAY;
         $text = function (float $m, float $f, float $maturity) use ($d, $later) {
             $d['dimensions']['coord_m']['x'] = $m;
@@ -407,7 +407,7 @@ final class RelDynIntimacyNeedTest extends TestCase
             $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['profile_overrides' => ['attachment_style' => $style]]);
             $this->assertSame($style, RelationshipDynamics::getAttachmentStyle($d));
             $this->assertTrue(RelDynFulfillment::ensure($d, $prefs, self::T0));
-            $levels[$style] = RelDynFulfillment::levelsAt($d['_fulfillment'], self::T0 + 3 * self::DAY);
+            $levels[$style] = RelDynFulfillment::levelsAt(RelDynFulfillment::pairState($d), self::T0 + 3 * self::DAY);
         }
         $half = RelDynFulfillment::config()['half_life_game_days'];
         $start = RelDynFulfillment::config()['start_units'];
@@ -428,7 +428,7 @@ final class RelDynIntimacyNeedTest extends TestCase
         $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['profile_overrides' => ['attachment_style' => 'anxious']]);
         RelDynFulfillment::ensure($d, $prefs, self::T0);
         RelDynFulfillment::deliver($d, [RelDynIntimacy::PHYSICAL => 0.0001], self::T0 + 3 * self::DAY);
-        $other = array_values(array_diff(array_keys($d['_fulfillment']['w']), RelDynIntimacy::AXES))[0];
+        $other = array_values(array_diff(array_keys(RelDynFulfillment::pairState($d)['w']), RelDynIntimacy::AXES))[0];
         $applied = RelDynFulfillment::deliver($d, [RelDynIntimacy::PHYSICAL => 1.0, $other => 1.0], self::T0);
         $this->assertEqualsWithDelta(0.5 ** (3.0 * 2.0 / $half), $applied[RelDynIntimacy::PHYSICAL], 1e-3);
         $this->assertEqualsWithDelta(0.5 ** (3.0 / $half), $applied[$other], 1e-3);
@@ -516,7 +516,7 @@ final class RelDynIntimacyNeedTest extends TestCase
             $this->assertNotNull(RelationshipDynamics::neglectBond($d), $type);
             $this->assertSame(RelDynIntimacy::EMOTIONAL, RelDynIntimacy::deprivedAxis($d, $later), "{$type}: the need is still there");
             $this->assertNull(RelDynIntimacy::feltText('Scholar', 'Kaida', $d, $later), "{$type}: no romance-coded text");
-            $this->assertContains('real closeness, being truly known', RelDynFulfillment::unmetPhrases($d['_fulfillment'], $later, 3),
+            $this->assertContains('real closeness, being truly known', RelDynFulfillment::unmetPhrases(RelDynFulfillment::pairState($d), $later, 3),
                 "{$type}: missed through the fulfillment text");
         }
         // The romance: the text speaks; once it ends (professional: no bond) it stops, like the weather

@@ -1593,6 +1593,7 @@ class RelationshipDynamics
     {
         $d = self::migrateDimensions(array_merge(self::defaultDynamics(), $stored ?? []));
         unset($d[self::LOAD_TOKEN_KEY]);
+        RelDynFulfillment::migrate($d);   // the pre-pair fulfillment blob is the player pair (rulings §11)
         return self::syncLegacyFromDimensions($d);
     }
 
@@ -4412,7 +4413,7 @@ class RelationshipDynamics
     public static function absenceBandFactors(array $dynamics): array
     {
         $out = ['grace' => 1.0, 'rate' => 1.0, 'band' => null];
-        $band = $dynamics[RelDynFulfillment::STATE_KEY]['contact_band'] ?? null;
+        $band = RelDynFulfillment::pairState($dynamics)['contact_band'] ?? null;   // the player pair
         if (!is_numeric($band) || !RelDynFulfillment::enabled()) return $out;
         $band = max(-1.0, min(1.0, floatval($band)));
         $l = (array) RelDynFulfillment::config()['absence_band_log2'];
@@ -4462,7 +4463,7 @@ class RelationshipDynamics
         $severity = self::getNeglectProfile($dynamics);
         $low = floatval($cfg['low_band']);
         $rate = floatval($bond['resentment_per_game_day'] ?? 0) * floatval($cfg['unfulfilled_rate_mult']) * $severity['rate_mult'];
-        $fstate = (array) ($dynamics[RelDynFulfillment::STATE_KEY] ?? []);
+        $fstate = RelDynFulfillment::pairState($dynamics) ?? [];   // the player pair
         foreach ($samples as [$t, $band]) {
             if (!RelDynFulfillment::wasPresentOn($fstate, RelDynFulfillment::gameDayEndedAt(floatval($t)))) continue;   // away that day
             $depth = max(0.0, min(1.0, ($low - floatval($band)) / max(0.001, $low + 1.0)));
@@ -4475,7 +4476,7 @@ class RelationshipDynamics
         $max = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
         $out['resentment'] = self::drainCalendarResentment($dynamics, '_calendar_neglect_raw', $out['raw'], min($max, $severity['ceiling']), $temperament);
-        $state = is_array($dynamics[RelDynFulfillment::STATE_KEY] ?? null) ? $dynamics[RelDynFulfillment::STATE_KEY] : [];
+        $state = RelDynFulfillment::pairState($dynamics) ?? [];
         $since = floatval($state['low_since_gamets'] ?? $samples[0][0]);
         $now = floatval(end($samples)[0]);
         self::recordUnfulfilledGrievance($dynamics, $since, $now, $out['raw'], RelDynFulfillment::unmetPhrases($state, $now, 2, $cfg));
@@ -4516,9 +4517,13 @@ class RelationshipDynamics
      * step-back on core (boundaryStepBack); on contact record the band this contact leaves
      * behind (absenceBandFactors reads it for the next absence). No state and no contact: nothing.
      *
+     * The player pair (rulings §11: fulfillment is per relationship pair). Presence
+     * ($present, default $contact) is an actual interaction within the pair
+     * (isPairInteraction): only then does today count as a day the player was there.
+     *
      * @return array ['changed' => bool, 'events' => string[], 'step_back' => ?array, 'band' => ?float]
      */
-    public static function advanceFulfillment(string $npcName, array &$dynamics, float $now, bool $contact = false): array
+    public static function advanceFulfillment(string $npcName, array &$dynamics, float $now, bool $contact = false, ?bool $present = null): array
     {
         $out = ['changed' => false, 'events' => [], 'step_back' => null, 'band' => null];
         if ($now <= 0 || !RelDynFulfillment::enabled()) return $out;
@@ -4526,9 +4531,9 @@ class RelationshipDynamics
             $out['changed'] = RelDynIntimacy::ensureNeed($npcName, $dynamics);
             $out['changed'] = RelDynFulfillment::ensure($dynamics, RelDynFacets::preferences($dynamics, $npcName), $now) || $out['changed'];
         }
-        if (!is_array($dynamics[RelDynFulfillment::STATE_KEY] ?? null)) return $out;
-        if ($contact) {
-            // Today counts as a day the player was there (unfulfilled neglect, the low stretch)
+        if (RelDynFulfillment::pairState($dynamics) === null) return $out;
+        if ($present ?? $contact) {
+            // Today counts as a day the pair interacted (unfulfilled neglect, the low stretch)
             $out['changed'] = RelDynFulfillment::recordContactDay($dynamics, $now) || $out['changed'];
         }
 
@@ -4542,14 +4547,16 @@ class RelationshipDynamics
             && self::attachmentExperience($dynamics, 'boundary_kept', $now, 1.0, $npcName)) {
             $out['changed'] = true;
         }
-        if (($dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? null) === 'failed') {
+        if ((RelDynFulfillment::pairState($dynamics)['boundary']['state'] ?? null) === 'failed') {
             $out['step_back'] = self::boundaryStepBack($npcName, $dynamics, $now);
             $out['changed'] = true;
         }
-        $band = RelDynFulfillment::bandAt($dynamics[RelDynFulfillment::STATE_KEY], $now);
+        $state = RelDynFulfillment::pairState($dynamics);
+        $band = RelDynFulfillment::bandAt($state, $now);
         $out['band'] = $band;
         if ($contact) {
-            $dynamics[RelDynFulfillment::STATE_KEY]['contact_band'] = $band;
+            $state['contact_band'] = $band;
+            RelDynFulfillment::setPairState($dynamics, RelDynFulfillment::PLAYER, $state);
             $out['changed'] = true;
         }
         foreach ($out['events'] as $event) {
@@ -4575,7 +4582,7 @@ class RelationshipDynamics
     private static function boundaryStepBack(string $npcName, array &$dynamics, float $now): array
     {
         $cfg = RelDynFulfillment::config();
-        $state = $dynamics[RelDynFulfillment::STATE_KEY];
+        $state = RelDynFulfillment::pairState($dynamics);
         $from = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         $to = RelDynFulfillment::stepBackTarget($dynamics, $cfg);
         $unmet = RelDynFulfillment::unmetPhrases($state, $now, 2, $cfg);
@@ -4595,7 +4602,7 @@ class RelationshipDynamics
             $state['boundary'] = ['state' => 'none', 'blocked_gamets' => $now, 'from' => $from, 'to' => $to];
             error_log("[RelDyn-FULFILL] {$npcName}: probation failed but the step-back {$from} -> " . ($to ?? '-') . " was not written; boundary closed");
         }
-        $dynamics[RelDynFulfillment::STATE_KEY] = $state;
+        RelDynFulfillment::setPairState($dynamics, RelDynFulfillment::PLAYER, $state);
         return ['from' => $from, 'to' => $to, 'written' => $written, 'reason' => $reason];
     }
 
@@ -4607,20 +4614,36 @@ class RelationshipDynamics
      * @return array ['needs' => axis => 0..1, 'coverage' => axis => -1..1, 'band' => -1..1,
      *                'trend' => band per game day, 'known' => bool, 'low_band' => bool]
      */
-    public static function fulfillment(string $npcName, array $dynamics, ?float $now = null): array
+    public static function fulfillment(string $npcName, array $dynamics, ?float $now = null, string $target = RelDynFulfillment::PLAYER): array
     {
         $now = $now ?? self::currentGamets();
-        $prefs = is_array($dynamics[RelDynFulfillment::STATE_KEY]['w'] ?? null) ? [] : RelDynFacets::preferences($dynamics, $npcName);
-        return RelDynFulfillment::compute($dynamics, $prefs, $now);
+        $prefs = is_array(RelDynFulfillment::pairState($dynamics, $target)['w'] ?? null) ? [] : RelDynFacets::preferences($dynamics, $npcName);
+        return RelDynFulfillment::compute($dynamics, $prefs, $now, $target);
     }
 
-    /** Spider-graph read API (api_fulfillment.php, for the P5 UI): RelDynFulfillment::graph of a stored NPC. */
-    public static function fulfillmentGraph(string $npcName, ?float $now = null): array
+    /**
+     * Spider-graph read API (api_fulfillment.php, for the P5 UI): RelDynFulfillment::graph of a
+     * stored NPC's pair with $target (the player by default).
+     */
+    public static function fulfillmentGraph(string $npcName, ?float $now = null, string $target = RelDynFulfillment::PLAYER): array
     {
         $dynamics = self::getDynamics($npcName);
         $now = $now ?? self::currentGamets();
-        $prefs = is_array($dynamics[RelDynFulfillment::STATE_KEY]['w'] ?? null) ? [] : RelDynFacets::preferences($dynamics, $npcName);
-        return RelDynFulfillment::graph($npcName, $dynamics, $prefs, $now);
+        $prefs = is_array(RelDynFulfillment::pairState($dynamics, $target)['w'] ?? null) ? [] : RelDynFacets::preferences($dynamics, $npcName);
+        return RelDynFulfillment::graph($npcName, $dynamics, $prefs, $now, $target);
+    }
+
+    /**
+     * Is this request an actual interaction of the player pair (rulings §11: presence is
+     * interaction within the pair, "a follower you never talk to is not fulfilling")? The player
+     * speaking to the NPC (isPlayerInputRequest), or intimacy with the player the plugin
+     * reports (RelDynIntimacy::requestKind). An NPC's own remark, a radiant round or a
+     * bystander's turn is not.
+     */
+    public static function isPairInteraction($gameRequest, string $playerName): bool
+    {
+        if (!is_array($gameRequest)) return false;
+        return self::isPlayerInputRequest($gameRequest) || RelDynIntimacy::requestKind($gameRequest, $playerName) !== null;
     }
 
     /**
@@ -4733,7 +4756,7 @@ class RelationshipDynamics
         }
         // Fulfillment (rulings §9): day-end samples, unfulfilled neglect and the mature boundary
         // move with the calendar for every bond that has a fulfillment state, talked to or not.
-        if (is_array($dyn[RelDynFulfillment::STATE_KEY] ?? null)) {
+        if (RelDynFulfillment::pairState($dyn) !== null) {
             $f = self::advanceFulfillment($npcName, $dyn, $now, false);
             $result['fulfillment'] = $f;
             $changed = $changed || $f['changed'];
@@ -11560,7 +11583,7 @@ class RelationshipDynamics
         $drift = (array) ($cfg['drift'] ?? []);
         if (empty($drift['enabled']) || empty(self::getConfig()['attachment_style_enabled']) || $samples === []) return [];
         if (($dynamics['_walkaway_state'] ?? 'normal') !== 'normal') return [];
-        $state = is_array($dynamics[RelDynFulfillment::STATE_KEY] ?? null) ? $dynamics[RelDynFulfillment::STATE_KEY] : [];
+        $state = RelDynFulfillment::pairState($dynamics) ?? [];   // the player pair
         $fcfg = RelDynFulfillment::config();
         $low = floatval($fcfg['low_band']);
         $graceEnd = self::neglectGraceEndGamets($dynamics);

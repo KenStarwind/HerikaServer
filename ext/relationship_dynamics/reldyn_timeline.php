@@ -685,8 +685,9 @@ final class RelDynTimeline
                 !(is_array($m) && is_numeric($m['gamets'] ?? null) && floatval($m['gamets']) >= $T)));
             if ($pending === []) unset($d['_romance']['pending']); else $d['_romance']['pending'] = $pending;
         }
-        if (is_array($d[RelDynFulfillment::STATE_KEY] ?? null)) {
-            $d[RelDynFulfillment::STATE_KEY] = self::rebaselineFulfillment($d[RelDynFulfillment::STATE_KEY], $T);
+        // Every relationship pair's fulfillment (rulings §11), each on the same load
+        foreach (RelDynFulfillment::pairs($d) as $target => $state) {
+            RelDynFulfillment::setPairState($d, (string) $target, self::rebaselineFulfillment($state, $T));
         }
         // Baseline drift samples (one per game day of contact) of days after the loaded one: the
         // loaded game never lived them
