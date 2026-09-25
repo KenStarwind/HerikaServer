@@ -418,8 +418,11 @@ if ($evalOwnsExchange) {
     $positiveExchange = $passionGain > 0;
 
     // ========== ATTRACTION: THE SPARK, THEN THE UPHILL x ATTACHMENT (decisions §13, rulings §9) ==========
+    // (the love language's eval tag is the gain's channel: decisions §15, an asexual NPC's
+    // passion grows only through the emotional ones)
     $matrixPassionMult = $passionGain > 0
-        ? RelationshipDynamics::attractionPassionFactor($npcName, $dynamics, $passionGain, 'love_match') : 1.0;
+        ? RelationshipDynamics::attractionPassionFactor($npcName, $dynamics, $passionGain, 'love_match',
+            RelDynAttraction::loveLanguageChannelTags($interactionLL)) : 1.0;
     if ($passionGain > 0) {
         $passionGain *= $matrixPassionMult;
     }

@@ -3721,7 +3721,7 @@ class RelationshipDynamics
     {
         $passion = floatval($dynamics['passion'] ?? 0);
         $a = is_array($dynamics) ? ($dynamics['_attraction'] ?? null) : null;
-        if (is_array($a) && !empty($a['enabled']) && !empty($a['hard_zero']) && is_numeric($a['spark'] ?? null)) {
+        if (self::attractionHoldsDriveAtSpark($a)) {
             $passion = max($passion, floatval($a['spark']));   // see affinityDrivePassion
         }
         return 0.3 + ($passion / 100.0) * 1.7;
@@ -3734,16 +3734,30 @@ class RelationshipDynamics
      * is structurally 0 (no spark, no gain), which is no verdict on the friendship: the drive
      * reads at least the spark, the passion anyone else gets freely, so a friendship with an
      * NPC who cannot feel passion for the player grows like one at the spark, not idling at
-     * x0.3 forever.
+     * x0.3 forever. The same holds for an NPC whose passion only the emotional channels move
+     * (asexual, decisions §15: "their affinity growth is not slowed"), and for a preference hard
+     * zero while the Matrix does not judge the player (aromantic friendship: not slowed).
      */
     public static function affinityDrivePassion(array $dynamics): float
     {
         $passion = self::getPassion($dynamics);
         $a = $dynamics['_attraction'] ?? null;
-        if (is_array($a) && !empty($a['enabled']) && !empty($a['hard_zero']) && is_numeric($a['spark'] ?? null)) {
+        if (self::attractionHoldsDriveAtSpark($a)) {
             return max($passion, floatval($a['spark']));
         }
         return $passion;
+    }
+
+    /**
+     * Whether the MDD 1.1 affinity drive reads at least the spark (affinityDrivePassion): an
+     * attraction hard zero (judged, or a preference's with the Matrix off: withPreference) or
+     * passion restricted to the emotional channels (passion_channel, asexual).
+     */
+    private static function attractionHoldsDriveAtSpark($a): bool
+    {
+        if (!is_array($a) || !is_numeric($a['spark'] ?? null)) return false;
+        $prefZero = str_starts_with((string) ($a['hard_zero'] ?? ''), 'preference:');
+        return (!empty($a['hard_zero']) && (!empty($a['enabled']) || $prefZero)) || ($a['passion_channel'] ?? null) === 'emotional';
     }
 
     // =========================================================================
@@ -4887,11 +4901,13 @@ class RelationshipDynamics
     // =========================================================================
 
     /**
-     * Calculate effective sex_disposal with passion and jealousy overlay.
+     * Calculate effective sex_disposal with passion and jealousy overlay. Passion that only the
+     * emotional channels move (asexual, decisions §15) is no sexual arousal: it adds nothing.
      */
     public static function getEffectiveDisposition($baseDisposal, $dynamics)
     {
         $passion = floatval($dynamics['passion'] ?? 0);
+        if (($dynamics['_attraction']['passion_channel'] ?? null) === 'emotional') $passion = 0.0;
         $jealousy = floatval($dynamics['jealousy_anger'] ?? 0);
 
         $effective = $baseDisposal + ($passion * 0.3) - ($jealousy * 0.3);
@@ -7095,7 +7111,8 @@ class RelationshipDynamics
         // where passion itself crosses it (the physics is linear in the delta) ---
         if ($dimensionId === 'passion' && $actualDelta > 0 && is_array($dynamics['_attraction'] ?? null)) {
             $attractionFactor = self::loggedPassionFactor($dynamics, $actualDelta,
-                (string) ($overrides['attraction_source'] ?? 'dimension engine'));
+                (string) ($overrides['attraction_source'] ?? 'dimension engine'),
+                is_array($overrides['attraction_tags'] ?? null) ? $overrides['attraction_tags'] : null);
             $actualDelta *= $attractionFactor;
             if ($actualDelta < 0.0001) {
                 return 0.0;
@@ -8076,10 +8093,14 @@ class RelationshipDynamics
             // Attraction (decisions §13): the spark, then the uphill x attachment (rulings §9);
             // Aela warms to a warrior, a bard climbs a long hill; a hard zero leaves exactly 0.
             // The dimension engine applies it to the physics' move (applyDelta, attraction_source).
+            // Decisions §15: the item's tags are the gain's channel (an asexual NPC's passion
+            // grows only through the emotional ones).
             self::attractionPassionMult((string) $npcName, $dynamics);   // this request's summary
-            if (RelDynAttraction::gainFactor((array) $dynamics['_attraction'], self::getPassion($dynamics), $raw) <= 0.0) {
-                self::attractionPassionFactor((string) $npcName, $dynamics, $raw, 'eval');   // logged: why
-                $why = isset($dynamics['_attraction']['hard_zero']) ? 'attraction hard zero' : 'at the attraction passion ceiling';
+            if (RelDynAttraction::gainFactor((array) $dynamics['_attraction'], self::getPassion($dynamics), $raw, $tags) <= 0.0) {
+                self::attractionPassionFactor((string) $npcName, $dynamics, $raw, 'eval', $tags);   // logged: why
+                $why = isset($dynamics['_attraction']['hard_zero']) ? 'attraction hard zero'
+                    : (!RelDynAttraction::channelOpen((array) $dynamics['_attraction'], $tags) ? 'emotional passion only: not an emotional channel'
+                    : 'at the attraction passion ceiling');
                 $result['line'] = sprintf('%s %+.2f%s%s -> 0 (%s)', $signal, $rawIn, $clampNote, $steps, $why);
                 return $result;
             }
@@ -8135,6 +8156,7 @@ class RelationshipDynamics
 
         if ($signal === 'passion') {
             $overrides['attraction_source'] = "{$npcName}: eval";
+            $overrides['attraction_tags'] = array_values(array_map('strval', (array) $tags));
         }
         $attractionFactor = 1.0;
         $actual = self::applyDelta($signal, $dynamics, $raw, $temperament, $overrides, $attractionFactor);
@@ -13736,37 +13758,50 @@ class RelationshipDynamics
      * passion_mult (the uphill), 0 for a hard zero (RelDynAttraction::gainFactor). Uses this
      * request's summary; evaluates first when the NPC has none yet. Logged per gain ($source).
      */
-    public static function attractionPassionFactor(string $npcName, array &$dynamics, float $raw, string $source): float
+    public static function attractionPassionFactor(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
     {
         if (!is_array($dynamics['_attraction'] ?? null)) {
             self::updateAttraction($npcName, $dynamics);
         }
-        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}");
+        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}", $tags);
     }
 
-    /** RelDynAttraction::gainFactor on the stored summary at the current passion, logged ($label: who / which path). */
-    private static function loggedPassionFactor(array $dynamics, float $raw, string $label): float
+    /**
+     * RelDynAttraction::gainFactor on the stored summary at the current passion, logged ($label:
+     * who / which path; $tags: the gain's eval tags, its channel, decisions §15).
+     */
+    private static function loggedPassionFactor(array $dynamics, float $raw, string $label, ?array $tags = null): float
     {
         $passion = self::getPassion($dynamics);
-        $factor = RelDynAttraction::gainFactor((array) ($dynamics['_attraction'] ?? []), $passion, $raw);
+        $a = (array) ($dynamics['_attraction'] ?? []);
+        $factor = RelDynAttraction::gainFactor($a, $passion, $raw, $tags);
         self::log(sprintf('[ATTRACTION] %s passion +%.4f at %.2f x%.4f%s', $label, $raw, $passion, $factor,
-            ($factor <= 0.0 && $raw > 0.0) ? (isset($dynamics['_attraction']['hard_zero'])
-                ? ' (hard zero: ' . $dynamics['_attraction']['hard_zero'] . ')'
-                : ' (at the MDD 1.4 passion ceiling ' . ($dynamics['_attraction']['passion_ceiling'] ?? 'none') . ')') : ''));
+            ($factor <= 0.0 && $raw > 0.0) ? ' (' . self::passionClosedReason($a, $tags) . ')' : ''));
         return $factor;
+    }
+
+    /** Why a passion gain adds nothing (log / eval line): hard zero, a closed channel, or the MDD 1.4 ceiling. */
+    private static function passionClosedReason(array $a, ?array $tags): string
+    {
+        if (isset($a['hard_zero'])) return 'hard zero: ' . $a['hard_zero'];
+        if (!RelDynAttraction::channelOpen($a, $tags)) {
+            return 'channel closed: ' . ($a['passion_channel'] ?? 'restricted') . ' passion only, tags ' . ($tags ? implode(',', $tags) : 'none');
+        }
+        return 'at the MDD 1.4 passion ceiling ' . ($a['passion_ceiling'] ?? 'none');
     }
 
     /**
      * A passion GAIN of $raw passion points from $source, through the attraction (decisions
      * §13: raw x attractionPassionFactor; a hard zero adds exactly 0), then addPassion (stage
-     * ceiling). Returns the gain asked of addPassion (points).
+     * ceiling). $tags: the gain's eval tags (its channel, decisions §15; null = no channel).
+     * Returns the gain asked of addPassion (points).
      */
-    public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source): float
+    public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
     {
         if ($raw <= 0.0) {
             return 0.0;
         }
-        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source);
+        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source, $tags);
         if ($gain <= 0.0) {
             return 0.0;
         }

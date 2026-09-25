@@ -32,14 +32,18 @@
  *        below the spark (20 points): gain = raw x attachment            (open to anyone)
  *        from the spark:              gain = raw x curve x attachment [x prebond]
  *      curve: each of the NPC's passion pillars (MDD 8.3: archetype passion_pillars, else the
- *      intimacy gate's gate_pillars) has a floor in pillar points (0..100; default 45, Ken's
- *      generic example; Aela's martial floor 68). Below it the multiplier is < 1 and steep
+ *      intimacy gate's gate_pillars) has a floor in pillar points (0..100): the NPC's
+ *      STANDARDS floor (decisions §15, config 'standards': around Ken's generic 45, higher for
+ *      the selective, the mature and the self-assured; Aela's "high 60s" falls out of her
+ *      traits at 67.6; the flat 45 without a trait vector). Below it the multiplier is < 1 and steep
  *      (about 0.1 far below, 1.0 at the floor, config exponent); above it +1% per point, capped
  *      at 1.25; several units combine with the weakest setting the scale (passionCurve,
  *      combineUnits). Charm climbs the hill: Speech closes up to 15% of the gap to her floor.
- *      Hard zero, spark included, only for the non-negotiable: orientation, a passion-free or
- *      romance-free preference (asexual, aromantic, not interested) and a rigid passion pillar
- *      below its bar ("Rigid: must pass. Non-negotiable"; "100 x 0 is still 0"). A balanced
+ *      Hard zero, spark included, only for the non-negotiable: orientation, a romance-free
+ *      preference (aromantic, not interested) and a rigid passion pillar below its bar ("Rigid:
+ *      must pass. Non-negotiable"; "100 x 0 is still 0"). Asexual passion is emotional, not zero
+ *      (decisions §15): only the emotional channels move it (channelOpen), its visceral pillars
+ *      count as met, and intimacy (Sharmat) stays closed. A balanced
  *      NPC's bond eases the visceral hill (1.0 at the bonded tier, which its bond can reach:
  *      the visceral pillars never hold its depth; sociological units keep theirs); a visceral
  *      NPC gets no relief. Every passion writer (legacy, eval signal, reunion, combat, repair,
@@ -287,11 +291,12 @@ class RelDynAttraction
                 // Passion points open to anyone at the normal rate (decisions §13: "a spark is
                 // open to anyone"; MDD 8.1 Unknown / Acquaintance ceiling 20)
                 'spark' => 20.0,
-                // Pillar points (0..100): the floor of every pillar unless the NPC names its own.
+                // Pillar points (0..100): F0, the midpoint of the standards floor (config
+                // 'standards', decisions §15: every NPC's floor scales with its standards), and the
+                // flat floor of an NPC with no trait vector (design §3.6: the consumer's default).
                 // Ken's generic example: "until you hit the 45 your gains are less than 1 ... at
                 // 45 you get 1x, at 50 1.05, 55 1.10". Per NPC / pillar: 'floors' in npc_overrides
-                // (Aela's martial 68) or attraction_overrides, or the editor's
-                // attraction_profile.pillar_floors.
+                // or attraction_overrides, or the editor's attraction_profile.pillar_floors, win.
                 'floor' => 45.0,
                 // Multiplier far below the floor (Ken: "about 0.1"; ".1, .15, .25 until the floor
                 // is met"), for flexible units
@@ -338,6 +343,35 @@ class RelDynAttraction
                 // bonded tier"), so its visceral pillars never hold the depth axis.
                 'bond_relief_from_tier' => 'friend',
             ],
+            // Decisions §15 / design §5.1, standards: the floor of every pillar (pillar points,
+            // 0..100) scales with who the NPC is, replacing the flat curve.floor ("scaled by
+            // openness, something like standards; more mature know what they want"):
+            //   floor = clamp(F0 + sel_points x z_sel + mat_points x z_mat + self_points x z_self, min, max)
+            //   z_sel  = clamp((sel_center - o) / sel_span, -1, 1)     o: effective openness (0..1)
+            //   z_mat  = clamp((M - mat_center) / mat_span, -1, 1)    M: maturity BASELINE (0..100)
+            //   z_self = clamp((max(C, Pd) - self_center) / self_span, -1, 1)   confidence / pride
+            // F0 = curve.floor (Ken's generic 45). The design's shape (12 / 20 / 20) was
+            // calibrated so Aela lands in Ken's "high 60s" on the design's assumed vector (o .40,
+            // M 59, C .77); her committed bio read is more centred (ruling §16 #10: o .462, M
+            // 54.5, C .736), so the same shape is scaled x1.35 (16 / 27 / 27) to land her real
+            // read at 67.6, the design's worked value. Maturity reads the baseline, not the live
+            // x: standards do not wobble with a bad day. An NPC with no trait vector keeps the
+            // flat curve.floor. enabled false = the flat curve.floor for everyone.
+            'standards' => [
+                'enabled' => true,
+                'sel_points' => 16.0, 'sel_center' => 0.6, 'sel_span' => 0.3,
+                'mat_points' => 27.0, 'mat_center' => 50.0, 'mat_span' => 50.0,
+                'self_points' => 27.0, 'self_center' => 0.5, 'self_span' => 0.5,
+                'min' => 25.0, 'max' => 85.0,
+            ],
+            // Hysteresis on the openness band read from an NPC's traits (0..1 openness units):
+            // an NPC whose band is already recorded (_attraction_state.openness_band) keeps it
+            // until its openness is more than this far past the boundary between the two bands
+            // (0.45 low / medium, the won-over switch; 0.75 medium / high). A trait vector that
+            // is re-resolved a hair to the other side (a re-read, a prior tweak, an editor nudge)
+            // does not flip the won-over switch or the ceiling cut back and forth (today Aela's
+            // read sits at 0.462 and Serana's at 0.445). The first reading is the nearest band.
+            'openness_hysteresis' => 0.02,
             // Plan §4: respect rate = (competence + status) / 2 on this NPC's pillar scores
             // (memory: competence -> respect). While on, the eval respect signal's GAINS are
             // multiplied by respect_mult = clamp(rate / respect_mult_neutral, respect_mult_range):
@@ -377,16 +411,32 @@ class RelDynAttraction
             // bond_core_aff; intimacy needs peak core affinity intimacy_peak_core_aff and the
             // intimacy_min_tier maintained (memory: peak 100 AND Fond+).
             // passion false: the preference type is a non-negotiable hard zero on passion
-            // (decisions §13: no spark, no gain), whatever the pillars say.
+            // (decisions §13: no spark, no gain), whatever the pillars say. passion 'emotional'
+            // (asexual, decisions §15): passion is not zero, it grows only through the emotional
+            // channels (emotional_passion); the visceral pillars count as met (ruling §16 #9),
+            // the sociological ones apply; intimacy false keeps the physical paths and Sharmat's
+            // consent closed.
             'preferences' => [
                 'monogamous'     => ['romance_max' => 2, 'intimacy' => true],
                 'polyamorous'    => ['romance_max' => 2, 'intimacy' => true],
                 'uncommitted'    => ['romance_max' => 1, 'intimacy' => true],
                 'not_interested' => ['romance_max' => 0, 'intimacy' => false, 'passion' => false],
                 'aromantic'      => ['romance_max' => 0, 'intimacy' => false, 'passion' => false],
-                'asexual'        => ['romance_max' => 2, 'intimacy' => false, 'passion' => false],
+                'asexual'        => ['romance_max' => 2, 'intimacy' => false, 'passion' => 'emotional'],
                 'demisexual'     => ['romance_max' => 2, 'intimacy' => true, 'bond_core_aff' => 60,
                                      'intimacy_peak_core_aff' => 100, 'intimacy_min_tier' => 'close_friend'],
+            ],
+            // Decisions §15, an asexual NPC's passion (preference passion 'emotional'): a passion
+            // gain counts only when it comes through an emotional channel, eval tags (the shared
+            // contract's): quality time, words (praise), reassurance, confiding and non-sexual
+            // touch. A gain tagged with a physical tag, or with no tag at all (combat, gifts,
+            // reunion, conflict repair, the hoover, a place's floor), adds nothing. The local
+            // classifier's love languages map to tags by legacy_love_language_tag; its physical
+            // touch is left out (it cannot tell a hug from a scene request).
+            'emotional_passion' => [
+                'tags' => ['quality_time', 'praise', 'reassurance', 'confiding', 'touch'],
+                'physical_tags' => ['intimacy'],
+                'legacy_love_language_tag' => [RelationshipDynamics::LL_TIME => 'quality_time', RelationshipDynamics::LL_WORDS => 'praise'],
             ],
             // Tier advancement after a lift: significant interactions needed =
             //   round(base_by_gate x openness_pace x attachment_pace x maturity_pace [x tolerated_pace_mult])
@@ -407,13 +457,12 @@ class RelDynAttraction
             // status_share, beauty_keywords, floors (pillar => pillar points 0..100).
             'npc_overrides' => [
                 // Memory (attraction design): "Aela is not high openness ... medium to medium-low"
-                // MDD 2.3: "Aela: only Companions rank". Floors: Ken (decisions §13) "to use Aela
-                // it'd be a substantial uphill; let's say her floor is high 60s or so in
-                // martial" -> her strength (martial, read through her lens) floor 68; her
-                // other pillars keep the default floor
+                // MDD 2.3: "Aela: only Companions rank". Her floor (Ken, decisions §13: "high 60s
+                // or so in martial") falls out of her traits now (config 'standards', decisions
+                // §15: 67.6 from her read); the hand-set 68 is gone.
                 // Ruling §16 #8: under the read assignment her openness comes from her traits
                 // (openness_from_traits); 'medium' stays for the label assignment (phase 1 legacy).
-                'aela the huntress' => ['openness' => 'medium', 'openness_from_traits' => true, 'status_share' => 1.0, 'floors' => ['strength' => 68.0]],
+                'aela the huntress' => ['openness' => 'medium', 'openness_from_traits' => true, 'status_share' => 1.0],
                 // Ken (rulings §10): "Ashe is less about the sex and more about the connection":
                 // commitment first, whatever class core registered her with
                 'ashe' => ['gate' => 'bond'],
@@ -475,7 +524,8 @@ class RelDynAttraction
      *   archetype profile (from _profile_autogen.archetype) -> rigidity, gate
      *   traits -> pillar weights
      *   signed facet preferences -> the strength / competence lens over player archetypes
-     *   temperament -> openness band (MDD 1.3)
+     *   temperament -> openness band (MDD 1.3; read at the NPC's trait vector, with hysteresis)
+     *   traits + maturity baseline -> the standards floor of every pillar (decisions §15)
      *   the NPC's core factions -> status markers (status_markers), archetype -> beauty keywords
      * Overrides, lowest to highest: named preset (config npc_overrides), the NPC editor's PR 11
      * attraction_profile (pillar_rigidity, intimacy_gate, gender_pref, beauty_keywords,
@@ -568,28 +618,63 @@ class RelDynAttraction
             }
         }
 
-        // Openness band
+        // Openness band, and its value o (0..1, MDD 1.4; the standards floor's selectiveness)
         $temperament = RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $levels = (array) $cfg['openness_levels'];
         // A5 through the trait engine: the preset's band (MDD 1.3), read at the NPC's vector
         $vector = RelDynTraits::vectorFor($temperament, $dynamics);
-        $band = $vector !== null
-            ? RelDynTraits::opennessAt($vector, (array) $cfg['temperament_openness'], (array) $cfg['openness_levels'])['band']
-            : (((array) $cfg['temperament_openness'])[$temperament ?? ''] ?? 'medium');
+        $oValue = null;
+        if ($vector !== null) {
+            $oa = RelDynTraits::opennessAt($vector, (array) $cfg['temperament_openness'], $levels);
+            [$band, $oValue] = [$oa['band'], $oa['o']];
+        } else {
+            $band = ((array) $cfg['temperament_openness'])[$temperament ?? ''] ?? 'medium';
+        }
         $sources['openness'] = $temperament !== null ? "temperament:{$temperament}" : 'fallback';
+        $fromTraits = $vector !== null;
         // A preset marked openness_from_traits keeps its band for the label assignment only; under
         // the read assignment the NPC's own vector decides (decisions §16 #8, Aela)
         $presetOpenness = (!empty($preset['openness_from_traits']) && RelDynTraits::readVector($dynamics) !== null) ? null : ($preset['openness'] ?? null);
         foreach ([['preset', $presetOpenness], ['editor', $dynamics['openness'] ?? null], ['override', $over['openness'] ?? null]] as [$src, $o]) {
             $b = self::opennessBand($o, $cfg);
-            if ($b !== null) { $band = $b; $sources['openness'] = $src; }
+            if ($b !== null) {
+                $band = $b;
+                $oValue = is_numeric($o) ? max(0.0, min(1.0, floatval($o))) : null;
+                $sources['openness'] = $src;
+                $fromTraits = false;
+            }
         }
         if (!in_array($band, self::OPENNESS_BANDS, true)) $band = 'medium';
+        if (!is_numeric($oValue)) $oValue = floatval($levels[$band] ?? 0.6);
+        // Hysteresis (config openness_hysteresis): a band read from the traits holds the band
+        // this NPC already had until its openness is clearly past the boundary
+        if ($fromTraits) {
+            $prior = $dynamics['_attraction_state']['openness_band'] ?? null;
+            $held = self::opennessBandHeld(floatval($oValue), is_string($prior) ? $prior : null, $levels,
+                floatval($cfg['openness_hysteresis'] ?? 0.0));
+            if ($held !== $band) {
+                $band = $held;
+                $sources['openness_held'] = true;
+            }
+        }
 
-        // Passion floors (decisions §13), pillar points 0..100: the default floor on every
-        // pillar, then per pillar the named preset, the editor's pillar_floors, the override
+        // Passion floors (decisions §13), pillar points 0..100: the NPC's standards floor
+        // (decisions §15; the flat curve.floor for an NPC with no trait vector or with
+        // standards off) on every pillar, then per pillar the named preset, the editor's
+        // pillar_floors, the override
         $cc = self::curveConfig($cfg);
-        $floors = array_fill_keys(self::PILLARS, max(1.0, min(100.0, floatval($cc['floor']))));
+        $standards = null;
+        $baseFloor = floatval($cc['floor']);
         $sources['floors'] = 'default';
+        $sc = array_replace(self::defaults()['standards'], (array) ($cfg['standards'] ?? []));
+        if ($vector !== null && !empty($sc['enabled'])) {
+            $M = $dynamics['dimensions']['maturity']['baseline'] ?? ($vector['maturity_start'] ?? null);
+            $standards = self::standardsFloor(['o' => floatval($oValue), 'M' => is_numeric($M) ? floatval($M) : floatval($sc['mat_center']),
+                'C' => floatval($vector['C']), 'Pd' => floatval($vector['Pd'])], $cfg);
+            $baseFloor = $standards['floor'];
+            $sources['floors'] = 'standards';
+        }
+        $floors = array_fill_keys(self::PILLARS, max(1.0, min(100.0, $baseFloor)));
         foreach ([['preset', $preset['floors'] ?? null], ['editor', $editor['pillar_floors'] ?? null], ['override', $over['floors'] ?? null]] as [$src, $table]) {
             if (!is_array($table)) continue;
             foreach (self::PILLARS as $p) {
@@ -642,7 +727,12 @@ class RelDynAttraction
             'lens'       => $lens,
             'lens_share' => $lensShare,
             'openness'   => $band,
+            // the openness value (0..1) and whether the band is the traits' (hysteresis state)
+            'openness_o' => round(floatval($oValue), 4),
+            'openness_from_traits' => $fromTraits,
             'floors'     => $floors,
+            // decisions §15: the standards floor and its terms (standardsFloor), null = flat floor
+            'standards'  => $standards,
             'gender_pref'=> $genderPref,
             'preference' => $pref,
             'status_markers' => $markers,
@@ -704,8 +794,9 @@ class RelDynAttraction
      * An open result (the Matrix does not judge the player) still carries the NPC's own
      * relationship preference: romance types above its romance_max are blocked (demisexual:
      * all of them until core affinity reaches bond_core_aff), intimacy follows the row, and
-     * a passion-free preference (the row's passion false: aromantic, asexual, not interested)
-     * is the non-negotiable hard zero on passion (decisions §13: no spark, no gain).
+     * a passion-free preference (the row's passion false: aromantic, not interested) is the
+     * non-negotiable hard zero on passion (decisions §13: no spark, no gain); an emotional one
+     * (asexual, decisions §15) opens passion to the emotional channels only.
      */
     private static function withPreference(array $r, array $dynamics): array
     {
@@ -732,6 +823,10 @@ class RelDynAttraction
             $r['hard_zero'] = "preference:{$pref}";
             $r['passion_mult'] = 0.0;
             $r['spark_mult'] = 0.0;
+        } elseif (($row['passion'] ?? true) === 'emotional') {
+            // decisions §15: passion through the emotional channels only (gainFactor)
+            $r['passion_channel'] = 'emotional';
+            $r['passion_channels'] = self::emotionalChannels(self::config());
         }
         $r['reason'] .= ", {$pref}";
         return $r;
@@ -800,6 +895,61 @@ class RelDynAttraction
         return $best;
     }
 
+    /**
+     * The openness band with hysteresis (config openness_hysteresis, openness units 0..1): the
+     * nearest band to $o, except that a $prior band next to it holds while $o is at most
+     * $margin past the boundary between the two (for adjacent levels a and b the boundary is
+     * their midpoint, and |o - a| - |o - b| = 2 x (distance past it)). No prior, a prior two
+     * bands away or no margin: the nearest band.
+     */
+    public static function opennessBandHeld(float $o, ?string $prior, array $levels, float $margin): string
+    {
+        $vals = [];
+        foreach ($levels as $b => $lvl) {
+            if (is_numeric($lvl)) $vals[(string) $b] = floatval($lvl);
+        }
+        asort($vals);
+        $near = 'medium';
+        $bestD = INF;
+        foreach ($vals as $b => $lvl) {
+            if (abs($o - $lvl) < $bestD) { $bestD = abs($o - $lvl); $near = $b; }
+        }
+        if ($prior === null || $prior === $near || !isset($vals[$prior]) || $margin <= 0.0) return $near;
+        $order = array_keys($vals);
+        if (abs(array_search($prior, $order, true) - array_search($near, $order, true)) !== 1) return $near;
+        return (abs($o - $vals[$prior]) - abs($o - $vals[$near])) <= 2.0 * $margin + 1e-12 ? $prior : $near;
+    }
+
+    /**
+     * Decisions §15 / design §5.1: the NPC's standards floor in pillar points (config
+     * 'standards'; F0 = curve.floor). $in: 'o' effective openness (0..1), 'M' maturity baseline
+     * (0..100), 'C' confidence and 'Pd' pride (0..1). Pure.
+     *   floor = clamp(F0 + sel_points z_sel + mat_points z_mat + self_points z_self, min, max)
+     *
+     * @return array ['floor' => pillar points, 'z' => ['sel', 'mat', 'self'], 'points' => same keys]
+     */
+    public static function standardsFloor(array $in, ?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        $sc = array_replace(self::defaults()['standards'], (array) ($cfg['standards'] ?? []));
+        $f0 = floatval(self::curveConfig($cfg)['floor']);
+        $z = fn(float $num, $span) => max(-1.0, min(1.0, $num / max(1e-9, floatval($span))));
+        $zs = [
+            'sel'  => $z(floatval($sc['sel_center']) - floatval($in['o'] ?? $sc['sel_center']), $sc['sel_span']),
+            'mat'  => $z(floatval($in['M'] ?? $sc['mat_center']) - floatval($sc['mat_center']), $sc['mat_span']),
+            'self' => $z(max(floatval($in['C'] ?? $sc['self_center']), floatval($in['Pd'] ?? 0.0)) - floatval($sc['self_center']), $sc['self_span']),
+        ];
+        $points = [];
+        $sum = $f0;
+        foreach ($zs as $k => $v) {
+            $points[$k] = round(floatval($sc["{$k}_points"]) * $v, 4);
+            $sum += floatval($sc["{$k}_points"]) * $v;
+        }
+        $lo = floatval($sc['min']);
+        $floor = max($lo, min(max($lo, floatval($sc['max'])), $sum));
+        return ['floor' => round($floor, 4), 'z' => array_map(fn($v) => round($v, 4), $zs), 'points' => $points];
+    }
+
     // =====================================================================
     // EVALUATION (the shared contract: RelationshipDynamics::attractionFor)
     // =====================================================================
@@ -837,7 +987,7 @@ class RelDynAttraction
             'score' => 1.0, 'passes' => true, 'friendzoned' => false, 'pillars' => $pillars,
             'ceiling_tier' => null, 'reason' => $reason,
             'enabled' => false, 'visceral_pass' => true, 'visceral_met' => true, 'sociological_pass' => true, 'gender_pass' => true,
-            'won_over' => false, 'passion_ceiling' => null,
+            'won_over' => false, 'passion_ceiling' => null, 'passion_channel' => null, 'passion_channels' => null,
             'gate' => 'balanced', 'openness' => 'medium', 'preference' => null, 'prebond' => false,
             'tolerated' => false, 'failed' => false, 'passion_mult' => 1.0,
             'spark' => floatval(self::curveConfig()['spark']), 'spark_mult' => 1.0, 'hard_zero' => null,
@@ -931,17 +1081,22 @@ class RelDynAttraction
         }
         $score = $wSum > 0 ? $sSum / $wSum : 1.0;
 
+        $prefRow = $def['preference'] !== null ? (array) (((array) $cfg['preferences'])[$def['preference']] ?? []) : [];
+        // Decisions §15, an asexual NPC (preference passion 'emotional'): passion is emotional,
+        // not zero; the visceral pillars count as met (ruling §16 #9: beauty / strength), the
+        // sociological ones apply, and only the emotional channels move passion (gainFactor)
+        $emotional = ($prefRow['passion'] ?? true) === 'emotional';
         $visceral = $pillars['beauty']['pass'] && $pillars['strength']['pass'];
         $sociological = $pillars['status']['pass'] && $pillars['competence']['pass'];
         $tolerated = false;
         $failed = false;
-        foreach ($pillars as $row) {
+        foreach ($pillars as $p => $row) {
+            if ($emotional && in_array($p, self::VISCERAL, true)) continue;
             $tolerated = $tolerated || $row['tolerated'];
             $failed = $failed || !$row['pass'] || $row['tolerated'];
         }
 
         $genderPass = self::genderPass($npcName, $def['gender_pref'], $profile);
-        $prefRow = $def['preference'] !== null ? (array) (((array) $cfg['preferences'])[$def['preference']] ?? []) : [];
         $romanceMax = intval($prefRow['romance_max'] ?? self::ROMANCE_FULL);
         $coreAff = RelationshipDynamics::getCoreAffinity($dynamics);
         $tierNow = RelationshipDynamics::getCurrentTier($coreAff);
@@ -953,9 +1108,13 @@ class RelDynAttraction
         // ---- The NPC's passion units on their MDD bars (decisions §13): a failed rigid unit is
         // the non-negotiable hard zero; the units' bars are the attraction label's line
         $cc = self::curveConfig($cfg);
-        $pu = self::passionUnits($pillars, $def, $cc, $margin);
+        $unitDef = $emotional
+            ? array_replace($def, ['passion_pillars' => array_values(array_diff((array) ($def['passion_pillars'] ?? self::PILLARS), self::VISCERAL))])
+            : $def;
+        $pu = self::passionUnits($pillars, $unitDef, $cc, $margin);
         // Non-negotiables (decisions §13): orientation, a rigid passion pillar below its bar, a
-        // preference with no romance (aromantic, not interested) or no passion (asexual)
+        // preference with no romance (aromantic, not interested) or no passion at all (the row's
+        // passion false; asexual passion is emotional, decisions §15)
         $hardZero = !$genderPass ? 'orientation' : $pu['hard_zero'];
         if ($hardZero === null && !$romanceCapable) $hardZero = 'preference:' . ($def['preference'] ?? 'none');
         if ($hardZero === null && ($prefRow['passion'] ?? true) === false) $hardZero = "preference:{$def['preference']}";
@@ -973,7 +1132,7 @@ class RelDynAttraction
         // that count as met here: a won-over NPC looks past them; a balanced NPC's bond is its
         // visceral substitute (plan §7 "visceral pass OR bonded tier"), so while the
         // sociological pillars pass, the bond may grow to the bonded tier without them
-        $visceralDepth = $visceral || $wonOver || ($gate === 'balanced' && $sociological);
+        $visceralDepth = $visceral || $wonOver || $emotional || ($gate === 'balanced' && $sociological);
         $skipDepth = ($visceralDepth && !$visceral) ? self::VISCERAL : [];
         $walk = 'acquaintance';
         foreach (array_reverse(self::DEPTH_TIERS) as $tier) {
@@ -1039,8 +1198,9 @@ class RelDynAttraction
         // Or won over. For someone this NPC can feel romantically about at all; a passion-free
         // preference (asexual) still judges the player, only passion is zero.
         $attracted = $romanceCapable && $pu['hard_zero'] === null && ($pu['bars_met'] || $bondMet || $wonOver);
-        // The visceral pillars as the romance axis reads them (MDD 2.6: crush / romantic)
-        $visceralMet = $visceral || $wonOver || $bondMet;
+        // The visceral pillars as the romance axis reads them (MDD 2.6: crush / romantic); an
+        // asexual NPC's count as met (ruling §16 #9)
+        $visceralMet = $visceral || $wonOver || $bondMet || $emotional;
         // Bond-gated, attracted, the bond not there yet: a slow burn, not a friendzone
         $prebond = $attracted && $gate === 'bond' && !$bonded;
         $passes = $attracted && !$prebond;
@@ -1146,6 +1306,10 @@ class RelDynAttraction
             'won_over'          => $wonOver,
             // MDD 1.4 passion ceiling (passion points; null = none): gains stop there (gainFactor)
             'passion_ceiling'   => $ceiling,
+            // decisions §15: 'emotional' (asexual) = only the emotional channels move passion
+            // (passion_channels: the eval tags that do; gainFactor), null = every channel
+            'passion_channel'   => $emotional ? 'emotional' : null,
+            'passion_channels'  => $emotional ? self::emotionalChannels($cfg) : null,
             // attracted, but below this NPC's floor: the uphill (felt text)
             'below_floor'       => $attracted && $curve['m'] < 1.0,
             // the factors (Jev / logs): the curve and its units, attachment, prebond, bond
@@ -1153,7 +1317,7 @@ class RelDynAttraction
             'passion'           => ['curve' => round($curve['m'], 4), 'units' => $curve['units'],
                                     'attachment' => round($attachmentMult, 6), 'bond' => $bondFactor,
                                     'relief' => round($relief, 4), 'charm' => round($charm, 4),
-                                    'pillars' => $def['passion_pillars'] ?? self::PILLARS],
+                                    'pillars' => $unitDef['passion_pillars'] ?? self::PILLARS],
             'respect_rate'      => self::respectRate($pillars),
             'respect_mult'      => self::respectMult(self::respectRate($pillars), $cfg),
             'allowed_tier'      => $depthAllowed,
@@ -1339,9 +1503,12 @@ class RelDynAttraction
      * bounds the result: a gain never lifts passion past it (at or above it: 0); passion
      * already above it is not cut. Every passion writer uses this one factor
      * (RelationshipDynamics::attractionPassionFactor).
+     * Decisions §15: a summary with passion_channels (an asexual NPC) opens only a gain that
+     * comes through one of them: $tags, the gain's eval tags (channelOpen); otherwise 0.
      */
-    public static function gainFactor(array $summary, float $passion, float $raw): float
+    public static function gainFactor(array $summary, float $passion, float $raw, ?array $tags = null): float
     {
+        if (!self::channelOpen($summary, $tags)) return 0.0;
         $factor = self::sparkSplitFactor($summary, $passion, $raw);
         $ceiling = $summary['passion_ceiling'] ?? null;
         if ($factor > 0.0 && $raw > 0.0 && is_numeric($ceiling)) {
@@ -1349,6 +1516,44 @@ class RelDynAttraction
             $factor = $room <= 0.0 ? 0.0 : min($factor, $room / $raw);
         }
         return $factor;
+    }
+
+    /**
+     * Decisions §15: does a passion gain carrying eval tags $tags (null / [] = a gain with no
+     * channel: combat, a gift, a reunion, repair, the hoover, a place) move this NPC's passion?
+     * Always, unless the summary restricts passion to channels (passion_channels, an asexual
+     * NPC): then only a gain with one of those tags and no physical tag
+     * (emotional_passion.physical_tags).
+     */
+    public static function channelOpen(array $summary, ?array $tags): bool
+    {
+        $channels = $summary['passion_channels'] ?? null;
+        if (!is_array($channels)) return true;
+        $tags = array_map(fn($t) => strtolower(trim((string) $t)), (array) $tags);
+        $ep = array_replace(self::defaults()['emotional_passion'], (array) (self::config()['emotional_passion'] ?? []));
+        if (array_intersect($tags, array_map('strval', (array) $ep['physical_tags'])) !== []) return false;
+        return array_intersect($tags, array_map('strval', $channels)) !== [];
+    }
+
+    /** The emotional channels (eval tags) an asexual NPC's passion grows through (config emotional_passion.tags). */
+    public static function emotionalChannels(?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        $ep = array_replace(self::defaults()['emotional_passion'], (array) ($cfg['emotional_passion'] ?? []));
+        return array_values(array_map(fn($t) => strtolower(trim((string) $t)), (array) $ep['tags']));
+    }
+
+    /**
+     * The eval tag a local-classifier love language stands for, as a passion channel
+     * (emotional_passion.legacy_love_language_tag); [] when it names none (physical touch,
+     * gifts, service: no emotional channel the classifier can vouch for).
+     */
+    public static function loveLanguageChannelTags(?string $loveLanguage): array
+    {
+        if ($loveLanguage === null) return [];
+        $ep = array_replace(self::defaults()['emotional_passion'], (array) (self::config()['emotional_passion'] ?? []));
+        $tag = ((array) $ep['legacy_love_language_tag'])[$loveLanguage] ?? null;
+        return is_string($tag) && $tag !== '' ? [$tag] : [];
     }
 
     /** gainFactor before the ceiling: the spark split (see gainFactor). */
@@ -1625,6 +1830,15 @@ class RelDynAttraction
             RelationshipDynamics::log("[ATTRACTION] {$npcName}: " . (!empty($r['won_over']) ? 'won over' : 'no longer won over') . " ({$r['reason']})");
         }
         $state['won_over'] = !empty($r['won_over']);
+        // The band read from the traits, held against flips at its boundary (opennessBandHeld)
+        if (!empty($def['openness_from_traits'])) {
+            if (($state['openness_band'] ?? null) !== $def['openness']) {
+                RelationshipDynamics::log("[ATTRACTION] {$npcName}: openness band {$def['openness']} (o " . round($def['openness_o'], 3) . ')');
+            }
+            $state['openness_band'] = $def['openness'];
+        } else {
+            unset($state['openness_band']);
+        }
         $dynamics['_attraction_state'] = $state;
         $r = self::evaluate($npcName, $dynamics, $profile, $def);
         self::storeSummary($npcName, $dynamics, $r);
@@ -1642,6 +1856,7 @@ class RelDynAttraction
             'passion_mult' => $r['passion_mult'], 'spark' => $r['spark'], 'spark_mult' => $r['spark_mult'],
             'hard_zero' => $r['hard_zero'], 'attracted' => $r['attracted'], 'below_floor' => $r['below_floor'],
             'won_over' => $r['won_over'] ?? false, 'passion_ceiling' => $r['passion_ceiling'] ?? null,
+            'passion_channel' => $r['passion_channel'] ?? null, 'passion_channels' => $r['passion_channels'] ?? null,
             'visceral_met' => $r['visceral_met'] ?? true,
             'passion' => $r['passion'] ?? null, 'respect_mult' => $r['respect_mult'] ?? 1.0,
             'respect_rate' => $r['respect_rate'] ?? null,

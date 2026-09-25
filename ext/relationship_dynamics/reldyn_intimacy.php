@@ -23,7 +23,8 @@
  * need reaches axis_min is an axis there, weighted by its need; the physical one only while
  * physical intimacy is in play with the player (a romance core type, or passion at
  * physical_in_play.min_passion, held down to release_passion, while the attraction reads as
- * attracted; never while friendzoned).
+ * attracted; never while friendzoned, and never for an asexual NPC, whose passion is
+ * emotional: decisions §15).
  * Deliveries are the fulfillment tag rows (intimacy / touch feed physical; quality time,
  * reassurance, praise, touch, confiding feed emotional) and the intimacy the plugin reports
  * (recordRequest: a Sharmat / OStim scene with the player covers physical in full, a VR touch
@@ -396,7 +397,9 @@ class RelDynIntimacy
     /**
      * The NPC's need per axis, 'physical' / 'emotional' => 0..1: the stored derivation
      * (ensureNeed), else derived now from state alone (no race); the named preset stored with
-     * it, then $dynamics['intimacy_need_overrides'], replace an axis. Pure.
+     * it, then $dynamics['intimacy_need_overrides'], replace an axis; a relationship
+     * preference whose multiplier closes an axis (preference_mult 0: asexual physical) closes
+     * it over both. Pure.
      */
     public static function need(array $dynamics, ?array $cfg = null): array
     {
@@ -412,6 +415,12 @@ class RelDynIntimacy
             foreach (self::KEYS as $k => $_) {
                 if (is_numeric($over[$k] ?? null)) $need[$k] = max(0.0, min(1.0, floatval($over[$k])));
             }
+        }
+        // A preference multiplier of 0 closes the axis over any preset or override (decisions
+        // §15: an asexual NPC's physical need is forced to 0, Aela's named 0.78 included)
+        $pref = strtolower(trim((string) ($dynamics['relationship_preference'] ?? '')));
+        foreach ((array) (((array) $cfg['preference_mult'])[$pref] ?? []) as $k => $mult) {
+            if (isset($need[$k]) && is_numeric($mult) && floatval($mult) <= 0.0) $need[$k] = 0.0;
         }
         return $need;
     }
@@ -441,6 +450,8 @@ class RelDynIntimacy
     {
         $cfg = $cfg ?? self::config();
         if (!empty($dynamics['_attraction']['friendzoned'])) return false;
+        // decisions §15: an asexual NPC's passion is emotional; the physical paths stay closed
+        if (($dynamics['_attraction']['passion_channel'] ?? null) === 'emotional') return false;
         $p = (array) $cfg['physical_in_play'];
         $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         if ($core !== '' && in_array($core, array_map('strtolower', (array) ($p['core_types'] ?? [])), true)) return true;

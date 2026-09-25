@@ -180,7 +180,10 @@ final class RelDynRomance
         } elseif ($positive) {
             $confession = in_array((string) $cfg['confession_tag'], $tags, true)
                 && $sig >= floatval($cfg['confession_min_significance']);
+            // decisions §15: an asexual NPC's moments come through the emotional channels
+            // (a physical moment is none; RelDynAttraction::channelOpen)
             $tagged = array_intersect((array) $cfg['moment_tags'], $tags) !== []
+                && RelDynAttraction::channelOpen((array) ($dynamics['_attraction'] ?? []), $tags)
                 && $sig >= floatval($cfg['moment_min_significance'])
                 && floatval($item['signals']['passion'] ?? 0) >= floatval($cfg['moment_min_passion_signal']);
             if ($confession) {
@@ -488,9 +491,12 @@ final class RelDynRomance
         $type = strtolower(trim((string) ($coreType ?? ($dynamics['_core_rel_type'] ?? 'neutral'))));
         $type = $type === '' ? 'neutral' : $type;
         // This request's Attraction Matrix summary (RelDynAttraction::update, prerequest)
-        $sum = is_array($dynamics['_attraction'] ?? null) && !empty($dynamics['_attraction']['enabled']) ? $dynamics['_attraction'] : null;
+        $att = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
+        $sum = !empty($att['enabled']) ? $att : null;
         $friendzoned = !empty($dynamics['_attraction_friendzoned']);
-        $intimacy = $sum === null ? null : !empty($sum['intimacy_allowed']);
+        // The NPC's own preference holds whether or not the Matrix judges the player
+        // (withPreference): an asexual NPC's consent stays closed with the Matrix off too
+        $intimacy = ($sum === null && ($att['preference'] ?? null) === null) ? null : !empty($att['intimacy_allowed']);
         $states = self::blockingStates($dynamics);
         $reasons = $states;
         if ($friendzoned) $reasons[] = 'friendzoned';
@@ -508,6 +514,8 @@ final class RelDynRomance
             'rung' => self::rung($type),
             'romantic' => self::rung($type) > 0,
             'passion_band' => RelationshipDynamics::getPassionBand(RelationshipDynamics::getPassion($dynamics)),
+            // decisions §15: 'emotional' = the passion is not sexual (asexual; null = unrestricted)
+            'passion_channel' => $att['passion_channel'] ?? null,
             'attraction_pass' => $sum === null ? null : !empty($sum['passes']),
             'friendzoned' => $friendzoned,
             'intimacy_allowed' => $intimacy,

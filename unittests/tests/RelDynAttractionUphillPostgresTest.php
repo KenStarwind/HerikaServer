@@ -168,7 +168,8 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         Logger::setCustomLog(sys_get_temp_dir() . '/reldyn_attraction_uphill_pg_test.log');
 
         pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2)',
-            [RelationshipDynamics::CONFIG_ROW_ID, json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true]))]);
+            [RelationshipDynamics::CONFIG_ROW_ID, json_encode(array_merge(RelationshipDynamics::defaultConfig(),
+                ['log_enabled' => true, 'attraction' => self::labelPathAttraction()]))]);
         RelationshipDynamics::clearConfigCache();
 
         // Aela: the Companions' huntress, as the plugin registers her (no RelDyn state).
@@ -376,10 +377,27 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
             ]);
     }
 
-    /** Aela's config: the defaults with $edit applied to the attraction table (the settings page's store). */
-    private function attractionConfig(callable $edit, array $top = []): void
+    /**
+     * The attraction table these label-path mechanics run on: the shipped defaults plus Aela's
+     * martial floor of 68 as a named preset (config npc_overrides floors, the per-NPC key that
+     * still wins over the standards floor). Decisions §15 retired the hand-set 68 from the
+     * defaults: her floor falls out of her traits (67.6 from her read, asserted in
+     * testRulingEightUnderTheReadAssignment on the shipped config); on this label path she is
+     * the Independent preset with her named 'medium' openness, whose standards floor is lower,
+     * so the hill these tests measure is pinned where her read puts it. Her other pillars keep
+     * her standards floor.
+     */
+    private static function labelPathAttraction(): array
     {
         $att = RelDynAttraction::defaults();
+        $att['npc_overrides']['aela the huntress']['floors'] = ['strength' => 68.0];
+        return $att;
+    }
+
+    /** Aela's config: the label-path table with $edit applied (the settings page's store). */
+    private function attractionConfig(callable $edit, array $top = []): void
+    {
+        $att = self::labelPathAttraction();
         $edit($att);
         pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID,
             json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true, 'attraction' => $att], $top))]);
@@ -425,8 +443,8 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertSame(['strength'], $unit['pillars']);
         $this->assertSame(68.0, $unit['floor']);
         $def = RelDynAttraction::definition(self::AELA, $d);
-        $this->assertSame('preset', $def['sources']['floors.strength'], 'Ken: her floor is high 60s in martial');
-        $this->assertSame(45.0, $def['floors']['beauty'], "Aela's other pillars keep the default floor (Ken's generic 45)");
+        $this->assertSame('preset', $def['sources']['floors.strength'], 'Ken: her floor is high 60s in martial (pinned: labelPathAttraction)');
+        $this->assertSame($def['standards']['floor'], $def['floors']['beauty'], "Aela's other pillars keep her standards floor");
         $this->assertLessThan(20.0, $unit['score'], 'a bard is far down her martial hill: ' . json_encode($unit));
         // Ken: "you'd be heavily penalized for being outside her attraction zone": ~0.1..0.12
         $this->assertGreaterThanOrEqual(0.1, $a['passion']['curve']);
@@ -579,6 +597,10 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
     private function aelaUnderTheReadAssignment(): void
     {
         RelDynTraits::$assignmentOverride = 'read';
+        // the shipped config: no pinned floor, hers falls out of her read (decisions §15)
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID,
+            json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true]))]);
+        RelationshipDynamics::clearConfigCache();
         RelDynTraitRead::reset();
         RelDynTraitRead::$launcher = function (): void {};
         RelDynTraitRead::$llm = function () { $this->fail('no LLM call: her read is the seed'); };
@@ -679,6 +701,13 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertSame('read', $src['assignment']);
         $this->assertSame('read', $src['auto_source']);
         $this->assertSame('medium', RelDynAttraction::definition(self::AELA, $plain['d'])['openness'], 'openness from her traits: the won-over switch is on');
+        // her floor falls out of her traits (decisions §15, design §6.2: 66-70), on every pillar
+        $def = RelDynAttraction::definition(self::AELA, $plain['d']);
+        $this->assertSame('standards', $def['sources']['floors']);
+        $this->assertArrayNotHasKey('floors.strength', $def['sources'], 'no hand-set floor');
+        $this->assertGreaterThanOrEqual(66.0, $def['floors']['strength']);
+        $this->assertLessThanOrEqual(70.0, $def['floors']['strength']);
+        $this->assertEqualsWithDelta($def['floors']['strength'], $charmFit['a']['passion']['units']['flexible:visceral']['floor'], 0.01, 'the unit reads it');
         $this->assertGreaterThan(0.8, RelDynTraits::value(RelDynTraits::readVector($plain['d']), 'y_passion_down'));
 
         // a plain bard never gets there
@@ -696,7 +725,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertTrue($charmFit['a']['attracted'], $charmFit['a']['reason']);
         $this->assertSame('drawn', $charmFit['a']['outcome'], $charmFit['a']['reason']);
         $this->assertTrue($charmFit['a']['below_floor']);
-        $this->assertLessThan(45.0, $u['score'], 'a partial fit: far below her martial floor of 68');
+        $this->assertLessThan(45.0, $u['score'], 'a partial fit: far below her martial floor in the high 60s');
         $first40 = array_key_first(array_filter($charmFit['passion'], fn($p) => $p >= 40.0));
         $this->assertNotNull($first40, 'strong charm plus partial fit gets there: ' . $why);
         $this->assertGreaterThan(20, $first40, 'steep: weeks of courting: ' . $why);
@@ -796,11 +825,12 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
                 // bond-gated: every pillar moves passion (MDD 8.2 A); status rigid, no Companions standing
                 $d['attraction_overrides'] = ['gate' => 'bond'];
             },
-            'preference:asexual' => function (array &$d): void { $d['relationship_preference'] = 'asexual'; },
+            // (asexual is no longer one: its passion is emotional, decisions §15, below)
+            'preference:aromantic' => function (array &$d): void { $d['relationship_preference'] = 'aromantic'; },
         ];
         foreach ($cases as $expect => $setup) {
             if ($expect === 'rigid:status') $this->corePlayer('The Companions Quests Completed', '0');
-            if ($expect === 'preference:asexual') {
+            if ($expect === 'preference:aromantic') {
                 $this->attractionConfig(function (array &$att): void {}, ['type_filter_enabled' => true]);
             }
             $d = $this->dynamics();
@@ -820,6 +850,32 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
             }
             $this->assertStringContainsString("hard zero: {$expect}", $this->errorLogText(), 'the passion log names why');
         }
+
+        // Asexual (decisions §15): passion is emotional, not zero. Every path that is no emotional
+        // channel adds exactly nothing (a reunion, a rescue, the untagged dimension engine, the
+        // hoover, sex), the spark included; the emotional channels move it like anyone's.
+        $d = $this->dynamics();
+        $d['relationship_preference'] = 'asexual';
+        $a = $this->attractionNow($d);
+        $this->assertNull($a['hard_zero'], $a['reason']);
+        $this->assertSame('emotional', $a['passion_channel']);
+        $this->assertGreaterThan(0.0, $a['spark_mult']);
+        foreach ([0.0, 30.0] as $from) {
+            RelationshipDynamics::setPassion($d, $from);
+            $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 15.0, 'reunion'), "asexual from {$from}");
+            foreach ([['rescue'], ['intimacy'], ['touch', 'intimacy']] as $tags) {
+                $line = RelationshipDynamics::applyEvalSignal(self::AELA, $d, 'passion', 20.0, $tags, 0.9);
+                $this->assertSame(0.0, $line['actual'], "asexual from {$from}: {$line['line']}");
+                $this->assertStringContainsString('emotional passion only', $line['line']);
+            }
+            $this->assertSame(0.0, RelationshipDynamics::applyDelta('passion', $d, 5.0, 'Guarded'), "asexual from {$from}: untagged");
+            RelationshipDynamics::executeHoover($d, self::AELA, 'Guarded');
+            $this->assertSame($from, RelationshipDynamics::getPassion($d), "asexual from {$from}: nothing from the closed paths");
+            $line = RelationshipDynamics::applyEvalSignal(self::AELA, $d, 'passion', 8.0, ['quality_time'], 0.9);
+            $this->assertGreaterThan(0.0, $line['actual'], "asexual from {$from}: quality time moves her ({$line['line']})");
+            $this->assertGreaterThan(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 5.0, 'love_match', ['praise']), "asexual from {$from}: words");
+        }
+        $this->assertStringContainsString('channel closed: emotional passion only', $this->errorLogText(), 'the passion log names why');
 
         // A rigid pillar is a gate on its bar, not a hill (Ken: rigid, non-negotiable pillars
         // stay a hard zero; memory "Rigid: must pass. Non-negotiable"): one Companions quest is
@@ -1064,21 +1120,26 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         RelationshipDynamics::setPassion($d, 0.0);
         $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 10.0, 'reunion'), 'no spark either');
 
-        // One of her words: the bar is passed, the gate is open and met (55 points, floor 45: x1.10)
+        // One of her words: the bar is passed, the gate is open and met (55 points: a passed
+        // rigid pillar is met, x1.0 below her floor, the surplus above it)
         $this->corePlayer('appearance', 'A rugged man with ink-stained fingers.');
         $a = $this->attractionNow($d);
         $why = $a['reason'] . ' ' . json_encode($a['passion']['units']);
         $this->assertTrue($a['pillars']['beauty']['pass'], $why);
         $this->assertNull($a['hard_zero'], $why);
         $this->assertTrue($a['passion']['units']['beauty']['met']);
-        $this->assertEqualsWithDelta(1.10, $a['passion']['units']['beauty']['m'], 1e-4, $why);
+        $beautyFloor = RelDynAttraction::definition(self::AELA, $d)['floors']['beauty'];
+        $this->assertEqualsWithDelta(max(1.0, RelDynAttraction::pillarMult(55.0, $beautyFloor)), $a['passion']['units']['beauty']['m'], 1e-4, $why);
+        // at Ken's generic 45 that is x1.10 (the editor's per-pillar floor)
+        $d['attraction_overrides']['floors'] = ['beauty' => 45.0];
+        $this->assertEqualsWithDelta(1.10, $this->attractionNow($d)['passion']['units']['beauty']['m'], 1e-4, $why);
         $this->assertSame('drawn', $a['outcome'], $why);
         $this->assertNoDbFailures();
     }
 
     /**
-     * Each pillar has its own floor: Ken's 68 is Aela's martial floor only; beauty keeps the
-     * default (45), and a rigid beauty that passes its bar is met whatever its floor. A warrior
+     * Each pillar has its own floor: the pinned 68 is Aela's martial floor only; beauty keeps
+     * her standards floor, and a rigid beauty that passes its bar is met whatever its floor. A warrior
      * well past her martial floor reads as drawn whether or not an appearance text exists
      * (review: with every pillar on 68, one keyword hit, 55, friendzoned him).
      */
@@ -1089,7 +1150,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $d = $this->dynamics();
         $def = RelDynAttraction::definition(self::AELA, $d);
         $this->assertSame(68.0, $def['floors']['strength']);
-        foreach (['beauty', 'status', 'competence'] as $p) $this->assertSame(45.0, $def['floors'][$p], $p);
+        foreach (['beauty', 'status', 'competence'] as $p) $this->assertSame($def['standards']['floor'], $def['floors'][$p], $p);
         $outcomes = [];
         foreach (['none' => null, 'no words' => 'A tall man with dark hair and a calm voice.',
                      'one word' => 'A rugged man with dark hair.', 'two words' => 'A rugged, scarred man.'] as $label => $text) {
@@ -1246,8 +1307,10 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
 
     /**
      * A hard zero takes passion, not the friendship (review: MDD 1.1 makes passion the affinity
-     * speed, so an asexual or orientation-mismatched NPC idled every affinity gain at x0.3
-     * forever). The drive reads the spark instead (what anyone else gets freely).
+     * speed, so an aromantic or orientation-mismatched NPC idled every affinity gain at x0.3
+     * forever). The drive reads the spark instead (what anyone else gets freely). An asexual
+     * NPC's passion is emotional (decisions §15: "their affinity growth is not slowed"): her
+     * drive reads at least the spark too, and her own passion above it.
      */
     public function testAHardZeroDoesNotIdleTheFriendship(): void
     {
@@ -1255,14 +1318,23 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->turn('Good hunting today.');
         $this->attractionConfig(function (array &$att): void {}, ['type_filter_enabled' => true]);
         $d = $this->dynamics();
-        $d['relationship_preference'] = 'asexual';
+        $d['relationship_preference'] = 'aromantic';
         RelationshipDynamics::setPassion($d, 0.0);
         $a = $this->attractionNow($d);
-        $this->assertSame('preference:asexual', $a['hard_zero'], $a['reason']);
-        $this->assertTrue($a['attracted'], 'asexual (romance_max 2) still judges the player; only passion is zero');
+        $this->assertSame('preference:aromantic', $a['hard_zero'], $a['reason']);
         $drive = RelationshipDynamics::affinityModifiers($d, 5.0, ['quality_time'])['rows']['passion_drives_gains'] ?? null;
         $this->assertEqualsWithDelta(0.3 + 0.017 * 20.0, $drive, 1e-9, 'the drive at the spark, not idling at x0.3');
         $this->assertEqualsWithDelta(0.3 + 1.7 * 0.2, RelationshipDynamics::getAffinityGainMultiplier($d), 1e-9);
+        $d['relationship_preference'] = 'asexual';
+        $a = $this->attractionNow($d);
+        $this->assertNull($a['hard_zero'], $a['reason']);
+        $this->assertTrue($a['attracted'], 'asexual (romance_max 2) still judges the player; her passion is emotional');
+        $this->assertEqualsWithDelta(0.3 + 0.017 * 20.0, RelationshipDynamics::affinityModifiers($d, 5.0, ['quality_time'])['rows']['passion_drives_gains'], 1e-9,
+            'asexual at passion 0: the drive at the spark');
+        RelationshipDynamics::setPassion($d, 50.0);
+        $this->assertEqualsWithDelta(0.3 + 0.017 * 50.0, RelationshipDynamics::affinityModifiers($d, 5.0, ['quality_time'])['rows']['passion_drives_gains'], 1e-9,
+            'asexual at passion 50: her own emotional passion drives it');
+        RelationshipDynamics::setPassion($d, 0.0);
         // The same NPC with no hard zero and no passion: MDD 1.1's idle x0.3 as written
         unset($d['relationship_preference']);
         $open = $this->attractionNow($d);
