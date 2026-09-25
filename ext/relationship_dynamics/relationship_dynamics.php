@@ -4036,8 +4036,10 @@ class RelationshipDynamics
         $w = $clamp01(floatval($cfg['codependence_attachment_weight']));
         // A = the codependence_attachment corners read at the NPC's axes (attachmentBlend)
         $a = self::attachmentBlend($dynamics, (array) $cfg['codependence_attachment'], 0.5);
-        // A20 from possessiveness (phase 3) and A21 (0.5 x egocentric(Pd), Rule R), through the trait engine
-        $vector = RelDynTraits::vectorFor($temperament, $dynamics);
+        // A20 from possessiveness (phase 3) and A21 (0.5 x egocentric(Pd), Rule R), through the trait engine.
+        // T reads the NPC's own vector (or its own label's preset point), never the Stoic stand-in
+        // for a missing temperament: no vector keeps codependence_temperament_default (design §3.6)
+        $vector = RelDynTraits::vectorFor($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null, $dynamics);
         $t = $vector !== null
             ? self::codependenceFromPossessiveness(floatval($vector['Po']), (array) $cfg['codependence_possessiveness'])
             : floatval($cfg['codependence_temperament_default']);
@@ -6498,8 +6500,8 @@ class RelationshipDynamics
         // --- Trust: slow gain, fast loss (Y_up=0.7, Y_down=1.5 base) ---
         'trust' => [
             'Romantic'    => ['Y_up' => 0.8,  'Y_down' => 1.3],
-            // Y_up: traits phase 3 drops the anxiety bump (MDD 1.5; the guard model gives 0.84):
-            // attachment anxiety carries it (design §2.2, counted twice)
+            // Y_up: traits phase 3 moves the anxiety bump (MDD 1.5; the guard model gives 0.84) to
+            // the attachment (trust_gain_mult, anxious corner 1.8; design §2.2, counted twice)
             'Anxious'     => ['Y_up' => 0.84, 'Y_down' => 1.5],   // Volatile -- cross-signal with maturity
             'Playful'     => ['Y_up' => 0.8,  'Y_down' => 1.0],
             'Humble'      => ['Y_up' => 0.9,  'Y_down' => 1.2],
@@ -7051,6 +7053,10 @@ class RelationshipDynamics
         // Resentment buildup amplification: blended across the style corners by the axes
         if ($dimensionId === 'resentment' && $rawDelta > 0) {
             $modifiedDelta *= floatval(self::getAttachmentModifier($dynamics, 'resentment_gain_mult') ?? 1.0);
+        }
+        // Trust gains: the anxiety part of A15h (traits phase 3, design §2.2), blended by the axes
+        if ($dimensionId === 'trust' && $rawDelta > 0) {
+            $modifiedDelta *= floatval(self::getAttachmentModifier($dynamics, 'trust_gain_mult') ?? 1.0);
         }
 
         // Maturity floor: the fearful region's (region key, not blended)
@@ -10829,14 +10835,14 @@ class RelationshipDynamics
                     'resentment_gain_mult' => 1.0, 'confrontation_threshold' => 50, 'absence_comfort_delta' => 0.0,
                     'affinity_absence_mult' => 1.0, 'jealousy_mult' => 1.0, 'maturity_floor' => null,
                     'conflict_passion_gain' => 0.0, 'suffocation_threshold' => null,
-                    'reunion_mult' => 1.0,
+                    'reunion_mult' => 1.0, 'trust_gain_mult' => 1.0,
                 ],
                 'avoidant' => [
                     'resentment_gain_mult' => 1.0, 'confrontation_threshold' => 70, 'absence_comfort_delta' => 0.5,
                     'affinity_absence_mult' => 0.5,   // decisions 2026-09-23 section 2: Avoidant x0.5
                     'jealousy_mult' => 0.5, 'maturity_floor' => null,
                     'conflict_passion_gain' => 0.0, 'suffocation_threshold' => 60,
-                    'reunion_mult' => 1.0,
+                    'reunion_mult' => 1.0, 'trust_gain_mult' => 1.0,
                 ],
                 'anxious' => [
                     'resentment_gain_mult' => 1.5, 'confrontation_threshold' => 30, 'absence_comfort_delta' => -1.0,
@@ -10845,12 +10851,16 @@ class RelationshipDynamics
                     // traits phase 3: the anxiety part of the MDD 1.3 reunion column (Anxious 1.8 =
                     // model 1.31 x 1.4), moved here from temperament (reunion multiplier, unitless)
                     'reunion_mult' => 1.4,
+                    // traits phase 3: the anxiety part of the MDD 1.5 trust-gain row (A15h; Anxious
+                    // 1.5 = model 0.84 x 1.8), moved here from temperament (trust gain multiplier,
+                    // unitless): an anxious attachment trusts fast
+                    'trust_gain_mult' => 1.8,
                 ],
                 'toxic' => [
                     'resentment_gain_mult' => 1.3, 'confrontation_threshold' => 50, 'absence_comfort_delta' => 0.0,
                     'affinity_absence_mult' => 1.0, 'jealousy_mult' => 1.5, 'maturity_floor' => 30,
                     'conflict_passion_gain' => 5.0, 'suffocation_threshold' => null,
-                    'reunion_mult' => 1.0,
+                    'reunion_mult' => 1.0, 'trust_gain_mult' => 1.0,
                 ],
             ],
             // Keys read from the NPC's region (label), never blended: the fearful protocol.

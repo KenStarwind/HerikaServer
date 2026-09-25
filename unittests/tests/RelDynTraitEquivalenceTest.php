@@ -33,10 +33,11 @@ final class RelDynTraitEquivalenceTest extends TestCase
         'mdd_15_4_edits' => ['*/resistance/maturity', 'Volatile/resistance/*'],
         // Attachment de-duplication (design §2.2): the Anxious anxiety residuals of A3 / A4 / A15h
         // up and A18 absence decay are gone (the attachment carries them: a derived anxiety now
-        // lifts the reunion), A18 is owned by possessiveness, A20 codependence reads possessiveness
+        // lifts the reunion and trust GAINS, positive raws only), A18 is owned by possessiveness,
+        // A20 codependence reads possessiveness (the preset labels; a missing one keeps its default)
         'attachment_dedup' => ['Anxious/reunion_mult', 'Anxious/jealousy_mult', 'Anxious/plasticity/trust/Y_up',
-            'Anxious/apply_delta/trust/*', 'Anxious/physical/injured/injured/trust', '*/e2e/reunion',
-            'Anxious/e2e/jealousy/*', 'Anxious/absence_decay', '*/neglect/*',
+            'Anxious/apply_delta/trust/*', '*/apply_delta/trust/[0-9]*', 'Anxious/physical/injured/injured/trust', '*/e2e/reunion',
+            'Anxious/e2e/jealousy/*', 'Anxious/absence_decay', '[A-Z]*/neglect/*',
             'Anxious/column/reunion_mult', 'Anxious/column/jealousy_mult', 'Anxious/column/y_trust_up', 'Anxious/column/absence_decay'],
         // Bleedout redesign (design §2.5): the fall is fight C Pd (1 - D) - fear L (1 - C) at every
         // preset (the old drain table is retired); no vector keeps -1.5

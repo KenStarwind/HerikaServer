@@ -237,6 +237,20 @@ final class RelDynTraitPhase3Test extends TestCase
             // A4: jealousy counts anxiety once (attachment x2.0), not twice (1.5 x 2.0 = 3.0 before)
             $jeal = fn(string $p, string $style) => RelationshipDynamics::jealousyEventGain(self::reunionReady(self::preset($p, self::style($style))), 1);
             $this->assertEqualsWithDelta(1.39 * 2.0, $jeal('Anxious', 'anxious') / $jeal('Humble', 'secure') * 0.5, 1e-9);
+            // A15h: the trust-gain part moved to the attachment too (anxious corner x1.8: an
+            // anxious attachment trusts fast, MDD 1.5), not dropped: model 0.84 x 1.8 = the MDD 1.5
+            $gain = function (string $p, string $style, float $delta): float {
+                $d = self::preset($p, self::style($style));
+                $d['dimensions']['trust']['x'] = 40.0;
+                return RelationshipDynamics::applyDelta('trust', $d, $delta, $d['inferred_temperament']);
+            };
+            foreach (['Stoic', 'Anxious', 'Romantic'] as $p) {
+                $this->assertEqualsWithDelta(1.8, $gain($p, 'anxious', 4.0) / $gain($p, 'secure', 4.0), 1e-3, "{$p}: any anxious NPC trusts faster");
+                $this->assertEqualsWithDelta(1.0, $gain($p, 'avoidant', 4.0) / $gain($p, 'secure', 4.0), 1e-3, "{$p}: avoidance does not");
+                $this->assertEqualsWithDelta($gain($p, 'anxious', -4.0), $gain($p, 'secure', -4.0), 1e-9, "{$p}: losses untouched");
+            }
+            $this->assertEqualsWithDelta(1.5, 0.84 * RelationshipDynamics::getAttachmentModifier(self::preset('Anxious', self::style('anxious')), 'trust_gain_mult'), 0.02,
+                'an Anxious NPC with the anxious attachment it implies is back at the MDD 1.5');
         } finally {
             if ($saved !== null) $GLOBALS['gameRequest'] = $saved; else unset($GLOBALS['gameRequest']);
         }
@@ -290,11 +304,15 @@ final class RelDynTraitPhase3Test extends TestCase
         $this->assertEqualsWithDelta($c('Romantic', 'secure'), $c('Romantic', 'secure', ['insecure']), 1e-12,
             'insecure no longer adds +0.2 (the anxiety it stands for is the attachment term)');
         $this->assertEqualsWithDelta(0.0, $c('Independent', 'avoidant'), 1e-9);
-        // no temperament: this consumer reads Stoic (design §3.6), whose Po .10 gives T 0
+        // no temperament and no vector: the documented default T (codependence_temperament_default
+        // 0.5), not the Stoic stand-in's Po .10 (that gave T 0 and dropped the bond to 0.3)
         $d = RelationshipDynamics::migrateDimensions(RelationshipDynamics::defaultDynamics());
         $d['inferred_temperament'] = null;
         $d['profile_overrides']['attachment_style'] = 'secure';
-        $this->assertEqualsWithDelta(0.6 * 0.5, RelationshipDynamics::getNeglectProfile($d)['codependence'], 1e-9);
+        $this->assertSame(0.5, RelationshipDynamics::neglectSeverityDefaults()['codependence_temperament_default']);
+        $this->assertEqualsWithDelta(0.6 * 0.5 + 0.4 * 0.5, RelationshipDynamics::getNeglectProfile($d)['codependence'], 1e-9);
+        // a real Stoic (its own label) is the deliberate A20 change: T 0
+        $this->assertEqualsWithDelta(0.6 * 0.5, $c('Stoic', 'secure'), 1e-9);
         // a label with no vector (not a preset): the default T
         $d['inferred_temperament'] = 'Volatile';
         $this->assertEqualsWithDelta(0.6 * 0.5 + 0.4 * 0.5, RelationshipDynamics::getNeglectProfile($d)['codependence'], 1e-9);
