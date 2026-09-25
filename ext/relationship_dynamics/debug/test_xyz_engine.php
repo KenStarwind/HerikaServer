@@ -4297,46 +4297,28 @@ try {
     try { restoreDIConfig($ai6Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AI7: Duty override — normal request returns 1.0 ──
+// ── AI7: Duty override — no hostility, no quest: no override (RelDynQuests, MDD 9) ──
 try {
     $ai7Saved = setDIConfig(['duty_override_enabled' => true]);
-    unset($GLOBALS['gameRequest']);
-    $ai7Factor = RelationshipDynamics::getDutyOverrideFactor();
-    check('AI7: Normal request → duty factor 1.0', $ai7Factor, 1.0, 0.001);
-    echo "      Duty factor (normal): " . round($ai7Factor, 3) . "\n";
+    $ai7Duty = RelDynQuests::dutyState('Ashe', ['dimensions' => []]);
+    check('AI7: Not hostile → no duty override', $ai7Duty, null);
     restoreDIConfig($ai7Saved);
 } catch (Throwable $e) {
     skip('AI7', 'Exception: ' . $e->getMessage());
     try { restoreDIConfig($ai7Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AI8: Duty override — quest request returns dampened ──
-try {
-    $ai8Saved = setDIConfig(['duty_override_enabled' => true]);
-    $GLOBALS['gameRequest'] = ['quest_dialogue', '', '', 'some quest data'];
-    $ai8Factor = RelationshipDynamics::getDutyOverrideFactor();
-    check('AI8: Quest request → duty factor 0.1', $ai8Factor, 0.1, 0.001);
-    echo "      Duty factor (quest): " . round($ai8Factor, 3) . "\n";
-    unset($GLOBALS['gameRequest']);
-    restoreDIConfig($ai8Saved);
-} catch (Throwable $e) {
-    skip('AI8', 'Exception: ' . $e->getMessage());
-    unset($GLOBALS['gameRequest']);
-    try { restoreDIConfig($ai8Saved ?? null); } catch (Throwable $e2) {}
-}
+// ── AI8: Duty override — the explicit game-side flag is covered by RelDynQuestDutyPostgresTest ──
+skip('AI8', 'duty override reads core quest data: RelDynQuestDutyPostgresTest');
 
-// ── AI9: Duty override — disabled returns 1.0 ──
+// ── AI9: Duty override — disabled returns no override ──
 try {
     $ai9Saved = setDIConfig(['duty_override_enabled' => false]);
-    $GLOBALS['gameRequest'] = ['quest_dialogue', '', '', 'some quest data'];
-    $ai9Factor = RelationshipDynamics::getDutyOverrideFactor();
-    check('AI9: Disabled duty override → 1.0 regardless', $ai9Factor, 1.0, 0.001);
-    echo "      Duty factor (disabled + quest): " . round($ai9Factor, 3) . "\n";
-    unset($GLOBALS['gameRequest']);
+    $ai9Duty = RelDynQuests::dutyState('Ashe', ['dimensions' => []]);
+    check('AI9: Disabled duty override → none', $ai9Duty, null);
     restoreDIConfig($ai9Saved);
 } catch (Throwable $e) {
     skip('AI9', 'Exception: ' . $e->getMessage());
-    unset($GLOBALS['gameRequest']);
     try { restoreDIConfig($ai9Saved ?? null); } catch (Throwable $e2) {}
 }
 

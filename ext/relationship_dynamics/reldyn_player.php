@@ -380,6 +380,10 @@ class RelDynPlayer
         $tables = [];
         foreach ((array) $cfg['archetypes'] as $spec) $tables[] = (array) ($spec['deeds'] ?? []);
         foreach ((array) $cfg['pillar_components'] as $table) $tables[] = (array) $table;
+        // the reputation layer's fame / infamy evidence (reldyn_reputation.php) reads tracked stats too
+        if (class_exists('RelDynReputation', false)) {
+            foreach (RelDynReputation::evidenceTables() as $table) $tables[] = (array) $table;
+        }
         foreach ($tables as $table) {
             foreach (array_keys($table) as $key) {
                 if (strpos($key, 'stat:') === 0) $names[] = substr($key, 5);

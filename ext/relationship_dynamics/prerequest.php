@@ -119,6 +119,12 @@ try {
     RelationshipDynamics::logError('combat eventlog rows', $e);
 }
 
+// ========== CORE'S QUEST STAGES (quest-event-hook) ==========
+// comm.php logs '_uquest' stage changes to questlog and ends those requests before any ext hook,
+// so the stages since RelDyn last ran reach the NPCs their journal quest names here, once each
+// (a questlog watermark), before this NPC's dynamics load.
+RelDynQuests::consumeQuestlog();
+
 // Load dynamics
 $dynamics = RelationshipDynamics::getDynamics($npcName);
 
@@ -136,6 +142,12 @@ if ($gametsDelta > 0) {
 
 // Auto-generate love language if missing
 RelationshipDynamics::ensureLoveLanguage($npcName, $dynamics);
+
+// ========== REPUTATION (reputation-layer) ==========
+// What she heard of the player before meeting them (fixed at the first contact the player
+// profile knows anything), held on trust / respect / comfort and fading with every meaningful
+// interaction since.
+RelDynReputation::apply($dynamics, $npcName);
 
 // Load config toggles
 $reldynCfg = RelationshipDynamics::getConfig();
@@ -280,14 +292,10 @@ if ($reunionPassion > 0) {
 // as romantic. relationships_locked (the editor's manual edits) is respected.
 RelDynRomance::guardCorePromotion($npcName, $dynamics, $reldynPrevCoreType);
 
-// ========== DUTY OVERRIDE (PR 12) ==========
-if (!empty($reldynCfg['duty_override_enabled'])) {
-    $dutyFactor = RelationshipDynamics::getDutyOverrideFactor();
-    $GLOBALS['RELDYN_DUTY_FACTOR'] = $dutyFactor;
-    if ($dutyFactor < 1.0) {
-        RelationshipDynamics::log("[RelDyn-PRE] Duty override active: factor=" . round($dutyFactor, 2));
-    }
-}
+// ========== DUTY OVERRIDE (MDD 9) ==========
+// A hostile NPC an active journal quest names: cold, professional compliance (context), her
+// negative eval signals of the exchange dampened (the eval job carries RELDYN_DUTY_FACTOR).
+RelDynQuests::onPrerequest($npcName, $dynamics);
 
 // ========== INTERNAL WEATHER + CREATURE MODIFIERS (PR 13) ==========
 if (!empty($reldynCfg['internal_weather_enabled'])) {
@@ -333,18 +341,14 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
     $autonomyEval = RelationshipDynamics::evaluateAutonomyState($dynamics, $autoTemperament);
     $GLOBALS['RELDYN_AUTONOMY_STATE'] = $autonomyEval['state'];
     $GLOBALS['RELDYN_AUTONOMY_EVAL'] = $autonomyEval;
+    $GLOBALS['RELDYN_AUTONOMY_NPC'] = $npcName;
 
     // People-pleaser internalization: a swallowed refusal builds resentment_self, on the play clock
     RelDynResentment::peoplePleaserBuildup($npcName, $dynamics, $autonomyEval);
 
-    // Action list filtering for refusing/walkaway states
-    $deniedActions = $autonomyEval['deny_actions'];
-    if (!empty($deniedActions) && function_exists('unsetFunction')) {
-        foreach ($deniedActions as $actionName) {
-            unsetFunction($actionName);
-        }
-        RelationshipDynamics::log("[RelDyn-PRE] Autonomy action filter: state={$autonomyEval['state']}, denied=" . implode(',', $deniedActions));
-    }
+    // The denied actions (refusing / walkaway) are taken off the LLM's list by this plugin's
+    // functions.php hook, which core runs after it loads the action list (main.php builds it
+    // after these hooks): RelationshipDynamics::applyAutonomyActionFilter.
 
     // Initiate walkaway when one is due and not already walking away (initiateWalkaway spends
     // the return grace first; the evaluation already reads that hold, and walkaway_enabled)
@@ -363,6 +367,12 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
         $GLOBALS['RELDYN_WALKAWAY_STATE'] = $dynamics['_walkaway_state'] ?? 'normal';
     }
 }
+
+// ========== INTRINSIC GOALS (MDD 14.2, tier 1) ==========
+// Goals she forms from her own character and state (backstory, affinity trajectory, stage,
+// interests, self-worth) and their daily tick; after resentment and autonomy (self-worth reads
+// resentment_self), on the game calendar.
+RelDynGoals::onContact($npcName, $dynamics, RelationshipDynamics::currentGamets());
 
 // ========== HOOVER CHECK (PR 16) ==========
 if (!empty($reldynCfg['hoover_enabled'] ?? true)) {
