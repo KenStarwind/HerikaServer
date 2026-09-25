@@ -145,7 +145,7 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
             if ($combatLL === 'combat_bleedout') {
                 // Bleedout drain: temperament-scaled negative passion
                 $temperament = $dynamics['inferred_temperament'] ?? null;
-                $gain = RelationshipDynamics::TEMPERAMENT_BLEEDOUT_DRAIN[$temperament] ?? -1.5;
+                $gain = RelDynTraits::param($temperament, 'bleedout', -1.5, $dynamics);   // A2, trait engine (Rule I)
                 RelationshipDynamics::log("Bleedout drain: {$combatNpc} temperament={$temperament} base_drain={$gain}");
             } else {
                 // Fighting together is an activity the NPC appraises (decisions §6): its combat

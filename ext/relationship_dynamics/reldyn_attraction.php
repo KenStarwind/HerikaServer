@@ -568,7 +568,11 @@ class RelDynAttraction
 
         // Openness band
         $temperament = RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? null);
-        $band = ((array) $cfg['temperament_openness'])[$temperament ?? ''] ?? 'medium';
+        // A5 through the trait engine: the preset's band (MDD 1.3), read at the NPC's vector
+        $vector = RelDynTraits::vectorFor($temperament, $dynamics);
+        $band = $vector !== null
+            ? RelDynTraits::opennessAt($vector, (array) $cfg['temperament_openness'], (array) $cfg['openness_levels'])['band']
+            : (((array) $cfg['temperament_openness'])[$temperament ?? ''] ?? 'medium');
         $sources['openness'] = $temperament !== null ? "temperament:{$temperament}" : 'fallback';
         foreach ([['preset', $preset['openness'] ?? null], ['editor', $dynamics['openness'] ?? null], ['override', $over['openness'] ?? null]] as [$src, $o]) {
             $b = self::opennessBand($o, $cfg);

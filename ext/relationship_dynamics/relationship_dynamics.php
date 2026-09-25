@@ -19,6 +19,7 @@
 
 require_once __DIR__ . '/reldyn_storage.php';
 require_once __DIR__ . '/reldyn_facets.php';
+require_once __DIR__ . '/reldyn_traits.php';
 
 class RelationshipDynamics
 {
@@ -1367,6 +1368,8 @@ class RelationshipDynamics
 
         // XYZ shim: sync legacy keys from dimensions before persisting
         $mine = self::syncLegacyFromDimensions($mine);
+        // Personality traits, phase 1: trait_vector mirrors the temperament label being written
+        $mine = RelDynTraits::syncStored($mine);
 
         // Primary: write only the 'dynamics' key of plugin_extended_data.reldyn, so a save
         // never clobbers the eval inbox or any other key written concurrently.
@@ -1397,7 +1400,7 @@ class RelationshipDynamics
                         $toWrite = $mine;
                         if ($base !== null) {
                             $theirs = self::normalizeStoredDynamics(is_array($current['value']) ? $current['value'] : null);
-                            $toWrite = self::syncLegacyFromDimensions(self::mergeDynamics($base, $mine, $theirs));
+                            $toWrite = RelDynTraits::syncStored(self::syncLegacyFromDimensions(self::mergeDynamics($base, $mine, $theirs)));
                         }
                         if (RelDynStorage::setKeyIfUnchanged($npcId, RelDynStorage::KEY_DYNAMICS, $current['expected'], $toWrite)) {
                             $toWrite[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($toWrite, $gen);
@@ -2306,9 +2309,11 @@ class RelationshipDynamics
     /**
      * Profile fields a per-NPC override can set (stored in $dynamics['profile_overrides']).
      * attachment_axes = ['anxiety' => 0..1, 'avoidance' => 0..1]; attachment_style = a label,
-     * read as that style's textbook point. Setting one clears the other.
+     * read as that style's textbook point. Setting one clears the other. trait_vector = a partial
+     * map of trait name => 0..1 (personality traits design §4.1 precedence 1; stored, not read by
+     * the phase-1 assignment). 'traits' stays the trait TAG override.
      */
-    const PROFILE_OVERRIDE_FIELDS = ['temperament', 'attachment_style', 'attachment_axes', 'maturity_type', 'traits'];
+    const PROFILE_OVERRIDE_FIELDS = ['temperament', 'attachment_style', 'attachment_axes', 'maturity_type', 'traits', 'trait_vector'];
 
     /** Dimensions whose x/baseline migrateDimensions() seeds from the temperament baseline. */
     const TEMPERAMENT_SEEDED_DIMENSIONS = ['maturity', 'trust', 'comfort', 'respect', 'warmth', 'coord_m', 'coord_f', 'self_confidence'];
@@ -2740,12 +2745,13 @@ class RelationshipDynamics
     /** Maturity type and traits implied by a temperament and archetype (attachment: attachmentBase). */
     private static function deriveProfileDependents(string $temperament, ?string $archetype, array $cfg): array
     {
+        // A17 and C1 through the trait engine: the nearest preset's row of the config tables
         $maturityType = ($archetype !== null ? self::validMaturityType(((array) ($cfg['archetype_maturity_type'] ?? []))[$archetype] ?? null) : null)
-            ?? self::validMaturityType(((array) ($cfg['temperament_maturity_type'] ?? []))[$temperament] ?? null)
+            ?? self::validMaturityType(RelDynTraits::labelParam($temperament, (array) ($cfg['temperament_maturity_type'] ?? []), null))
             ?? 'Adaptive';
 
         $traits = array_merge(
-            (array) (((array) ($cfg['temperament_traits'] ?? []))[$temperament] ?? []),
+            (array) RelDynTraits::labelParam($temperament, (array) ($cfg['temperament_traits'] ?? []), []),
             $archetype !== null ? (array) (((array) ($cfg['archetype_traits'] ?? []))[$archetype] ?? []) : []
         );
         $traits = self::normalizeTraits($traits, $cfg) ?? [];
@@ -2824,6 +2830,8 @@ class RelationshipDynamics
         $dynamics['inferred_temperament'] = $profile['temperament'];
         $dynamics['dimensions']['maturity']['plasticity_type'] = $profile['maturity_type'];
         $dynamics['traits'] = $profile['traits'];
+        // Personality traits (design §4.6), phase 1: the label's preset point, stored as trait_vector
+        $dynamics = RelDynTraits::syncStored($dynamics);
         // Attachment is read from the axes (getAttachmentAxes), never from a stored label: an
         // April / earlier label (the temperament auto-map) is not carried (decisions §3, §12).
         unset($dynamics['attachment_style']);
@@ -2886,7 +2894,8 @@ class RelationshipDynamics
     /**
      * Set (or with null, clear) a per-NPC override for temperament, attachment_style (a label:
      * that style's textbook point), attachment_axes (['anxiety' => 0..1, 'avoidance' => 0..1]),
-     * maturity_type or traits, and apply it. Changing the temperament re-derives the
+     * maturity_type or traits, and apply it; trait_vector (a partial trait map) is only stored
+     * in phase 1 and changes nothing else. Changing the temperament re-derives the
      * dependents that still hold their automatic value. The two attachment overrides replace
      * each other; the attachment drift offset stays (experience is kept, the base moves).
      * Returns false and changes nothing for an unknown field or value.
@@ -2902,6 +2911,7 @@ class RelationshipDynamics
                 'attachment_axes'  => self::validAttachmentAxes($value),
                 'maturity_type'    => self::validMaturityType($value),
                 'traits'           => self::normalizeTraits($value, $cfg),
+                'trait_vector'     => RelDynTraits::validOverride($value),
             };
             if ($value === null) return false;
         }
@@ -2911,6 +2921,10 @@ class RelationshipDynamics
         if ($value !== null && $field === 'attachment_style') unset($overrides['attachment_axes']);
         if ($value !== null && $field === 'attachment_axes') unset($overrides['attachment_style']);
         $dynamics['profile_overrides'] = $overrides;
+        // Phase 1: the trait_vector override is stored for phase 2 and read by nothing, so it
+        // must not re-run the resolution below (that would reset a stored non-override
+        // temperament, maturity type or tag list to the auto-generated one).
+        if ($field === 'trait_vector') return true;
 
         $autogen = (array) ($dynamics['_profile_autogen'] ?? []);
         $prevAuto = (array) ($autogen['auto'] ?? []);
@@ -2938,6 +2952,7 @@ class RelationshipDynamics
         $dynamics['traits'] = $effective['traits'];
         $autogen['auto'] = $auto;
         $dynamics['_profile_autogen'] = $autogen;
+        $dynamics = RelDynTraits::syncStored($dynamics);   // trait_vector follows the label (phase 1)
         return true;
     }
 
@@ -3001,16 +3016,19 @@ class RelationshipDynamics
 
     // ---- Love language mapping helpers ----
 
+    /** C3 (traits design §2.2): the primary love language a temperament implies; others LL_TIME. */
+    const TEMPERAMENT_LOVE_LANGUAGE = [
+        'Romantic'    => self::LL_WORDS,
+        'Jealous'     => self::LL_TIME,
+        'Proud'       => self::LL_SERVICE,
+        'Humble'      => self::LL_GIFTS,
+        'Independent' => self::LL_TIME,
+    ];
+
+    /** C3 through the trait engine: the nearest preset's love language (label-valued). */
     private static function temperamentToLoveLanguage($temperament)
     {
-        $map = [
-            'Romantic'    => self::LL_WORDS,
-            'Jealous'     => self::LL_TIME,
-            'Proud'       => self::LL_SERVICE,
-            'Humble'      => self::LL_GIFTS,
-            'Independent' => self::LL_TIME,
-        ];
-        return $map[$temperament] ?? self::LL_TIME;
+        return RelDynTraits::labelParam($temperament, self::TEMPERAMENT_LOVE_LANGUAGE, self::LL_TIME);
     }
 
     private static function speechStyleToLoveLanguage($style)
@@ -3085,24 +3103,30 @@ class RelationshipDynamics
         return $rotation[$ll] ?? self::LL_WORDS;
     }
 
+    /** A6 (traits design §2.1): the warmth curve (CURVE_PARAMS) a temperament names. */
+    const TEMPERAMENT_WARMTH_CURVES = [
+        'Romantic'    => self::CURVE_SLOW_BURN,
+        'Anxious'     => self::CURVE_QUICK,
+        'Playful'     => self::CURVE_QUICK,
+        'Bold'        => self::CURVE_MODERATE,
+        'Humble'      => self::CURVE_MODERATE,
+        'Nurturing'   => self::CURVE_MODERATE,
+        'Gentle'      => self::CURVE_SLOW_BURN,
+        'Jealous'     => self::CURVE_SLOW_BURN,
+        'Defiant'     => self::CURVE_GUARDED,
+        'Stoic'       => self::CURVE_GUARDED,
+        'Proud'       => self::CURVE_GUARDED,
+        'Guarded'     => self::CURVE_GUARDED,
+        'Independent' => self::CURVE_GUARDED,
+    ];
+
+    /**
+     * A6 through the trait engine: the nearest preset's curve name. (Phase 3 computes the
+     * curve numbers from traits every time: RelDynTraits columns warmth_half_life etc.)
+     */
     private static function temperamentToWarmthCurve($temperament)
     {
-        $map = [
-            'Romantic'    => self::CURVE_SLOW_BURN,
-            'Anxious'     => self::CURVE_QUICK,
-            'Playful'     => self::CURVE_QUICK,
-            'Bold'        => self::CURVE_MODERATE,
-            'Humble'      => self::CURVE_MODERATE,
-            'Nurturing'   => self::CURVE_MODERATE,
-            'Gentle'      => self::CURVE_SLOW_BURN,
-            'Jealous'     => self::CURVE_SLOW_BURN,
-            'Defiant'     => self::CURVE_GUARDED,
-            'Stoic'       => self::CURVE_GUARDED,
-            'Proud'       => self::CURVE_GUARDED,
-            'Guarded'     => self::CURVE_GUARDED,
-            'Independent' => self::CURVE_GUARDED,
-        ];
-        return $map[$temperament] ?? self::CURVE_MODERATE;
+        return RelDynTraits::labelParam($temperament, self::TEMPERAMENT_WARMTH_CURVES, self::CURVE_MODERATE);
     }
 
     // ---- Data source helpers ----
@@ -3349,9 +3373,9 @@ class RelationshipDynamics
         $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
         $stageMult = self::STAGE_PARAMS[$stage]['gain_mult'] ?? 1.0;
 
-        // Temperament multiplier
+        // Temperament multiplier (A1, through the trait engine)
         $temperament = $dynamics['inferred_temperament'] ?? null;
-        $tempMult = self::TEMPERAMENT_PASSION_MULT[$temperament] ?? 1.0;
+        $tempMult = RelDynTraits::param($temperament, 'passion_mult', 1.0, $dynamics);
 
         // Shared-activity multiplier (facet appraisal of the place / activity, MDD 1.2 + 1.5)
         $interestMult = self::getInterestMultiplier($dynamics, $interactionLoveLanguage, $activityAppraisal);
@@ -3546,9 +3570,9 @@ class RelationshipDynamics
             $spike = 5.0;
         }
 
-        // Temperament modifier
+        // Temperament modifier (A3, through the trait engine)
         $temperament = $dynamics['inferred_temperament'] ?? null;
-        $tempMult = self::TEMPERAMENT_REUNION_MULT[$temperament] ?? 1.0;
+        $tempMult = RelDynTraits::param($temperament, 'reunion_mult', 1.0, $dynamics);
         $spike *= $tempMult;
 
         $dynamics['reunion_spike_given'] = true;
@@ -3640,9 +3664,12 @@ class RelationshipDynamics
         $w = $clamp01(floatval($cfg['codependence_attachment_weight']));
         // A = the codependence_attachment corners read at the NPC's axes (attachmentBlend)
         $a = self::attachmentBlend($dynamics, (array) $cfg['codependence_attachment'], 0.5);
-        $t = floatval(((array) $cfg['codependence_temperament'])[$temperament] ?? $cfg['codependence_temperament_default']);
+        // A20 (Rule I) and A21 (0.5 x egocentric(Pd), Rule R), through the trait engine
+        $t = floatval(RelDynTraits::tableParam($temperament, (array) $cfg['codependence_temperament'],
+            $cfg['codependence_temperament_default'], 'I', null, 'unit01'));
         $c = $w * $a + (1.0 - $w) * $t;
-        $p = floatval(((array) $cfg['pride_temperament'])[$temperament] ?? 0.0);
+        $p = floatval(RelDynTraits::tableParam($temperament, (array) $cfg['pride_temperament'], 0.0, 'R',
+            fn(array $x) => 0.5 * RelDynTraits::egocentric($x['Pd']), 'unit01'));
         foreach ($traits as $trait) {
             $c += floatval(((array) $cfg['codependence_traits'])[$trait] ?? 0.0);
             $p += floatval(((array) $cfg['pride_traits'])[$trait] ?? 0.0);
@@ -4629,7 +4656,7 @@ class RelationshipDynamics
             'short'  => "{$npcName} is glad to see {$player} again — a pleasant warmth at their return.",
         ];
 
-        $set = $texts[$temperament] ?? $default;
+        $set = RelDynTraits::labelParam($temperament, $texts, $default);   // D1: nearest preset's text set
         return $set[$tier] ?? null;
     }
 
@@ -6218,7 +6245,11 @@ class RelationshipDynamics
             return (float) $fixedBaselines[$dimensionId];
         }
 
-        // Temperament-specific baseline
+        // Temperament-specific baseline (A7-A14, through the trait engine: the preset point of
+        // an exact temperament name; any other label keeps today's lookup / the dimension default)
+        if (isset(self::TEMPERAMENT_BASELINES[$dimensionId]) && RelDynTraits::isPreset($temperament)) {
+            return (float) RelDynTraits::param($temperament, 'baseline_' . $dimensionId, $def['default_baseline']);
+        }
         if ($temperament && isset(self::TEMPERAMENT_BASELINES[$dimensionId][$temperament])) {
             return (float) self::TEMPERAMENT_BASELINES[$dimensionId][$temperament];
         }
@@ -6268,7 +6299,13 @@ class RelationshipDynamics
             // Fall through to temperament-based lookup below
         }
 
-        // Temperament-specific lookup
+        // Temperament-specific lookup (A15, through the trait engine for an exact temperament name)
+        if (RelDynTraits::isPreset($temperament) && RelDynTraits::hasColumn("y_{$dimensionId}_up")) {
+            return [
+                'Y_up'   => RelDynTraits::param($temperament, "y_{$dimensionId}_up", 1.0),
+                'Y_down' => RelDynTraits::param($temperament, "y_{$dimensionId}_down", 1.0),
+            ];
+        }
         if ($temperament && isset(self::PLASTICITY_PROFILES[$dimensionId][$temperament])) {
             return self::PLASTICITY_PROFILES[$dimensionId][$temperament];
         }
@@ -6320,6 +6357,9 @@ class RelationshipDynamics
      */
     public static function getMaturityPlasticityType($temperament)
     {
+        // A17: the MDD 15.6 corner nearest to the exact two-axis formula at the preset's (Rs, L)
+        $x = RelDynTraits::vectorFor($temperament);
+        if ($x !== null) return RelDynTraits::maturityCorner($x);
         return self::TEMPERAMENT_MATURITY_PLASTICITY[$temperament] ?? 'Adaptive';
     }
 
@@ -7516,8 +7556,12 @@ class RelationshipDynamics
     /** R_temperament[signal] (MDD 15.4; passion: MDD 1.3). Unitless. */
     public static function getSignalResistance($temperament, string $signal): float
     {
+        // A1 / A16 through the trait engine (a non-preset label keeps today's row lookup)
         if ($signal === 'passion') {
-            return (float) (self::TEMPERAMENT_PASSION_MULT[$temperament] ?? 1.0);
+            return (float) RelDynTraits::param($temperament, 'passion_mult', 1.0);
+        }
+        if (RelDynTraits::hasColumn("resist_{$signal}")) {
+            return (float) RelDynTraits::param($temperament, "resist_{$signal}", 1.0);
         }
         return (float) (self::TEMPERAMENT_SIGNAL_RESISTANCE[$temperament][$signal] ?? 1.0);
     }
@@ -8505,7 +8549,7 @@ class RelationshipDynamics
         }
         $gain = floatval(self::configValue('jealousy_eval_gain'))
             * floatval(((array) self::configValue('jealousy_intensity_mult'))[$intensity] ?? 1.0)
-            * floatval(self::TEMPERAMENT_JEALOUSY_MULT[$dynamics['inferred_temperament'] ?? ''] ?? 1.0)
+            * floatval(RelDynTraits::param($dynamics['inferred_temperament'] ?? '', 'jealousy_mult', 1.0, $dynamics))   // A4
             * floatval(self::getAttachmentModifier($dynamics, 'jealousy_mult') ?? 1.0)
             * $prefMult
             * $commitment;
@@ -9233,7 +9277,7 @@ class RelationshipDynamics
         }
 
         // --- Get retention threshold from temperament ---
-        $retention = self::TEMPERAMENT_TIER_RETENTION[$temperament] ?? -15;
+        $retention = RelDynTraits::param($temperament, 'tier_retention', -15, $dynamics);   // A19, trait engine
         $demotionThreshold = $tierFloor + $retention; // retention is negative, so this lowers the threshold
         $result['demotion_threshold'] = $demotionThreshold;
 
@@ -9495,7 +9539,7 @@ class RelationshipDynamics
         }
 
         // --- Calculate base decay ---
-        $baseDecayRate = self::TEMPERAMENT_DECAY_RATES[$temperament] ?? -0.5; // core points per tick
+        $baseDecayRate = RelDynTraits::param($temperament, 'absence_decay', -0.5, $dynamics); // A18: core points per tick
 
         // decay_per_tick is already negative; multiply by ticks
         $totalDecay = $baseDecayRate * $typeDecayMult * $ticksElapsed;
@@ -10372,7 +10416,9 @@ class RelationshipDynamics
             $trait = strtolower((string) $trait);
             $add(((array) ($d['traits'] ?? []))[$trait] ?? [], 1.0, "trait:{$trait}");
         }
-        if (!empty($in['temperament'])) $add(((array) ($d['temperament'] ?? []))[$in['temperament']] ?? [], 1.0, "temperament:{$in['temperament']}");
+        // C2 through the trait engine: anxiety Rule I, avoidance Rule R (0.08 - 0.21 W)
+        if (!empty($in['temperament'])) $add(RelDynTraits::rowParam($in['temperament'], (array) ($d['temperament'] ?? []),
+            ['avoidance' => ['R', [0.08, 'W' => -0.21]]]), 1.0, "temperament:{$in['temperament']}");
         $maxHits = max(0, intval($d['text_max_hits'] ?? 3));
         foreach (self::ATTACHMENT_AXES as $axis) {
             $hits = min($maxHits, max(0, intval($in['text_hits'][$axis] ?? 0)));
@@ -10447,7 +10493,7 @@ class RelationshipDynamics
         $acfg = self::getTemperamentAutogenConfig();
         $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null);
         $archetype = $dynamics['_profile_autogen']['archetype'] ?? null;
-        $implied = array_map('strtolower', (array) (((array) ($acfg['temperament_traits'] ?? []))[$temperament ?? ''] ?? []));
+        $implied = array_map('strtolower', (array) RelDynTraits::labelParam($temperament ?? '', (array) ($acfg['temperament_traits'] ?? []), []));
         $fromRole = is_string($archetype) ? array_map('strtolower', (array) (((array) ($acfg['archetype_traits'] ?? []))[$archetype] ?? [])) : [];
         return array_values(array_filter($traits, fn($t) => !in_array($t, $implied, true) || in_array($t, $fromRole, true)));
     }
@@ -11080,7 +11126,7 @@ class RelationshipDynamics
         if ($dynamics !== null && !empty($dynamics['social_sensitivity_curve'])) {
             return $dynamics['social_sensitivity_curve'];
         }
-        return self::TEMPERAMENT_SENSITIVITY_CURVES[$temperament] ?? 'open_heart';
+        return RelDynTraits::labelParam($temperament, self::TEMPERAMENT_SENSITIVITY_CURVES, 'open_heart');   // A22 (nearest preset)
     }
 
     /**
@@ -11105,24 +11151,21 @@ class RelationshipDynamics
             return $rawDelta;
         }
 
-        $curve = self::getSocialSensitivityCurve($temperament, $dynamics);
-
-        // Proud exception: respect dimension uses open_heart (disrespect from anyone lands)
-        // Only applies if using temperament default (not per-NPC override)
-        if (empty($dynamics['social_sensitivity_curve'])) {
-            if ($temperament === 'Proud' && $dimensionId === 'respect') {
-                $curve = 'open_heart';
-            }
-
-            // Jealous exception: passion/comfort dimensions use open_heart
-            // (hyperaware of partner's attention toward ANYONE)
-            if ($temperament === 'Jealous' && in_array($dimensionId, ['passion', 'comfort'], true)) {
-                $curve = 'open_heart';
-            }
-        }
-
         $bondLevel = $dynamics['dimensions']['affinity']['x'] ?? 50;
         $isNegative = ($rawDelta < 0);
+
+        // A22 through the trait engine: the preset curves (with the Proud / Jealous exceptions)
+        // read pointwise at the NPC's vector; a per-NPC curve override or a non-preset label
+        // keeps the curve path below.
+        $vector = empty($dynamics['social_sensitivity_curve']) ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+        if ($vector !== null) {
+            return $rawDelta * RelDynTraits::sensitivityAt($vector, $dimensionId, $bondLevel, $isNegative);
+        }
+
+        // The Proud (respect) and Jealous (passion, comfort) open_heart exceptions are preset
+        // curves now (RelDynTraits::presetCurve); a per-NPC override curve never had them.
+        $curve = self::getSocialSensitivityCurve($temperament, $dynamics);
+
         $sensitivity = self::calculateSocialSensitivity($curve, $bondLevel, $isNegative);
 
         return $rawDelta * $sensitivity;
@@ -11317,6 +11360,10 @@ class RelationshipDynamics
     // condition is active and are reversed when it clears. No MinAI reads.
     // ====================================================
 
+    /** A23: temperaments whose trust answers 'injured' (healer gate) / respect answers 'bloody' (warrior gate). */
+    const PHYSICAL_HEALER_TEMPERAMENTS  = ['Nurturing', 'Gentle', 'Anxious'];
+    const PHYSICAL_WARRIOR_TEMPERAMENTS = ['Bold', 'Defiant', 'Proud'];
+
     /**
      * Mapping of physical state names to dimension deltas.
      *
@@ -11416,9 +11463,9 @@ class RelationshipDynamics
             $dynamics['_applied_physical_deltas'] = [];
         }
 
-        // Temperament-gated pseudo-dimension remapping
-        $healerTemperaments  = ['Nurturing', 'Gentle', 'Anxious'];
-        $warriorTemperaments = ['Bold', 'Defiant', 'Proud'];
+        // Temperament-gated pseudo-dimension remapping (A23, membership through the trait engine)
+        $healerTemperaments  = self::PHYSICAL_HEALER_TEMPERAMENTS;
+        $warriorTemperaments = self::PHYSICAL_WARRIOR_TEMPERAMENTS;
 
         foreach ($activeStates as $state) {
             // Skip if this state was already applied this session
@@ -11436,14 +11483,14 @@ class RelationshipDynamics
             foreach ($modifiers as $dimId => $delta) {
                 // Remap pseudo-dimensions
                 if ($dimId === 'trust_healer') {
-                    if ($temperament && in_array($temperament, $healerTemperaments, true)) {
+                    if ($temperament && RelDynTraits::membership($temperament, $healerTemperaments) >= 0.5) {
                         $dimId = 'trust';
                     } else {
                         continue; // Skip -- temperament does not qualify
                     }
                 }
                 if ($dimId === 'respect_warrior') {
-                    if ($temperament && in_array($temperament, $warriorTemperaments, true)) {
+                    if ($temperament && RelDynTraits::membership($temperament, $warriorTemperaments) >= 0.5) {
                         $dimId = 'respect';
                     } else {
                         continue;
@@ -13676,6 +13723,23 @@ class RelationshipDynamics
         return max(0.0, min(1.0, self::cosineSimilarity($a, $b)));
     }
 
+    /** C4 (traits design §2.2): the attraction archetype a temperament falls back to. */
+    const TEMPERAMENT_ARCHETYPE = [
+        'Romantic'    => 'Bard',
+        'Anxious'     => 'Noble',
+        'Playful'     => 'Bard',
+        'Humble'      => 'Priest',
+        'Nurturing'   => 'Priest',
+        'Gentle'      => 'Scholar',
+        'Jealous'     => 'Noble',
+        'Stoic'       => 'Warrior',
+        'Proud'       => 'Noble',
+        'Bold'        => 'Warrior',
+        'Independent' => 'Rogue',
+        'Defiant'     => 'Primal',
+        'Guarded'     => 'Rogue',
+    ];
+
     /**
      * Get the archetype profile for an NPC based on their interests/temperament.
      * Falls back to 'Warrior' if no match found.
@@ -13708,23 +13772,8 @@ class RelationshipDynamics
 
             $archetype = $interestToArchetype[$topInterest] ?? 'Warrior';
         } else {
-            // Fallback: temperament-based
-            $temperamentToArchetype = [
-                'Romantic'    => 'Bard',
-                'Anxious'     => 'Noble',
-                'Playful'     => 'Bard',
-                'Humble'      => 'Priest',
-                'Nurturing'   => 'Priest',
-                'Gentle'      => 'Scholar',
-                'Jealous'     => 'Noble',
-                'Stoic'       => 'Warrior',
-                'Proud'       => 'Noble',
-                'Bold'        => 'Warrior',
-                'Independent' => 'Rogue',
-                'Defiant'     => 'Primal',
-                'Guarded'     => 'Rogue',
-            ];
-            $archetype = $temperamentToArchetype[$temperament] ?? 'Warrior';
+            // Fallback: temperament-based (C4, the nearest preset's archetype)
+            $archetype = RelDynTraits::labelParam($temperament, self::TEMPERAMENT_ARCHETYPE, 'Warrior');
         }
 
         $profile = self::ATTRACTION_ARCHETYPES[$archetype] ?? self::ATTRACTION_ARCHETYPES['Warrior'];
@@ -15629,8 +15678,15 @@ class RelationshipDynamics
         }
 
         $profile = self::CHARISMA_EFFECTIVENESS[$style];
-        $isEffective = in_array($temperament, $profile['effective'] ?? [], true);
-        $isIneffective = in_array($temperament, $profile['ineffective'] ?? [], true);
+        // A24 through the trait engine: +1 effective .. -1 ineffective at the NPC's vector
+        if (RelDynTraits::hasColumn("charisma_{$style}") && RelDynTraits::isPreset($temperament)) {
+            $effect = floatval(RelDynTraits::param($temperament, "charisma_{$style}", 0.0));
+            $isEffective = $effect >= 0.5;
+            $isIneffective = $effect <= -0.5;
+        } else {
+            $isEffective = in_array($temperament, $profile['effective'] ?? [], true);
+            $isIneffective = in_array($temperament, $profile['ineffective'] ?? [], true);
+        }
 
         // Catalyst special: ineffective against HIGH maturity regardless of temperament
         if ($style === 'catalyst' && $maturity > 60 && !$isEffective) {
