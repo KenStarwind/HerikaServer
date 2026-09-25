@@ -436,11 +436,13 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
     /**
      * The same slights, day after day, to four partners (MDD 15.5 at the attachment row's
      * threshold; maturity shapes it; decisions §14: repetition feeds the one boundary):
-     *   - Aela (secure, maturity 55, the mature band) says it once, calmly and directly;
+     *   - Aela (secure, maturity 55, a werewolf of the Circle): her beast blood holds her maturity
+     *     a little lower (creature moodifications), just below the mature band, so she means to say
+     *     it evenly and it comes out as an accusation; she still takes the mature path;
      *   - Muiri (secure, 52, in between, accusation her style) and Lynly (secure, 51, in between)
      *     mean to say it evenly and it comes out in their style;
      *   - Ashe (avoidant region, maturity 75) holds it longest: her threshold is 70, so she says it
-     *     rounds after the other three, and calmly.
+     *     rounds after the other three, and calmly: the one composed confrontation of the four.
      * Wronged again after saying it, the three draw the values boundary instead of a second
      * confrontation, and the next slight inside its probation is a deliberate step-back
      * (romantic -> platonic), said on its own turn (no new boundary beside it). Ashe's unmet needs
@@ -455,7 +457,17 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
         $expr = array_map(fn($dd) => RelDynConcern::expression($dd, RelDynConcern::traitsOf($dd)), $d);
         $why = json_encode(['at' => $at, 'expr' => $expr]);
         $this->assertSame(['Aela the Huntress' => 50.0, 'Ashe' => 70.0, 'Muiri' => 50.0, 'Lynly Star-Sung' => 50.0], $at, $why);
-        $this->assertSame('mature', $expr['Aela the Huntress']['band'], $why);
+        // Aela's beast blood (werewolf by her CompanionsCircle faction) is held on her maturity;
+        // without it she is in the mature band, with it just below
+        $aela = $d['Aela the Huntress'];
+        $held = floatval($aela['_creature']['applied']['maturity'] ?? 0.0);
+        $this->assertSame('werewolf', $aela['_creature']['type'] ?? null, $why);
+        $this->assertLessThan(0.0, $held, 'beast blood: maturity a little lower ' . $why);
+        $bare = $aela;
+        $bare['dimensions']['maturity']['x'] -= $held;
+        $this->assertSame('mature', RelDynConcern::expression($bare, RelDynConcern::traitsOf($bare))['band'], $why);
+        $this->assertSame(['mixed', 'mature', 'accusation'], [$expr['Aela the Huntress']['band'], $expr['Aela the Huntress']['path'],
+            $expr['Aela the Huntress']['style']], $why);
         $this->assertSame('mature', $expr['Ashe']['band'], $why);
         $this->assertSame(['mixed', 'mature', 'accusation'], [$expr['Muiri']['band'], $expr['Muiri']['path'], $expr['Muiri']['style']], $why);
         $this->assertSame(['mixed', 'mature'], [$expr['Lynly Star-Sung']['band'], $expr['Lynly Star-Sung']['path']], $why);
@@ -486,10 +498,12 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
         }
         foreach (['Aela the Huntress', 'Ashe'] as $npc) {
             $text = $this->felt[$npc][$confront[$npc]]['resentment_confront'];
-            $this->assertStringContainsString('calmly and directly, in one conversation', $text, $npc);
             $this->assertStringContainsString('called her useless in front of the household', $text, "{$npc}: the grievance as it happened");
         }
-        $this->assertStringContainsString('means to say it evenly, but it comes out as an accusation', $this->felt['Muiri'][$confront['Muiri']]['resentment_confront']);
+        $this->assertStringContainsString('calmly and directly, in one conversation', $this->felt['Ashe'][$confront['Ashe']]['resentment_confront']);
+        foreach (['Aela the Huntress', 'Muiri'] as $npc) {
+            $this->assertStringContainsString('means to say it evenly, but it comes out as an accusation', $this->felt[$npc][$confront[$npc]]['resentment_confront'], $npc);
+        }
         $this->assertStringContainsString('means to say it evenly', $this->felt['Lynly Star-Sung'][$confront['Lynly Star-Sung']]['resentment_confront']);
 
         // Aela, Muiri, Lynly: the repetition went to the one boundary, then the step-back
@@ -526,7 +540,7 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
      * (the editor's maturity, her own vector otherwise) blows up, as an accusation, the line
      * itself unsteady (the low-maturity degradation of an intense line), and blows up again when
      * it happens again; no boundary, no step-back, the romance stands. Beside her the same slights
-     * bring Aela to one calm conversation and then the boundary.
+     * bring Aela (in between: her beast blood) to one conversation, meant evenly, and then the boundary.
      */
     public function testAnImmatureMuiriBlowsUpAgainWhereAelaDrawsTheBoundary(): void
     {
@@ -560,7 +574,8 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
             $this->assertSame(['ex', 'permanent', 'resentment'], [$types['r9'], $m['_walkaway_state'] ?? null, $m['_walkaway_reason'] ?? null]);
         }
         $aela = $this->felt['Aela the Huntress'][$this->firstRound('Aela the Huntress', 'resentment_confront')]['resentment_confront'];
-        $this->assertStringContainsString('calmly and directly, in one conversation', $aela, 'Aela says it composed');
+        $this->assertStringContainsString('means to say it evenly', $aela, 'Aela means to say it evenly (her beast blood)');
+        $this->assertStringNotContainsString('It all comes out at once', $aela, 'Aela does not blow up');
         $this->assertNotNull($this->firstRound('Aela the Huntress', 'concern_boundary'), 'Aela, the same slights: the boundary');
         $this->assertFeelingsNotNumbers();
         $this->assertSame([], $this->db->failures);
