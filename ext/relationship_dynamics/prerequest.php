@@ -289,10 +289,13 @@ if (!empty($reldynCfg['internal_weather_enabled'])) {
     RelationshipDynamics::applyWeatherModifiers($npcName, $dynamics, $temperament);
 }
 
-if (!empty($reldynCfg['creature_moodifications_enabled'])) {
-    $temperament = $temperament ?? ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic');
-    RelationshipDynamics::applyCreatureModifiers($npcName, $dynamics, $temperament);
-}
+// ========== CREATURE MOODIFICATIONS (feedback_creature_moodifications, decisions §7) ==========
+// Vampires by night / day, werewolves by Skyrim's moon: the row's offsets are held while it
+// holds and taken back when it changes (or when creature_moodifications_enabled is off); a
+// return from beast form (core's transformation report, the form watch) is the shame.
+RelDynCreatures::observeForms();
+$temperament = $temperament ?? ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic');
+RelDynCreatures::update($npcName, $dynamics, $temperament);
 
 // ========== SOCIAL MASKING (PR 14) ==========
 if (!empty($reldynCfg['social_masking_enabled'])) {

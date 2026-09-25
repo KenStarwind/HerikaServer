@@ -77,11 +77,10 @@ class RelDynIntimacy
                 ['match' => ['highelf', 'altmer', 'woodelf', 'bosmer', 'darkelf', 'dunmer', 'snowelf', 'falmer'],
                  'lifespan' => 'long', 'axes' => ['physical' => -0.2]],
             ],
-            // Creature (dynamics creature_type, else a race / faction name match). MDD creature notes
-            // (feedback_creature_moodifications): a vampire is ageless (no mortal urgency; its hunger is
-            // for blood), a werewolf's beast blood keeps arousal elevated. The Companions' Circle
-            // (CompanionsCircle) share the beast blood in vanilla lore.
-            'creature_match' => ['vampire' => ['vampire', 'volkihar'], 'werewolf' => ['werewolf', 'companionscircle']],
+            // Creature (dynamics creature_type, else the core race / factions: RelDynCreatures::classify,
+            // config 'creatures' detection). MDD creature notes (feedback_creature_moodifications): a
+            // vampire is ageless (no mortal urgency; its hunger is for blood), a werewolf's beast blood
+            // keeps arousal elevated. The Companions' Circle share the beast blood in vanilla lore.
             'creature' => [
                 'vampire'  => ['physical' => -0.2, 'emotional' => 0.05],
                 'werewolf' => ['physical' => 0.2],
@@ -223,25 +222,14 @@ class RelDynIntimacy
     }
 
     /**
-     * Creature type from a core row's race and faction names (config creature_match), or null.
+     * Creature type from a core row's race and faction names, or null: the one creature detection
+     * (RelDynCreatures::classify, config 'creatures' detection: exact faction editor ids, so a
+     * thrall or a vampire hunter is not a vampire).
      * $factions: extended_data.factions ([['name' => ..., 'rank' => ...], ...]); rank < 0 = not a member.
      */
-    public static function creatureFromCore(?string $race, array $factions, ?array $cfg = null): ?string
+    public static function creatureFromCore(?string $race, array $factions): ?string
     {
-        $cfg = $cfg ?? self::config();
-        $names = [self::key($race)];
-        foreach ($factions as $f) {
-            if (is_array($f) && intval($f['rank'] ?? 0) >= 0) $names[] = self::key($f['name'] ?? '');
-        }
-        foreach ((array) $cfg['creature_match'] as $type => $needles) {
-            foreach ((array) $needles as $needle) {
-                $needle = self::key($needle);
-                foreach ($names as $n) {
-                    if ($needle !== '' && $n !== '' && str_contains($n, $needle)) return (string) $type;
-                }
-            }
-        }
-        return null;
+        return RelDynCreatures::classify($race, $factions)['type'];
     }
 
     /**
@@ -362,7 +350,7 @@ class RelDynIntimacy
                 $row = RelationshipDynamics::fetchCoreProfileRow($npcName);
                 $ext = RelationshipDynamics::decodeProfileJson($row['extended_data'] ?? null);
                 $state['race'] = (string) ($row['race'] ?? '');
-                $state['creature'] = self::creatureFromCore($state['race'], (array) ($ext['factions'] ?? []), $cfg);
+                $state['creature'] = self::creatureFromCore($state['race'], (array) ($ext['factions'] ?? []));
             } catch (Throwable $e) {
                 error_log("[RelDyn] intimacy need: core_npc_master read failed for {$npcName}: " . $e->getMessage());
             }

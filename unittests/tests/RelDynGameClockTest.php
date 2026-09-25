@@ -121,18 +121,19 @@ final class RelDynGameClockTest extends TestCase
         $this->assertFalse(RelationshipDynamics::isGameNight(self::at(1, 19.99)));
     }
 
-    public function testFullMoonEveryFifthDayFromLiveGameRequest(): void
+    /** Skyrim's 24-day moon cycle (RelDynCreatures::moonPhase), full on cycle days 22, 23, 0. */
+    public function testFullMoonFromLiveGameRequest(): void
     {
+        self::setGameRequestGamets(self::at(46, 23));
+        $this->assertTrue(RelationshipDynamics::isFullMoon(), 'day 46 at 23:00 = cycle day 23');
+
+        self::setGameRequestGamets(self::at(24, 11));
+        $this->assertTrue(RelationshipDynamics::isFullMoon(), 'the last full morning: the phase turns at midday');
+
         self::setGameRequestGamets(self::at(4, 23));
-        $this->assertTrue(RelationshipDynamics::isFullMoon(), 'day 4 of the 5-day cycle');
+        $this->assertFalse(RelationshipDynamics::isFullMoon(), 'the April "every 5th day" guess, not the game');
 
-        self::setGameRequestGamets(self::at(9, 1));
-        $this->assertTrue(RelationshipDynamics::isFullMoon(), 'day 9 of the 5-day cycle');
-
-        self::setGameRequestGamets(self::at(3, 23));
-        $this->assertFalse(RelationshipDynamics::isFullMoon());
-
-        self::setGameRequestGamets(self::at(5, 1));
+        self::setGameRequestGamets(self::at(24, 13));
         $this->assertFalse(RelationshipDynamics::isFullMoon());
     }
 
@@ -140,20 +141,21 @@ final class RelDynGameClockTest extends TestCase
     {
         $dyn = ['creature_type' => 'werewolf'];
 
-        self::setGameRequestGamets(self::at(4, 22));
-        $this->assertSame(RelationshipDynamics::WEREWOLF_MOON_MODIFIERS, RelationshipDynamics::getCreatureModifiers('Aela', $dyn));
+        self::setGameRequestGamets(self::at(46, 22));
+        // The design row (no trait vector: the row's own valence sign)
+        $this->assertSame(['arousal' => 15.0, 'coord_f' => -5.0, 'coord_m' => 10.0, 'maturity' => -10.0, 'valence' => -10.0],
+            RelationshipDynamics::getCreatureModifiers('Aela', $dyn));
 
         self::setGameRequestGamets(self::at(2, 12));
-        $mods = RelationshipDynamics::getCreatureModifiers('Aela', $dyn);
-        foreach (RelationshipDynamics::WEREWOLF_MOON_MODIFIERS as $dim => $val) {
-            $this->assertEqualsWithDelta(-$val * RelationshipDynamics::CREATURE_DAY_INVERSION, $mods[$dim], 1e-9);
-        }
+        $this->assertSame(['arousal' => 3.0, 'maturity' => -2.0], RelationshipDynamics::getCreatureModifiers('Aela', $dyn),
+            'by day the beast blood only simmers');
     }
 
     public function testVampireGetsNightModifiersFromLiveClock(): void
     {
         $dyn = ['creature_type' => 'vampire'];
         self::setGameRequestGamets(self::at(7, 23));
-        $this->assertSame(RelationshipDynamics::VAMPIRE_NIGHT_MODIFIERS, RelationshipDynamics::getCreatureModifiers('Serana', $dyn));
+        $this->assertSame(['arousal' => 10.0, 'comfort' => 5.0, 'coord_m' => 5.0, 'self_confidence' => 10.0],
+            RelationshipDynamics::getCreatureModifiers('Serana', $dyn));
     }
 }

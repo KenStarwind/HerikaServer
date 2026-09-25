@@ -61,6 +61,9 @@
  *                     'respect_mult' => respect-gain multiplier (0.5..2.0, 1 at the neutral pillar score),
  *                     'friendzoned' => bool (a label; no passion cap)]
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
+ *   creature         null | ['type' => vampire|werewolf, 'state' => ?string (vampire_night|vampire_day|
+ *                    werewolf_moon|werewolf_night|werewolf_day), 'moon' => ?string (Skyrim's phase),
+ *                    'offsets' => [dim => points held now]] (RelDynCreatures::jev)
  *   goal             null | ['text' => string, 'priority' => 0..1]
  *   units            field => unit description
  *   text             compact one-line rendering ("key=value ...") for a prompt
@@ -85,6 +88,7 @@ final class RelDynJev
         'concern.level' => 'concern points 0..100', 'concern.incidents' => 'highest pattern[kind] per channel in the values window (counted nights)',
         'concern.pattern' => 'kind => counted nights in the values window',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
+        'creature.offsets' => 'dimension points held by the creature row',
     ];
 
     public static function state(string $npcName, array $dynamics, float $now): array
@@ -179,6 +183,7 @@ final class RelDynJev
             'fulfillment' => $fulfillment,
             'attraction' => $attraction,
             'place' => $place,
+            'creature' => RelDynCreatures::jev($dynamics),
             'goal' => $goal,
             'units' => self::UNITS,
         ];
@@ -237,6 +242,10 @@ final class RelDynJev
         }
         if ($s['place'] !== null) {
             $parts[] = 'place=' . number_format($s['place']['valence'], 2, '.', '') . ($s['place']['dominant'] !== null ? "({$s['place']['dominant']})" : '');
+        }
+        if (($s['creature'] ?? null) !== null) {
+            $parts[] = 'creature=' . $s['creature']['type'] . ($s['creature']['state'] !== null ? "({$s['creature']['state']})" : '')
+                . ($s['creature']['moon'] !== null ? " moon={$s['creature']['moon']}" : '');
         }
         if ($s['goal'] !== null) {
             $parts[] = 'goal="' . str_replace('"', "'", $s['goal']['text']) . '"(' . number_format($s['goal']['priority'], 1, '.', '') . ')';
