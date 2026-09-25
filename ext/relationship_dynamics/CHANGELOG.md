@@ -3,6 +3,29 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.15 — Whom she saves herself for, what she will not do, what she wants, and what she makes of it
+She can be yours before anyone says so. A pull toward you grows out of her feelings (the spark, how deep the bond
+runs, how well you meet her needs) and is shaped by who she is: a monogamous, loyal, grown woman holds steadiest, a
+volatile or avoidant one keeps a door open. When another NPC courts her, she turns him aside in her own way (plainly,
+coolly, sharply or flustered) and her interest in him is held down. A title makes the pull stronger but never creates
+it, and she names you only once there is one. Leave her unmet or alone for long and it loosens, the anxious first,
+until she is drifting. Being there for her now means actually being with her: a follower you never talk to is not
+meeting her needs, and those needs are kept per relationship so other bonds can have their own later.
+She can say no. Under enough distrust, disrespect and resentment she refuses an order as she is (cleanly, with a yes
+that means no, or with silence), and the refusal is real: following, trading and giving come off her list, while
+leaving and ending the talk stay. A people-pleaser swallows it and turns it on herself. If a quest ties her to you,
+she does the task coldly instead, and your slights land softly for its length.
+She wants things of her own. Goals form from her story, from how the bond is going and from what she loves, grow as
+the world and your company feed them, and fade if nothing does; the need to become better than she is can form and
+hold, or slip into self-blame. The quest journal reaches the NPCs it names. What you are known for meets her before
+you do, read her way, and fades as she comes to know you. What she drinks, reads or wears means what it means to her.
+She reflects when core writes her diary. The moments that mattered are kept for her next entry, and when it comes she
+looks back at who she has been since, as deep as her maturity allows: growing lifts her, going nowhere weighs on
+her, spiralling costs her. Pages written drunk wait for her sober self.
+Where these meet: a suitor's move on her is no rival of yours and her jealousy over your nights out is no crack in
+her pull; a partner who has stepped back from the romance holds herself for no one any more; a refusal is not a
+step-back and does not end the probation of a boundary, and a step-back is not a refusal.
+
 ## reldyn-v0.14 — What she carries, what the moon does to her, and who she slowly becomes
 A grievance is now said out loud. When resentment builds past her own point (an anxious partner speaks early, an
 avoidant one holds it long), she brings it up to your face, naming what actually happened, never a score. How it
