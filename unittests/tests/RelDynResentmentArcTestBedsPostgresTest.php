@@ -346,8 +346,9 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
 
     /**
      * The eval LLM at the connector boundary: an insult is a grievance (the MDD 15.5 +5, severity
-     * 1) with a small affinity and comfort loss; "what is weighing on you" is a confiding moment met
-     * with care; anything else is small talk.
+     * 1) with a small affinity and comfort loss; "what is weighing on you" is her telling what
+     * she is ashamed of, met with care (confessing, rulings 2026-09-25 §18 #10: no longer
+     * 'confiding'); anything else is small talk.
      */
     private function evalLlm(): callable
     {
@@ -359,7 +360,7 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
             return json_encode([
                 'signals' => ['affinity' => $insult ? -2 : 0, 'trust' => $confide ? 3 : 0, 'comfort' => $insult ? -2 : ($confide ? 4 : 0),
                               'respect' => $insult ? -2 : 0, 'passion' => 0, 'maturity' => 0],
-                'tags' => $insult ? ['insult'] : ($confide ? ['confiding', 'quality_time'] : []),
+                'tags' => $insult ? ['insult'] : ($confide ? ['confessing', 'quality_time'] : []),
                 'grievance' => $insult ? ['flag' => true, 'kind' => 'insult', 'severity' => 1] : ['flag' => false, 'kind' => null, 'severity' => 0],
                 'jealousy' => ['flag' => false, 'rival' => null, 'intensity' => 0],
                 'significance' => $insult ? 0.4 : ($confide ? 0.5 : 0.1),
@@ -647,7 +648,7 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
         $this->assertGreaterThan($before - 10.0 - 3 * 0.5 * 2.0, self::x($after, 'resentment_self'), 'one confession, not three ' . $trace);
         $this->assertFalse($after['_resentment_arc']['self']['confess_open'] ?? false, 'told: nothing left open to confess ' . $trace);
         $this->assertSame('normal', $after['_walkaway_state'] ?? 'normal', $trace);
-        // The rest of the way down is slow kindness (the decay; forgiveness has no eval tag yet):
+        // The rest of the way down is slow kindness (the decay; the player's forgiveness is its own tag, §18 #10):
         // here the editor sets where it would end, and the next time they speak the standing
         // effects are lifted exactly (and the reflection re-armed)
         $this->editDynamics('Lynly Star-Sung', function (array &$dd): void { $dd['dimensions']['resentment_self']['x'] = 25.0; });

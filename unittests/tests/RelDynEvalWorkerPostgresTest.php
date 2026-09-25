@@ -368,6 +368,7 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
             'v' => 1, 'npc' => self::NPC, 'npc_id' => $this->npcId, 'gamets' => self::T0, 'source' => 'reldyn_eval',
             'signals' => ['affinity' => 4, 'trust' => 2, 'comfort' => 1, 'respect' => 3, 'passion' => 1, 'maturity' => 0],
             'romantic_intent' => 0,   // decisions §8: always asked; a reply without it reads as none
+            'charisma' => 'none',     // rulings 2026-09-25 §18 #11: always asked; a reply without it reads as none
             'reply_mood' => 'pleased',   // the mood she answered in (moods_issued at the postrequest), code-written
             'tags' => ['gift', 'praise'],
             'grievance' => ['flag' => false, 'kind' => null, 'severity' => 0],

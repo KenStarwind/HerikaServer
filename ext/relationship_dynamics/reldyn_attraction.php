@@ -429,13 +429,14 @@ class RelDynAttraction
             ],
             // Decisions §15, an asexual NPC's passion (preference passion 'emotional'): a passion
             // gain counts only when it comes through an emotional channel, eval tags (the shared
-            // contract's): quality time, words (praise), reassurance, confiding and non-sexual
+            // contract's): quality time, words (praise), reassurance, confiding (and confessing,
+            // split from it: rulings 2026-09-25 §18 #10) and non-sexual
             // touch. A gain tagged with a physical tag, or with no tag at all (combat, gifts,
             // reunion, conflict repair, the hoover, a place's floor), adds nothing. The local
             // classifier's love languages map to tags by legacy_love_language_tag; its physical
             // touch is left out (it cannot tell a hug from a scene request).
             'emotional_passion' => [
-                'tags' => ['quality_time', 'praise', 'reassurance', 'confiding', 'touch'],
+                'tags' => ['quality_time', 'praise', 'reassurance', 'confiding', 'confessing', 'touch'],
                 'physical_tags' => ['intimacy'],
                 'legacy_love_language_tag' => [RelationshipDynamics::LL_TIME => 'quality_time', RelationshipDynamics::LL_WORDS => 'praise'],
             ],

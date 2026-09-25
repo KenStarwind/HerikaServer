@@ -91,7 +91,7 @@ class RelDynFulfillment
             // --- deliveries (what the relationship gives, in delivery units) ---
             // Eval source tag => axis => units at full significance. Negative units take coverage away.
             // Intimacy axes (rulings §10): physical from intimacy (and a little from touch);
-            // emotional from quality time, confiding, reassurance, praise and non-sexual touch.
+            // emotional from quality time, confiding (and confessing), reassurance, praise and non-sexual touch.
             'tag_delivery' => [
                 'gift'             => [RelationshipDynamics::LL_GIFTS => 1.0, 'admiration' => 0.4],
                 'praise'           => [RelationshipDynamics::LL_WORDS => 1.0, 'admiration' => 1.0, RelDynIntimacy::EMOTIONAL => 0.4],
@@ -99,6 +99,11 @@ class RelDynFulfillment
                 'apology'          => [RelationshipDynamics::LL_WORDS => 0.3, 'reassurance' => 0.6],
                 'quality_time'     => [RelationshipDynamics::LL_TIME => 1.0, 'reassurance' => 0.4, RelDynIntimacy::EMOTIONAL => 1.0],
                 'confiding'        => [RelationshipDynamics::LL_TIME => 0.3, RelDynIntimacy::EMOTIONAL => 1.0],
+                // rulings 2026-09-25 §18 #10: her confession (split from confiding) is being known too
+                'confessing'       => [RelationshipDynamics::LL_TIME => 0.3, RelDynIntimacy::EMOTIONAL => 1.0],
+                // rulings §18 #10: the player forgiving her is reassurance (as an apology is) and
+                // closeness (Serene's units)
+                'forgiveness'      => ['reassurance' => 0.6, RelDynIntimacy::EMOTIONAL => 0.4],
                 'touch'            => [RelationshipDynamics::LL_TOUCH => 1.0, RelDynIntimacy::EMOTIONAL => 0.8, RelDynIntimacy::PHYSICAL => 0.15],
                 'intimacy'         => [RelationshipDynamics::LL_TOUCH => 1.0, 'reassurance' => 0.3,
                                        RelDynIntimacy::PHYSICAL => 1.0, RelDynIntimacy::EMOTIONAL => 0.5],

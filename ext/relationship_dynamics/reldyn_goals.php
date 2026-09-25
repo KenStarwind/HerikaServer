@@ -91,7 +91,7 @@ final class RelDynGoals
             'progress_experience' => 0.05,
             'progress_eval' => 0.1,
             'eval_tags' => [
-                'bond_seeking' => ['quality_time', 'confiding', 'touch', 'reassurance', 'praise'],
+                'bond_seeking' => ['quality_time', 'confiding', 'confessing', 'touch', 'reassurance', 'praise'],
                 'safety' => ['rescue', 'reassurance', 'help'],
                 'purpose' => ['help'],
                 'revenge' => ['help'],

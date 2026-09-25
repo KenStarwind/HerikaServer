@@ -89,18 +89,28 @@ final class RelDynPerBondDisplayTest extends TestCase
         $this->assertEqualsWithDelta(25.0 * 1.15 * sqrt(2.0), $w, 1e-6);
         $this->assertNotSame('Comfortable', RelationshipDynamics::getDimensionBand('warmth', $w)['label']);
 
-        // trust / comfort: pow 0.75 (bonded 2.0 -> 1.68, 2.5 -> 1.99); affinity bonus linear over 0..100
+        // trust / comfort: pow 0.75 (bonded 2.0 -> 1.68, 2.5 -> 1.99); affinity bonus linear over 0..100;
+        // lifted above 1 they saturate (rulings 2026-09-25 §18 #8): 100 x (1 - (1 - x/100)^mult)
         $bonded = $this->npc('romantic', 60.0, ['trust' => 30.0, 'comfort' => 20.0]);
         $this->assertSame('bonded', RelationshipDynamics::getRelationshipType('Tester', $bonded));
         $bonus = 1.0 + 0.15 * 0.60;
-        $this->assertEqualsWithDelta(30.0 * $bonus * pow(2.0, 0.75), RelationshipDynamics::getEffectiveDimensionValue($bonded, 'trust'), 1e-6);
-        $this->assertEqualsWithDelta(20.0 * $bonus * pow(2.5, 0.75), RelationshipDynamics::getEffectiveDimensionValue($bonded, 'comfort'), 1e-6);
+        $sat = fn(float $x, float $m) => 100.0 * (1.0 - pow(1.0 - $x / 100.0, $m));
+        $this->assertEqualsWithDelta($sat(30.0, $bonus * pow(2.0, 0.75)), RelationshipDynamics::getEffectiveDimensionValue($bonded, 'trust'), 1e-6);
+        $this->assertEqualsWithDelta($sat(20.0, $bonus * pow(2.5, 0.75)), RelationshipDynamics::getEffectiveDimensionValue($bonded, 'comfort'), 1e-6);
         // respect keeps the default sqrt curve (bonded 1.5)
         $this->assertEqualsWithDelta($bonus * sqrt(1.5), RelationshipDynamics::perBondMultiplier($bonded, 'respect'), 1e-9);
 
-        // clamped to the dimension's range
-        $close = $this->npc('romantic', 100.0, ['comfort' => 80.0]);
-        $this->assertSame(100.0, RelationshipDynamics::getEffectiveDimensionValue($close, 'comfort'));
+        // comfort saturates toward the top of its range instead of clamping (a partner at raw 80
+        // is not the same as one at raw 46); passion still clamps
+        $close = $this->npc('romantic', 100.0, ['comfort' => 80.0, 'trust' => 46.0]);
+        $m = RelationshipDynamics::perBondMultiplier($close, 'comfort');
+        $this->assertGreaterThan(2.0, $m);
+        $this->assertEqualsWithDelta($sat(80.0, $m), RelationshipDynamics::getEffectiveDimensionValue($close, 'comfort'), 1e-9);
+        $this->assertLessThan(100.0, RelationshipDynamics::getEffectiveDimensionValue($close, 'comfort'));
+        $this->assertLessThan(RelationshipDynamics::getEffectiveDimensionValue($close, 'comfort'),
+            RelationshipDynamics::getEffectiveDimensionValue($close, 'comfort', 46.0), 'raw 46 and raw 80 no longer read alike');
+        $hot = $this->npc('crush', 100.0, ['passion' => 80.0]);
+        $this->assertSame(100.0, RelationshipDynamics::getEffectiveDimensionValue($hot, 'passion'), 'passion is not on the saturating list');
 
         // a negative core affinity gives no bonus (1.0), never a penalty below the type curve
         $enemy = $this->npc('enemy', -80.0, ['trust' => 40.0, 'warmth' => 30.0]);
@@ -133,8 +143,9 @@ final class RelDynPerBondDisplayTest extends TestCase
         $this->assertSame('friend', RelationshipDynamics::getRelationshipType('Tester', $d));
         $friendTrust = RelationshipDynamics::getEffectiveDimensionValue($d, 'trust');
         $friendBase = RelationshipDynamics::getEffectiveDimensionValue($d, 'trust', 28.0);
-        $this->assertEqualsWithDelta(50.0 * 1.0675 * pow(1.2, 0.75), $friendTrust, 1e-6);
-        $this->assertEqualsWithDelta(28.0 * 1.0675 * pow(1.2, 0.75), $friendBase, 1e-6);
+        $sat = fn(float $x, float $m) => 100.0 * (1.0 - pow(1.0 - $x / 100.0, $m));   // rulings §18 #8
+        $this->assertEqualsWithDelta($sat(50.0, 1.0675 * pow(1.2, 0.75)), $friendTrust, 1e-6);
+        $this->assertEqualsWithDelta($sat(28.0, 1.0675 * pow(1.2, 0.75)), $friendBase, 1e-6);
         $this->assertSame($before, $d, 'reading the display value stores nothing');
 
         // betrayal: core writes 'betrayed' (hostile); the same stored state now reads as ice
@@ -178,5 +189,14 @@ final class RelDynPerBondDisplayTest extends TestCase
         RelationshipDynamics::clearConfigCache();
         $d = $this->npc('romantic', 100.0, ['trust' => 30.0]);
         $this->assertEqualsWithDelta(1.3 * 2.0, RelationshipDynamics::perBondMultiplier($d, 'trust'), 1e-9, "Ken's first, flat formula");
+        $this->assertEqualsWithDelta(100.0 * (1.0 - pow(0.7, 2.6)), RelationshipDynamics::getEffectiveDimensionValue($d, 'trust'), 1e-9, 'saturating by default');
+
+        // the saturating list is config: empty = the hard clamp of before
+        $GLOBALS['db'] = new RelDynPerBondConfigDb(['per_bond_display' => ['saturating' => []]]);
+        RelationshipDynamics::clearConfigCache();
+        $d = $this->npc('romantic', 100.0, ['trust' => 30.0, 'comfort' => 60.0]);
+        $m = RelationshipDynamics::perBondMultiplier($d, 'trust');
+        $this->assertEqualsWithDelta(30.0 * $m, RelationshipDynamics::getEffectiveDimensionValue($d, 'trust'), 1e-9);
+        $this->assertSame(100.0, RelationshipDynamics::getEffectiveDimensionValue($d, 'comfort'));
     }
 }

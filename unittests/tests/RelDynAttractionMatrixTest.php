@@ -423,7 +423,7 @@ final class RelDynAttractionMatrixTest extends TestCase
         // decisions §15: asexual passion is emotional, not zero; only the emotional channels move it
         $this->assertNull($ace['hard_zero'], 'asexual: no longer a hard zero');
         $this->assertSame('emotional', $ace['passion_channel']);
-        $this->assertSame(['quality_time', 'praise', 'reassurance', 'confiding', 'touch'], $ace['passion_channels']);
+        $this->assertSame(['quality_time', 'praise', 'reassurance', 'confiding', 'confessing', 'touch'], $ace['passion_channels']);
         $this->assertGreaterThan(0.0, $ace['spark_mult']);
         $this->assertTrue($ace['visceral_met'], 'ruling §16 #9: beauty / strength count as met');
         $this->assertSame(0.0, RelDynAttraction::gainFactor($ace, 10.0, 5.0, ['intimacy']), 'intimacy: closed');

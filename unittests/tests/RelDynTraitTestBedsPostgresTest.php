@@ -523,8 +523,10 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
      * hook). The fall is who she is: Aela ("Bold / Warrior (Aela): RAGE ... passion goes UP"),
      * confident and not brittle, fights harder (valence up), the only one who does; Muiri,
      * reactive and unsure, panics (the largest panic, the biggest spike); Ashe ("Guarded /
-     * Scholar (Ashe) ... Deep negative-valence spike") falls deepest: her avoidance is the
-     * shame of needing help; every fall is an arousal spike.
+     * Scholar (Ashe) ... Deep negative-valence spike") falls deep: her avoidance is the shame of
+     * needing help. Muiri, fearful since her preset (rulings 2026-09-25 §18 #9: high anxiety and
+     * avoidance), panics AND is ashamed of needing help: hers is now the deepest fall, Ashe's
+     * the next. Every fall is an arousal spike.
      */
     public function testPhaseThreeBleedoutIsWhoSheIsOnTheFourBeds(): void
     {
@@ -563,7 +565,8 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         foreach (['Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) $this->assertLessThan(0.0, $fall[$npc]['net'], "{$npc}: not a fighter: {$why}");
         $nets = array_map(fn($f) => $f['net'], $fall);
         asort($nets);
-        $this->assertSame('Ashe', array_key_first($nets), 'the deepest fall (existential): ' . $why);
+        $this->assertSame(['Muiri', 'Ashe'], array_slice(array_keys($nets), 0, 2), 'the deepest falls: fearful Muiri, then Ashe (existential): ' . $why);
+        $this->assertGreaterThan(0.1, $fall['Muiri']['terms']['shame'], 'fearful: the shame of needing help too: ' . $why);
         $this->assertLessThan(-15.0, $fall['Ashe']['valence'], 'a deep negative-valence spike: ' . $why);
         $this->assertGreaterThan(0.1, $fall['Ashe']['terms']['shame'], 'hers is the shame of needing help: ' . $why);
         $this->assertSame('Aela the Huntress', array_key_last($nets), 'the most fight');

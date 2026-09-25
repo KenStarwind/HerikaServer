@@ -62,10 +62,13 @@ require_once __DIR__ . '/relationship_dynamics.php';
 if (RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'])) {
     return;
 }
-// A rechat answering another NPC is NPC-to-NPC too (its payload names that speaker; core sets
-// RECHAT_PREVIOUS_SPEAKER only after these hooks): no contact, reunion, passion or fulfillment
-// of the player pair for anyone in it.
-if (RelationshipDynamics::isNpcExchange($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')))) {
+// A rechat or continue answering another NPC is NPC-to-NPC too (core sets
+// RECHAT_PREVIOUS_SPEAKER only after these hooks: a rechat's payload names that speaker, and a
+// continue / continue_group answers the speaker of core's last speech row, read here as core
+// reads it): no contact, reunion, passion or fulfillment of the player pair for anyone in it. A
+// continue of her own line is hers.
+if (RelationshipDynamics::isNpcExchange($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')),
+        is_string($GLOBALS['HERIKA_NAME'] ?? null) ? $GLOBALS['HERIKA_NAME'] : null)) {
     return;
 }
 

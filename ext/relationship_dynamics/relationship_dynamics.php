@@ -383,6 +383,11 @@ class RelationshipDynamics
     const PER_BOND_DISPLAY_DEFAULTS = [
         'affinity_bonus_max' => 0.15,
         'type_curve_exponent' => ['passion' => 0.5, 'warmth' => 0.5, 'respect' => 0.5, 'trust' => 0.75, 'comfort' => 0.75],
+        // Rulings 2026-09-25 §18 #8: these dimensions saturate instead of clamping when the
+        // multiplier lifts them (mult > 1): range x (1 - (1 - x/range)^mult), so a partner's
+        // comfort and trust keep their shape near the top (a hard clamp read every partner above
+        // raw ~46 as 100). A multiplier at or below 1 stays linear (x x mult never clamps).
+        'saturating' => ['trust', 'comfort'],
     ];
 
     /** Config 'self_confidence' defaults (units in defaultConfig()). */
@@ -964,6 +969,10 @@ class RelationshipDynamics
             'ick_system_enabled' => true,
             'ick_base_threshold' => 0.5,             // fraction of romantic attempts in the window
             'charisma_detection_enabled' => true,
+            // Charisma (MDD 5.1, rulings §18 #11): the player's style from the eval's charisma
+            // grades (window / min_samples = graded exchanges, min_share 0..1 of the window;
+            // CHARISMA_DEFAULTS, charismaConfig)
+            'charisma' => self::CHARISMA_DEFAULTS,
             // PR 16: Autonomy Override + Walkaway + Hoover
             'autonomy_enabled' => true,
             // Autonomy override (MDD 6.4, PR16 plan, autonomy design memory): the autonomy score
@@ -2604,6 +2613,15 @@ class RelationshipDynamics
                 // passion x0.6, bookish facet tastes), which would reshape her far beyond how hard
                 // she is to get into; that choice is Ken's. Her attachment is these axes either way.
                 'aela the huntress' => ['attachment_axes' => ['anxiety' => 0.15, 'avoidance' => 0.35]],
+                // Rulings 2026-09-25 §18 #9 (Ken can veto): the toxic test bed attaches like one. Her
+                // bio read reads secure (her toxicity is scheming, not how she attaches), and the
+                // fearful region is never derived (MDD 6.1: set by hand or by an arc), so this is
+                // her hand-set point: a nudge just inside the fearful region (thresholds 0.5), well
+                // short of the textbook corner (0.85): she wants closeness and fears it, used once
+                // and cast off. The fearful protocol applies (region keys: maturity floor 30,
+                // conflict passion, the hoover, the manipulative refusal); drift can still carry
+                // her out as trust is earned.
+                'muiri' => ['attachment_axes' => ['anxiety' => 0.6, 'avoidance' => 0.55]],
                 'mikael' => ['maturity_type' => 'Volatile'],                            // MDD 15.6
                 'serana' => ['maturity_type' => 'Growth'],                              // MDD 15.6
                 'nazeem' => ['maturity_type' => 'Rigid'],                               // MDD 15.6
@@ -3997,8 +4015,10 @@ class RelationshipDynamics
      * The NPC a rechat / continue / continue_group answers, when that previous speaker is another
      * NPC (not the player, the Narrator or "everyone"); null otherwise or when unknown. Core sets
      * RECHAT_PREVIOUS_SPEAKER after the prerequest hooks (main.php); before that a rechat names
-     * its speaker in its own payload ($gameRequest[3] JSON 'speaker') and a continue is not known
-     * yet. A continue whose previous speaker is $npcName herself answers nobody else.
+     * its speaker in its own payload ($gameRequest[3] JSON 'speaker'), and a continue /
+     * continue_group is answered as core answers it a moment later: the speaker of core's last
+     * speech row (coreLastSpeechSpeaker, a SELECT). A continue whose previous speaker is $npcName
+     * herself answers nobody else.
      */
     public static function previousNpcSpeaker($gameRequest, string $playerName, ?string $npcName = null): ?string
     {
@@ -4009,6 +4029,9 @@ class RelationshipDynamics
         if ($prev === '' && $type === 'rechat') {
             $payload = json_decode(trim((string) ($gameRequest[3] ?? '')), true);
             $prev = is_array($payload) && is_string($payload['speaker'] ?? null) ? trim($payload['speaker']) : '';
+        } elseif ($prev === '' && !array_key_exists('RECHAT_PREVIOUS_SPEAKER', $GLOBALS)) {
+            // a continue before core resolved it (the prerequest): core's own source, read now
+            $prev = trim((string) (self::coreLastSpeechSpeaker() ?? ''));
         }
         if ($prev === '' || strcasecmp($prev, trim($playerName)) === 0 || strcasecmp($prev, self::PLAYER_RELATIONSHIP_KEY) === 0
             || in_array(mb_strtolower($prev), ['everyone', 'all', 'the narrator', 'narrator'], true)) {
@@ -4018,6 +4041,27 @@ class RelationshipDynamics
             return null;   // she goes on with her own line
         }
         return $prev;
+    }
+
+    /**
+     * The speaker of core's last speech row, as main.php reads it for a continue /
+     * continue_group (SELECT speaker FROM speech ORDER BY rowid DESC LIMIT 1), or null when
+     * there is none or no database. Read only.
+     */
+    public static function coreLastSpeechSpeaker(): ?string
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) {
+            return null;
+        }
+        try {
+            $row = $db->fetchOne("SELECT speaker FROM speech ORDER BY rowid DESC LIMIT 1");
+        } catch (Throwable $e) {
+            error_log('[RelDyn] continue: reading core\'s last speech row failed: ' . $e->getMessage());
+            return null;
+        }
+        $speaker = is_array($row) ? trim((string) ($row['speaker'] ?? '')) : '';
+        return $speaker !== '' ? $speaker : null;
     }
 
     /**
@@ -8112,8 +8156,15 @@ class RelationshipDynamics
     const EVAL_CONTRACT_TAGS = [
         'gift', 'praise', 'help', 'rescue', 'quality_time', 'touch', 'intimacy', 'insult', 'criticism',
         'neglect', 'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology',
-        'confession', 'confiding',
+        'confession', 'confiding', 'confessing', 'forgiveness',
     ];
+
+    /**
+     * charisma grades of the contract (additive v1, rulings 2026-09-25 §18 #11, MDD 5.1): the
+     * player's approach in one exchange; 'none' = no particular approach. The charisma styles
+     * (CHARISMA_EFFECTIVENESS keys) are the three that are not 'none'.
+     */
+    const EVAL_CHARISMA_GRADES = ['rock', 'catalyst', 'charmer', 'none'];
 
     /** Fingerprints of applied items kept per NPC (count), so a re-queued copy is skipped. */
     const EVAL_APPLIED_KEEP = 32;
@@ -8666,10 +8717,11 @@ class RelationshipDynamics
     /**
      * Contract v1 optional fields of decisions §8 (additive): romantic_intent (int 0..3),
      * goal_addressed + goal_ref (bool + the shown goal's directorGoalRef), masking {flag,
-     * slipped}; and reply_mood (lowercased; written by code from core's moods_issued, never by
-     * the LLM). Only the fields the item carries, valid, come back; an invalid one is logged
-     * and left out (the item still applies). An older item has none of them: its readers
-     * (charisma, director goal, masking) get nothing from it.
+     * slipped}; charisma (rulings §18 #11: one of EVAL_CHARISMA_GRADES); and reply_mood
+     * (lowercased; written by code from core's moods_issued, never by the LLM). Only the fields
+     * the item carries, valid, come back; an invalid one is logged and left out (the item still
+     * applies). An older item has none of them: its readers (charisma, the Ick, director goal,
+     * masking) get nothing from it.
      */
     public static function normalizeEvalExtraFields(array $item, string $npc = ''): array
     {
@@ -8679,6 +8731,15 @@ class RelationshipDynamics
                 $out['romantic_intent'] = (int) max(0, min(self::EVAL_ROMANTIC_INTENT_MAX, round(floatval($item['romantic_intent']))));
             } else {
                 error_log("[RelDyn-EVAL] eval item for {$npc}: romantic_intent is not a number, ignored");
+            }
+        }
+        if (array_key_exists('charisma', $item)) {
+            $grade = is_string($item['charisma']) ? strtolower(trim($item['charisma'])) : null;
+            if ($grade !== null && in_array($grade, self::EVAL_CHARISMA_GRADES, true)) {
+                $out['charisma'] = $grade;
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: charisma " . json_encode($item['charisma']) . ' is not one of '
+                    . implode('|', self::EVAL_CHARISMA_GRADES) . ', ignored');
             }
         }
         if (array_key_exists('goal_addressed', $item)) {
@@ -8885,9 +8946,9 @@ class RelationshipDynamics
 
     /**
      * The decisions §8 eval fields of one applied item (normalized), into their readers:
-     *   romantic_intent  -> the charisma tracker (MDD 5.1: the player's style from romantic
-     *                       intent and the affinity raw signal, core points), charisma on; and
-     *                       the Ick (MDD 6.3, recordIckEvalAttempt, with the item's reply_mood:
+     *   charisma         -> the charisma tracker (MDD 5.1, rulings §18 #11: the player's style
+     *                       from the eval's grade of each exchange's approach), charisma on;
+     *   romantic_intent  -> the Ick (MDD 6.3, recordIckEvalAttempt, with the item's reply_mood:
      *                       the mood the NPC answered that exchange in), the ick system on;
      *   goal_addressed   -> fulfils the director goal the eval was shown (goal_ref), when it is
      *                       still the active one (PR 39), director goals on;
@@ -8898,8 +8959,8 @@ class RelationshipDynamics
     public static function applyEvalExtraFields(string $npcName, array $n, array &$dynamics, float $gamets): void
     {
         $cfg = self::getConfig();
-        if (isset($n['romantic_intent']) && !empty($cfg['charisma_detection_enabled'] ?? true)) {
-            self::updateCharismaTracker($dynamics, intval($n['romantic_intent']), floatval($n['signals']['affinity'] ?? 0), $gamets);
+        if (isset($n['charisma']) && !empty($cfg['charisma_detection_enabled'] ?? true)) {
+            self::updateCharismaTracker($dynamics, (string) $n['charisma'], $gamets);
         }
         if (isset($n['romantic_intent']) && !empty($cfg['ick_system_enabled'] ?? true)) {
             self::recordIckEvalAttempt($npcName, $n, $dynamics);
@@ -9368,10 +9429,11 @@ class RelationshipDynamics
                 $out['resentment_decay'] = self::applyDelta('resentment', $dynamics,
                     -floatval(self::configValue('resentment_positive_decay')), $temperament);
             }
-            // resentment_self's recovery path (processResentmentSelfDecay, a confession)
+            // resentment_self's recovery path (processResentmentSelfDecay, a confession, the
+            // player's forgiveness, a gentle approach while she is away in her shame)
             $self = RelDynResentment::onPositiveEval($npcName, $dynamics, $tags);
-            if ($self['decay'] + $self['recovery'] > 0) {
-                $out['resentment_self_relief'] = $self['decay'] + $self['recovery'];
+            if ($self['decay'] + $self['recovery'] + $self['gentle'] > 0) {
+                $out['resentment_self_relief'] = $self['decay'] + $self['recovery'] + $self['gentle'];
             }
             if (!empty($dynamics['in_conflict']) && self::configValue('conflict_enabled')) {
                 $burst = self::recordConflictPositive($dynamics);
@@ -9870,7 +9932,25 @@ class RelationshipDynamics
         $min = $def ? floatval($def['range_min']) : 0.0;
         $max = $def ? floatval($def['range_max']) : 100.0;
         $own = max($min, min($max, $value - $held));
-        return max($min, min($max, max($min, min($max, $own * $mult)) + $held));
+        $shown = self::perBondScaled($dimensionId, $own, $mult, $min, $max);
+        return max($min, min($max, $shown + $held));
+    }
+
+    /**
+     * $own (dimension points, within $min..$max) under the per-bond multiplier: linear (x x mult,
+     * clamped) or, for a per_bond_display.saturating dimension lifted by a multiplier above 1,
+     * the saturating curve of rulings §18 #8 on the range: u = (x - min) / span,
+     * min + span x (1 - (1 - u)^mult). Same slope as x x mult at the bottom, 100 only at 100.
+     */
+    public static function perBondScaled(string $dimensionId, float $own, float $mult, float $min = 0.0, float $max = 100.0): float
+    {
+        $span = $max - $min;
+        $saturating = in_array($dimensionId, (array) (self::perBondDisplayConfig()['saturating'] ?? []), true);
+        if (!$saturating || $mult <= 1.0 || $span <= 0.0) {
+            return max($min, min($max, $own * $mult));
+        }
+        $u = max(0.0, min(1.0, ($own - $min) / $span));
+        return $min + $span * (1.0 - pow(1.0 - $u, $mult));
     }
 
     // ========== END RELATIONSHIP TYPE MODIFIERS (PR 5) ==========
@@ -16220,16 +16300,32 @@ class RelationshipDynamics
 
     // ========== CHARISMA ARCHETYPES (PR 15) ==========
     //
-    // Detects player interaction style (Rock/Catalyst/Charmer) from
-    // patterns in romantic_intent and affinity deltas.
-    // Applies effectiveness multipliers per NPC temperament + maturity.
-    // MDD Section 5.1.
+    // The player's interaction style (Rock / Catalyst / Charmer, MDD 5.1: "no press X to flirt,
+    // LLM sentiment analysis grades Charisma flavor") from the eval's own grade of each
+    // exchange's approach: the contract field charisma (rulings 2026-09-25 §18 #11), which
+    // replaced the affinity-variance heuristic (push-pull read from how her affinity signals
+    // swung, the Rock from a steady player). Applies effectiveness multipliers per NPC
+    // temperament + maturity.
     // ==========================================================
 
-    const CHARISMA_WINDOW = 10;       // Interactions to analyze
-    const CHARISMA_MIN_SAMPLES = 5;   // Minimum before detection
-    const CHARISMA_VARIANCE_HIGH = 15.0; // Above this = Catalyst
-    const CHARISMA_VARIANCE_LOW = 5.0;   // Below this = Rock or Charmer
+    /**
+     * Config 'charisma' defaults (Serene's picks; the MDD gives the styles, not the counts):
+     *   window       graded exchanges kept (the rolling window; 'none' grades count)
+     *   min_samples  graded exchanges in the window before any style is read
+     *   min_share    share (0..1) of the window one style needs to be the player's style; that
+     *                share is its confidence (getCharismaContext's awareness needs 0.5)
+     */
+    const CHARISMA_DEFAULTS = ['window' => 10, 'min_samples' => 5, 'min_share' => 0.5];
+
+    /** Source of a tracker fed by the eval's charisma grades; any other tracker starts over. */
+    const CHARISMA_TRACKER_SOURCE = 'eval_charisma';
+
+    /** Config 'charisma' over its defaults. */
+    public static function charismaConfig(): array
+    {
+        $stored = self::configValue('charisma');
+        return is_array($stored) ? array_replace(self::CHARISMA_DEFAULTS, $stored) : self::CHARISMA_DEFAULTS;
+    }
 
     /**
      * Effectiveness multipliers: [temperament => [style => [dimension => multiplier]]]
@@ -16256,74 +16352,71 @@ class RelationshipDynamics
     ];
 
     /**
-     * Update the charisma style tracker with latest interaction data.
+     * Update the charisma style tracker with one exchange's grade.
      *
-     * Fed once per applied eval item that carries romantic_intent (applyEvalExtraFields): an
-     * exchange nobody scored says nothing about the player's style.
+     * Fed once per applied eval item that carries charisma (applyEvalExtraFields): an exchange
+     * nobody graded says nothing about the player's style. The window keeps the last
+     * charisma.window grades ('none' included: ordinary talk dilutes a style); the style is
+     * read again on every grade, and a window that reads as no style clears the old one (the
+     * label follows the evidence, it does not stick).
      *
-     * @param array      &$dynamics      NPC dynamics
-     * @param int        $romanticIntent romantic_intent from eval (0-3)
-     * @param float      $affinityDelta  the eval's raw affinity signal (core points, -30..30)
-     * @param float|null $gamets         raw game time of the exchange (stamps a detection)
+     * @param array      &$dynamics NPC dynamics
+     * @param string     $grade     the eval's charisma grade (EVAL_CHARISMA_GRADES)
+     * @param float|null $gamets    raw game time of the exchange (stamps a new detection)
      */
-    public static function updateCharismaTracker(&$dynamics, $romanticIntent, $affinityDelta, ?float $gamets = null)
+    public static function updateCharismaTracker(&$dynamics, string $grade, ?float $gamets = null): void
     {
         $cfg = self::getConfig();
         if (empty($cfg['charisma_detection_enabled'] ?? true)) {
             return;
         }
+        $grade = strtolower(trim($grade));
+        if (!in_array($grade, self::EVAL_CHARISMA_GRADES, true)) {
+            error_log("[RelDyn-CHARISMA] charisma grade '{$grade}' is not one of " . implode('|', self::EVAL_CHARISMA_GRADES) . ', not counted');
+            return;
+        }
 
-        // A tracker the pre-eval heuristic filled (intent always 0, so every player read as the
-        // Rock) is not evidence: it starts over
-        if (!is_array($dynamics['_charisma_tracker'] ?? null) || ($dynamics['_charisma_tracker']['source'] ?? null) !== 'eval') {
+        // A tracker of the retired heuristic (romantic intent and affinity deltas) is not this
+        // evidence: it starts over
+        if (!is_array($dynamics['_charisma_tracker'] ?? null) || ($dynamics['_charisma_tracker']['source'] ?? null) !== self::CHARISMA_TRACKER_SOURCE) {
             $dynamics['_charisma_tracker'] = [
-                'source' => 'eval',
-                'recent_intents' => [],
-                'recent_deltas'  => [],
+                'source' => self::CHARISMA_TRACKER_SOURCE,
+                'recent_grades' => [],
                 'detected_style' => null,
                 'style_confidence' => 0.0,
                 'style_detected_gamets' => 0.0,
             ];
         }
 
+        $c = self::charismaConfig();
         $tracker = &$dynamics['_charisma_tracker'];
-
-        // Push to rolling window
-        $tracker['recent_intents'][] = intval($romanticIntent);
-        $tracker['recent_deltas'][] = floatval($affinityDelta);
-
-        // Trim to window size
-        if (count($tracker['recent_intents']) > self::CHARISMA_WINDOW) {
-            array_shift($tracker['recent_intents']);
-        }
-        if (count($tracker['recent_deltas']) > self::CHARISMA_WINDOW) {
-            array_shift($tracker['recent_deltas']);
+        $tracker['recent_grades'][] = $grade;
+        while (count($tracker['recent_grades']) > max(1, intval($c['window']))) {
+            array_shift($tracker['recent_grades']);
         }
 
-        // Detect style if enough samples. A window that reads as no style (mixed, or no romantic
-        // intent at all) clears the old one: the label follows the evidence, it does not stick.
-        if (count($tracker['recent_deltas']) >= self::CHARISMA_MIN_SAMPLES) {
-            $detected = self::detectCharismaStyle($tracker['recent_intents'], $tracker['recent_deltas']);
-            if ($detected !== null) {
-                $tracker['detected_style'] = $detected['style'];
-                $tracker['style_confidence'] = $detected['confidence'];
+        $detected = self::detectCharismaStyle($tracker['recent_grades'], $c);
+        if ($detected !== null) {
+            if ($detected['style'] !== ($tracker['detected_style'] ?? null)) {
                 $tracker['style_detected_gamets'] = $gamets ?? self::currentGamets();   // raw game time
-                unset($tracker['style_detected_at']);   // the old wall-clock stamp
-            } elseif (($tracker['detected_style'] ?? null) !== null) {
-                $tracker['detected_style'] = null;
-                $tracker['style_confidence'] = 0.0;
             }
+            $tracker['detected_style'] = $detected['style'];
+            $tracker['style_confidence'] = $detected['confidence'];
+        } elseif (($tracker['detected_style'] ?? null) !== null) {
+            $tracker['detected_style'] = null;
+            $tracker['style_confidence'] = 0.0;
         }
+        unset($tracker);
     }
 
     /**
      * The player's detected charisma style (rock / catalyst / charmer) with this NPC, or null:
-     * only a tracker fed by eval items counts (updateCharismaTracker).
+     * only a tracker fed by the eval's charisma grades counts (updateCharismaTracker).
      */
     public static function charismaStyle(array $dynamics): ?string
     {
         $t = $dynamics['_charisma_tracker'] ?? null;
-        if (!is_array($t) || ($t['source'] ?? null) !== 'eval') {
+        if (!is_array($t) || ($t['source'] ?? null) !== self::CHARISMA_TRACKER_SOURCE) {
             return null;
         }
         $style = $t['detected_style'] ?? null;
@@ -16331,56 +16424,39 @@ class RelationshipDynamics
     }
 
     /**
-     * Analyze interaction patterns to detect charisma style.
+     * The style a window of charisma grades reads as: the style graded most often, when the
+     * window holds at least charisma.min_samples grades, that style is at least
+     * charisma.min_share of them and no other style is graded as often (a tie is mixed).
+     * 'none' grades count toward the window, never as a style. Pure.
      *
-     * @param array $intents  Recent romantic_intent values
-     * @param array $deltas   Recent affinity_delta values
-     * @return array|null ['style' => string, 'confidence' => float] or null
+     * @param array      $grades charisma grades, oldest first (EVAL_CHARISMA_GRADES)
+     * @param array|null $cfg    charismaConfig()
+     * @return array|null ['style' => string, 'confidence' => its share of the window 0..1] or null
      */
-    public static function detectCharismaStyle($intents, $deltas)
+    public static function detectCharismaStyle(array $grades, ?array $cfg = null): ?array
     {
-        $count = count($deltas);
-        if ($count < self::CHARISMA_MIN_SAMPLES) {
+        $cfg = $cfg ?? self::charismaConfig();
+        $n = count($grades);
+        if ($n === 0 || $n < max(1, intval($cfg['min_samples']))) {
             return null;
         }
-
-        // Calculate delta statistics
-        $avgDelta = array_sum($deltas) / $count;
-        $variance = 0.0;
-        foreach ($deltas as $d) {
-            $variance += ($d - $avgDelta) ** 2;
+        $counts = array_fill_keys(array_keys(self::CHARISMA_EFFECTIVENESS), 0);
+        foreach ($grades as $g) {
+            if (is_string($g) && isset($counts[$g])) {
+                $counts[$g]++;
+            }
         }
-        $variance /= $count;
-
-        // Calculate intent statistics
-        $avgIntent = array_sum($intents) / $count;
-        $highIntentCount = count(array_filter($intents, fn($i) => $i >= 2));
-
-        // MDD 5.1 "no press X to flirt": the style is the flavour of the player's approach. A
-        // window with no romantic intent at all is no approach (an ordinary, steady player was
-        // read as the Rock and a Bold NPC's every affinity signal cut to 0.7)
-        if ($intents === [] || max($intents) < 1) {
+        arsort($counts);
+        $styles = array_keys($counts);
+        $top = $styles[0];
+        if ($counts[$top] === 0 || (isset($styles[1]) && $counts[$styles[1]] === $counts[$top])) {
+            return null;   // no approach at all, or mixed
+        }
+        $share = $counts[$top] / $n;
+        if ($share < floatval($cfg['min_share'])) {
             return null;
         }
-
-        // Detection logic:
-        // Catalyst: high variance (push-pull), alternating positive/negative
-        if ($variance > self::CHARISMA_VARIANCE_HIGH && abs($avgDelta) > 1.0) {
-            return ['style' => 'catalyst', 'confidence' => min(1.0, $variance / 30.0)];
-        }
-
-        // Charmer: consistent positive, high romantic intent
-        if ($variance < self::CHARISMA_VARIANCE_LOW && $avgDelta > 0.5 && $avgIntent >= 1.0) {
-            $confidence = min(1.0, ($avgDelta / 3.0) * ($avgIntent / 2.0));
-            return ['style' => 'charmer', 'confidence' => $confidence];
-        }
-
-        // Rock: consistent, low emotional variation, low romantic intent
-        if ($variance < self::CHARISMA_VARIANCE_LOW && abs($avgDelta) < 1.5 && $avgIntent < 1.0) {
-            return ['style' => 'rock', 'confidence' => min(1.0, (1.5 - abs($avgDelta)) / 1.5)];
-        }
-
-        return null; // Mixed/ambiguous
+        return ['style' => $top, 'confidence' => round($share, 4)];
     }
 
     /**
@@ -16912,8 +16988,9 @@ class RelationshipDynamics
         $walkState = $dynamics['_walkaway_state'] ?? 'pending';
         $shame = ($dynamics['_walkaway_reason'] ?? self::walkawayReason($dynamics)) === 'shame';
         if ($shame && ($walkState === 'active' || $walkState === 'boundary_test')) {
+            // Rulings §18 #7: approaching her is not pursuit; a gentle word can reach her
             return "{$npcName} has gone off alone, too ashamed to face anyone. "
-                 . "Seeking them out now would only drive them further away.";
+                 . "Being found is hard, but a gentle word might reach them; pressing or blaming would not.";
         }
         if ($shame && $walkState !== 'permanent') {
             return "{$npcName} cannot bear to be seen right now and is pulling away to be alone with it. "
@@ -17150,11 +17227,18 @@ class RelationshipDynamics
         // greeting and the conversation it set off, not following them; those ticks carry on
         // like any other below. An NPC walking out of a fight (resentment, jealousy, the ick,
         // autonomy) is followed by the next line, as before.
+        // Rulings 2026-09-25 §18 #7: an NPC who left in shame (a resentment_self crisis) is not
+        // followed by being approached: she is not running from the player, and a gentle word is
+        // what can reach her (RelDynResentment::onPositiveEval: the gentle approach). Never pursuit.
         $partingMinutes = floatval(self::configValue('walkaway_parting_game_minutes'));
         $sinceLeftMinutes = (self::gameHoursSince($dynamics, '_walkaway_activated_calendar_gamets') ?? 0.0) * 60.0;
+        $shame = ($dynamics['_walkaway_reason'] ?? null) === 'shame';
         $parting = ($dynamics['_walkaway_reason'] ?? null) === 'neglect' && $sinceLeftMinutes < $partingMinutes;
-        $isPursuit = $isDialogue && ($state === 'active' || $state === 'boundary_test') && !$parting;
-        if ($isDialogue && !$isPursuit && ($state === 'active' || $state === 'boundary_test')) {
+        $isPursuit = $isDialogue && ($state === 'active' || $state === 'boundary_test') && !$parting && !$shame;
+        if ($isDialogue && $shame && ($state === 'active' || $state === 'boundary_test')) {
+            self::log("[WALKAWAY] {$npcName}: the player approached her after she left in shame: not pursuit");
+            $result['shame_approach'] = true;
+        } elseif ($isDialogue && !$isPursuit && ($state === 'active' || $state === 'boundary_test')) {
             self::log("[WALKAWAY] {$npcName}: player spoke " . round($sinceLeftMinutes, 1)
                 . " game minutes after they left (parting window {$partingMinutes}): not pursuit");
             $result['parting'] = true;

@@ -40,12 +40,21 @@
  * Baseline offsets are reversible: they lift exactly when resentment_self falls back.
  * Recovery (open issue: "no recovery path ... trapped in permanent guilt"): applied as
  * resentment_self points, not through the inverted rubber band that caused the trap:
- *   - confession: the NPC tells what she is ashamed of and it is met with care (eval tag,
- *     self.recovery_tags). The dimension draft's confession follows the self-reflection (the
- *     Director's scene at 50, then she tells), so it opens only once the reflection was said to
- *     the player, and it is made once (the MDD 15.5 addressed decay, like the confrontation's):
- *     the next opening up is the decay again. The window closes when resentment_self is worked
+ *   - confession: the NPC tells what she is ashamed of and it is met with care (eval tag
+ *     'confessing', self.recovery_tags; rulings 2026-09-25 §18 #10 split it from 'confiding',
+ *     which is opening up in general). The dimension draft's confession follows the
+ *     self-reflection (the Director's scene at 50, then she tells), so it opens only once the
+ *     reflection was said to the player (or she was approached gently in her shame walkaway,
+ *     below), and it is made once (the MDD 15.5 addressed decay, like the confrontation's): the
+ *     next opening up is the decay again. The window closes when resentment_self is worked
  *     through (reflection_rearm_at), and the next reflection opens the next one;
+ *   - forgiveness: the player forgives her for something she did (eval tag 'forgiveness',
+ *     self.forgiveness_tags, -15), once per episode;
+ *   - the gentle approach (rulings §18 #7): approaching her after she left in shame is not
+ *     pursuit (RelationshipDynamics::processWalkawayTick); a positive exchange then takes
+ *     self.shame_gentle_relief off (rate-limited on the play clock) and opens the confession.
+ *     As it falls, the walkaway's early recovery (resentment_self below the recovery line,
+ *     comfort above its floor) brings her back sooner;
  *   - processResentmentSelfDecay: -0.5 x (1 + maturity/100) per positive interaction while
  *     comfort is above 20, at most once per self.decay_cooldown_play_minutes of played time.
  * The people-pleaser buildup (prerequest) only runs when the people-pleaser override swallowed a
@@ -121,10 +130,24 @@ final class RelDynResentment
                 'decay_comfort_above' => 20.0,
                 // Serene: the same cadence as resentment's decay (GAMETS_RESENTMENT_COOLDOWN).
                 'decay_cooldown_play_minutes' => 15.0,
-                // Dimension design: confession (addressed decay) -10; forgiveness from the affected
-                // party -15 has no eval tag yet (open question), so it maps nothing by default.
+                // Dimension design: confession (addressed decay) -10. Rulings 2026-09-25 §18 #10:
+                // the eval tag is 'confessing' (she admits something she is ashamed of), split
+                // from 'confiding' (opening up in general, which is no confession).
                 // Eval tag => resentment_self points taken off (the exchange must be positive).
-                'recovery_tags' => ['confiding' => 10.0],
+                'recovery_tags' => ['confessing' => 10.0],
+                // Dimension design: forgiveness from the affected party -15 (rulings §18 #10: eval
+                // tag 'forgiveness', the player forgiving her for something she did). Needs no
+                // reflection first; once per episode (re-armed when resentment_self is worked
+                // through, reflection_rearm_at). Eval tag => resentment_self points.
+                'forgiveness_tags' => ['forgiveness' => 15.0],
+                // Rulings §18 #7: approaching an NPC who left in shame is not pursuit, and a
+                // gentle approach helps. A positive exchange with her while her shame walkaway is
+                // under way (active / boundary test) takes shame_gentle_relief resentment_self
+                // points off (Serene: half a confession), at most once per
+                // shame_gentle_cooldown_play_minutes of played time (the decay's cadence), and
+                // opens the confession (the reflection's "if asked gently, it might come out").
+                'shame_gentle_relief' => 5.0,
+                'shame_gentle_cooldown_play_minutes' => 15.0,
                 // People-pleaser buildup (prerequest), at most once per buildup_cooldown_play_minutes
                 // of played time (Serene: the decay's cadence). When (a list pick):
                 //   'swallowed'     the people-pleaser override turned a refusal into compliance
@@ -175,8 +198,16 @@ final class RelDynResentment
         foreach (['confrontation', 'self', 'guilt_bleed', 'felt_text', 'fuel_phrases'] as $section) {
             $cfg[$section] = array_replace($defaults[$section], is_array($stored[$section] ?? null) ? $stored[$section] : []);
         }
+        // A row install.php wrote before rulings §18 #10 stores the retired default (confiding as
+        // the confession): that was never a choice, so the current default applies
+        if ((array) ($cfg['self']['recovery_tags'] ?? []) == self::RETIRED_RECOVERY_TAGS) {
+            $cfg['self']['recovery_tags'] = $defaults['self']['recovery_tags'];
+        }
         return $cfg;
     }
+
+    /** self.recovery_tags as shipped before rulings 2026-09-25 §18 #10 ('confiding' was the confession). */
+    const RETIRED_RECOVERY_TAGS = ['confiding' => 10.0];
 
     public static function enabled(?array $cfg = null): bool
     {
@@ -209,7 +240,11 @@ final class RelDynResentment
      *   self      ['baselines' => dimension => ['offset' => points, 'prior' => ?float],
      *             'reflect_armed' => bool, 'reflect_pending' => bool, 'last_decay_play' => ?float,
      *             'last_buildup_play' => ?float, 'confess_open' => bool (missing: false; the
-     *             reflection was said and she has not confessed yet)]
+     *             reflection was said, or she was approached gently in her shame walkaway, and
+     *             she has not confessed yet), 'forgiven' => bool (missing: false; forgiven this
+     *             episode), 'last_gentle_play' => ?float (play gamets of the last gentle
+     *             approach in a shame walkaway), 'gentle_opened' => the walkaway start stamp
+     *             (raw gamets) whose gentle approach opened the confession]
      *   guilt     ['applied' => comfort points currently taken off (<= 0)]
      */
     private static function &state(array &$dynamics): array
@@ -439,6 +474,16 @@ final class RelDynResentment
     }
 
     /**
+     * She left in shame and has not come back yet: a walkaway with reason 'shame' (a
+     * resentment_self crisis) that is under way (active or in its boundary test). Pure.
+     */
+    public static function inShameWalkaway(array $dynamics): bool
+    {
+        return ($dynamics['_walkaway_reason'] ?? null) === 'shame'
+            && in_array($dynamics['_walkaway_state'] ?? 'normal', ['active', 'boundary_test'], true);
+    }
+
+    /**
      * The thresholds' standing effects at the current resentment_self: each baseline row's
      * offset applied to that dimension's baseline while above, lifted exactly when not; the
      * self-reflection armed / queued. Returns event names (baseline:<dim>+|-, reflection).
@@ -488,6 +533,7 @@ final class RelDynResentment
             $state['self']['reflect_armed'] = true;
             $state['self']['reflect_pending'] = false;
             $state['self']['confess_open'] = false;   // worked through: nothing left to confess
+            $state['self']['forgiven'] = false;       // nor to forgive: the next episode's forgiveness counts again
         }
         unset($state);
         if ($events !== []) RelationshipDynamics::log("[RESENT-SELF] {$npcName}: " . implode(', ', $events) . ' (resentment_self ' . round($rs, 2) . ')');
@@ -522,19 +568,40 @@ final class RelDynResentment
      * The eval side of recovery for one applied contract item (positive exchanges only):
      *   - processResentmentSelfDecay: -(decay_base x (1 + maturity/100)) points while comfort
      *     is above decay_comfort_above, at most once per decay_cooldown_play_minutes of play;
-     *   - recovery_tags (confession: the NPC opened up and it was met with care): their points,
-     *     only while the confession is open (the self-reflection was said to the player and she
-     *     has not confessed since), and once: the confession closes it.
-     * Returns ['decay' => points, 'recovery' => points, 'tags' => string[]].
+     *   - the gentle approach (rulings §18 #7): while her shame walkaway is under way (reason
+     *     'shame', active or boundary test), the positive exchange is the player reaching her
+     *     gently: shame_gentle_relief points, at most once per shame_gentle_cooldown_play_minutes
+     *     of play, and the confession opens (asked gently, it can come out);
+     *   - recovery_tags (confessing: she admits what she is ashamed of and it is met with care):
+     *     their points, only while the confession is open (the self-reflection was said to the
+     *     player, or the gentle approach above, and she has not confessed since), and once: the
+     *     confession closes it;
+     *   - forgiveness_tags (the player forgives her for something she did): their points, once per
+     *     episode (tickSelf re-arms it when resentment_self is worked through).
+     * Returns ['decay' => points, 'recovery' => points, 'gentle' => points, 'tags' => string[]].
      */
     public static function onPositiveEval(string $npcName, array &$dynamics, array $tags): array
     {
-        $out = ['decay' => 0.0, 'recovery' => 0.0, 'tags' => []];
+        $out = ['decay' => 0.0, 'recovery' => 0.0, 'gentle' => 0.0, 'tags' => []];
         $cfg = self::config();
         if (!self::enabled($cfg) || empty($cfg['self']['enabled']) || self::x($dynamics, 'resentment_self') <= 0.0) return $out;
         $s = (array) $cfg['self'];
         $state = &self::state($dynamics);
         $play = RelationshipDynamics::getPlayGamets($dynamics);
+        if (self::inShameWalkaway($dynamics)) {
+            $lastGentle = $state['self']['last_gentle_play'] ?? null;
+            if ($lastGentle === null || $play - floatval($lastGentle) >= self::playGamets(floatval($s['shame_gentle_cooldown_play_minutes']))) {
+                $out['gentle'] = self::relieveSelf($dynamics, floatval($s['shame_gentle_relief']));
+                $state['self']['last_gentle_play'] = $play;
+            }
+            // approached gently: it can come out now (once per walkaway, keyed by when she left)
+            $walkaway = $dynamics['_walkaway_started_calendar_gamets'] ?? null;   // raw gamets
+            $opened = $state['self']['gentle_opened'] ?? null;
+            if (!is_numeric($opened) || !is_numeric($walkaway) || abs(floatval($opened) - floatval($walkaway)) > 1e-6) {
+                $state['self']['confess_open'] = true;
+                $state['self']['gentle_opened'] = $walkaway;
+            }
+        }
         $last = $state['self']['last_decay_play'];
         if (self::x($dynamics, 'comfort', 50.0) > floatval($s['decay_comfort_above'])
             && ($last === null || $play - floatval($last) >= self::playGamets(floatval($s['decay_cooldown_play_minutes'])))) {
@@ -548,9 +615,17 @@ final class RelDynResentment
             $out['tags'][] = (string) $tag;
             $state['self']['confess_open'] = false;   // told: the confession is made once
         }
+        foreach ((array) ($s['forgiveness_tags'] ?? []) as $tag => $points) {
+            if (!empty($state['self']['forgiven']) || !in_array((string) $tag, $tags, true)) continue;
+            $out['recovery'] += self::relieveSelf($dynamics, floatval($points));
+            $out['tags'][] = (string) $tag;
+            $state['self']['forgiven'] = true;   // forgiven: once this episode
+        }
         unset($state);
-        if ($out['decay'] > 0 || $out['recovery'] > 0) {
-            RelationshipDynamics::log("[RESENT-SELF] {$npcName}: recovery -" . round($out['decay'] + $out['recovery'], 3)
+        $total = $out['decay'] + $out['recovery'] + $out['gentle'];
+        if ($total > 0) {
+            RelationshipDynamics::log("[RESENT-SELF] {$npcName}: recovery -" . round($total, 3)
+                . ($out['gentle'] > 0 ? ' (gentle approach in her shame)' : '')
                 . ($out['tags'] ? ' (' . implode(',', $out['tags']) . ')' : '') . ', now ' . round(self::x($dynamics, 'resentment_self'), 2));
         }
         return $out;

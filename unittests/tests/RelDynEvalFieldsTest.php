@@ -144,7 +144,9 @@ final class RelDynEvalFieldsTest extends TestCase
     {
         $user = RelDynEval::buildMessages('Aela the Huntress', 'Kaida', self::WINDOW, ['Bond with the player: friend'], [])[1]['content'];
         $this->assertStringContainsString('ROMANTIC_INTENT: 0..3, how romantically Kaida approached Aela the Huntress', $user);
-        $this->assertStringContainsString('"summary": "one short line", "romantic_intent": 0}', $user, 'in the reply shape');
+        $this->assertStringContainsString('CHARISMA: the flavour of how Kaida approached Aela the Huntress in this exchange, one word: rock', $user,
+            'rulings §18 #11: charisma is always asked');
+        $this->assertStringContainsString('"summary": "one short line", "romantic_intent": 0, "charisma": "none"}', $user, 'in the reply shape');
         $this->assertStringNotContainsString('GOAL_ADDRESSED', $user, 'no goal shown: not asked');
         $this->assertStringNotContainsString('MASKING', $user, 'nobody else present: not asked');
 
@@ -154,7 +156,7 @@ final class RelDynEvalFieldsTest extends TestCase
         $this->assertStringContainsString('GOAL_ADDRESSED: true only when this exchange clearly served that purpose', $user);
         $this->assertStringContainsString('MASKING (others were present: Farkas, Vilkas)', $user);
         $this->assertStringContainsString('Score the signals from what Aela the Huntress really felt, not the front.', $user);
-        $this->assertStringContainsString('"romantic_intent": 0, "goal_addressed": false, "masking": {"flag": false, "slipped": false}}', $user);
+        $this->assertStringContainsString('"romantic_intent": 0, "charisma": "none", "goal_addressed": false, "masking": {"flag": false, "slipped": false}}', $user);
     }
 
     // ------------------------------------------------------------------ strict parser
@@ -233,50 +235,69 @@ final class RelDynEvalFieldsTest extends TestCase
     }
 
     /**
-     * MDD 5.1: the style is graded from the eval's romantic_intent and affinity. Before this
-     * field existed the tracker was fed intent 0 on every request and read every player as the
-     * Rock; a tracker from that time starts over, and an item without the field feeds nothing.
+     * MDD 5.1, rulings 2026-09-25 §18 #11: the style is the eval's own grade of each exchange's
+     * approach (charisma), not a heuristic over romantic intent and affinity swings. The tracker
+     * of that heuristic starts over; an item without the field feeds nothing; romantic intent
+     * alone grades no style.
      */
-    public function testRomanticIntentGradesThePlayersStyle(): void
+    public function testTheCharismaGradeIsThePlayersStyle(): void
     {
-        $feed = function (array $npc, array $rows): array {
-            foreach ($rows as $i => [$intent, $aff]) {
+        $feed = function (array $npc, array $grades, array $extra = [], int $from = 0): array {
+            foreach ($grades as $k => $grade) {
+                $i = $from + $k;
                 RelationshipDynamics::processEvalContractItem('Mjoll', $this->item([
-                    'gamets' => 200000 + 1000 * $i, 'romantic_intent' => $intent,
-                    'signals' => ['affinity' => $aff, 'trust' => 0, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0],
-                    'summary' => "exchange {$i}",
-                ]), $npc);
+                    'gamets' => 200000 + 1000 * $i, 'charisma' => $grade, 'summary' => "exchange {$i}",
+                ] + $extra), $npc);
             }
             return $npc;
         };
-        $charmer = $feed($this->npc(), array_fill(0, 5, [2, 3]));
+        $charmer = $feed($this->npc(), array_fill(0, 5, 'charmer'));
         $this->assertSame('charmer', RelationshipDynamics::charismaStyle($charmer));
-        $this->assertSame(204000.0, $charmer['_charisma_tracker']['style_detected_gamets'], 'stamped on the fifth exchange\'s game time');
-        $this->assertArrayNotHasKey('style_detected_at', $charmer['_charisma_tracker']);
+        $this->assertSame(1.0, $charmer['_charisma_tracker']['style_confidence']);
+        $this->assertSame(204000.0, $charmer['_charisma_tracker']['style_detected_gamets'], 'stamped on the game time of the fifth exchange');
 
-        $catalyst = $feed($this->npc(), [[2, 8], [1, -6], [2, 8], [1, -6], [2, 8]]);
-        $this->assertSame('catalyst', RelationshipDynamics::charismaStyle($catalyst), 'push-pull');
-        $rock = $feed($this->npc(), [[1, 1], [0, 1], [0, 1], [1, 1], [0, 1]]);
-        $this->assertSame('rock', RelationshipDynamics::charismaStyle($rock), 'steady, little romance');
-        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), array_fill(0, 5, [0, 1]))),
-            'no romantic intent at all: no approach, no style (the ordinary player is not the Rock)');
-        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), array_fill(0, 4, [2, 3]))), 'too few exchanges yet');
+        $this->assertSame('catalyst', RelationshipDynamics::charismaStyle($feed($this->npc(), ['catalyst', 'none', 'catalyst', 'catalyst', 'rock'])), 'push-pull, graded');
+        $this->assertSame('rock', RelationshipDynamics::charismaStyle($feed($this->npc(), ['rock', 'rock', 'none', 'rock', 'none'])), 'calm, steady');
+        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), array_fill(0, 5, 'none'))),
+            'no particular approach: no style (the ordinary player is not the Rock)');
+        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), ['rock', 'rock', 'catalyst', 'catalyst', 'none'])), 'mixed: a tie');
+        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), ['charmer', 'none', 'none', 'charmer', 'none'])), 'under half the window');
+        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), array_fill(0, 4, 'charmer'))), 'too few exchanges yet');
+        $this->assertNull(RelationshipDynamics::charismaStyle($feed($this->npc(), array_fill(0, 5, 'none'), ['romantic_intent' => 3,
+            'signals' => ['affinity' => 8, 'trust' => 0, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0]])),
+            'open pursuit with big affinity swings is no style without the grade (the heuristic is retired)');
 
-        // The old heuristic's tracker is not evidence
+        // The label follows the evidence: ordinary talk dilutes it away
+        $fading = $feed($this->npc(), array_fill(0, 5, 'charmer'));
+        $fading = $feed($fading, array_fill(0, 5, 'none'), [], 5);
+        $this->assertSame('charmer', RelationshipDynamics::charismaStyle($fading), 'half the window still');
+        $fading = $feed($fading, ['none'], [], 10);
+        $this->assertNull(RelationshipDynamics::charismaStyle($fading), 'less than half: the old label goes');
+        $this->assertCount(10, $fading['_charisma_tracker']['recent_grades'], 'the window');
+
+        // The retired heuristic's tracker is not evidence
         $legacy = $this->npc();
-        $legacy['_charisma_tracker'] = ['recent_intents' => [0, 0, 0, 0, 0], 'recent_deltas' => [1, 1, 1, 1, 1],
-            'detected_style' => 'rock', 'style_confidence' => 0.9, 'style_detected_at' => 1727000000];
+        $legacy['_charisma_tracker'] = ['source' => 'eval', 'recent_intents' => [2, 2, 2, 2, 2], 'recent_deltas' => [3, 3, 3, 3, 3],
+            'detected_style' => 'charmer', 'style_confidence' => 0.9, 'style_detected_gamets' => 1000.0];
         $this->assertNull(RelationshipDynamics::charismaStyle($legacy), 'not read');
-        $legacy = $feed($legacy, [[2, 3]]);
-        $this->assertSame([2], $legacy['_charisma_tracker']['recent_intents'], 'starts over');
+        $legacy = $feed($legacy, ['rock'], [], 20);
+        $this->assertSame(['rock'], $legacy['_charisma_tracker']['recent_grades'], 'starts over');
+        $this->assertArrayNotHasKey('recent_intents', $legacy['_charisma_tracker']);
 
-        // An older item (no romantic_intent) says nothing about style
+        // An older item (no charisma) says nothing about style; a grade outside the list is left out
         $npc = $this->npc();
-        RelationshipDynamics::processEvalContractItem('Mjoll', $this->item(['signals' => ['affinity' => 3] + $this->item()['signals']]), $npc);
+        RelationshipDynamics::processEvalContractItem('Mjoll', $this->item(['romantic_intent' => 2]), $npc);
         $this->assertArrayNotHasKey('_charisma_tracker', $npc);
+        $bad = RelationshipDynamics::normalizeEvalContractItem($this->item(['charisma' => 'seducer']));
+        $this->assertArrayNotHasKey('charisma', $bad);
+        $this->assertStringContainsString('charisma "seducer" is not one of rock|catalyst|charmer|none, ignored', $this->log());
+        $this->assertSame('rock', RelationshipDynamics::normalizeEvalContractItem($this->item(['charisma' => ' Rock ']))['charisma']);
 
+        // Tunables (config 'charisma')
+        $this->setConfig(['charisma' => ['min_share' => 0.3]]);
+        $this->assertSame('charmer', RelationshipDynamics::charismaStyle($feed($this->npc(), ['charmer', 'none', 'none', 'charmer', 'none'])), 'a lower share');
         $this->setConfig(['charisma_detection_enabled' => false]);
-        $this->assertArrayNotHasKey('_charisma_tracker', $feed($this->npc(), array_fill(0, 5, [2, 3])), 'switched off');
+        $this->assertArrayNotHasKey('_charisma_tracker', $feed($this->npc(), array_fill(0, 5, 'charmer')), 'switched off');
     }
 
     /** PR 39 step 5: goal_addressed fulfils the goal the eval was shown, never a newer one. */

@@ -582,8 +582,10 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
      * player who presses each for a kiss three times after the hello (3 in 4 exchanges: romantic
      * pressure the eval scores, none of them answering in kind). The threshold is hers: maturity
      * and the avoidance axis ("suffocation threshold lowered"). Aela and Ashe, the avoidant-leaning,
-     * feel it at three in four; Muiri and Lynly, who do not mind closeness, not yet. The trigger is
-     * stamped with the exchange's game time and the play clock, never the wall clock. Pressing on:
+     * feel it by three in four, and so does Muiri, fearful since her preset (rulings 2026-09-25 §18
+     * #9: she wants closeness and fears it; her avoidance is high); Lynly, who does not mind
+     * closeness, not yet. The trigger is stamped with the game time of the exchange that set it
+     * off and the play clock, never the wall clock. Pressing on:
      * comfort and resentment pay, passion gains invert. Backing off: good, quiet days let her
      * comfort climb again (no longer forced down on every exchange) and the ick clears.
      */
@@ -601,8 +603,8 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
         $kiss = [];
         for ($k = 0; $k < 3; $k++) {
             foreach ($all as $i => $npc) {
-                $kiss[$npc] = $t + 100 * (4 * $k + $i);
-                $this->turn($npc, 'Come here and kiss me.', $kiss[$npc], "k{$k}");
+                $kiss[$npc][] = $t + 100 * (4 * $k + $i);
+                $this->turn($npc, 'Come here and kiss me.', end($kiss[$npc]), "k{$k}");
             }
             $stats = RelDynEval::runWorker($this->evalLlm());
             $this->assertSame(0, $stats['failed'] ?? 0, json_encode($stats));
@@ -617,12 +619,12 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
             $active[$npc] = !empty($tr['ick_active']);
             $this->assertSame(0.75 >= $threshold[$npc], $active[$npc], "{$npc}: threshold {$threshold[$npc]}");
             if ($active[$npc]) {
-                $this->assertSame((float) $kiss[$npc], floatval($tr['ick_triggered_gamets']), "{$npc}: stamped with the exchange's game time");
+                $this->assertContains(floatval($tr['ick_triggered_gamets']), array_map('floatval', $kiss[$npc]), "{$npc}: stamped with the exchange's game time");
                 $this->assertGreaterThan(0.0, floatval($tr['ick_triggered_play_gamets']));
             }
             $this->assertArrayNotHasKey('ick_triggered_at', $tr, "{$npc}: no wall clock");
         }
-        $this->assertSame(['Aela the Huntress' => true, 'Ashe' => true, 'Muiri' => false, 'Lynly Star-Sung' => false], $active,
+        $this->assertSame(['Aela the Huntress' => true, 'Ashe' => true, 'Muiri' => true, 'Lynly Star-Sung' => false], $active,
             'the avoidant-leaning feel it first ' . json_encode($threshold));
 
         // Pressing on: comfort and resentment pay for it, the passion the eval would give inverts
