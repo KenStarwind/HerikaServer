@@ -216,7 +216,7 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
         $npcPlay = 50 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;   // this NPC's play clock
         $dynamics = [
             'inferred_temperament' => 'Romantic',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'love_language_primary' => RelationshipDynamics::LL_TIME,
             'love_language_secondary' => RelationshipDynamics::LL_WORDS,
             '_interest_vector' => [0.1, 0.2, 0.3],

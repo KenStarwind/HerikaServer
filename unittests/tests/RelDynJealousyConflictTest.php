@@ -39,7 +39,7 @@ final class RelDynJealousyConflictTest extends TestCase
     {
         $d = $extra + [
             'inferred_temperament' => 'Stoic',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'jealousy_anger' => 0.0,
             'in_conflict' => false,
             'dimensions' => [],
@@ -86,7 +86,7 @@ final class RelDynJealousyConflictTest extends TestCase
         $this->assertEqualsWithDelta($base * 2.0, $gain(['inferred_temperament' => 'Jealous'], 1), 1e-9, 'MDD 1.3 Jealous 2.0x');
         $this->assertEqualsWithDelta($base * 0.2, $gain(['inferred_temperament' => 'Stoic'], 1), 1e-9, 'MDD 1.3 Stoic 0.2x');
         $this->assertEqualsWithDelta($base * 2.0 * 2.0,
-            $gain(['inferred_temperament' => 'Jealous', 'attachment_style' => 'anxious'], 1), 1e-9, 'Anxious attachment 2.0x');
+            $gain(['inferred_temperament' => 'Jealous', 'profile_overrides' => ['attachment_style' => 'anxious']], 1), 1e-9, 'Anxious attachment 2.0x');
         $this->assertEqualsWithDelta(2.0, $gain(['inferred_temperament' => 'Romantic'], 3) / $gain(['inferred_temperament' => 'Romantic'], 1), 1e-9);
         // Relationship preference (pipeline doc: monogamous 2x, polyamorous 0.1x), from config
         $this->assertEqualsWithDelta($base * 1.3 * 0.1,
@@ -174,10 +174,10 @@ final class RelDynJealousyConflictTest extends TestCase
         $this->assertSame(2.0, $k);
 
         $profiles = [
-            'secure, maturity 60'                  => [['attachment_style' => 'secure'], ['maturity' => 60.0, 'resentment' => 5.0]],
-            'anxious, maturity 60'                 => [['attachment_style' => 'anxious'], ['maturity' => 60.0, 'resentment' => 5.0]],
-            'secure, maturity 40, resentment 35'   => [['attachment_style' => 'secure'], ['maturity' => 40.0, 'resentment' => 35.0]],
-            'anxious, maturity 30, resentment 35'  => [['attachment_style' => 'anxious'], ['maturity' => 30.0, 'resentment' => 35.0]],
+            'secure, maturity 60'                  => [['profile_overrides' => ['attachment_style' => 'secure']], ['maturity' => 60.0, 'resentment' => 5.0]],
+            'anxious, maturity 60'                 => [['profile_overrides' => ['attachment_style' => 'anxious']], ['maturity' => 60.0, 'resentment' => 5.0]],
+            'secure, maturity 40, resentment 35'   => [['profile_overrides' => ['attachment_style' => 'secure']], ['maturity' => 40.0, 'resentment' => 35.0]],
+            'anxious, maturity 30, resentment 35'  => [['profile_overrides' => ['attachment_style' => 'anxious']], ['maturity' => 30.0, 'resentment' => 35.0]],
         ];
         foreach ($profiles as $label => [$extra, $dims]) {
             $d = $this->npc(['jealousy_anger' => 65.0] + $extra, $dims);

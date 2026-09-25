@@ -369,7 +369,8 @@ final class RelDynAttractionGatePostgresTest extends TestCase
             $this->assertGreaterThan($steps[$k - 1]['passion_mult'], $steps[$k]['passion_mult'], $why);
         }
         // The level-10 sellsword: a small multiplier, a fraction of what the Companion becomes
-        $this->assertLessThan(0.25, $steps[0]['passion_mult'], json_encode($steps[0]['passion']));
+        // (the modifier 0.28 x Aela's near-secure attachment 0.91, decisions §12; 0.7 while she was avoidant)
+        $this->assertLessThan(0.3, $steps[0]['passion_mult'], json_encode($steps[0]['passion']));
         $this->assertGreaterThan(2.0 * $steps[0]['passion_mult'], $steps[5]['passion_mult']);
         $this->assertLessThanOrEqual(1.0, $steps[5]['passion']['modifier'], 'attraction never speeds passion past its raw rate');
         // The modifier is the documented curve on the score (floor + span x S^curve)

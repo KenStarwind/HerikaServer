@@ -341,7 +341,7 @@ final class RelDynGameTimersTest extends TestCase
     private static function walkawayDynamics(): array
     {
         return [
-            'attachment_style' => 'toxic',
+            'profile_overrides' => ['attachment_style' => 'toxic'],
             'dimensions' => [
                 'resentment' => ['x' => 80, 'baseline' => 0, 'active' => true],
                 'comfort' => ['x' => 10, 'baseline' => 50, 'active' => true],
@@ -358,7 +358,7 @@ final class RelDynGameTimersTest extends TestCase
     {
         $start = self::setClock(self::at(40, 8));
         $dyn = self::walkawayDynamics();
-        $dyn['attachment_style'] = 'secure';          // not a hoover sleeper
+        $dyn['profile_overrides']['attachment_style'] = 'secure';          // not a hoover sleeper
         $dyn['_accumulated_play_gamets'] = 40.0 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
 
         RelationshipDynamics::initiateWalkaway($dyn, 'Ashe', 'resentment');

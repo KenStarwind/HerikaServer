@@ -196,7 +196,7 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->setCalendar(self::T0);
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
             'inferred_temperament' => 'Stoic',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             '_accumulated_play_gamets' => 10.0 * RelationshipDynamics::GAMETS_PER_REAL_HOUR,
         ], $extra));
         foreach ($dims + ['maturity' => 60.0, 'resentment' => 0.0] as $dim => $x) {
@@ -280,7 +280,7 @@ final class RelDynCalendarTimeTest extends TestCase
 
         $fade = [];
         foreach (['secure' => 1.0, 'anxious' => 2.0, 'avoidant' => 0.5] as $style => $mult) {
-            $d = $this->npc(['attachment_style' => $style]);
+            $d = $this->npc(['profile_overrides' => ['attachment_style' => $style]]);
             RelationshipDynamics::setPassion($d, 60.0);
             $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 3 * self::DAY);
             $fade[$style] = 60.0 - RelationshipDynamics::getPassion($d);
@@ -316,7 +316,7 @@ final class RelDynCalendarTimeTest extends TestCase
 
         $fade = [];
         foreach (['secure', 'anxious', 'avoidant'] as $style) {
-            $d = $this->npc(['attachment_style' => $style], ['warmth' => 80.0]);
+            $d = $this->npc(['profile_overrides' => ['attachment_style' => $style]], ['warmth' => 80.0]);
             $prof = RelationshipDynamics::getNeglectProfile($d);
             $absent = 5.0 - $graceDays * $prof['grace_mult'];         // absent game days past the grace
             $r = RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 5 * self::DAY);
@@ -384,10 +384,10 @@ final class RelDynCalendarTimeTest extends TestCase
         $cfg = RelationshipDynamics::defaultConfig();
         $days = 10.0;
         $neglect = function (string $type, string $style) use ($days): float {
-            $d = $this->npc(['relationship_type' => $type, 'attachment_style' => $style]);
+            $d = $this->npc(['relationship_type' => $type, 'profile_overrides' => ['attachment_style' => $style]]);
             return RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + $days * self::DAY)['neglect_days'];
         };
-        $graceMult = fn(string $style) => RelationshipDynamics::getNeglectProfile($this->npc(['attachment_style' => $style]))['grace_mult'];
+        $graceMult = fn(string $style) => RelationshipDynamics::getNeglectProfile($this->npc(['profile_overrides' => ['attachment_style' => $style]]))['grace_mult'];
 
         $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult('secure'), $neglect('bonded', 'secure'), 1e-9);
         $this->assertEqualsWithDelta($days - $cfg['neglect_bond_types']['bonded']['grace_game_days'] * $graceMult('anxious'), $neglect('bonded', 'anxious'), 1e-9);

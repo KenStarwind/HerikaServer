@@ -241,7 +241,7 @@ final class RelDynSaveLoadRacePostgresTest extends TestCase
             $dimensions['affinity'] = ['x' => ($coreAff + 100) / 2, 'baseline' => null];
             $dynamics += [
                 'inferred_temperament' => 'Stoic',
-                'attachment_style' => 'secure',
+                'profile_overrides' => ['attachment_style' => 'secure'],
                 'love_language_primary' => RelationshipDynamics::LL_TIME,
                 'love_language_secondary' => RelationshipDynamics::LL_WORDS,
                 '_interest_vector' => [0.1, 0.2, 0.3],

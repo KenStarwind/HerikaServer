@@ -958,7 +958,8 @@ final class RelDynEval
     // =========================================================================
 
     /**
-     * Compact state in words (bands, never raw numbers): tier, type, temperament, attachment,
+     * Compact state in words (bands, never raw numbers): tier, type, temperament, how they attach
+     * (behaviour, never the style name: RelationshipDynamics::attachmentFeltText),
      * maturity / trust / comfort bands, passion, jealousy and resentment bands, current mood.
      */
     public static function stateSummary(string $npcName, array $dynamics): array
@@ -977,7 +978,7 @@ final class RelDynEval
         $lines = [
             'Bond with the player: ' . str_replace('_', ' ', $tier) . ($type ? ", {$type}" : ''),
             'Temperament: ' . ($dynamics['inferred_temperament'] ?? 'unknown')
-                . '; attachment: ' . RelationshipDynamics::getAttachmentStyle($dynamics),
+                . '; in closeness: ' . RelationshipDynamics::attachmentFeltText($dynamics),
             'Maturity: ' . $band('maturity', $dimX('maturity')),
             'Trust in the player: ' . $band('trust', $dimX('trust')),
             'Comfort with the player: ' . $band('comfort', $dimX('comfort')),

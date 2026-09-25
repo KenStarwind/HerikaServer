@@ -184,7 +184,7 @@ final class RelDynCalendarScanPostgresTest extends TestCase
     {
         $dynamics += [
             'inferred_temperament' => 'Stoic',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             '_last_contact_gamets' => self::T0,
             'dimensions' => ['maturity' => ['x' => 60.0], 'resentment' => ['x' => 0.0, 'baseline' => 0]],
         ];
@@ -339,7 +339,7 @@ final class RelDynCalendarScanPostgresTest extends TestCase
     {
         $this->seed('Aela', [
             'relationship_type' => 'friend',
-            'attachment_style' => 'anxious',
+            'profile_overrides' => ['attachment_style' => 'anxious'],
             '_walkaway_state' => 'boundary_test',
             '_walkaway_boundary_test_hours' => 24.0,
             '_walkaway_activated_calendar_gamets' => self::T0,

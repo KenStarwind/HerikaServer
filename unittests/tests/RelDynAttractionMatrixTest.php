@@ -182,9 +182,12 @@ final class RelDynAttractionMatrixTest extends TestCase
             'Farengar x scholar: slow burn'   => ['Farengar Secret-Fire', 'scholar', false, false, 'prebond'],
             'Farengar x bard: friend'         => ['Farengar Secret-Fire', 'bard', false, true, 'friendzone'],
             // Rulings §11: a required pillar the player does not meet zeroes passion. A mage
-            // reads little strength in a warrior, short of his bar: his respect, no passion
-            // (testAFailedRequiredPillarZeroes)
-            'Farengar x warrior: friend'      => ['Farengar Secret-Fire', 'warrior', false, true, 'friendzone'],
+            // reads little strength in a warrior, short of his bar: no passion
+            // (testAFailedRequiredPillarZeroes). Decisions §12: Farengar is Guarded, not
+            // avoidant; at maturity 45 the April avoidant tolerance curve had forgiven the
+            // warrior's competence as he reads it (0.355 against a bar of 0.349), his secure
+            // one does not (bar 0.357): no respect-without-pull either, simply unattracted.
+            'Farengar x warrior: unattracted' => ['Farengar Secret-Fire', 'warrior', false, false, 'unattracted'],
             'Ysolda x bard'                   => ['Ysolda', 'bard', true, false, 'drawn'],
             'Jarl x newbie'                   => ['Jarl Hrothmund', 'newbie', false, false, 'unattracted'],
         ];
@@ -308,7 +311,7 @@ final class RelDynAttractionMatrixTest extends TestCase
      */
     public function testOpennessTolerance(): void
     {
-        $d = $this->npc('Uthgerd the Unbroken', ['attachment_style' => 'secure']);
+        $d = $this->npc('Uthgerd the Unbroken', ['profile_overrides' => ['attachment_style' => 'secure']]);
         $d['attraction_overrides'] = ['rigidity' => ['beauty' => 'soft', 'strength' => 'rigid', 'status' => 'soft', 'competence' => 'soft'],
             'lens_share' => ['strength' => 0.0]];
         $bar = RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $d, self::player('warrior'))['pillars']['strength']['bar'];
@@ -543,15 +546,18 @@ final class RelDynAttractionMatrixTest extends TestCase
         $this->assertGreaterThan(0.3, $mw, 'the warrior stirs Aela');
         $this->assertSame(0.0, $mb, 'the bard: her required strength is absent, 100 x 0 = 0 (rulings §11)');
         $a = $warrior['_attraction']['passion'];
-        $this->assertEqualsWithDelta($a['modifier'] * $a['gate_product'] * RelDynAttraction::config()['passion']['attachment_mult']['avoidant'],
-            $mw, 1e-3, 'modifier x gates x attachment (Aela is avoidant)');
+        // Decisions §12: Aela is secure-leaning (preset anxiety 0.15, avoidance 0.35), so her
+        // attachment factor is attachment_mult read at her axes, near the secure 1.0
+        $att = RelationshipDynamics::attachmentBlend($warrior, RelDynAttraction::config()['passion']['attachment_mult'], 1.0);
+        $this->assertEqualsWithDelta(1.0 - (0.2 / 0.7) * 0.3, $att, 1e-9, 'secure 1.0 x 5/7 + avoidant 0.7 x 2/7');
+        $this->assertEqualsWithDelta($a['modifier'] * $a['gate_product'] * $att, $mw, 1e-3, 'modifier x gates x attachment');
     }
 
     public function testAttachmentStyleSetsThePace(): void
     {
-        $anx = $this->aelaFor('warrior', ['attachment_style' => 'anxious']);
-        $avo = $this->aelaFor('warrior', ['attachment_style' => 'avoidant']);
-        $sec = $this->aelaFor('warrior', ['attachment_style' => 'secure']);
+        $anx = $this->aelaFor('warrior', ['profile_overrides' => ['attachment_style' => 'anxious']]);
+        $avo = $this->aelaFor('warrior', ['profile_overrides' => ['attachment_style' => 'avoidant']]);
+        $sec = $this->aelaFor('warrior', ['profile_overrides' => ['attachment_style' => 'secure']]);
         $m = fn($d) => RelationshipDynamics::attractionPassionMult(self::AELA, $d);
         $this->assertEqualsWithDelta(1.3 / 0.7, $m($anx) / $m($avo), 1e-3, 'anxious attaches fast, avoidant slow');
         $this->assertGreaterThan($m($sec), $m($anx));
@@ -662,7 +668,10 @@ final class RelDynAttractionMatrixTest extends TestCase
         $this->assertSame('bond', $def['gate']);
         $this->assertSame('low', $def['openness']);
         $need = RelDynAttraction::interactionsNeeded($d, $def['gate'], $def['openness'], false);
-        $this->assertGreaterThanOrEqual(10, $need);
+        // Decisions §12: Proud no longer makes him avoidant (pace x1.4); his pride and ego are a
+        // little avoidance (x1.11), so the bond gate and his low openness carry the caution now:
+        // 9 significant interactions (10-12 under the April map). Open question for Ken.
+        $this->assertGreaterThanOrEqual(8, $need);
         $this->assertLessThanOrEqual(15, $need);
     }
 

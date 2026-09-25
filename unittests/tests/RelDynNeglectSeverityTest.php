@@ -56,7 +56,7 @@ final class RelDynNeglectSeverityTest extends TestCase
         $GLOBALS['gameRequest'] = ['inputtext', (string) time(), (string) self::T0, 'Kaida: hello'];
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
             'inferred_temperament' => $temperament,
-            'attachment_style' => $attachment,
+            'profile_overrides' => ['attachment_style' => $attachment],
             'traits' => $traits,
             'relationship_type' => 'bonded',
             '_accumulated_play_gamets' => 10.0 * RelationshipDynamics::GAMETS_PER_REAL_HOUR,

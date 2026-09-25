@@ -255,16 +255,18 @@ class RelDynFulfillment
             if (is_string($ll) && in_array($ll, self::LOVE_LANGUAGES, true)) $add($ll, floatval($weight));
         }
         $traits = RelationshipDynamics::getTraits($dynamics);
-        $attachment = RelationshipDynamics::getAttachmentStyle($dynamics);
+        $attachment = RelationshipDynamics::attachmentWeights($dynamics);   // style corner => 0..1
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null;
         foreach ((array) $cfg['need_rules'] as $rule) {
             if (!is_array($rule)) continue;
-            $match = (isset($rule['trait']) && in_array(strtolower((string) $rule['trait']), $traits, true))
-                || (isset($rule['attachment']) && $rule['attachment'] === $attachment)
-                || (isset($rule['temperament']) && $rule['temperament'] === $temperament);
-            if (!$match) continue;
+            // An attachment rule adds its weights x how far the NPC sits toward that style's
+            // corner (decisions §12: the axes, not a yes/no label)
+            $scale = (isset($rule['trait']) && in_array(strtolower((string) $rule['trait']), $traits, true))
+                || (isset($rule['temperament']) && $rule['temperament'] === $temperament)
+                ? 1.0 : (isset($rule['attachment']) ? floatval($attachment[$rule['attachment']] ?? 0.0) : 0.0);
+            if ($scale <= 0.0) continue;
             foreach ((array) ($rule['axes'] ?? []) as $axis => $v) {
-                if (is_numeric($v)) $add((string) $axis, floatval($v));
+                if (is_numeric($v)) $add((string) $axis, floatval($v) * $scale);
             }
         }
         foreach (RelDynIntimacy::fulfillmentNeeds($dynamics) as $axis => $v) {

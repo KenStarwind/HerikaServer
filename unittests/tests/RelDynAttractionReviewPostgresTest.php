@@ -410,7 +410,6 @@ final class RelDynAttractionReviewPostgresTest extends TestCase
     {
         $this->editDynamics(function (array &$d) use ($hours): void {
             $d['profile_overrides']['attachment_style'] = 'toxic';
-            $d['attachment_style'] = 'toxic';
             $d['dimensions']['maturity']['x'] = 20;
             $d['dimensions']['maturity']['baseline'] = 20;
             $d['_walkaway_state'] = 'active';

@@ -217,7 +217,7 @@ final class RelDynEvalEndToEndTest extends TestCase
         $dim = fn(float $x, float $baseline, array $extra = []) => ['x' => $x, 'baseline' => $baseline] + $extra;
         $dynamics = [
             'inferred_temperament' => 'Jealous',
-            'attachment_style' => 'secure',
+            'profile_overrides' => ['attachment_style' => 'secure'],
             'traits' => [],
             'love_language_primary' => RelationshipDynamics::LL_TIME,
             'love_language_secondary' => RelationshipDynamics::LL_TOUCH,

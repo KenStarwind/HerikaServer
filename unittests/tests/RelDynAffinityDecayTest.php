@@ -46,7 +46,7 @@ final class RelDynAffinityDecayTest extends TestCase
     {
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
             'inferred_temperament' => 'Stoic',
-            'attachment_style' => 'secure',   // absence mult 1.0, no absence comfort drift
+            'profile_overrides' => ['attachment_style' => 'secure'],   // absence mult 1.0, no absence comfort drift
         ]));
         RelationshipDynamics::refreshAffinityMirror($d, $coreAff);
         foreach ($dims as $dim => $value) {
@@ -124,7 +124,7 @@ final class RelDynAffinityDecayTest extends TestCase
     {
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
             'inferred_temperament' => $temperament,
-            'attachment_style' => $attachment,
+            'profile_overrides' => ['attachment_style' => $attachment],
         ]));
         RelationshipDynamics::refreshAffinityMirror($d, $coreAff);
         $d['dimensions']['maturity']['x'] = 55.0;

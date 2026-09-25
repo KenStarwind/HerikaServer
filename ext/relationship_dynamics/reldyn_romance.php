@@ -439,7 +439,8 @@ final class RelDynRomance
     public static function requiredMomentum(array $dynamics, int $npcId, array $cfg): float
     {
         $required = floatval($cfg['momentum_required']);
-        $required *= floatval(((array) $cfg['momentum_attachment_mult'])[RelationshipDynamics::getAttachmentStyle($dynamics)] ?? 1.0);
+        // style corners read at the NPC's attachment axes (decisions §12)
+        $required *= RelationshipDynamics::attachmentBlend($dynamics, (array) $cfg['momentum_attachment_mult'], 1.0);
         $temperament = (string) ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? '');
         $required *= floatval(((array) $cfg['momentum_temperament_mult'])[$temperament] ?? 1.0);
 
