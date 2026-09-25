@@ -919,7 +919,8 @@ class RelationshipDynamics
             'attraction' => RelDynAttraction::defaults(),
             // Relationship preference -> jealousy multiplier (pipeline doc: monogamous 2x,
             // polyamorous 0.1x; not interested: no jealousy)
-            'preference_jealousy_mult' => ['monogamous' => 2.0, 'polyamorous' => 0.1, 'not_interested' => 0.0],
+            // aromantic: no romantic rival (traits design §1.7), so no jealousy
+            'preference_jealousy_mult' => ['monogamous' => 2.0, 'polyamorous' => 0.1, 'not_interested' => 0.0, 'aromantic' => 0.0],
             // PR 12: Affinity Network + Relationship Types
             'cascade_network_enabled' => true,
             'cascade_threshold' => 15,               // core affinity points (|delta| that ripples)
@@ -1057,6 +1058,11 @@ class RelationshipDynamics
             // x jealousy_intensity_mult[intensity 0..3].
             'jealousy_eval_gain' => 10.0,
             'jealousy_intensity_mult' => [1.0, 1.0, 1.5, 2.0],
+            // Trust damps possessive jealousy STRONGLY (traits design §1.1, §1.4; decisions §14):
+            // every jealousy gain x clamp(1 - this x trust / 100, 0.3, 1), trust = the bond's
+            // trust dimension (points 0..100). 0 = no damping. Protective concern is damped only
+            // mildly (concern.trust_damping); neither damps the values count.
+            'jealousy_trust_damping' => 0.7,
             // Eval grievance kinds that are jealousy (a rival), not a grievance: they raise
             // jealousy, which feeds resentment only through the conversion above (§5).
             'jealousy_grievance_kinds' => ['jealousy', 'jealous', 'rival', 'jealousy_trigger', 'envy'],
@@ -1113,6 +1119,10 @@ class RelationshipDynamics
             // Needs vector, deliveries, decay, band thresholds, boundary windows, felt text
             // (reldyn_fulfillment.php, RelDynFulfillment::configDefaults()).
             'fulfillment' => RelDynFulfillment::configDefaults(),
+            // ===== Protective concern + the values path of both channels (traits design §1) =====
+            // Risk appraisal, concern gains, repetition counter, routes A/B, felt text
+            // (reldyn_concern.php, RelDynConcern::configDefaults()).
+            'concern' => RelDynConcern::configDefaults(),
             // ===== Intimacy need per NPC (rulings 2026-09-24 §10) =====
             // Physical / emotional axes from a trait combo, fulfillment axes, deprivation text
             // (reldyn_intimacy.php, RelDynIntimacy::configDefaults()).
@@ -8260,6 +8270,48 @@ class RelationshipDynamics
             'witnesses' => is_array($item['witnesses'] ?? null)
                 ? array_values(array_filter(array_map(fn($w) => trim((string) $w), array_filter($item['witnesses'], 'is_string')), fn($w) => $w !== ''))
                 : null,
+        ] + (($e = self::normalizeEvalExposure($item['exposure'] ?? null, $npc)) !== null ? ['exposure' => $e] : []);
+    }
+
+    /**
+     * Contract v1 optional field 'exposure' (additive; traits design §1.2 route A): the player
+     * told the NPC about something it was not there for. {flag, kinds: [RelDynConcern::KINDS
+     * keys but 'rival'], intensity 1..3, when: today|last_night|earlier, disclosed: true}.
+     * Returns null for no exposure (absent, not flagged, or no known kind; a malformed one is
+     * logged). 'rival' (flirting in front of the NPC) is the jealousy object, not an exposure.
+     */
+    public static function normalizeEvalExposure($e, string $npc = ''): ?array
+    {
+        if ($e === null) {
+            return null;
+        }
+        if (!is_array($e)) {
+            error_log("[RelDyn-EVAL] eval item for {$npc}: exposure is not an object, ignored");
+            return null;
+        }
+        if (empty($e['flag'])) {
+            return null;
+        }
+        $kinds = [];
+        $raw = is_array($e['kinds'] ?? null) ? $e['kinds'] : (is_string($e['kind'] ?? null) ? [$e['kind']] : []);
+        foreach ($raw as $k) {
+            $k = strtolower(trim((string) $k));
+            if ($k === 'rival' || RelDynConcern::channelOf($k) === null) {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: exposure kind '{$k}' dropped");
+                continue;
+            }
+            if (!in_array($k, $kinds, true)) $kinds[] = $k;
+        }
+        if ($kinds === []) {
+            return null;
+        }
+        $when = strtolower(trim((string) ($e['when'] ?? 'today')));
+        return [
+            'flag' => true,
+            'kinds' => $kinds,
+            'intensity' => max(1, min(3, intval($e['intensity'] ?? 1))),
+            'when' => in_array($when, RelDynConcern::WHEN, true) ? $when : 'today',
+            'disclosed' => true,
         ];
     }
 
@@ -8330,6 +8382,12 @@ class RelationshipDynamics
         // Grievance / jealousy / positive interaction (resentment, conflict): once per accepted
         // item, after its signals. A rejected, misaddressed or already-applied item never gets here.
         $feelings = self::applyEvalFeelings((string) $npcName, $n, $dynamics);
+        // Both channels' values path (traits design §1.5): the jealousy event is a 'rival'
+        // incident; a disclosed exposure (route A) is learned; reassurance addresses one
+        $concern = RelDynConcern::onEvalItem((string) $npcName, $n, $dynamics, $feelings);
+        if ($concern['events'] !== [] || $concern['concern'] > 0 || $concern['jealousy'] > 0) {
+            $feelings['concern'] = $concern;
+        }
         // What the exchange gave against the NPC's needs (rulings §9 fulfillment; its physical /
         // emotional intimacy axes, rulings §10), at its game time.
         RelDynFulfillment::deliver($dynamics, RelDynFulfillment::evalItemAmounts($n),
@@ -8802,7 +8860,8 @@ class RelationshipDynamics
      * Jealousy points (0..100 scale) one eval jealousy event adds to this NPC:
      *   jealousy_eval_gain x jealousy_intensity_mult[intensity] x TEMPERAMENT_JEALOUSY_MULT (MDD 1.3)
      *   x attachment jealousy_mult x relationship preference (config preference_jealousy_mult:
-     *   monogamous 2.0, polyamorous 0.1, not_interested 0)
+     *   monogamous 2.0, polyamorous 0.1, not_interested 0, aromantic 0) x commitment
+     *   x jealousyTrustFactor (trust damps it strongly, traits design §1.4)
      */
     public static function jealousyEventGain(array $dynamics, int $intensity, float $commitment = 1.0): float
     {
@@ -8817,8 +8876,24 @@ class RelationshipDynamics
             * floatval(RelDynTraits::param($dynamics['inferred_temperament'] ?? '', 'jealousy_mult', 1.0, $dynamics))   // A4
             * floatval(self::getAttachmentModifier($dynamics, 'jealousy_mult') ?? 1.0)
             * $prefMult
-            * $commitment;
+            * $commitment
+            * self::jealousyTrustFactor($dynamics);
         return max(0.0, $gain);
+    }
+
+    /**
+     * Possessive trust damping (traits design §1.4): clamp(1 - jealousy_trust_damping x trust /
+     * 100, 0.3, 1), trust = dimensions.trust.x (points 0..100). A bond with no trust value yet
+     * is not damped (1.0). Unitless.
+     */
+    public static function jealousyTrustFactor(array $dynamics): float
+    {
+        $trust = $dynamics['dimensions']['trust']['x'] ?? null;
+        if (!is_numeric($trust)) {
+            return 1.0;
+        }
+        $k = max(0.0, floatval(self::configValue('jealousy_trust_damping')));
+        return max(0.3, min(1.0, 1.0 - $k * max(0.0, min(100.0, floatval($trust))) / 100.0));
     }
 
     /** Jealousy scale ceiling, jealousy points (MDD 6.5: walkaway at 100). */
@@ -8862,6 +8937,11 @@ class RelationshipDynamics
             $gain = self::bystanderJealousyGain($dyn);
             if ($gain <= 0) continue;
             self::addJealousy($dyn, $gain, $npcName);
+            // A 'rival' incident for the bystander's values path (traits design §1.5)
+            $seenAt = self::currentGamets();
+            if ($seenAt > 0) {
+                RelDynConcern::learn($name, $dyn, ['kinds' => ['rival' => 1], 'gamets' => $seenAt, 'route' => 'bystander', 'feeling_applied' => true], $seenAt);
+            }
             if (!self::saveDynamics($name, $dyn)) {
                 error_log("[RelDyn-JEALOUSY] bystander {$name}: save failed, +{$gain} jealousy lost");
                 continue;
@@ -17395,3 +17475,5 @@ require_once __DIR__ . '/reldyn_timeline.php';
 require_once __DIR__ . '/reldyn_felt.php';
 // Jev's explicit state block (the §3 exception): numbers, for the action picker.
 require_once __DIR__ . '/reldyn_jev.php';
+// Protective concern and the values path of both channels (traits design §1); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_concern.php';

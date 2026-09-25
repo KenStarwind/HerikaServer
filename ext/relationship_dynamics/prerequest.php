@@ -204,6 +204,10 @@ RelationshipDynamics::advanceFulfillment($npcName, $dynamics, RelationshipDynami
 // The reunion is measured before contact is marked; its passion is applied after this
 // request's attraction (below): a reunion spike is a passion gain like any other (rulings §11)
 $reunionPassion = ($reldynCfg['reunion_enabled'] ?? true) ? RelationshipDynamics::checkReunion($dynamics, $npcAffection) : 0;
+// Protective concern (traits design §1): eases while together; on a return, what the NPC can
+// perceive of the time apart (route B); the values boundary's probation and step-back. Before
+// contact is marked: it measures the time since the previous contact.
+RelDynConcern::onContact($npcName, $dynamics, RelationshipDynamics::currentGamets(), trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')));
 // Contact now (game calendar + play clock): absence, neglect and the next reunion count from here
 RelationshipDynamics::markContact($dynamics);
 

@@ -3,6 +3,17 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.13 — Worry, and what keeps happening
+A partner who stays home now finds out about your nights out and reacts as who she is. When you come back late from
+the tavern with drink on you, she notices; when you mention the Bannered Mare "with some friends", she hears it.
+Two feelings answer: jealousy about the people circling you (trust softens it a lot) and a new worry for your
+safety (trust softens it only a little). A crowded market is not a risk; the tavern at night is, and a fighter who
+lives in mead halls barely notices it while skooma still reaches her. What matters is repetition: a mature partner
+tells you once, plainly, that it is not something she values; the second time it shows; the third time in a week
+it becomes a real grievance and she draws a calm boundary, and if it goes on she steps back from the romance. A less
+mature one accuses, tries to forbid it or sulks, and the third time it boils over. One night counts once however she
+learns about it, and reassurance takes the edge off. Witnesses telling her comes later.
+
 ## reldyn-v0.12 — Personality read from each NPC's own bio
 Each NPC's personality now comes from her own CHIM bio: one read turns it into the ten traits, each backed by a short
 quote from the bio, blended with small hints from her voice, class, faction, skills and (a little) race. Reads stay
