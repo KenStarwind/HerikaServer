@@ -3,6 +3,18 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.16 — Shame is met gently, the style you bring is graded, and the ick is hers
+When she walks off in shame, going to her is not chasing her: a gentle word can reach her, she can tell you what she
+is ashamed of, and you can forgive her, and each of those brings her back sooner. Admitting something she is ashamed
+of is a confession; merely sharing a secret is not. A partner's trust and comfort show how high they really are
+instead of all reading as the top. The kind of presence you bring (a steady rock, a challenging catalyst, a charmer)
+is judged from how you actually behave in each exchange, not guessed from swings in affinity, and it is what a mature
+woman feels as pressure when you then push for more. Muiri now wants closeness and fears it at once, from the start.
+When she answers another NPC, it is their exchange, not a turn of yours. The ick is now only pressure she did not
+want, measured from her side: the touches the game reports inside your romance are the romance itself, a partner
+who has not warmed yet is not cold toward you, answering you in kind is answering, and one pushy moment is resented
+once, not twice. Grief and its turning points are told the same way for men and women.
+
 ## After reldyn-v0.15 (batch O review, untagged) — Crisis, grief, the ick and the parasite; and a suitor's flirt is not yours
 The protocols arrive. A catastrophe forks her on the game calendar: someone she trusts around her pulls her up, no
 one pulls her down, and in between a window stays open until an anchor comes or the time runs out; the dead anchor
