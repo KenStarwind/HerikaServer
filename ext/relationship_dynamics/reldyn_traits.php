@@ -412,6 +412,44 @@ final class RelDynTraits
         ];
     }
 
+    /**
+     * D2 (design §2.3, phase 3): how each trait reads in words at its low / high band, for the
+     * eval prompt's state summary (feelings and behaviour, never numbers). A trait between the
+     * band edges (TRAIT_BAND_EDGES, unitless 0..1) is not mentioned.
+     */
+    const TRAIT_BAND_TEXT = [
+        'G'  => ['lets people in quickly', 'guarded, slow to let people in'],
+        'E'  => ['keeps feelings contained', 'wears feelings openly'],
+        'C'  => ['unsure of themself', 'self-assured'],
+        'Pd' => ['modest', 'proud, slights land hard'],
+        'Rs' => ['breaks easily and rebuilds slowly', 'resilient, hard to shake'],
+        'L'  => ['steady, slow to react', 'reactive, big swings'],
+        'W'  => ['cool toward strangers', 'warm toward anyone'],
+        'D'  => ['impulsive', 'duty-first, restrained'],
+        'Po' => ['not possessive', 'possessive'],
+        'Pr' => ['lets others take their own risks', 'protective'],
+    ];
+
+    /** Band edges of TRAIT_BAND_TEXT: at or below low = the low phrase, at or above high = the high one. */
+    const TRAIT_BAND_EDGES = ['low' => 0.35, 'high' => 0.65];
+
+    /**
+     * The personality in words (D2): "<preset>" on a preset point, "<preset>-leaning" in between,
+     * then the phrases of the traits outside the middle band. No numbers (the Jev block has them).
+     */
+    public static function describe(array $x): string
+    {
+        $on = self::presetAt($x);
+        $name = $on ?? (self::nearestPreset($x)['name'] . '-leaning');
+        $parts = [];
+        foreach (self::TRAIT_BAND_TEXT as $code => [$low, $high]) {
+            $v = floatval($x[$code] ?? 0.5);
+            if ($v <= self::TRAIT_BAND_EDGES['low']) $parts[] = $low;
+            elseif ($v >= self::TRAIT_BAND_EDGES['high']) $parts[] = $high;
+        }
+        return $name . ': ' . ($parts ? implode('; ', $parts) : 'nothing about them is extreme');
+    }
+
     /** C1: egocentric tag strength from pride (0..1). */
     public static function egocentric(float $pd): float
     {

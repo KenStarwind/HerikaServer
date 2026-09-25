@@ -62,7 +62,7 @@ if ($rdMaturityX !== null && class_exists('RelationshipDynamics')) {
 
 // Maturity plasticity type options
 $rdMaturityPlasticityOptions = [
-    '' => '-- From temperament --',
+    '' => '-- From traits --',
     'Resilient' => 'Resilient (hard to break, normal rebuild)',
     'Growth'    => 'Growth (resists collapse, amplifies improvement)',
     'Brittle'   => 'Brittle (easy to break, hard to rebuild)',
@@ -250,20 +250,23 @@ $rdCurveOptions = [
     'guarded' => 'Guarded (12h half-life, hardest to crack)',
 ];
 
-// Temperament options (11 types)
+// Personality presets: all 13 MDD 1.3 temperaments as points in trait space (traits design §3.1).
+// Blank = the NPC's own traits (bio read over its priors); a preset replaces them with its point.
 $rdTempOptions = [
-    '' => '— Auto-generate —',
-    'Romantic' => 'Romantic (passion ×1.3, falls fast)',
-    'Anxious' => 'Anxious (reunion ×1.8, fears abandonment)',
-    'Bold' => 'Bold (passion ×1.1, confident & direct)',
-    'Playful' => 'Playful (passion ×1.4, flirty & volatile)',
-    'Humble' => 'Humble (passion ×1.1, steady & modest)',
-    'Nurturing' => 'Nurturing (reunion ×1.2, caretaker)',
-    'Jealous' => 'Jealous (jealousy ×2.0, possessive)',
-    'Proud' => 'Proud (passion ×0.8, demands respect)',
-    'Guarded' => 'Guarded (passion ×0.6, slow burn, huge payoff)',
-    'Independent' => 'Independent (passion ×0.7, autonomy-first)',
-    'Stoic' => 'Stoic (passion ×0.5, duty-first, deep quiet loyalty)',
+    '' => '— Own traits (bio read) —',
+    'Romantic' => 'Romantic (expressive, open, a little possessive)',
+    'Anxious' => 'Anxious (expressive, unsure, reactive)',
+    'Bold' => 'Bold (confident, direct, open)',
+    'Playful' => 'Playful (expressive, impulsive, open)',
+    'Humble' => 'Humble (modest, steady, dutiful)',
+    'Nurturing' => 'Nurturing (warm, protective, open)',
+    'Gentle' => 'Gentle (warm, modest, restrained)',
+    'Jealous' => 'Jealous (possessive, reactive, guarded)',
+    'Proud' => 'Proud (proud, self-assured, guarded)',
+    'Defiant' => 'Defiant (impulsive, proud, cool)',
+    'Guarded' => 'Guarded (slow to let people in, restrained)',
+    'Independent' => 'Independent (self-assured, steady, autonomy-first)',
+    'Stoic' => 'Stoic (duty-first, contained, deep quiet loyalty)',
 ];
 
 // Relationship preference options
@@ -279,7 +282,7 @@ $rdRelPrefOptions = [
 
 // Openness options
 $rdOpennessOptions = [
-    '' => '— Auto from temperament —',
+    '' => '— Auto from traits —',
     'high' => 'High (tolerant, effort compensates)',
     'medium' => 'Medium (soft blocks, 2x effort needed)',
     'low' => 'Low (hard blocks, strict standards)',
@@ -359,7 +362,7 @@ if ($rdUiPos !== false) {
         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-top:12px;">
             <div>
                 <label style="font-weight:700; color:rgb(242, 124, 17); display:block; margin-bottom:4px; font-size:0.85em;">
-                    Temperament
+                    Personality preset
                 </label>
                 <select id="reldyn_temperament" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
                     <?php foreach ($rdTempOptions as $val => $label): ?>
@@ -431,7 +434,7 @@ if ($rdUiPos !== false) {
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px;">
             <div>
                 <label style="font-weight:700; color:rgb(242, 124, 17); display:block; margin-bottom:4px; font-size:0.85em;"
-                    title="Override: pins the NPC to this style's textbook point on the anxiety x avoidance axes. Blank = derived from class, traits, temperament (weak prior) and loss history, drifting with experience.">
+                    title="Override: pins the NPC to this style's textbook point on the anxiety x avoidance axes. Blank = derived from class, personality traits (weak prior) and loss history, drifting with experience.">
                     Attachment Style
                 </label>
                 <select id="reldyn_attachment_style" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
@@ -444,11 +447,11 @@ if ($rdUiPos !== false) {
             </div>
             <div>
                 <label style="font-weight:700; color:rgb(242, 124, 17); display:block; margin-bottom:4px; font-size:0.85em;"
-                    title="How much this NPC cares about input from different bond levels. Inner Circle = only close bonds land. Open Heart = everyone's opinion matters. Blank = derive from temperament.">
+                    title="How much this NPC cares about input from different bond levels. Inner Circle = only close bonds land. Open Heart = everyone's opinion matters. Blank = derive from the personality traits.">
                     Social Sensitivity
                 </label>
                 <select id="reldyn_social_sensitivity" style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em;">
-                    <option value=""<?= $rdSensitivity === '' ? ' selected' : '' ?>>-- From temperament --</option>
+                    <option value=""<?= $rdSensitivity === '' ? ' selected' : '' ?>>-- From traits --</option>
                     <option value="inner_circle"<?= $rdSensitivity === 'inner_circle' ? ' selected' : '' ?>>Inner Circle (only close bonds land)</option>
                     <option value="open_heart"<?= $rdSensitivity === 'open_heart' ? ' selected' : '' ?>>Open Heart (everyone's opinion matters)</option>
                     <option value="uniform"<?= $rdSensitivity === 'uniform' ? ' selected' : '' ?>>Uniform (doesn't discriminate)</option>
@@ -597,7 +600,7 @@ if ($rdUiPos !== false) {
                     <?php endif; ?>
                 </label>
                 <button type="button" onclick="reldynResetMaturity()"
-                    title="Reset maturity X and baseline to temperament default"
+                    title="Reset maturity X and baseline to the trait default"
                     style="background:#2a2a2a; border:1px solid #4a4a4a; border-radius:4px; color:#fde68a; padding:3px 10px; cursor:pointer; font-size:0.75em;">
                     Reset to default
                 </button>
@@ -639,7 +642,7 @@ if ($rdUiPos !== false) {
                     <input type="number" id="reldyn_maturity_baseline"
                         min="0" max="100" step="1"
                         value="<?= $rdMaturityBaseline !== null ? round($rdMaturityBaseline) : '' ?>"
-                        placeholder="Auto from temperament"
+                        placeholder="Auto from traits"
                         style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
                 </div>
 
@@ -670,7 +673,7 @@ if ($rdUiPos !== false) {
                     <?php endif; ?>
                 </label>
                 <button type="button" onclick="reldynResetTrust()"
-                    title="Reset trust X and baseline to temperament default"
+                    title="Reset trust X and baseline to the trait default"
                     style="background:#1a2a3a; border:1px solid #3a5a7a; border-radius:4px; color:#8ab4d9; padding:3px 10px; cursor:pointer; font-size:0.75em;">
                     Reset to default
                 </button>
@@ -712,7 +715,7 @@ if ($rdUiPos !== false) {
                     <input type="number" id="reldyn_trust_baseline"
                         min="0" max="100" step="1"
                         value="<?= $rdTrustBaseline !== null ? round($rdTrustBaseline) : '' ?>"
-                        placeholder="Auto from temperament"
+                        placeholder="Auto from traits"
                         style="background:#0d1520; border:1px solid #3a5a7a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
                 </div>
             </div>
@@ -734,7 +737,7 @@ if ($rdUiPos !== false) {
                     <?php endif; ?>
                 </label>
                 <button type="button" onclick="reldynResetRespect()"
-                    title="Reset respect X and baseline to temperament default"
+                    title="Reset respect X and baseline to the trait default"
                     style="background:#2a2510; border:1px solid #7a6a3a; border-radius:4px; color:#d4a843; padding:3px 10px; cursor:pointer; font-size:0.75em;">
                     Reset to default
                 </button>
@@ -776,7 +779,7 @@ if ($rdUiPos !== false) {
                     <input type="number" id="reldyn_respect_baseline"
                         min="0" max="100" step="1"
                         value="<?= $rdRespectBaseline !== null ? round($rdRespectBaseline) : '' ?>"
-                        placeholder="Auto from temperament"
+                        placeholder="Auto from traits"
                         style="background:#1a1a0d; border:1px solid #7a6a3a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
                 </div>
             </div>
@@ -798,7 +801,7 @@ if ($rdUiPos !== false) {
                     <?php endif; ?>
                 </label>
                 <button type="button" onclick="reldynResetComfort()"
-                    title="Reset comfort X and baseline to temperament default"
+                    title="Reset comfort X and baseline to the trait default"
                     style="background:#1a2e1a; border:1px solid #3a6a4a; border-radius:4px; color:#8fd98e; padding:3px 10px; cursor:pointer; font-size:0.75em;">
                     Reset to default
                 </button>
@@ -840,7 +843,7 @@ if ($rdUiPos !== false) {
                     <input type="number" id="reldyn_comfort_baseline"
                         min="0" max="100" step="1"
                         value="<?= $rdComfortBaseline !== null ? round($rdComfortBaseline) : '' ?>"
-                        placeholder="Auto from temperament"
+                        placeholder="Auto from traits"
                         style="background:#0d1a0d; border:1px solid #3a6a4a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
                 </div>
             </div>
@@ -861,7 +864,7 @@ if ($rdUiPos !== false) {
                     <?php endif; ?>
                 </label>
                 <button type="button" onclick="reldynResetCoordM()"
-                    title="Reset masculine coordinate X and baseline to temperament default"
+                    title="Reset masculine coordinate X and baseline to the trait default"
                     style="background:#1e1e22; border:1px solid #5a5a5a; border-radius:4px; color:#a0a8b8; padding:3px 10px; cursor:pointer; font-size:0.75em;">
                     Reset to default
                 </button>
@@ -914,7 +917,7 @@ if ($rdUiPos !== false) {
                     <input type="number" id="reldyn_coord_m_baseline"
                         min="-100" max="100" step="1"
                         value="<?= $rdCoordMBaseline !== null ? round($rdCoordMBaseline) : '' ?>"
-                        placeholder="Auto from temperament"
+                        placeholder="Auto from traits"
                         style="background:#12121a; border:1px solid #5a5a5a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
                 </div>
             </div>
@@ -936,7 +939,7 @@ if ($rdUiPos !== false) {
                     <?php endif; ?>
                 </label>
                 <button type="button" onclick="reldynResetCoordF()"
-                    title="Reset feminine coordinate X and baseline to temperament default"
+                    title="Reset feminine coordinate X and baseline to the trait default"
                     style="background:#2a1a20; border:1px solid #7a4a5a; border-radius:4px; color:#d4788a; padding:3px 10px; cursor:pointer; font-size:0.75em;">
                     Reset to default
                 </button>
@@ -989,7 +992,7 @@ if ($rdUiPos !== false) {
                     <input type="number" id="reldyn_coord_f_baseline"
                         min="-100" max="100" step="1"
                         value="<?= $rdCoordFBaseline !== null ? round($rdCoordFBaseline) : '' ?>"
-                        placeholder="Auto from temperament"
+                        placeholder="Auto from traits"
                         style="background:#1a0d12; border:1px solid #7a4a5a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
                 </div>
             </div>
@@ -1226,7 +1229,7 @@ if ($rdUiPos !== false) {
                     <span style="color:#5a5a8a; font-weight:400; font-size:0.8em;">(GLOBAL)</span>
                 </label>
                 <button type="button" onclick="reldynResetSelfConfidence()"
-                    title="Reset self-confidence X and baseline to temperament default"
+                    title="Reset self-confidence X and baseline to the trait default"
                     style="background:#1a1a2e; border:1px solid #3a3a6a; border-radius:4px; color:#8a8ad9; padding:3px 10px; cursor:pointer; font-size:0.75em;">
                     Reset to default
                 </button>
@@ -1268,7 +1271,7 @@ if ($rdUiPos !== false) {
                     <input type="number" id="reldyn_self_confidence_baseline"
                         min="0" max="100" step="1"
                         value="<?= $rdSelfConfBaseline !== null ? round($rdSelfConfBaseline) : '' ?>"
-                        placeholder="Auto from temperament"
+                        placeholder="Auto from traits"
                         style="background:#0d0d1a; border:1px solid #3a3a6a; border-radius:4px; color:#e9efff; padding:6px 8px; width:100%; font-size:0.9em; box-sizing:border-box;">
                 </div>
 
@@ -1611,7 +1614,7 @@ if ($rdUiPos !== false) {
     };
 
     window.reldynResetMaturity = async function() {
-        showStatus('Resetting maturity to temperament default...', '#fde68a');
+        showStatus('Resetting maturity to the trait default...', '#fde68a');
         try {
             const resp = await fetch(RELDYN_API, {
                 method: 'POST',
@@ -1642,7 +1645,7 @@ if ($rdUiPos !== false) {
     };
 
     window.reldynResetTrust = async function() {
-        showStatus('Resetting trust to temperament default...', '#fde68a');
+        showStatus('Resetting trust to the trait default...', '#fde68a');
         try {
             const resp = await fetch(RELDYN_API, {
                 method: 'POST',
@@ -1673,7 +1676,7 @@ if ($rdUiPos !== false) {
     };
 
     window.reldynResetRespect = async function() {
-        showStatus('Resetting respect to temperament default...', '#fde68a');
+        showStatus('Resetting respect to the trait default...', '#fde68a');
         try {
             const resp = await fetch(RELDYN_API, {
                 method: 'POST',
@@ -1704,7 +1707,7 @@ if ($rdUiPos !== false) {
     };
 
     window.reldynResetComfort = async function() {
-        showStatus('Resetting comfort to temperament default...', '#fde68a');
+        showStatus('Resetting comfort to the trait default...', '#fde68a');
         try {
             const resp = await fetch(RELDYN_API, {
                 method: 'POST',
@@ -1742,7 +1745,7 @@ if ($rdUiPos !== false) {
     };
 
     window.reldynResetCoordM = async function() {
-        showStatus('Resetting masculine coordinate to temperament default...', '#fde68a');
+        showStatus('Resetting masculine coordinate to the trait default...', '#fde68a');
         try {
             const resp = await fetch(RELDYN_API, {
                 method: 'POST',
@@ -1779,7 +1782,7 @@ if ($rdUiPos !== false) {
     };
 
     window.reldynResetCoordF = async function() {
-        showStatus('Resetting feminine coordinate to temperament default...', '#fde68a');
+        showStatus('Resetting feminine coordinate to the trait default...', '#fde68a');
         try {
             const resp = await fetch(RELDYN_API, {
                 method: 'POST',
@@ -1879,7 +1882,7 @@ if ($rdUiPos !== false) {
     };
 
     window.reldynResetSelfConfidence = async function() {
-        showStatus('Resetting self-confidence to temperament default...', '#fde68a');
+        showStatus('Resetting self-confidence to the trait default...', '#fde68a');
         try {
             const resp = await fetch(RELDYN_API, {
                 method: 'POST',

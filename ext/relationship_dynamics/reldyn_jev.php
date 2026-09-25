@@ -23,7 +23,10 @@
  *   attachment_anxiety, attachment_avoidance
  *                    float  0..1 the two attachment axes (decisions §12, Fraley & Shaver): fear of
  *                           abandonment; discomfort with closeness once someone is in
- *   temperament      ?string
+ *   temperament      ?string the nearest preset (display; traits phase 3: the numbers are below)
+ *   traits           ?array  storage name => 0..1 (unitless), the NPC's own trait vector (design §1;
+ *                            null when the NPC has none yet)
+ *   trait_preset     ?array  ['nearest' => preset, 'distance' => trait-space distance (unitless)]
  *   relationship_type string RelDyn type (RelationshipDynamics::getRelationshipType)
  *   core_type        ?string core relationships.Player.type
  *   weather          string sunny|clear|overcast|stormy
@@ -133,6 +136,7 @@ final class RelDynJev
 
         $boundary = $dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? 'none';
         $axes = RelationshipDynamics::getAttachmentAxes($dynamics);
+        $traitVector = RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $dynamics);
         $rival = trim((string) ($dynamics['jealousy_trigger_npc'] ?? ''));
         $out = [
             'npc' => $npcName,
@@ -150,6 +154,9 @@ final class RelDynJev
             'attachment_anxiety' => round($axes['anxiety'], 3),
             'attachment_avoidance' => round($axes['avoidance'], 3),
             'temperament' => RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? null),
+            'traits' => $traitVector !== null ? array_map(fn($v) => round(floatval($v), 3), array_intersect_key(RelDynTraits::toStored($traitVector), array_flip(RelDynTraits::TRAITS))) : null,
+            'trait_preset' => $traitVector !== null ? ['nearest' => RelDynTraits::nearestPreset($traitVector)['name'],
+                'distance' => round(RelDynTraits::nearestPreset($traitVector)['distance'], 3)] : null,
             'relationship_type' => (string) RelationshipDynamics::getRelationshipType($npcName, $dynamics),
             'core_type' => isset($dynamics['_core_rel_type']) ? (string) $dynamics['_core_rel_type'] : null,
             'weather' => (string) ($dynamics['_internal_weather'] ?? 'clear'),
@@ -183,6 +190,13 @@ final class RelDynJev
         $parts[] = "attachment={$s['attachment']}(anxiety " . number_format($s['attachment_anxiety'], 2, '.', '')
             . ' avoidance ' . number_format($s['attachment_avoidance'], 2, '.', '') . ')';
         if ($s['temperament'] !== null) $parts[] = "temperament={$s['temperament']}";
+        if ($s['traits'] !== null) {
+            $codes = array_flip(RelDynTraits::TRAITS);
+            $t = [];
+            foreach ($s['traits'] as $name => $v) $t[] = $codes[$name] . number_format($v, 2, '.', '');
+            $parts[] = 'traits=' . implode(',', $t) . '(' . $s['trait_preset']['nearest'] . ' '
+                . number_format($s['trait_preset']['distance'], 2, '.', '') . ')';
+        }
         $parts[] = "weather={$s['weather']}";
         $parts[] = 'conflict=' . ($s['open_conflict'] ? 'open' : 'none');
         $parts[] = "boundary={$s['boundary']}";

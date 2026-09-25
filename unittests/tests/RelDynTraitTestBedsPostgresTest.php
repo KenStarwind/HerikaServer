@@ -5,6 +5,7 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../lib/core/npc_master.class.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
+require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
 
 /** `sql`-compatible adapter over one pg connection (CHIM conventions: fetchOne returns [] on failure). */
 final class RelDynTraitBedsPgDb
@@ -558,6 +559,32 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         $this->assertSame('Aela the Huntress', array_key_last($nets), 'the most fight');
         $log = (string) file_get_contents($this->errorLog) . (string) @file_get_contents(sys_get_temp_dir() . '/reldyn_trait_beds_test.log');
         $this->assertStringContainsString('Bleedout: Muiri fight=', $log);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Phase 3, D2 / D3: the eval prompt describes each bed's own traits in words (no numbers, no
+     * bare label) and Jev gets her trait numbers. The four read as four different people.
+     */
+    public function testPhaseThreeTraitWordingOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $lines = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $p = array_values(array_filter(RelDynEval::stateSummary($npc, $d), fn($l) => str_starts_with($l, 'Personality: ')));
+            $this->assertCount(1, $p, $npc);
+            $this->assertDoesNotMatchRegularExpression('/\d/', $p[0], "{$npc}: words, not numbers");
+            $this->assertStringContainsString($d['trait_preset']['nearest'], $p[0], $npc);
+            $lines[$npc] = $p[0];
+            $jev = RelationshipDynamics::jevStateBlock($npc);
+            $x = RelDynTraits::readVector($d);
+            foreach (RelDynTraits::TRAITS as $code => $name) $this->assertEqualsWithDelta($x[$code], $jev['traits'][$name], 5e-4, "{$npc} {$name}");
+            $this->assertStringContainsString('traits=G', $jev['text']);
+        }
+        $this->assertCount(4, array_unique($lines), 'four different people: ' . json_encode($lines));
+        $this->assertStringContainsString('guarded, slow to let people in', $lines['Ashe']);
+        $this->assertStringContainsString('self-assured', $lines['Aela the Huntress']);
         $this->assertSame([], $this->db->failures);
     }
 }

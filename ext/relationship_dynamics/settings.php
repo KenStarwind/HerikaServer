@@ -473,7 +473,7 @@ html, body {
                 <div class="rd-toggle">
                     <input type="hidden" name="charisma_detection_enabled" value="">
                     <input type="checkbox" name="charisma_detection_enabled" id="rd_charisma" <?php if ($cfg['charisma_detection_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_charisma" title="Charisma Archetypes: detects player style (Rock/Catalyst/Charmer) and adjusts effectiveness per NPC temperament and maturity.">Charisma Detection</label>
+                    <label for="rd_charisma" title="Charisma Archetypes: detects player style (Rock/Catalyst/Charmer) and adjusts effectiveness per NPC personality traits and maturity.">Charisma Detection</label>
                 </div>
             </div>
             <div class="rd-row" style="margin-top:8px;">
@@ -556,12 +556,12 @@ html, body {
     <!-- Warmth Curves (read-only reference) -->
     <div class="rd-section">
         <h2>Warmth Curves</h2>
-        <p style="font-size:0.85em; color:#888; margin:0 0 8px;">Per-NPC curve set in Sharmat NPC Editor. These are the built-in presets:</p>
+        <p style="font-size:0.85em; color:#888; margin:0 0 8px;">Per-NPC curve set in the NPC editor; otherwise the curve of the NPC's nearest personality preset (guard sets how slowly warmth is won). These are the built-in presets:</p>
         <table class="rd-curve-table">
             <thead>
                 <tr>
                     <th>Curve</th>
-                    <th>Temperaments</th>
+                    <th>Nearest personality presets</th>
                     <th>Decay Rate</th>
                     <th>Half-Life</th>
                     <th>Passion Decay</th>
@@ -571,7 +571,7 @@ html, body {
             <tbody>
                 <tr>
                     <td>slow_burn</td>
-                    <td>Romantic, Jealous</td>
+                    <td>Romantic, Gentle, Jealous</td>
                     <td>0.10/int</td>
                     <td>10h</td>
                     <td>2.5/hr</td>
@@ -579,7 +579,7 @@ html, body {
                 </tr>
                 <tr>
                     <td>moderate</td>
-                    <td>Humble</td>
+                    <td>Bold, Humble, Nurturing (and the default)</td>
                     <td>0.08/int</td>
                     <td>8h</td>
                     <td>3.0/hr</td>
@@ -587,7 +587,7 @@ html, body {
                 </tr>
                 <tr>
                     <td>quick_warmth</td>
-                    <td>(default)</td>
+                    <td>Anxious, Playful</td>
                     <td>0.06/int</td>
                     <td>6h</td>
                     <td>4.0/hr</td>
@@ -595,7 +595,7 @@ html, body {
                 </tr>
                 <tr>
                     <td>guarded</td>
-                    <td>Proud, Independent</td>
+                    <td>Proud, Defiant, Guarded, Independent, Stoic</td>
                     <td>0.12/int</td>
                     <td>12h</td>
                     <td>5.0/hr</td>

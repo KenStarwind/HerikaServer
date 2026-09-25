@@ -4,6 +4,7 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
+require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
 
 /**
  * Personality traits phase 3 (D:\docs\reldyn-personality-traits-design.md §6.1 item 3;
@@ -366,5 +367,58 @@ final class RelDynTraitPhase3Test extends TestCase
         $r = RelationshipDynamics::bleedoutResponse($n, true);
         $this->assertSame([-1.5, 0.0, 0.0, false], [$r['passion'], $r['applied']['arousal'], $r['applied']['valence'], $r['vector']]);
         $this->assertSame($cfg['no_vector_passion'], -1.5);
+    }
+
+    // =========================================================================
+    // D2 / D3 / E1: trait wording in the eval prompt, numbers in Jev, the editor and settings text
+    // =========================================================================
+
+    public function testEvalPromptDescribesTraitsInWordsAndJevGetsTheNumbers(): void
+    {
+        $ashe = self::at(self::asheVector());
+        $text = RelDynTraits::describe(RelDynTraits::readVector($ashe));
+        $this->assertStringStartsWith('Stoic-leaning: ', $text);
+        foreach (['guarded, slow to let people in', 'keeps feelings contained', 'resilient, hard to shake', 'duty-first, restrained', 'not possessive'] as $phrase) {
+            $this->assertStringContainsString($phrase, $text);
+        }
+        $this->assertDoesNotMatchRegularExpression('/\d/', $text, 'feelings, never numbers');
+        $this->assertStringStartsWith('Stoic: ', RelDynTraits::describe(RelDynTraits::points()['Stoic']), 'on a preset: its name');
+        $this->assertSame('Bold-leaning: nothing about them is extreme', RelDynTraits::describe(RelDynTraits::normalizeVector([])), 'all traits 0.5');
+
+        // (the eval state summary line itself reads the mood table: RelDynTraitTestBedsPostgresTest)
+        $none = RelationshipDynamics::migrateDimensions(RelationshipDynamics::defaultDynamics());
+        $none['inferred_temperament'] = null;
+
+        // Jev: the numbers (decisions §3 exception)
+        $jev = RelDynJev::state('Ashe', $ashe, 3.0e9);
+        $v = RelDynTraits::readVector($ashe);
+        $this->assertSame(array_values(RelDynTraits::TRAITS), array_keys($jev['traits']));
+        foreach (RelDynTraits::TRAITS as $code => $name) $this->assertEqualsWithDelta($v[$code], $jev['traits'][$name], 5e-4, $name);
+        $this->assertSame('Stoic', $jev['trait_preset']['nearest']);
+        $this->assertStringContainsString('traits=G0.75,E0.30,C0.65,Pd0.40,Rs0.75,L0.36,W0.40,D0.70,Po0.20,Pr0.55(Stoic 0.', $jev['text']);
+        $this->assertNull(RelDynJev::state('Nobody', $none, 3.0e9)['traits']);
+    }
+
+    public function testEditorAndSettingsTextSpeakTraits(): void
+    {
+        $dir = __DIR__ . '/../../ext/relationship_dynamics/';
+        $editor = (string) file_get_contents($dir . 'npc_editor_section.php');
+        // the preset picker lists all 13 (the 11-of-13 bug: Gentle and Defiant were missing)
+        $this->assertSame(1, preg_match('/\$rdTempOptions = \[(.*?)\];/s', $editor, $m));
+        preg_match_all("/'([A-Za-z]*)' =>/", $m[1], $keys);
+        $this->assertEqualsCanonicalizing(array_merge([''], array_keys(RelDynTraits::PRESET_TRAITS)), $keys[1]);
+        $this->assertStringNotContainsString('temperament default', $editor);
+        $this->assertStringNotContainsString('From temperament', $editor);
+        $this->assertStringNotContainsString('Auto from temperament', $editor);
+        $this->assertStringNotContainsString('reunion ×1.8', $editor, 'no stale multipliers in the picker');
+        // settings: the warmth curve reference lists the presets that really use each curve
+        $settings = (string) file_get_contents($dir . 'settings.php');
+        preg_match_all('#<td>(slow_burn|moderate|quick_warmth|guarded)</td>\s*<td>([^<]*)</td>#', $settings, $rows, PREG_SET_ORDER);
+        $this->assertCount(4, $rows);
+        foreach ($rows as [, $curve, $list]) {
+            $want = array_keys(array_filter(RelationshipDynamics::TEMPERAMENT_WARMTH_CURVES, fn($c) => $c === $curve));
+            preg_match_all('/[A-Z][a-z]+/', $list, $names);
+            $this->assertEqualsCanonicalizing($want, $names[0], $curve);
+        }
     }
 }

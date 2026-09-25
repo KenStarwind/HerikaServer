@@ -987,7 +987,8 @@ final class RelDynEval
     // =========================================================================
 
     /**
-     * Compact state in words (bands, never raw numbers): tier, type, temperament, how they attach
+     * Compact state in words (bands, never raw numbers): tier, type, personality (the trait
+     * bands and the nearest preset, RelDynTraits::describe; traits phase 3, design D2), how they attach
      * (behaviour, never the style name: RelationshipDynamics::attachmentFeltText),
      * maturity / trust / comfort bands, passion, jealousy and resentment bands, current mood.
      */
@@ -1006,7 +1007,7 @@ final class RelDynEval
 
         $lines = [
             'Bond with the player: ' . str_replace('_', ' ', $tier) . ($type ? ", {$type}" : ''),
-            'Temperament: ' . ($dynamics['inferred_temperament'] ?? 'unknown')
+            'Personality: ' . self::personalityText($dynamics)
                 . '; in closeness: ' . RelationshipDynamics::attachmentFeltText($dynamics),
             'Maturity: ' . $band('maturity', $dimX('maturity')),
             'Trust in the player: ' . $band('trust', $dimX('trust')),
@@ -1020,6 +1021,13 @@ final class RelDynEval
             $lines[] = "Current mood: {$mood}";
         }
         return $lines;
+    }
+
+    /** The NPC's personality in words (its own vector, or its label's preset point), 'unknown' without either. */
+    private static function personalityText(array $dynamics): string
+    {
+        $x = RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $dynamics);
+        return $x !== null ? RelDynTraits::describe($x) : 'unknown';
     }
 
     private static function currentMood(string $npcName): ?string
@@ -1075,7 +1083,7 @@ EARLIER CONVERSATION (context only, already scored, do not score it again):
 THIS EXCHANGE (score only this):
 {$current}
 {$events}
-TASK: How did THIS EXCHANGE change {$npc}'s feelings toward {$player}? Consider {$npc}'s state and temperament: the same words land differently on different people.
+TASK: How did THIS EXCHANGE change {$npc}'s feelings toward {$player}? Consider {$npc}'s state and personality: the same words land differently on different people.
 
 SIGNALS (raw change, 0 = no change):
 - affinity: do they like {$player} more or less
