@@ -86,24 +86,9 @@ class RelationshipDynamics
         'Stoic'       => 0.5,
     ];
 
-    // Temperament -> bleedout passion drain (negative: how much passion is lost when NPC falls)
-    // Guarded/Stoic NPCs lose more (they see vulnerability as weakness)
-    // Nurturing/Anxious NPCs lose less (they bond through shared danger)
-    const TEMPERAMENT_BLEEDOUT_DRAIN = [
-        'Anxious'     => -3.0,  // Spirals into panic, abandonment terror
-        'Guarded'     => -2.5,  // Walls slam up instantly
-        'Independent' => -2.0,  // Vulnerability is intolerable
-        'Proud'       => -2.0,  // Humiliation of helplessness
-        'Jealous'     => -1.5,  // Fear of being replaced while weak
-        'Gentle'      => -1.5,  // Deeply shaken by violence
-        'Romantic'    => -1.0,  // Scared but trusts their partner
-        'Nurturing'   => -1.0,  // Worried about others, not self
-        'Humble'      => -0.8,  // Accepts it quietly
-        'Playful'     => -0.5,  // Shakes it off with humor
-        'Stoic'       => -0.5,  // Barely registers externally
-        'Bold'        => -0.3,  // Rage fuel, not fear
-        'Defiant'     =>  1.0,  // Fights HARDER when cornered — passion UP
-    ];
+    // A2 bleedout: the temperament drain table (Anxious -3.0 .. Defiant +1.0) is retired in traits
+    // phase 3. The fall is a trait outcome now (RelDynTraits::bleedout, bleedoutResponse()):
+    // passion, valence and arousal from fight = C Pd (1 - D) and fear = L (1 - C).
 
 
     // Temperament → reunion multiplier: MDD 1.3 Reunion column. Traits phase 3 (design §2.2,
@@ -1003,6 +988,17 @@ class RelationshipDynamics
             'passion_absence_grace_game_hours' => 24,
             'passion_absence_fade_per_game_day' => 3.0,
             'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
+            // The fall of bleedout (A2, traits phase 3; design §2.5, MDD 1.3 combat notes): from the
+            // NPC's traits, net = fight C Pd (1 - D) - fear L (1 - C) (unitless, about -0.8..+0.3).
+            //   passion = passion_per_net x net (passion points, clamped -5..+5; |passion| below
+            //             dead_band does nothing): a positive net fights harder (gainPassion, the
+            //             attraction route), a negative one drains (setPassion)
+            //   valence = valence_per_net x net (valence points): the sign of fight - fear
+            //   arousal = arousal_base x (0.5 + L) (arousal points): every fall is a spike
+            // passion_per_net 4.25 keeps the Anxious preset's MDD panic (-3.0 passion points).
+            // No trait vector: passion no_vector_passion, no valence or arousal (today's drain).
+            'bleedout_response' => ['passion_per_net' => 4.25, 'valence_per_net' => 40.0, 'arousal_base' => 20.0,
+                                    'dead_band' => 0.05, 'no_vector_passion' => -1.5],
             // Warmth fades with absence too (decisions §2, rulings §8): after
             // warmth_absence_grace_game_hours x the NPC's neglect grace_mult without contact,
             // warmth (0..100) above its baseline loses warmth_absence_fade_per_game_day x the
@@ -3815,6 +3811,38 @@ class RelationshipDynamics
         self::log("Reunion spike for NPC: +{$spike} passion (game_hours_apart={$hoursApart}, temp_mult={$tempMult}, attachment_mult={$attachMult})");
 
         return $spike;
+    }
+
+    /**
+     * The fall of bleedout for this NPC (A2 redesign, traits phase 3): config bleedout_response
+     * at the NPC's own trait vector (RelDynTraits::bleedout). With $apply, the arousal spike and
+     * the valence (sign of fight - fear) go through applyDelta (Y overridden to 1: the traits
+     * already scale them, the plasticity table must not again); passion is returned for the
+     * caller's route (gainPassion when positive, a drain when negative, nothing inside the dead
+     * band). No vector: no_vector_passion (today's -1.5 drain), nothing else.
+     *
+     * @return array ['passion' (passion points), 'valence', 'arousal' (points asked),
+     *                'applied' => ['valence' => actual, 'arousal' => actual], 'fight', 'fear', 'net', 'vector' => bool]
+     */
+    public static function bleedoutResponse(array &$dynamics, bool $apply = false): array
+    {
+        $cfg = (array) (self::configValue('bleedout_response') ?? []) + self::defaultConfig()['bleedout_response'];
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $x = RelDynTraits::vectorFor($temperament, $dynamics);
+        if ($x === null) {
+            return ['passion' => floatval($cfg['no_vector_passion']), 'valence' => 0.0, 'arousal' => 0.0,
+                    'applied' => ['valence' => 0.0, 'arousal' => 0.0], 'fight' => null, 'fear' => null, 'net' => null, 'vector' => false];
+        }
+        $r = RelDynTraits::bleedout($x, $cfg);
+        if (abs($r['passion']) < floatval($cfg['dead_band'])) $r['passion'] = 0.0;
+        $r['applied'] = ['valence' => 0.0, 'arousal' => 0.0];
+        if ($apply) {
+            $flat = ['Y_up' => 1.0, 'Y_down' => 1.0];
+            $r['applied']['arousal'] = self::applyDelta('arousal', $dynamics, $r['arousal'], $temperament, $flat);
+            $r['applied']['valence'] = self::applyDelta('valence', $dynamics, $r['valence'], $temperament, $flat);
+        }
+        $r['vector'] = true;
+        return $r;
     }
 
     /**

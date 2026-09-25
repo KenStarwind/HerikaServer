@@ -511,4 +511,53 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         $this->assertLessThan(0.4, $codep['Ashe']);
         $this->assertSame([], $this->db->failures);
     }
+
+    /**
+     * Phase 3, bleedout redesign (design §2.5): each bed falls in combat (a core 'bleedout'
+     * event through the real postrequest hook). The fall is who she is: Aela, confident and
+     * proud, fights harder (valence up); Muiri, reactive and unsure, panics (valence and passion
+     * down, the biggest spike); every fall is an arousal spike.
+     */
+    public function testPhaseThreeBleedoutIsWhoSheIsOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $before = $after = $fall = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $before[$npc] = $this->dynamics($npc);
+            $d = $before[$npc];
+            $fall[$npc] = RelationshipDynamics::bleedoutResponse($d);   // what the hook will apply
+            $GLOBALS['gameRequest'] = ['bleedout', (string) $this->realTs, (string) (int) $this->gamets, "{$npc} falls to the ground, badly wounded."];
+            $GLOBALS['RELDYN_NPC_NAME'] = $npc;
+            $GLOBALS['HERIKA_NAME'] = 'The Narrator';
+            $GLOBALS['CACHE_PEOPLE'] = '|' . $npc . '|' . self::PLAYER . '|';
+            $GLOBALS['PLAYER_NAME'] = self::PLAYER;
+            (static function (): void { require __DIR__ . '/../../ext/relationship_dynamics/postrequest.php'; })();
+            RelationshipDynamics::endRequest();
+            $this->clearReldynGlobals();
+            $after[$npc] = $this->dynamics($npc);
+            $this->gamets += 60 * RelationshipDynamics::GAMETS_PER_DAY / 1440;
+            $this->realTs += 60;
+        }
+        $dim = fn(array $d, string $k) => floatval($d['dimensions'][$k]['x'] ?? 0);
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->assertTrue($fall[$npc]['vector'], $npc);
+            $this->assertGreaterThan($dim($before[$npc], 'arousal'), $dim($after[$npc], 'arousal'), "{$npc}: the fall is a spike");
+            $dv = $dim($after[$npc], 'valence') - $dim($before[$npc], 'valence');
+            if (abs($fall[$npc]['net']) > 0.01) {
+                $this->assertSame($fall[$npc]['net'] > 0, $dv > 0, "{$npc}: valence follows fight - fear");
+            }
+            if ($fall[$npc]['passion'] < 0) {
+                $this->assertLessThan(RelationshipDynamics::getPassion($before[$npc]) + 1e-9, RelationshipDynamics::getPassion($after[$npc]) + 1e-9, "{$npc}: drained");
+            }
+        }
+        $this->assertGreaterThan(0.0, $fall['Aela the Huntress']['net'], 'Aela fights harder');
+        $this->assertLessThan(0.0, $fall['Muiri']['net'], 'Muiri panics');
+        $nets = array_map(fn($f) => $f['net'], $fall);
+        asort($nets);
+        $this->assertSame('Muiri', array_key_first($nets), 'the deepest fear');
+        $this->assertSame('Aela the Huntress', array_key_last($nets), 'the most fight');
+        $log = (string) file_get_contents($this->errorLog) . (string) @file_get_contents(sys_get_temp_dir() . '/reldyn_trait_beds_test.log');
+        $this->assertStringContainsString('Bleedout: Muiri fight=', $log);
+        $this->assertSame([], $this->db->failures);
+    }
 }

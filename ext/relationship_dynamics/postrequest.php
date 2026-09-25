@@ -141,12 +141,14 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
             // Combat context from core eventlog (health is unknown on 3.4.1: null)
             $combatCtx = RelationshipDynamics::getCombatContext($combatNpc);
 
-            // Calculate passion change -- bleedout is a DRAIN, positive combat is a GAIN
+            // Calculate passion change: the fall of bleedout is who the NPC is (A2, traits phase 3:
+            // fight or fear, with a valence and an arousal spike); positive combat is a GAIN
             if ($combatLL === 'combat_bleedout') {
-                // Bleedout drain: temperament-scaled negative passion
-                $temperament = $dynamics['inferred_temperament'] ?? null;
-                $gain = RelDynTraits::param($temperament, 'bleedout', -1.5, $dynamics);   // A2, trait engine (Rule I)
-                RelationshipDynamics::log("Bleedout drain: {$combatNpc} temperament={$temperament} base_drain={$gain}");
+                $fall = RelationshipDynamics::bleedoutResponse($dynamics, true);   // 0 inside the dead band
+                $gain = $fall['passion'];
+                RelationshipDynamics::log(sprintf('Bleedout: %s fight=%s fear=%s passion=%+.2f valence=%+.2f arousal=%+.2f',
+                    $combatNpc, $fall['fight'] === null ? 'n/a' : round($fall['fight'], 3), $fall['fear'] === null ? 'n/a' : round($fall['fear'], 3),
+                    $gain, $fall['applied']['valence'], $fall['applied']['arousal']));
             } else {
                 // Fighting together is an activity the NPC appraises (decisions §6): its combat
                 // facets against the NPC's preferences scale the gain (MDD 1.2 0.5x-2.0x), feed

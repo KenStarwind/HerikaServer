@@ -38,6 +38,9 @@ final class RelDynTraitEquivalenceTest extends TestCase
             'Anxious/apply_delta/trust/*', 'Anxious/physical/injured/injured/trust', '*/e2e/reunion',
             'Anxious/e2e/jealousy/*', 'Anxious/absence_decay', '*/neglect/*',
             'Anxious/column/reunion_mult', 'Anxious/column/jealousy_mult', 'Anxious/column/y_trust_up', 'Anxious/column/absence_decay'],
+        // Bleedout redesign (design §2.5): the fall is fight C Pd (1 - D) - fear L (1 - C) at every
+        // preset (the old drain table is retired); no vector keeps -1.5
+        'bleedout_redesign' => ['*/bleedout'],
     ];
 
     /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */
@@ -165,7 +168,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
             $x = $points[$p];
             $b = $base[$p];
             $expect = [
-                'passion_mult' => $b['passion_mult'], 'bleedout' => $b['bleedout'], 'reunion_mult' => $b['reunion_mult'],
+                'passion_mult' => $b['passion_mult'], 'reunion_mult' => $b['reunion_mult'],   // bleedout: no longer a column (phase 3)
                 'jealousy_mult' => $b['jealousy_mult'], 'tier_retention' => $b['tier_retention'], 'absence_decay' => $b['absence_decay'],
             ];
             foreach (RelationshipDynamics::TEMPERAMENT_BASELINES as $dim => $_) {

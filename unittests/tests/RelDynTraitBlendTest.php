@@ -48,6 +48,19 @@ final class RelDynTraitBlendTest extends TestCase
         return RelDynTraits::normalizeVector($v);
     }
 
+    /**
+     * The phase-1/2 bleedout table (MDD 1.3 drain, passion points). Phase 3 retired it (the fall is
+     * a trait outcome, RelDynTraits::bleedout); it stays here as §3.5's Rule I example.
+     */
+    private const BLEEDOUT_TABLE = ['Romantic' => -1.0, 'Anxious' => -3.0, 'Bold' => -0.3, 'Playful' => -0.5, 'Humble' => -0.8,
+        'Nurturing' => -1.0, 'Gentle' => -1.5, 'Jealous' => -1.5, 'Proud' => -2.0, 'Defiant' => 1.0, 'Guarded' => -2.5,
+        'Independent' => -2.0, 'Stoic' => -0.5];
+
+    private static function bleedoutI(array $x): float
+    {
+        return RelDynTraits::blend($x, self::BLEEDOUT_TABLE, 'I', null, 'bleedout');
+    }
+
     /** §3.5: Defiant (+1.0 rage) to Bold (-0.3) under Rule I: monotone (to 1e-3), bounded, still rage at 0.15. */
     public function testDefiantToBoldBleedoutWalkIsMonotoneAndKeepsTheRageNearDefiant(): void
     {
@@ -56,10 +69,10 @@ final class RelDynTraitBlendTest extends TestCase
         $len = RelDynTraits::distance($def, $bold);
         $this->assertEqualsWithDelta(0.515, $len, 0.002);
         $prev = INF;
-        $table = RelDynTraits::table('bleedout');
+        $table = self::BLEEDOUT_TABLE;
         for ($i = 0; $i <= 40; $i++) {
             $x = self::lerp($def, $bold, $i / 40);
-            $v = RelDynTraits::value($x, 'bleedout');
+            $v = self::bleedoutI($x);
             // monotone up to the pull of the other presets' weights (w = d^-4), well under 0.001 passion points
             $this->assertLessThanOrEqual($prev + 1e-3, $v, "monotone at step {$i}");
             $this->assertGreaterThanOrEqual(min($table) - 1e-12, $v);
@@ -67,11 +80,11 @@ final class RelDynTraitBlendTest extends TestCase
             $prev = $v;
             if ($i / 40 * $len <= 0.15) $this->assertGreaterThan(0.0, $v, sprintf('rage kept %.3f from Defiant', $i / 40 * $len));
         }
-        $this->assertSame(1.0, RelDynTraits::value($def, 'bleedout'));
-        $this->assertSame(-0.3, RelDynTraits::value($bold, 'bleedout'));
+        $this->assertSame(1.0, self::bleedoutI($def));
+        $this->assertSame(-0.3, self::bleedoutI($bold));
         // design table: +0.92 at 0.15, crossing zero about 0.29 from Defiant
-        $this->assertEqualsWithDelta(0.92, RelDynTraits::value(self::lerp($def, $bold, 0.15 / $len), 'bleedout'), 0.02);
-        $this->assertEqualsWithDelta(-0.15, RelDynTraits::value(self::lerp($def, $bold, 0.31 / $len), 'bleedout'), 0.03);
+        $this->assertEqualsWithDelta(0.92, self::bleedoutI(self::lerp($def, $bold, 0.15 / $len)), 0.02);
+        $this->assertEqualsWithDelta(-0.15, self::bleedoutI(self::lerp($def, $bold, 0.31 / $len)), 0.03);
     }
 
     /** Rule I is a convex combination: never outside [min T, max T]; continuous at a preset. */
@@ -79,7 +92,7 @@ final class RelDynTraitBlendTest extends TestCase
     {
         mt_srand(20260924);
         $iCols = array_keys(array_filter(RelDynTraits::columns(), fn($c) => $c['rule'] === 'I'));
-        $this->assertContains('bleedout', $iCols);
+        $this->assertNotContains('bleedout', $iCols, 'retired in phase 3 (RelDynTraits::bleedout)');
         $this->assertContains('reunion_mult', $iCols);
         $this->assertContains('baseline_respect', $iCols);
         for ($n = 0; $n < 200; $n++) {
@@ -365,7 +378,7 @@ final class RelDynTraitBlendTest extends TestCase
             RelDynAttraction::defaults()['temperament_openness'], RelDynAttraction::defaults()['openness_levels']);
         $this->assertSame(0.9, $open['o']);
         $this->assertSame('high', $open['band']);
-        $this->assertSame([-5.0, 5.0], RelDynTraits::CLAMPS[$cols['bleedout']['unit']]);
+        $this->assertSame([-5.0, 5.0], RelDynTraits::CLAMPS['bleedout'], 'the bleedout passion (RelDynTraits::bleedout)');
         $this->assertSame([0.3, 1.5], RelDynTraits::CLAMPS[$cols['y_maturity_up']['unit']]);
         $this->assertSame([-100.0, 100.0], RelDynTraits::CLAMPS[$cols['baseline_affinity']['unit']], 'core affinity units (RelDynAffinityUnitsTest)');
     }

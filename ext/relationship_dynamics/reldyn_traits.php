@@ -362,6 +362,29 @@ final class RelDynTraits
         return $t * $t * (3.0 - 2.0 * $t);
     }
 
+    /**
+     * A2 redesign (phase 3; design §2.5, MDD 1.3 combat notes): the fall of bleedout from traits.
+     * fight = C Pd (1 - D) (rage: confident, proud, unrestrained; Bold / Defiant "fight harder"),
+     * fear = L (1 - C) (panic: reactive and unsure; Anxious "abandonment terror"), net = fight -
+     * fear (unitless). passion = passion_per_net x net (passion points, clamp 'bleedout'), valence
+     * = valence_per_net x net (valence points, clamped -100..100; its sign is sign(fight - fear)),
+     * arousal = arousal_base x (0.5 + L) (arousal points, clamped 0..100). $cfg: config
+     * bleedout_response. Pure; the dead band and the routes are the consumer's.
+     */
+    public static function bleedout(array $x, array $cfg): array
+    {
+        $c = floatval($x['C'] ?? 0.5);
+        $fight = $c * floatval($x['Pd'] ?? 0.5) * (1.0 - floatval($x['D'] ?? 0.5));
+        $fear = floatval($x['L'] ?? 0.5) * (1.0 - $c);
+        $net = $fight - $fear;
+        return [
+            'fight' => $fight, 'fear' => $fear, 'net' => $net,
+            'passion' => self::clampUnit(floatval($cfg['passion_per_net']) * $net, 'bleedout'),
+            'valence' => max(-100.0, min(100.0, floatval($cfg['valence_per_net']) * $net)),
+            'arousal' => max(0.0, min(100.0, floatval($cfg['arousal_base']) * (0.5 + floatval($x['L'] ?? 0.5)))),
+        ];
+    }
+
     /** C1: egocentric tag strength from pride (0..1). */
     public static function egocentric(float $pd): float
     {
@@ -513,8 +536,7 @@ final class RelDynTraits
         // A1-A4 (MDD 1.3 multipliers; A2 passion points per bleedout event)
         $add('passion_mult', 'A1', 'R', ['E', 'D', 'G'], [0.80, 'E' => 0.81, 'D' => -0.28, 'G' => -0.28], 'mult',
             fn() => self::fill($RD::TEMPERAMENT_PASSION_MULT, 1.0));
-        $add('bleedout', 'A2', 'I', ['C', 'L', 'Pd'], null, 'bleedout',
-            fn() => self::fill($RD::TEMPERAMENT_BLEEDOUT_DRAIN, -1.5));
+        // A2 bleedout: no longer a column (phase 3): RelDynTraits::bleedout() from the traits
         $add('reunion_mult', 'A3', 'I', ['E', 'D'], null, 'mult',
             fn() => self::fill($RD::TEMPERAMENT_REUNION_MULT, 1.0));
         $add('jealousy_mult', 'A4', 'R', ['Po', 'Pd', 'D'], [0.08, 'Po' => 2.2, 'Pd' => 0.17, 'D' => -0.16], 'mult',

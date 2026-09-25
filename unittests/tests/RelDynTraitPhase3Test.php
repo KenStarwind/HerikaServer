@@ -297,4 +297,73 @@ final class RelDynTraitPhase3Test extends TestCase
         $d['inferred_temperament'] = 'Volatile';
         $this->assertEqualsWithDelta(0.6 * 0.5 + 0.4 * 0.5, RelationshipDynamics::getNeglectProfile($d)['codependence'], 1e-9);
     }
+
+    // =========================================================================
+    // A2 redesign: the fall of bleedout as passion, valence and arousal (design §2.5)
+    // =========================================================================
+
+    public function testBleedoutIsFightOrFearWithValenceAndArousal(): void
+    {
+        $cfg = RelationshipDynamics::defaultConfig()['bleedout_response'];
+        $this->assertFalse(RelDynTraits::hasColumn('bleedout'), 'no longer a preset table');
+        $this->assertFalse(defined('RelationshipDynamics::TEMPERAMENT_BLEEDOUT_DRAIN'));
+        $fall = function (string $p) {
+            $d = self::preset($p);
+            return RelationshipDynamics::bleedoutResponse($d);
+        };
+        // the formula at a point
+        foreach (RelDynTraits::points() as $p => $x) {
+            $r = $fall($p);
+            $fight = $x['C'] * $x['Pd'] * (1 - $x['D']);
+            $fear = $x['L'] * (1 - $x['C']);
+            $this->assertEqualsWithDelta($fight - $fear, $r['net'], 1e-12, $p);
+            $want = max(-5.0, min(5.0, 4.25 * ($fight - $fear)));
+            $this->assertEqualsWithDelta(abs($want) < 0.05 ? 0.0 : $want, $r['passion'], 1e-12, "{$p} passion");
+            $this->assertEqualsWithDelta(40.0 * ($fight - $fear), $r['valence'], 1e-12, "{$p} valence: the sign of fight - fear");
+            $this->assertEqualsWithDelta(20.0 * (0.5 + $x['L']), $r['arousal'], 1e-12, "{$p} arousal spike");
+        }
+        // MDD 1.3 combat notes: Bold / Defiant fight harder (passion and valence UP; Bold was -0.3),
+        // Anxious panics (the MDD's -3.0 kept by calibration), Guarded / Gentle go negative
+        $this->assertGreaterThan(0.0, $fall('Bold')['passion'], 'Bold: passion goes up (the MDD), not -0.3');
+        $this->assertGreaterThan(0.0, $fall('Defiant')['passion']);
+        $this->assertGreaterThan(0.0, $fall('Defiant')['valence']);
+        $this->assertEqualsWithDelta(-3.0, $fall('Anxious')['passion'], 0.01);
+        $this->assertLessThan(-20.0, $fall('Anxious')['valence'], 'abandonment panic');
+        $this->assertLessThan(0.0, $fall('Guarded')['valence']);
+        $this->assertLessThan(0.0, $fall('Gentle')['valence']);
+        $this->assertEqualsWithDelta(-0.5, $fall('Stoic')['passion'], 0.01, 'Stoic barely registers, as before');
+        // arousal: every fall is a spike, the reactive the most
+        $this->assertGreaterThan($fall('Stoic')['arousal'], $fall('Anxious')['arousal']);
+        $this->assertEqualsWithDelta(10.0, $fall('Independent')['arousal'], 1e-9, 'L 0: the smallest spike');
+
+        // the dead band: a near-balanced fall moves no passion (valence and arousal still move)
+        $d = self::at(['confidence' => 0.5, 'pride' => 0.5, 'restraint' => 0.5, 'reactivity' => 0.25]);   // fight .125, fear .125
+        $r = RelationshipDynamics::bleedoutResponse($d);
+        $this->assertEqualsWithDelta(0.0, $r['net'], 1e-12);
+        $this->assertSame(0.0, $r['passion']);
+        $this->assertGreaterThan(0.0, $r['arousal']);
+
+        // applied: arousal and valence through applyDelta with Y 1 (no second trait scaling)
+        $d = self::preset('Anxious');
+        $a0 = floatval($d['dimensions']['arousal']['x']);
+        $v0 = floatval($d['dimensions']['valence']['x']);
+        $r = RelationshipDynamics::bleedoutResponse($d, true);
+        $this->assertGreaterThan($a0, floatval($d['dimensions']['arousal']['x']));
+        $this->assertLessThan($v0, floatval($d['dimensions']['valence']['x']));
+        $this->assertEqualsWithDelta($r['applied']['arousal'], floatval($d['dimensions']['arousal']['x']) - $a0, 1e-3);
+        $this->assertEqualsWithDelta($r['applied']['valence'], floatval($d['dimensions']['valence']['x']) - $v0, 1e-3);
+
+        // Ashe (her own vector): a mild negative fall, no panic
+        $ashe = self::at(self::asheVector());
+        $ra = RelationshipDynamics::bleedoutResponse($ashe);
+        $this->assertLessThan(0.0, $ra['net']);
+        $this->assertGreaterThan(-1.0, $ra['passion']);
+
+        // no vector (inferred_temperament null): today's -1.5 drain, nothing else
+        $n = RelationshipDynamics::migrateDimensions(RelationshipDynamics::defaultDynamics());
+        $n['inferred_temperament'] = null;
+        $r = RelationshipDynamics::bleedoutResponse($n, true);
+        $this->assertSame([-1.5, 0.0, 0.0, false], [$r['passion'], $r['applied']['arousal'], $r['applied']['valence'], $r['vector']]);
+        $this->assertSame($cfg['no_vector_passion'], -1.5);
+    }
 }
