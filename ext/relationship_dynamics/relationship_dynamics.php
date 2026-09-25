@@ -1512,6 +1512,86 @@ class RelationshipDynamics
             && isset($out['dimensions']['affinity']) && is_array($out['dimensions']['affinity'])) {
             $out['dimensions']['affinity']['x'] = round(floatval($mark) + $uTheirs + $uMine - $uBase, 4);
         }
+
+        $k = self::ATTACHMENT_DRIFT_KEY;
+        $bd = is_array($base[$k] ?? null) ? $base[$k] : [];
+        $md = $mine[$k] ?? null;
+        $td = $theirs[$k] ?? null;
+        if (is_array($md) && is_array($td) && !self::sameMergeValue($md, $bd) && !self::sameMergeValue($td, $bd)) {
+            $out[$k] = self::mergeAttachmentDrift($bd, $md, $td);
+        }
+        return $out;
+    }
+
+    /**
+     * Attachment drift state changed by two concurrent requests (decisions §12): both
+     * experiences count and the drift bounds hold for the sum.
+     *  - offsets (signed, axis units): base + both changes (a missing base offset is 0);
+     *  - both moves on the same game day: the bounded part of the two changes together moves an
+     *    axis at most the day's remaining budget (max_per_game_day - what the base had spent that
+     *    day), and the day's spend is capped at max_per_game_day; an arc (arc_fearful or a
+     *    change past the budget, unbounded by design) is added as it is. Different days: each
+     *    move had its own day, the later day's spend is kept;
+     *  - never further than max_from_base from the base, or than either side already was (an arc);
+     *  - the fearful region is enforced on read (attachmentPoint), the held style and the arc
+     *    mark come from the side that changed them (mine when both did), the log is both sides'
+     *    entries in game-time order.
+     */
+    private static function mergeAttachmentDrift(array $b, array $m, array $t): array
+    {
+        $cfg = self::getAttachmentConfig();
+        $drift = (array) ($cfg['drift'] ?? []);
+        $cap = floatval($drift['max_per_game_day'] ?? 0.03);
+        $maxFromBase = floatval($drift['max_from_base'] ?? 0.4);
+        $pick = function (string $key) use ($b, $m, $t) {
+            $bv = $b[$key] ?? null;
+            if (!self::sameMergeValue($m[$key] ?? null, $bv)) return $m[$key] ?? null;
+            return $t[$key] ?? null;
+        };
+        $out = $m;
+        $dayM = intval($m['day'] ?? -1);
+        $dayT = intval($t['day'] ?? -1);
+        $dayB = intval($b['day'] ?? -1);
+        $sameDay = $dayM === $dayT;
+        foreach (self::ATTACHMENT_AXES as $axis) {
+            $b0 = floatval($b[$axis] ?? 0.0);
+            $dm = floatval($m[$axis] ?? 0.0) - $b0;
+            $dt = floatval($t[$axis] ?? 0.0) - $b0;
+            $spentB = $dayB === $dayM ? floatval($b['moved'][$axis] ?? 0.0) : 0.0;
+            if ($sameDay) {
+                $room = max(0.0, $cap - $spentB);
+                $bounded = 0.0;
+                $unbounded = 0.0;
+                foreach ([$dm, $dt] as $change) {
+                    if (abs($change) > $room + 1e-9) $unbounded += $change; else $bounded += $change;
+                }
+                $net = max(-$room, min($room, $bounded)) + $unbounded;
+                $spent = $spentB + (floatval($m['moved'][$axis] ?? 0.0) - $spentB) + (floatval($t['moved'][$axis] ?? 0.0) - $spentB);
+                $out['moved'][$axis] = round(min($cap, max(0.0, $spent)), 6);
+            } else {
+                $net = $dm + $dt;
+                $out['moved'][$axis] = round(floatval(($dayM > $dayT ? $m : $t)['moved'][$axis] ?? 0.0), 6);
+            }
+            $limit = max($maxFromBase, abs(floatval($m[$axis] ?? 0.0)), abs(floatval($t[$axis] ?? 0.0)));
+            $out[$axis] = round(max(-$limit, min($limit, $b0 + $net)), 6);
+        }
+        $out['day'] = max($dayM, $dayT);
+        foreach (['arc_fearful', 'style', 'style_base'] as $key) {
+            $v = $pick($key);
+            if ($v === null) unset($out[$key]); else $out[$key] = $v;
+        }
+        $log = [];
+        $seen = [];
+        foreach ([$m['log'] ?? [], $t['log'] ?? []] as $side) {
+            foreach ((array) $side as $e) {
+                $id = json_encode($e);
+                if (isset($seen[$id])) continue;
+                $seen[$id] = true;
+                $log[] = $e;
+            }
+        }
+        usort($log, fn($x, $y) => floatval($x['gamets'] ?? 0) <=> floatval($y['gamets'] ?? 0));
+        $out['log'] = array_slice($log, -max(1, intval($drift['log_size'] ?? 12)));
         return $out;
     }
 
@@ -1563,18 +1643,12 @@ class RelationshipDynamics
         if (preg_match('/(^|_)(at|ts|gamets|tick|start|hwm)$|(^|_)last(_|$)|(^|_)accumulated(_|$)/', $key)) {
             return max($m, $t);
         }
-        // Attachment drift offsets (signed, axis units) and their day budget: both requests'
-        // experience counts (decisions §12), the next move re-applies the drift bounds
-        $driftOffset = (bool) preg_match('/^' . self::ATTACHMENT_DRIFT_KEY . '\.(anxiety|avoidance)$/', $path);
+        // (Attachment drift state is merged as a whole in mergeAttachmentDrift().)
         $additive = in_array($key, ['x', 'passion', 'jealousy_anger', '_pending_aff_delta'], true)
             || preg_match('/(_count|_interactions|_given|_score|_window)$/', $key)
-            || preg_match('/^(passion_sources|_interest_satisfaction|_interaction_pattern)\./', $path)
-            || $driftOffset || preg_match('/^' . self::ATTACHMENT_DRIFT_KEY . '\.moved\./', $path);
+            || preg_match('/^(passion_sources|_interest_satisfaction|_interaction_pattern)\./', $path);
         if (!$additive) {
             return $m;
-        }
-        if ($driftOffset) {
-            return round($t + ($m - $b), 6);
         }
 
         $v = $t + ($m - $b);
@@ -2289,8 +2363,13 @@ class RelationshipDynamics
                 // moderate avoidance rooted in self-protection, expected to ease as trust is earned.
                 'ashe'   => ['temperament' => 'Guarded', 'maturity_type' => 'Resilient',
                              'attachment_axes' => ['anxiety' => 0.3, 'avoidance' => 0.5]],
-                // §12: Guarded, secure-leaning: low anxiety, moderate avoidance (copes through
-                // action, not talk), fiercely loyal to her own.
+                // §12: guarded in Ken's sense (hard to get in, arm's length until let in) and
+                // secure-leaning: low anxiety, moderate avoidance (copes through action, not talk),
+                // fiercely loyal to her own. Her temperament is not preset: it still derives from
+                // her class (Hunter -> Independent, MDD 1.3). RelDyn's Guarded temperament is the
+                // whole MDD 1.3 package (trust 20, comfort 15, self-confidence 40, Brittle maturity,
+                // passion x0.6, bookish facet tastes), which would reshape her far beyond how hard
+                // she is to get into; that choice is Ken's. Her attachment is these axes either way.
                 'aela the huntress' => ['attachment_axes' => ['anxiety' => 0.15, 'avoidance' => 0.35]],
                 'mikael' => ['maturity_type' => 'Volatile'],                            // MDD 15.6
                 'serana' => ['maturity_type' => 'Growth'],                              // MDD 15.6
@@ -2522,7 +2601,7 @@ class RelationshipDynamics
         $attachment = self::attachmentBase([
             'profile_overrides' => $overrides,
             '_profile_autogen'  => ['archetype' => $archetype, 'preset' => array_filter($preset, fn($v) => $v !== null),
-                                    'attachment_text' => $textHits],
+                                    'attachment_text' => $textHits, 'traits_source' => $sources['traits']],
             'inferred_temperament' => $temperament,
             'traits' => $profile['traits'],
             '_grief_bonds' => array_fill(0, max(0, intval($options['losses'] ?? 0)), []),
@@ -9931,6 +10010,11 @@ class RelationshipDynamics
         return [
             // Region thresholds: at or above = high on that axis (getAttachmentStyle).
             'thresholds' => ['anxiety' => 0.5, 'avoidance' => 0.5],
+            // Axis units. A style reached by drift is held until the axes are this far past a
+            // threshold (one small step across the line is not a new style: label-keyed
+            // consumers, the refusal type, the diary trigger). A new base (override, preset,
+            // loss) or an arc reads the plain region.
+            'hysteresis' => 0.05,
             // Textbook points: a style's corner is 'low'/'high' on each axis. An NPC at a corner
             // reads that style's table row exactly; attachmentWeights() is linear between.
             'prototype' => ['low' => 0.15, 'high' => 0.85],
@@ -10037,7 +10121,11 @@ class RelationshipDynamics
             // Divine-intervention arcs (PR 10): a one-time shift in axis units, not budgeted.
             // Redemption lowers both axes; breaking raises avoidance (anxiety for a secure NPC with
             // self_confidence <= 50, as the April table: secure -> anxious/avoidant, anxious -> toxic).
-            'arcs' => ['redemption' => 0.4, 'breaking' => 0.4],
+            // From the fearful region redemption moves each axis by this share of the step
+            // (unitless): avoidance only, so fearful -> anxious as the April table (the fear of
+            // abandonment outlasts the push-pull), not straight to secure.
+            'arcs' => ['redemption' => 0.4, 'breaking' => 0.4,
+                       'redemption_from_fearful' => ['anxiety' => 0.0, 'avoidance' => 1.0]],
 
             // Style rows (MDD 6.1 / PR 10), blended by attachmentWeights() unless the key is a
             // region key. Units: multipliers unitless, thresholds in dimension points 0..100,
@@ -10079,6 +10167,14 @@ class RelationshipDynamics
                 'toxic'    => 'wants closeness and fears it at once; pulls close, then pushes away',
                 'mild_prefix' => 'a little ',
                 'mild_below' => 0.5,
+                // Inside the secure region: how far the NPC sits toward the high end of an axis
+                // (0..1 between prototype low and high) from which that axis colours the text
+                // (the larger one only).
+                'secure_lean' => [
+                    'anxiety'   => 'mostly at ease with closeness, though a little watchful for signs of distance',
+                    'avoidance' => 'mostly at ease with closeness, though copes alone before leaning on anyone',
+                ],
+                'lean_at' => 0.25,
             ],
         ];
     }
@@ -10208,9 +10304,30 @@ class RelationshipDynamics
             'text_hits'   => is_array($hits) ? $hits : [],
             'archetype'   => is_string($dynamics['_profile_autogen']['archetype'] ?? null) ? $dynamics['_profile_autogen']['archetype'] : null,
             'temperament' => self::validTemperament($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null),
-            'traits'      => self::getTraits($dynamics),
+            'traits'      => self::attachmentTraitEvidence($dynamics),
             'losses'      => is_array($dynamics['_grief_bonds'] ?? null) ? count($dynamics['_grief_bonds']) : 0,
         ];
+    }
+
+    /**
+     * The NPC's traits that are evidence about attachment (decisions §12: temperament is only a
+     * weak prior). A trait the profile carries only because its temperament implies it
+     * (temperament_autogen temperament_traits, e.g. Anxious -> insecure, traits_source
+     * 'derived') is the temperament again and is left out; one set on the NPC (override, preset,
+     * editor), or implied by its class archetype, counts.
+     */
+    private static function attachmentTraitEvidence(array $dynamics): array
+    {
+        $traits = self::getTraits($dynamics);
+        if (isset($dynamics['profile_overrides']['traits']) || ($dynamics['_profile_autogen']['traits_source'] ?? null) !== 'derived') {
+            return $traits;
+        }
+        $acfg = self::getTemperamentAutogenConfig();
+        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null);
+        $archetype = $dynamics['_profile_autogen']['archetype'] ?? null;
+        $implied = array_map('strtolower', (array) (((array) ($acfg['temperament_traits'] ?? []))[$temperament ?? ''] ?? []));
+        $fromRole = is_string($archetype) ? array_map('strtolower', (array) (((array) ($acfg['archetype_traits'] ?? []))[$archetype] ?? [])) : [];
+        return array_values(array_filter($traits, fn($t) => !in_array($t, $implied, true) || in_array($t, $fromRole, true)));
     }
 
     /**
@@ -10253,12 +10370,44 @@ class RelationshipDynamics
         }
         $base = self::attachmentBase($dynamics, $cfg);
         $drift = is_array($dynamics[self::ATTACHMENT_DRIFT_KEY] ?? null) ? $dynamics[self::ATTACHMENT_DRIFT_KEY] : [];
-        $out = [];
-        foreach (self::ATTACHMENT_AXES as $axis) {
-            $out[$axis] = self::clamp01($base[$axis] + floatval($drift[$axis] ?? 0.0));
-        }
-        return $out + ['base' => ['anxiety' => $base['anxiety'], 'avoidance' => $base['avoidance']],
+        return self::attachmentPoint($base, $drift, $cfg) + ['base' => ['anxiety' => $base['anxiety'], 'avoidance' => $base['avoidance']],
                        'source' => $base['source'], 'signals' => $base['signals']];
+    }
+
+    /**
+     * Base + drift offset, with the drift invariants applied on every read (the base is live:
+     * an override or a new loss moves it under an old offset, and concurrent saves add offsets):
+     *  - the drift keeps an axis within derive.min..max (a base outside them stays where it is);
+     *  - drift never carries a non-fearful base into the fearful region (unless reach_fearful or
+     *    an arc took the NPC there, drift state arc_fearful): the axis the drift carried over
+     *    the line with the smaller excess stops at the fearful edge (threshold - fearful_margin).
+     *
+     * @param array $base  ['anxiety', 'avoidance'] axis units
+     * @param array $drift the ATTACHMENT_DRIFT_KEY state
+     * @return array ['anxiety' => 0..1, 'avoidance' => 0..1]
+     */
+    private static function attachmentPoint(array $base, array $drift, array $cfg): array
+    {
+        $min = floatval($cfg['derive']['min'] ?? 0.05);
+        $max = floatval($cfg['derive']['max'] ?? 0.95);
+        $p = [];
+        foreach (self::ATTACHMENT_AXES as $axis) {
+            $b = floatval($base[$axis]);
+            $p[$axis] = self::clamp01(max(min($min, $b), min(max($max, $b), $b + floatval($drift[$axis] ?? 0.0))));
+        }
+        if (!empty($cfg['drift']['reach_fearful']) || !empty($drift['arc_fearful'])
+            || self::attachmentStyleOf($p['anxiety'], $p['avoidance'], $cfg) !== 'toxic'
+            || self::attachmentStyleOf(floatval($base['anxiety']), floatval($base['avoidance']), $cfg) === 'toxic') {
+            return $p;
+        }
+        $pull = null;
+        foreach (self::ATTACHMENT_AXES as $axis) {
+            $t = floatval($cfg['thresholds'][$axis] ?? 0.5);
+            if (floatval($base[$axis]) >= $t) continue;   // the base was already high here: not what drift crossed
+            if ($pull === null || $p[$axis] - $t < $p[$pull] - floatval($cfg['thresholds'][$pull] ?? 0.5)) $pull = $axis;
+        }
+        $p[$pull] = floatval($cfg['thresholds'][$pull] ?? 0.5) - floatval($cfg['derive']['fearful_margin'] ?? 0.01);
+        return $p;
     }
 
     /** The style region of a point (thresholds inclusive): secure|anxious|avoidant|toxic (= fearful). */
@@ -10270,12 +10419,41 @@ class RelationshipDynamics
         return $hiA ? ($hiV ? 'toxic' : 'anxious') : ($hiV ? 'avoidant' : 'secure');
     }
 
-    /** The named style derived from the axes, for display and the tables that key on it. */
+    /**
+     * The named style derived from the axes, for display and the tables that key on it: the
+     * region, or the style drift last settled in while the axes are within config hysteresis of
+     * it on the same base (attachmentHeldStyle).
+     */
     public static function getAttachmentStyle($dynamics): string
     {
         $cfg = self::getAttachmentConfig();
         $a = self::getAttachmentAxes($dynamics, $cfg);
-        return self::attachmentStyleOf($a['anxiety'], $a['avoidance'], $cfg);
+        $drift = is_array($dynamics) && is_array($dynamics[self::ATTACHMENT_DRIFT_KEY] ?? null) ? $dynamics[self::ATTACHMENT_DRIFT_KEY] : [];
+        return self::attachmentHeldStyle($a, $a['base'], $drift, $cfg);
+    }
+
+    /**
+     * The region of point $a, unless the drift state holds a style (drift.style, reached on
+     * drift.style_base) that $a is still within hysteresis of, on the same base: then that
+     * style. A different base (override, preset, loss) reads the plain region.
+     */
+    private static function attachmentHeldStyle(array $a, array $base, array $drift, array $cfg): string
+    {
+        $plain = self::attachmentStyleOf($a['anxiety'], $a['avoidance'], $cfg);
+        $held = self::validAttachmentStyle($drift['style'] ?? null);
+        $heldBase = $drift['style_base'] ?? null;
+        if ($held === null || $held === $plain || !is_array($heldBase)) return $plain;
+        foreach (self::ATTACHMENT_AXES as $axis) {
+            if (!is_numeric($heldBase[$axis] ?? null) || abs(floatval($heldBase[$axis]) - floatval($base[$axis])) > 1e-9) return $plain;
+        }
+        $h = max(0.0, floatval($cfg['hysteresis'] ?? 0.0));
+        $high = ['anxiety' => in_array($held, ['anxious', 'toxic'], true), 'avoidance' => in_array($held, ['avoidant', 'toxic'], true)];
+        foreach (self::ATTACHMENT_AXES as $axis) {
+            $x = round(floatval($a[$axis]), 9);
+            $t = floatval($cfg['thresholds'][$axis] ?? 0.5);
+            if ($high[$axis] ? $x <= round($t - $h, 9) : $x >= round($t + $h, 9)) return $plain;
+        }
+        return $held;
     }
 
     /**
@@ -10336,9 +10514,17 @@ class RelationshipDynamics
         $t = (array) ($cfg['felt_text'] ?? []);
         $style = self::getAttachmentStyle($dynamics);
         $text = (string) ($t[$style] ?? '');
-        if ($style !== 'secure' && self::attachmentWeights($dynamics, $cfg)[$style] < floatval($t['mild_below'] ?? 0.5)) {
-            $text = (string) ($t['mild_prefix'] ?? '') . $text;
+        $w = self::attachmentWeights($dynamics, $cfg);
+        if ($style !== 'secure') {
+            if ($w[$style] < floatval($t['mild_below'] ?? 0.5)) $text = (string) ($t['mild_prefix'] ?? '') . $text;
+            return $text;
         }
+        // Secure: the axis the NPC sits furthest toward (0..1 of the way from prototype low to
+        // high: the corner weights summed along that axis) colours the text from lean_at.
+        $toward = ['anxiety' => $w['anxious'] + $w['toxic'], 'avoidance' => $w['avoidant'] + $w['toxic']];
+        $axis = $toward['avoidance'] >= $toward['anxiety'] ? 'avoidance' : 'anxiety';
+        $lean = ((array) ($t['secure_lean'] ?? []))[$axis] ?? null;
+        if (is_string($lean) && $lean !== '' && $toward[$axis] >= floatval($t['lean_at'] ?? 0.25)) $text = $lean;
         return $text;
     }
 
@@ -10437,6 +10623,10 @@ class RelationshipDynamics
      *    than max_from_base from the base (an offset already beyond, from an arc, may only shrink),
      *    and never into the fearful region unless reach_fearful;
      *  - the axis stays within derive.min..max.
+     * Arcs ($bounded false) spend no day budget; an arc that lands in the fearful region marks
+     * it (arc_fearful: attachmentPoint lets it stand), any move out of it clears the mark. The
+     * style the move settles in (attachmentHeldStyle; an arc: the plain region) is kept with
+     * the base it was reached on (style, style_base).
      * The offset, the day budget and a short log live in $dynamics[ATTACHMENT_DRIFT_KEY].
      *
      * @return array axis => axis units actually moved (only axes that moved)
@@ -10445,25 +10635,23 @@ class RelationshipDynamics
     {
         $drift = (array) ($cfg['drift'] ?? []);
         $state = is_array($dynamics[self::ATTACHMENT_DRIFT_KEY] ?? null) ? $dynamics[self::ATTACHMENT_DRIFT_KEY] : [];
-        $day = $gamets > 0 ? (int) floor($gamets / self::GAMETS_PER_DAY) : 0;
-        if (intval($state['day'] ?? -1) !== $day) {
-            $state['day'] = $day;
-            $state['moved'] = ['anxiety' => 0.0, 'avoidance' => 0.0];
-        }
         $base = self::attachmentBase($dynamics, $cfg);
         $min = floatval($cfg['derive']['min'] ?? 0.05);
         $max = floatval($cfg['derive']['max'] ?? 0.95);
         $t = ['anxiety' => floatval($cfg['thresholds']['anxiety'] ?? 0.5), 'avoidance' => floatval($cfg['thresholds']['avoidance'] ?? 0.5)];
         $margin = floatval($cfg['derive']['fearful_margin'] ?? 0.01);
-        $cur = [];
-        foreach (self::ATTACHMENT_AXES as $axis) {
-            $cur[$axis] = self::clamp01($base[$axis] + floatval($state[$axis] ?? 0.0));
+        $cur = self::attachmentPoint($base, $state, $cfg);
+        $styleBefore = self::attachmentHeldStyle($cur, $base, $state, $cfg);
+        $day = $gamets > 0 ? (int) floor($gamets / self::GAMETS_PER_DAY) : 0;
+        if (intval($state['day'] ?? -1) !== $day) {
+            $state['day'] = $day;
+            $state['moved'] = ['anxiety' => 0.0, 'avoidance' => 0.0];
         }
         $moved = [];
         foreach (self::ATTACHMENT_AXES as $axis) {
             $d = floatval($delta[$axis] ?? 0.0);
             if (abs($d) < 1e-12) continue;
-            $old = floatval($state[$axis] ?? 0.0);
+            $old = $cur[$axis] - $base[$axis];   // the offset as read (attachmentPoint), not a stale stored one
             $gap = $base[$axis] - $cur[$axis];                       // > 0: sits below its base (earned)
             $mult = max(1.0, floatval($drift['slingshot_mult'] ?? 1.0));
             if ($d > 0 && $gap > 0) {
@@ -10478,7 +10666,7 @@ class RelationshipDynamics
                 $limit = max(floatval($drift['max_from_base'] ?? 0.4), abs($old));
                 $new = max(-$limit, min($limit, $new));
             }
-            $x = max($min, min($max, $base[$axis] + $new));
+            $x = max(min($min, $base[$axis]), min(max($max, $base[$axis]), $base[$axis] + $new));
             if ($bounded && $d > 0 && empty($drift['reach_fearful'])) {
                 $other = $axis === 'anxiety' ? 'avoidance' : 'anxiety';
                 if ($cur[$other] >= $t[$other] && $x >= $t[$axis]) {
@@ -10489,7 +10677,7 @@ class RelationshipDynamics
             if (abs($applied) < 1e-12) continue;
             $state[$axis] = round($x - $base[$axis], 6);
             $cur[$axis] = $x;
-            $state['moved'][$axis] = round(floatval($state['moved'][$axis] ?? 0.0) + abs($applied), 6);
+            if ($bounded) $state['moved'][$axis] = round(floatval($state['moved'][$axis] ?? 0.0) + abs($applied), 6);
             $moved[$axis] = $applied;
         }
         if ($moved) {
@@ -10498,6 +10686,16 @@ class RelationshipDynamics
             $state['log'] = array_slice($log, -max(1, intval($drift['log_size'] ?? 12)));
             $state['anxiety'] = floatval($state['anxiety'] ?? 0.0);
             $state['avoidance'] = floatval($state['avoidance'] ?? 0.0);
+            $fearful = self::attachmentStyleOf($cur['anxiety'], $cur['avoidance'], $cfg) === 'toxic';
+            if (!$bounded) {
+                $state['arc_fearful'] = $fearful && self::attachmentStyleOf($base['anxiety'], $base['avoidance'], $cfg) !== 'toxic';
+            } elseif (!$fearful) {
+                $state['arc_fearful'] = false;
+            }
+            $state['style'] = $bounded ? self::attachmentHeldStyle($cur, $base, ['style' => $styleBefore,
+                'style_base' => ['anxiety' => $base['anxiety'], 'avoidance' => $base['avoidance']]], $cfg)
+                : self::attachmentStyleOf($cur['anxiety'], $cur['avoidance'], $cfg);
+            $state['style_base'] = ['anxiety' => $base['anxiety'], 'avoidance' => $base['avoidance']];
             $dynamics[self::ATTACHMENT_DRIFT_KEY] = $state;
         }
         return $moved;
@@ -10522,9 +10720,15 @@ class RelationshipDynamics
         $cfg = self::getAttachmentConfig();
         $before = self::getAttachmentStyle($dynamics);
         $diType = $dynamics['_divine_intervention_last_type'] ?? null;
-        $step = floatval(((array) ($cfg['arcs'] ?? []))[$diType] ?? 0.0);
+        $arcs = (array) ($cfg['arcs'] ?? []);
+        $step = is_string($diType) && is_numeric($arcs[$diType] ?? null) ? floatval($arcs[$diType]) : 0.0;
         if ($step <= 0.0) return null;
-        if ($diType === 'redemption') {
+        if ($diType === 'redemption' && $before === 'toxic') {
+            // fearful -> anxious (the April table): per-axis share of the step
+            $share = (array) ($arcs['redemption_from_fearful'] ?? []);
+            $delta = [];
+            foreach (self::ATTACHMENT_AXES as $axis) $delta[$axis] = -$step * floatval($share[$axis] ?? 1.0);
+        } elseif ($diType === 'redemption') {
             $delta = ['anxiety' => -$step, 'avoidance' => -$step];
         } elseif ($before === 'secure') {
             $selfConf = floatval($dynamics['dimensions']['self_confidence']['x'] ?? 50);

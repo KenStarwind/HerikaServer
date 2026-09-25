@@ -174,7 +174,8 @@ final class RelDynAttachmentAxesTest extends TestCase
         $this->assertSame('Ranger', $d['_profile_autogen']['archetype']);
         $this->assertSame('derived', $d['_profile_autogen']['attachment_source']);
         $this->assertEqualsWithDelta(0.15, $anx, 1e-9, 'low anxiety');
-        $this->assertEqualsWithDelta(0.35, $avo, 1e-9, 'moderate avoidance: a self-reliant hunter copes through action (Ranger + Independent)');
+        $this->assertSame('Independent', $d['inferred_temperament'], 'a generic Hunter-class NPC (MDD 1.3)');
+        $this->assertEqualsWithDelta(0.35, $avo, 1e-9, 'moderate avoidance: a self-reliant hunter copes through action (Ranger + Independent; Aela herself reads her preset)');
         $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($d), 'secure-leaning, not avoidant');
         $this->assertContains('archetype:Ranger', $d['_profile_autogen']['attachment']['signals']);
         $this->assertArrayNotHasKey('attachment_style', $d, 'no label is stored: the axes are read from the profile');
@@ -243,10 +244,65 @@ final class RelDynAttachmentAxesTest extends TestCase
         $this->assertGreaterThan($d0['anxiety'], $with(['text_hits' => ['anxiety' => 1]])['anxiety'], 'clingy / needy words');
         $this->assertSame($with(['text_hits' => ['avoidance' => 3]]), $with(['text_hits' => ['avoidance' => 7]]), 'at most text_max_hits');
 
-        // Anxious / Jealous temperaments carry the insecure trait: anxious, as before
-        $anxious = $this->derived(['Nervous' => self::row('Nervous', 'ImperialRace', 'Citizen', [], [], 'A timid, nervous and clingy woman.')], 'Nervous');
-        $this->assertSame('Anxious', $anxious['inferred_temperament']);
-        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($anxious));
+        // Attachment-behaviour words in the profile are evidence: anxious
+        $clingy = $this->derived(['Clingy' => self::row('Clingy', 'ImperialRace', 'Citizen', [], [],
+            'Clingy and needy; she fears being left behind by anyone she loves.')], 'Clingy');
+        $this->assertSame(3, $clingy['_profile_autogen']['attachment_text']['anxiety']);
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($clingy));
+    }
+
+    /**
+     * Decisions §12: temperament is a separate axis, only a weak prior. The insecure trait the
+     * Anxious / Jealous temperaments imply (temperament_traits) is that temperament again, not
+     * attachment evidence: a merely shy or jealous NPC is not anxious on its own. A trait set on
+     * the NPC (editor, preset) is evidence.
+     */
+    public function testAnAnxiousOrJealousTemperamentAloneIsNotAnxiousAttachment(): void
+    {
+        $shy = $this->derived(['Shy' => self::row('Shy', 'ImperialRace', 'Citizen', [], [], 'A shy, timid and nervous girl.')], 'Shy');
+        $this->assertSame('Anxious', $shy['inferred_temperament']);
+        $this->assertSame(['insecure'], $shy['traits'], 'the trait stays for the systems that read it');
+        $this->assertEqualsWithDelta(0.15 + 0.2, self::axes($shy)[0], 1e-9, 'base + the Anxious prior only');
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($shy));
+        $this->assertNotContains('trait:insecure', $shy['_profile_autogen']['attachment']['signals']);
+
+        $jealous = $this->derived(['Jealous' => self::row('Jealous', 'ImperialRace', 'Citizen', [], [], 'A jealous and possessive woman.')], 'Jealous');
+        $this->assertSame('Jealous', $jealous['inferred_temperament']);
+        $this->assertEqualsWithDelta(0.15 + 0.15, self::axes($jealous)[0], 1e-9);
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($jealous));
+
+        $ysolda = $this->derived(['Ysolda' => self::row('Ysolda', 'NordRace', 'Citizen', [], [])], 'Ysolda');
+        $this->assertSame('Anxious', $ysolda['inferred_temperament'], 'MDD 8.2 C preset');
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($ysolda));
+
+        // A trait someone set on the NPC is evidence
+        $set = $this->derived(['Shy' => self::row('Shy', 'ImperialRace', 'Citizen', [], [], 'A shy, timid and nervous girl.')], 'Shy',
+            ['profile_overrides' => ['traits' => ['insecure']]]);
+        $this->assertEqualsWithDelta(0.15 + 0.2 + 0.35, self::axes($set)[0], 1e-9);
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($set));
+    }
+
+    /**
+     * Decisions §12: Aela is secure-leaning (0.15 / 0.35) from her preset, whatever her
+     * temperament: the derived Independent (Hunter class) or Ken's "guarded" as the Guarded
+     * temperament. Guarded adds no avoidance: a huntress with it and no preset derives only
+     * the Ranger role's.
+     */
+    public function testAelasAttachmentDoesNotDependOnHerTemperament(): void
+    {
+        $aela = $this->derived(['Aela the Huntress' => self::huntress('Aela the Huntress')], 'Aela the Huntress');
+        $this->assertSame('preset', $aela['_profile_autogen']['attachment_source']);
+        $this->assertSame([0.15, 0.35], self::axes($aela));
+        $guarded = $this->derived(['Aela the Huntress' => self::huntress('Aela the Huntress')], 'Aela the Huntress',
+            ['profile_overrides' => ['temperament' => 'Guarded']]);
+        $this->assertSame('Guarded', $guarded['inferred_temperament']);
+        $this->assertSame([0.15, 0.35], self::axes($guarded));
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($guarded));
+
+        $g = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['profile_overrides' => ['temperament' => 'Guarded']]);
+        $this->assertSame('Guarded', $g['inferred_temperament']);
+        $this->assertEqualsWithDelta(0.25, self::axes($g)[1], 1e-9, 'Ranger +0.1, Guarded +0');
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($g));
     }
 
     public function testTheDerivationIsDeterministicAndNeverFearful(): void
@@ -464,6 +520,72 @@ final class RelDynAttachmentAxesTest extends TestCase
         $this->assertStringStartsWith('keeps some distance', RelationshipDynamics::attachmentFeltText(self::textbook('avoidant')));
     }
 
+    /**
+     * Inside the secure region the felt text still follows the axes: an NPC with moderate
+     * avoidance (Aela, §12) is not told she is simply at ease with closeness.
+     */
+    public function testSecureFeltTextLeansWithTheAxes(): void
+    {
+        $plain = RelationshipDynamics::attachmentFeltText(self::textbook('secure'));
+        $this->assertSame('at ease with closeness; trusts it will hold', $plain, 'a textbook secure NPC');
+        $this->assertSame($plain, RelationshipDynamics::attachmentFeltText(self::at(0.2, 0.2)));
+
+        $aela = $this->derived(['Aela the Huntress' => self::huntress('Aela the Huntress')], 'Aela the Huntress');
+        $felt = RelationshipDynamics::attachmentFeltText($aela);
+        $this->assertNotSame($plain, $felt);
+        $this->assertStringContainsString('copes alone', $felt, 'copes through action, not talk');
+        $this->assertStringContainsString('copes alone', RelationshipDynamics::attachmentFeltText(self::at(0.28, 0.47)));
+        $this->assertStringContainsString('watchful', RelationshipDynamics::attachmentFeltText(self::at(0.45, 0.2)));
+        foreach ([$felt, RelationshipDynamics::attachmentFeltText(self::at(0.45, 0.2))] as $text) {
+            $this->assertDoesNotMatchRegularExpression('/\b(secure|anxious|avoidant|toxic|fearful|attachment)\b|\d/i', $text);
+        }
+    }
+
+    /**
+     * Ashe's preset sits on the avoidance threshold. One small step of earned trust does not flip
+     * every label-keyed consumer (refusal type, felt text, the diary trigger): the style is held
+     * until the axes are clearly past the line (config attachment.hysteresis); the continuous
+     * consumers still move at once.
+     */
+    public function testOneSmallStepAcrossTheLineDoesNotFlipTheStyle(): void
+    {
+        $d = $this->asheInRomance();
+        $d['dimensions']['self_confidence']['x'] = 60;
+        $d['dimensions']['maturity']['x'] = 60;
+        $this->assertSame('avoidant', RelationshipDynamics::getAttachmentStyle($d));
+        $this->assertSame('direct', RelationshipDynamics::getRefusalType($d, 'Guarded'));
+        $jBefore = RelationshipDynamics::getAttachmentModifier($d, 'jealousy_mult');
+
+        RelationshipDynamics::attachmentExperience($d, 'repair', self::T0);
+        [, $avo] = self::axes($d);
+        $this->assertLessThan(0.5, $avo, 'the axes moved below the line');
+        $this->assertSame('avoidant', RelationshipDynamics::getAttachmentStyle($d), 'held: one step is not a new style');
+        $this->assertSame('direct', RelationshipDynamics::getRefusalType($d, 'Guarded'));
+        $this->assertStringContainsString('keeps some distance', RelationshipDynamics::attachmentFeltText($d));
+        $this->assertNotEquals($jBefore, RelationshipDynamics::getAttachmentModifier($d, 'jealousy_mult'), 'blended consumers move at once');
+
+        // Clearly past the line: secure, with the lean
+        for ($k = 1; $k <= 4; $k++) RelationshipDynamics::attachmentExperience($d, 'repair', self::T0 + $k * self::DAY);
+        $this->assertLessThan(0.45, self::axes($d)[1]);
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($d));
+        $this->assertStringContainsString('copes alone', RelationshipDynamics::attachmentFeltText($d));
+
+        // A new base (an override) is read as it is, not held: here just past the line
+        $off = $d[RelationshipDynamics::ATTACHMENT_DRIFT_KEY]['avoidance'];
+        RelationshipDynamics::setProfileOverride($d, 'attachment_axes', ['anxiety' => 0.15, 'avoidance' => 0.52 - $off]);
+        $this->assertEqualsWithDelta(0.52, self::axes($d)[1], 1e-9);
+        $this->assertSame('avoidant', RelationshipDynamics::getAttachmentStyle($d));
+
+        // The other way: one step up across the line is held secure, a second step past the band is not
+        $e = self::at(0.3, 0.49, ['_core_rel_type' => 'romantic']);
+        RelationshipDynamics::attachmentExperience($e, 'betrayal', self::T0);
+        $this->assertEqualsWithDelta(0.52, self::axes($e)[1], 1e-9);
+        $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($e));
+        RelationshipDynamics::attachmentExperience($e, 'betrayal', self::T0 + self::DAY);
+        $this->assertEqualsWithDelta(0.55, self::axes($e)[1], 1e-9);
+        $this->assertSame('avoidant', RelationshipDynamics::getAttachmentStyle($e));
+    }
+
     // ------------------------------------------------------------------ drift (Earned Security)
 
     /** Ashe (preset: anxiety 0.3, avoidance 0.5) in a romance, trust earned, at game day T0. */
@@ -604,7 +726,7 @@ final class RelDynAttachmentAxesTest extends TestCase
         $this->assertSame('toxic', RelationshipDynamics::processAttachmentShift($d));
         $d['_attachment_shift_available'] = true;
         $d['_divine_intervention_last_type'] = 'redemption';
-        $this->assertSame('anxious', RelationshipDynamics::processAttachmentShift($d), 'a redemption arc lowers both: toxic -> anxious (the April table)');
+        $this->assertSame('anxious', RelationshipDynamics::processAttachmentShift($d), 'a redemption arc from fearful: toxic -> anxious (the April table)');
 
         // An unknown experience is logged, not applied
         $before = self::axes($d);
@@ -613,17 +735,130 @@ final class RelDynAttachmentAxesTest extends TestCase
         $this->assertStringContainsString("attachment experience 'hug'", (string) file_get_contents($this->errorLog));
     }
 
-    /** Two requests that each moved her attachment and saved concurrently: both experiences count. */
+    /**
+     * MDD 6.1 / decisions §12: a redemption arc (divine intervention) takes each style one step
+     * toward security, as the April table did: toxic (fearful) -> anxious, anxious -> secure,
+     * avoidant -> secure. A breaking arc: anxious -> toxic, avoidant stays.
+     */
+    public function testArcsFromEachTextbookStyleFollowTheAprilTable(): void
+    {
+        $GLOBALS['db'] = new RelDynAttachmentAxesCoreDb([], array_merge(RelationshipDynamics::defaultConfig(), ['divine_intervention_enabled' => true]));
+        RelationshipDynamics::clearConfigCache();
+        $arc = function (string $style, string $type): array {
+            $d = self::textbook($style, ['_core_rel_type' => 'romantic', '_attachment_shift_available' => true,
+                '_divine_intervention_last_type' => $type]);
+            RelationshipDynamics::processAttachmentShift($d);
+            return [RelationshipDynamics::getAttachmentStyle($d), self::axes($d)];
+        };
+        [$style, $axes] = $arc('toxic', 'redemption');
+        $this->assertSame('anxious', $style, 'toxic -> anxious, not straight to secure');
+        $this->assertEqualsWithDelta(0.85, $axes[0], 1e-9, 'the fear of abandonment stays for now');
+        $this->assertEqualsWithDelta(0.45, $axes[1], 1e-9);
+        $this->assertSame('secure', $arc('anxious', 'redemption')[0]);
+        $this->assertSame('secure', $arc('avoidant', 'redemption')[0]);
+        $this->assertSame('secure', $arc('secure', 'redemption')[0]);
+        $this->assertSame('toxic', $arc('anxious', 'breaking')[0]);
+        $this->assertSame('avoidant', $arc('avoidant', 'breaking')[0]);
+    }
+
+    /**
+     * Drift never carries an NPC into the fearful region, even when the base rises later: a loss
+     * (a grief bond, as onNpcDeath writes it) raises the derived base while the drift offset
+     * stays. The protocol behaviours (maturity floor, manipulative refusal, hoover) stay off;
+     * the axes stay within derive.min..max.
+     */
+    public function testALaterLossNeverCarriesDriftIntoFearful(): void
+    {
+        $d = $this->derived(['Clingy' => self::row('Clingy', 'ImperialRace', 'Citizen', [], [],
+            'Clingy and needy; she fears being left behind by anyone she loves.')], 'Clingy');
+        $d['dimensions']['maturity']['x'] = 20;
+        $this->assertSame('derived', $d['_profile_autogen']['attachment_source']);
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($d));
+        for ($k = 0; $k < 30; $k++) {
+            RelationshipDynamics::attachmentExperience($d, 'betrayal', self::T0 + $k * self::DAY);
+        }
+        [$anx, $avo] = self::axes($d);
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($d), 'the edge guard held');
+        $this->assertEqualsWithDelta(0.49, $avo, 1e-9);
+
+        // Two people she loved die (the grief system's record of each loss)
+        $GLOBALS['gameRequest'] = ['death', '1', (string) (int) (self::T0 + 31 * self::DAY), 'Irileth died'];
+        RelationshipDynamics::onNpcDeath('Irileth', 'Clingy', $d);
+        RelationshipDynamics::onNpcDeath('Hulda', 'Clingy', $d);
+        $this->assertCount(2, $d['_grief_bonds']);
+        $a = RelationshipDynamics::getAttachmentAxes($d);
+        $this->assertEqualsWithDelta(0.15 + 2 * 0.05, $a['base']['avoidance'], 1e-9, 'the losses raised her base');
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($d), 'drift alone never reaches fearful');
+        $this->assertLessThan(0.5, $a['avoidance']);
+        $this->assertLessThanOrEqual(0.95 + 1e-9, $a['anxiety'], 'within derive.max');
+        $this->assertNull(RelationshipDynamics::getAttachmentModifier($d, 'maturity_floor'));
+        $this->assertNotSame('manipulative', RelationshipDynamics::getRefusalType($d));
+        $this->assertFalse(RelationshipDynamics::isHooverSleeper($d));
+
+        // An arc still can; a loss afterwards keeps her there (the arc took her in, not drift)
+        $GLOBALS['db'] = new RelDynAttachmentAxesCoreDb([], array_merge(RelationshipDynamics::defaultConfig(), ['divine_intervention_enabled' => true]));
+        RelationshipDynamics::clearConfigCache();
+        $d['_attachment_shift_available'] = true;
+        $d['_divine_intervention_last_type'] = 'breaking';
+        $this->assertSame('toxic', RelationshipDynamics::processAttachmentShift($d));
+        RelationshipDynamics::onNpcDeath('Jon', 'Clingy', $d);
+        $this->assertSame('toxic', RelationshipDynamics::getAttachmentStyle($d));
+    }
+
+    /** Two requests that each moved her attachment and saved concurrently: both experiences count, within the day budget. */
     public function testConcurrentDriftSavesKeepBothExperiences(): void
     {
         $k = RelationshipDynamics::ATTACHMENT_DRIFT_KEY;
         $base = [$k => ['anxiety' => 0.01, 'avoidance' => -0.02, 'day' => 420, 'moved' => ['anxiety' => 0.01, 'avoidance' => 0.02]]];
         $mine = [$k => ['anxiety' => -0.003, 'avoidance' => -0.026, 'day' => 420, 'moved' => ['anxiety' => 0.023, 'avoidance' => 0.026]]];
-        $theirs = [$k => ['anxiety' => 0.04, 'avoidance' => 0.01, 'day' => 420, 'moved' => ['anxiety' => 0.04, 'avoidance' => 0.05]]];
+        $theirs = [$k => ['anxiety' => 0.02, 'avoidance' => -0.01, 'day' => 420, 'moved' => ['anxiety' => 0.02, 'avoidance' => 0.03]]];
         $m = RelationshipDynamics::mergeDynamics($base, $mine, $theirs)[$k];
-        $this->assertEqualsWithDelta(0.04 - 0.013, $m['anxiety'], 1e-9, 'signed offsets add up (no clamp at 0)');
-        $this->assertEqualsWithDelta(0.01 - 0.006, $m['avoidance'], 1e-9);
-        $this->assertEqualsWithDelta(0.053, $m['moved']['anxiety'], 1e-9, 'the day budget spent by both');
+        $this->assertEqualsWithDelta(0.02 - 0.013, $m['anxiety'], 1e-9, 'signed offsets add up (no clamp at 0)');
+        $this->assertEqualsWithDelta(-0.01 - 0.006, $m['avoidance'], 1e-9);
+        $this->assertEqualsWithDelta(0.03, $m['moved']['anxiety'], 1e-9, 'the day budget, spent by both, is spent');
+    }
+
+    /**
+     * Concurrent saves re-apply the drift bounds: two experiences on the same game day move an
+     * axis at most max_per_game_day together, never carry an NPC into fearful, and neither is lost
+     * when the stored drift was still empty.
+     */
+    public function testConcurrentDriftSavesStayWithinTheDriftBounds(): void
+    {
+        // Anxious at the avoidance edge: a lie on the previous day, then a betrayal in one request
+        // and a walkaway in another, both on the same game day
+        $base = self::at(0.85, 0.47, ['_core_rel_type' => 'romantic']);
+        $base['dimensions']['maturity']['x'] = 20;
+        RelationshipDynamics::attachmentExperience($base, 'lie', self::T0 - self::DAY);
+        $mine = $base;
+        $theirs = $base;
+        RelationshipDynamics::attachmentExperience($mine, 'betrayal', self::T0);
+        RelationshipDynamics::attachmentExperience($theirs, 'walkaway', self::T0 + self::HOUR);
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($mine));
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($theirs));
+        $merged = RelationshipDynamics::mergeDynamics($base, $mine, $theirs);
+        [$anx0] = self::axes($base);
+        [$anx, $avo] = self::axes($merged);
+        $this->assertLessThanOrEqual($anx0 + 0.03 + 1e-9, $anx, 'one game day: at most max_per_game_day together');
+        $this->assertLessThan(0.5, $avo);
+        $this->assertSame('anxious', RelationshipDynamics::getAttachmentStyle($merged), 'never fearful by drift');
+        $this->assertNotSame('manipulative', RelationshipDynamics::getRefusalType($merged));
+        $this->assertFalse(RelationshipDynamics::isHooverSleeper($merged));
+        $k = RelationshipDynamics::ATTACHMENT_DRIFT_KEY;
+        $this->assertLessThanOrEqual(0.03 + 1e-9, $merged[$k]['moved']['anxiety']);
+        $this->assertLessThanOrEqual(0.03 + 1e-9, $merged[$k]['moved']['avoidance']);
+
+        // No stored drift yet: both lies count (neither side's is dropped)
+        $fresh = self::at(0.3, 0.3, ['_core_rel_type' => 'romantic']);
+        $this->assertNull($fresh[$k] ?? null);
+        $a = $fresh;
+        $b = $fresh;
+        RelationshipDynamics::attachmentExperience($a, 'lie', self::T0);
+        RelationshipDynamics::attachmentExperience($b, 'lie', self::T0 + self::HOUR);
+        $both = RelationshipDynamics::mergeDynamics($fresh, $a, $b);
+        $this->assertEqualsWithDelta(0.3 + 2 * 0.015, self::axes($both)[0], 1e-9);
+        $this->assertEqualsWithDelta(0.3 + 2 * 0.01, self::axes($both)[1], 1e-9);
+        $this->assertEqualsWithDelta(0.03, $both[$k]['moved']['anxiety'], 1e-9);
     }
 
     public function testWalkawayBoundaryAndBondWeight(): void

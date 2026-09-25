@@ -474,12 +474,13 @@ final class RelDynTemperamentAutogenTest extends TestCase
             $d['dimensions']['maturity']['plasticity_type'], $d['traits']]);
         [$anx0, $avo0] = array_values(array_intersect_key(RelationshipDynamics::getAttachmentAxes($d), ['anxiety' => 1, 'avoidance' => 1]));
 
-        // Proud is a weak prior, and Proud brings the egocentric trait: a little more avoidance,
-        // still secure (the April map made every Proud NPC avoidant)
+        // Proud is a weak prior: a little more avoidance, still secure (the April map made every
+        // Proud NPC avoidant). The egocentric trait Proud implies is the temperament again, not
+        // attachment evidence (decisions §12), so it adds nothing here.
         $this->assertTrue(RelationshipDynamics::setProfileOverride($d, 'temperament', 'Proud'));
         $this->assertSame('Proud', $d['inferred_temperament']);
         $this->assertSame('secure', RelationshipDynamics::getAttachmentStyle($d));
-        $this->assertEqualsWithDelta($avo0 + 0.05 + 0.1, RelationshipDynamics::getAttachmentAxes($d)['avoidance'], 1e-9, 'Proud prior + egocentric');
+        $this->assertEqualsWithDelta($avo0 + 0.05, RelationshipDynamics::getAttachmentAxes($d)['avoidance'], 1e-9, 'the Proud prior only');
         $this->assertSame($anx0, RelationshipDynamics::getAttachmentAxes($d)['anxiety']);
         $this->assertSame('Brittle', $d['dimensions']['maturity']['plasticity_type']);
         $this->assertSame(['egocentric'], $d['traits']);
