@@ -417,8 +417,10 @@ final class RelDynEvalEndToEndTest extends TestCase
         $this->assertSame([], $after['dimensions']['resentment']['pending_grievances'] ?? [], 'not also on the legacy list');
 
         // Jealousy (0..100 points), decisions §5: 10 x intensity-1 mult 1.0 x Jealous 2.0 (MDD 1.3)
-        //   x secure 1.0 = +20, rival Lydia; it does not add resentment directly.
-        $this->assertEqualsWithDelta(65.0 + 20.0, (float) $after['jealousy_anger'], 1e-9, 'jealousy 65 -> 85');
+        //   x secure 1.0 = 20, x the possessive trust damping (traits design §1.4) at the trust
+        //   the same item just left, 46.8: 1 - 0.7 x 0.468 = 0.6724 -> +13.448, rival Lydia; it
+        //   does not add resentment directly.
+        $this->assertEqualsWithDelta(65.0 + 20.0 * (1.0 - 0.7 * 0.468), (float) $after['jealousy_anger'], 1e-9, 'jealousy 65 -> 78.448');
         $this->assertSame('Lydia', $after['jealousy_trigger_npc']);
         $this->assertTrue($after['in_conflict'] ?? false, 'jealousy at 40+ opens a conflict');
         $this->assertEmpty($before['in_conflict'] ?? false);

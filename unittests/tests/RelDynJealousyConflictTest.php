@@ -44,7 +44,9 @@ final class RelDynJealousyConflictTest extends TestCase
             'in_conflict' => false,
             'dimensions' => [],
         ];
-        $dims += ['maturity' => 60.0, 'self_confidence' => 50.0, 'trust' => 50.0, 'respect' => 50.0,
+        // trust 0: no possessive trust damping (traits design §1.4), so the MDD multipliers show
+        // as they are; testTrustDampsEveryJealousyGainStrongly covers the damping
+        $dims += ['maturity' => 60.0, 'self_confidence' => 50.0, 'trust' => 0.0, 'respect' => 50.0,
                   'comfort' => 50.0, 'resentment' => 0.0];
         foreach ($dims as $dim => $x) {
             $d['dimensions'][$dim] = ['x' => $x, 'baseline' => $dim === 'resentment' ? 0 : $x];
@@ -94,6 +96,24 @@ final class RelDynJealousyConflictTest extends TestCase
         $this->assertEqualsWithDelta($base * 1.3 * 2.0,
             $gain(['inferred_temperament' => 'Romantic', 'relationship_preference' => 'monogamous'], 1), 1e-9);
         $this->assertSame(0.0, $gain(['inferred_temperament' => 'Romantic', 'relationship_preference' => 'not_interested'], 3));
+    }
+
+    /** Traits design §1.4 (decisions §14): trust damps jealousy strongly, x clamp(1 - 0.7 trust / 100, 0.3, 1). */
+    public function testTrustDampsEveryJealousyGainStrongly(): void
+    {
+        $gain = function (float $trust): float {
+            $d = $this->npc(['inferred_temperament' => 'Romantic'], ['trust' => $trust]);
+            RelationshipDynamics::applyEvalFeelings('Lydia',
+                $this->item(['jealousy' => ['flag' => true, 'rival' => 'Aela', 'intensity' => 1]]), $d);
+            return (float) $d['jealousy_anger'];
+        };
+        $untrusting = $gain(0.0);
+        $this->assertEqualsWithDelta(0.44 * $untrusting, $gain(80.0), 1e-9, 'trust 80: x 0.44');
+        $this->assertEqualsWithDelta(0.30 * $untrusting, $gain(100.0), 1e-9, 'never below x 0.3');
+        // the bystander path reads the same gain
+        $romantic = fn(float $trust) => $this->npc(['inferred_temperament' => 'Romantic', '_core_rel_type' => 'romantic'], ['trust' => $trust]);
+        $this->assertEqualsWithDelta(0.44, RelationshipDynamics::bystanderJealousyGain($romantic(80.0))
+            / RelationshipDynamics::bystanderJealousyGain($romantic(0.0)), 1e-9);
     }
 
     public function testRivalIsRecordedAndTheTagAloneIsAJealousyEvent(): void

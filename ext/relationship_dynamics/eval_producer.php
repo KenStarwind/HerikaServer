@@ -30,7 +30,11 @@
  *    tags:[subset of TAGS], grievance:{flag,kind,severity 0..3},
  *    jealousy:{flag,rival,intensity 0..3}, significance 0..1, positive_interaction, summary,
  *    witnesses: optional (additive to v1) list of names present at the exchange, from its
- *               eventlog rows' people column; bystander jealousy reads it}
+ *               eventlog rows' people column; bystander jealousy reads it,
+ *    exposure: optional (additive to v1), only when flagged: {flag, kinds [rival_exposure|
+ *               place|vice|danger|company], intensity 1..3, when today|last_night|earlier,
+ *               disclosed: true}: the player told the NPC about something it was not there for
+ *               (traits design §1.2 route A; RelDynConcern reads it)}
  *
  * Classification: tags are the one interaction classification source. TAG_LOVE_LANGUAGE /
  * LOVE_LANGUAGE_TAGS translate between tags and RelDyn's love-language constants, and
@@ -1099,11 +1103,12 @@ TAGS (what {$player} did; use only these, empty list if none apply):
 
 GRIEVANCE: flag true when {$npc} was hurt or wronged and it was not resolved in this exchange; kind = short word (e.g. insult, neglect, disrespect, being used); severity 1 mild .. 3 severe.
 JEALOUSY: flag true when {$npc} felt jealous of a rival because of this exchange; rival = the rival's name; intensity 1..3.
+EXPOSURE: flag true only when {$player} tells {$npc} about something {$npc} was not there for that put {$player} near rivals or at risk. kinds, any of: rival_exposure (out where others could court {$player}, e.g. a tavern night with single company), place (a risky place: a tavern late at night among strangers, a skooma den), vice (drinking, skooma), danger (a fight, a deadly place), company (bad company: bandits, criminals). intensity 1 mild .. 3 serious. when: today, last_night or earlier.
 SIGNIFICANCE: 0..1, how much this exchange matters to {$npc} (small talk 0.1, meaningful 0.5, life-changing 1).
 SUMMARY: one short line saying what happened in this exchange, as an event (who did what). No numbers, no scores, no signal names, no feelings named (not "she trusts {$player} more").
 
 Reply with exactly this JSON shape:
-{"signals": {{$signalText}}, "tags": [], "grievance": {"flag": false, "kind": null, "severity": 0}, "jealousy": {"flag": false, "rival": null, "intensity": 0}, "significance": 0.2, "summary": "one short line"}
+{"signals": {{$signalText}}, "tags": [], "grievance": {"flag": false, "kind": null, "severity": 0}, "jealousy": {"flag": false, "rival": null, "intensity": 0}, "exposure": {"flag": false, "kinds": [], "intensity": 0, "when": null}, "significance": 0.2, "summary": "one short line"}
 PROMPT;
 
         return [
@@ -1179,6 +1184,8 @@ PROMPT;
         if ($jealousy['rival'] !== null && (self::sameName($jealousy['rival'], $npc) || self::sameName($jealousy['rival'], $player))) {
             $jealousy['rival'] = null;   // the rival is a third person
         }
+        // Optional, additive to v1: a malformed exposure is logged and left out, never the item
+        $exposure = RelationshipDynamics::normalizeEvalExposure($data['exposure'] ?? null, $npc);
 
         $significance = self::DEFAULT_SIGNIFICANCE;
         if (array_key_exists('significance', $data)) {
@@ -1217,7 +1224,7 @@ PROMPT;
             'significance'         => round($significance, 3),
             'positive_interaction' => $classified['positive_interaction'],
             'summary'              => $summary,
-        ];
+        ] + ($exposure !== null ? ['exposure' => $exposure] : []);
     }
 
     /** grievance / jealousy object: {flag bool, <textKey> string|null, <levelKey> 0..3}; null = malformed. */

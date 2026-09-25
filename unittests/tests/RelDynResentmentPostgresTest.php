@@ -307,7 +307,11 @@ final class RelDynResentmentPostgresTest extends TestCase
 
         $aela = $this->dynamics('Aela');
         $base = (float) RelationshipDynamics::defaultConfig()['jealousy_eval_gain'];
-        $this->assertEqualsWithDelta($base * 2.0, (float) $aela['jealousy_anger'], 1e-9, 'intensity-1 event x Jealous 2.0');
+        // x the possessive trust damping at her trust (traits design §1.4: 1 - 0.7 x trust / 100)
+        $trust = (float) $aela['dimensions']['trust']['x'];
+        $this->assertGreaterThan(0.0, $trust);
+        $this->assertEqualsWithDelta($base * 2.0 * (1.0 - 0.7 * $trust / 100.0), (float) $aela['jealousy_anger'], 1e-9,
+            'intensity-1 event x Jealous 2.0 x trust damping');
         $this->assertSame('Lydia', $aela['jealousy_trigger_npc']);
         $this->assertSame(0.0, (float) ($this->dynamics('Mjoll')['jealousy_anger'] ?? 0.0), 'platonic: not jealous');
         $this->assertSame(0.0, (float) ($this->dynamics('Muiri')['jealousy_anger'] ?? 0.0), 'Muiri did not see it');

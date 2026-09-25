@@ -550,6 +550,15 @@ final class RelDynFelt
             }
         }
 
+        // --- Protective concern and the values path (traits design §1): worry, stated values,
+        // the boundary; one-shots are said to the player's face ---
+        $concern = RelDynConcern::takeFeltLines($dynamics, $npc, $player, $now, !empty($env['player_addressed']));
+        if ($concern['changed']) $changed = true;
+        foreach ($concern['lines'] as $l) {
+            $lines[] = self::line('concern_' . $l['key'], self::SCOPE_BOND, $l['lane'] === 'turn' ? self::LANE_TURN : self::LANE_CORE,
+                floatval($l['salience']), (string) $l['text'], ['must' => !empty($l['must']), 'intense' => !empty($l['intense'])]);
+        }
+
         // --- Intimacy need (rulings §10) ---
         $intimacy = RelDynIntimacy::feltText($npc, $player, $dynamics, $now);
         if ($intimacy) $lines[] = self::line('intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['intimacy']), $intimacy);

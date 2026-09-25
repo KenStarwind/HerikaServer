@@ -32,6 +32,10 @@
  *   weather          string sunny|clear|overcast|stormy
  *   open_conflict    bool   conflict_repairs int (positive interactions since it opened)
  *   boundary         string none|pending|probation|failed (mature boundary, rulings §9)
+ *   concern          ['level' => concern points 0..100 (protective worry, traits design §1.4),
+ *                     'band' => none|uneasy|raise|insist, 'possessive_incidents' /
+ *                     'protective_incidents' => counted incidents in the values window (§1.5),
+ *                     'values_boundary' => none|pending|probation|failed]
  *   walkaway         string normal|pending|active|boundary_test|recovery|permanent
  *   fulfillment      ['band' => -1..1, 'trend' => band per game day, 'low' => bool, 'known' => bool]
  *   attraction       ['enabled' => bool, 'outcome' => ?string, 'score' => 0..1,
@@ -77,6 +81,7 @@ final class RelDynJev
         'attraction.score' => '0..1',
         'attachment_anxiety' => 'axis 0..1 (fear of abandonment)',
         'attachment_avoidance' => 'axis 0..1 (discomfort with closeness once in)',
+        'concern.level' => 'concern points 0..100', 'concern.incidents' => 'counted incidents in the values window',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
     ];
 
@@ -167,6 +172,7 @@ final class RelDynJev
             'open_conflict' => !empty($dynamics['in_conflict']),
             'conflict_repairs' => intval($dynamics['conflict_positive_count'] ?? 0),
             'boundary' => is_string($boundary) ? $boundary : 'none',
+            'concern' => RelDynConcern::jev($dynamics, $now),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'fulfillment' => $fulfillment,
             'attraction' => $attraction,
@@ -204,6 +210,9 @@ final class RelDynJev
         $parts[] = "weather={$s['weather']}";
         $parts[] = 'conflict=' . ($s['open_conflict'] ? 'open' : 'none');
         $parts[] = "boundary={$s['boundary']}";
+        $c = $s['concern'];
+        $parts[] = 'concern=' . $f($c['level']) . "({$c['band']}) incidents=" . $c['possessive_incidents'] . '/' . $c['protective_incidents']
+            . ($c['values_boundary'] !== 'none' ? " values_boundary={$c['values_boundary']}" : '');
         $parts[] = "walkaway={$s['walkaway']}";
         $parts[] = 'fulfillment=' . number_format($s['fulfillment']['band'], 2, '.', '') . ($s['fulfillment']['low'] ? '(low)' : '');
         $a = $s['attraction'];

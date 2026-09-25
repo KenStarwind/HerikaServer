@@ -157,8 +157,12 @@ function reldyn_trait_capture_label($t): array
     $r['e2e']['passion_gain'] = $RD::calculatePassionGain($n, $RD::LL_TIME);
     $m = $n;
     $r['e2e']['reunion'] = $RD::checkReunion($m, 100);
+    // Phase 3 (traits design §1.4) damps every jealousy gain by the bond's trust; this pins the
+    // temperament path, so the bond has no trust value (damping factor 1.0, as before phase 3).
+    $j = $n;
+    unset($j['dimensions']['trust']);
     foreach ([1, 2, 3] as $i) {
-        $r['e2e']['jealousy'][$i] = $RD::jealousyEventGain(['profile_overrides' => ['attachment_style' => 'secure']] + $n, $i);
+        $r['e2e']['jealousy'][$i] = $RD::jealousyEventGain(['profile_overrides' => ['attachment_style' => 'secure']] + $j, $i);
     }
     if ($savedRequest !== null) $GLOBALS['gameRequest'] = $savedRequest; else unset($GLOBALS['gameRequest']);
     // end to end: tier retention (A19) in checkTierDemotion, core affinity 20 / 5 below a held 'friend' (floor 31)

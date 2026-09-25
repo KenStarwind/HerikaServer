@@ -3,16 +3,25 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## Unreleased — Personality phase 3: the deliberate fixes
-Anxiety now counts once. An anxious NPC's clinginess comes from how she attaches, not a second time from her
-temperament: reunions, jealousy, missing you while you're away and minding neglect no longer stack it two or three
-times, and how much absence hurts follows how possessive she is. Trust is slow to win and quick to lose: a guarded
-NPC no longer loses trust as slowly as she gains it. The maturity column of the resistance table is gone (her
-maturity type already covers it), the unreachable Volatile row is deleted, and Humble still resists nothing.
-Stacked slow-burn romance (guarded and avoidant) needs at most 2.5x the moments, not 4x. Falling in battle is who
-she is: the confident and proud fight harder, the reactive and unsure panic, and every fall is a jolt. A few values
-that turned the wrong way just off a preset (coordinates near Bold, tier retention near Independent) now follow the
-traits. The eval sees her personality in words, Jev sees the trait numbers, and the editor lists all 13 presets.
+## reldyn-v0.13 — Who she is decides what she wants, what she forgives and what she worries about
+Her standards come from her own personality now: a selective, mature, self-assured woman sets a high bar on every
+pillar of attraction and a shy, open one sets a low bar, instead of everyone sharing the same line. An asexual NPC
+can still fall for you, through time together, kind words, reassurance, confiding and gentle touch; her longing
+carries no desire, physical intimacy never comes into play and Sharmat stays closed.
+A partner who stays home now finds out about your nights out and reacts as who she is. She notices when you come back
+late from the tavern with drink on you, and she hears it when you mention the night yourself. Two feelings answer:
+jealousy about the people circling you, which trust softens a lot, and a new worry for your safety, which trust
+softens only a little. A crowded market is not a risk; the tavern at night is. What matters is repetition: a mature
+partner tells you once, plainly, what she values; the next time it shows; if it keeps happening within the week it
+becomes a real grievance, she draws a calm boundary, and if it goes on she steps back from the romance. A less mature
+one accuses, tries to forbid it or sulks, and in the end it boils over. One night counts once however she learns of
+it, and reassurance takes the edge off. Witnesses telling her comes later.
+Anxiety now counts once, from how she attaches rather than again from her temperament. Trust is slow to win and
+quick to lose. Stacked slow-burn romance no longer demands an absurd number of moments. Falling in battle is who she
+is: the confident and proud fight harder, the reactive and unsure panic, and every fall is a jolt. Values that turned
+the wrong way just off a preset now follow the traits, the eval sees her personality in words, Jev sees the numbers,
+and the editor lists every preset. CHIM's once-a-second poll now only keeps the play clock and save loads in step and
+never touches a bond, so an NPC set as the server default no longer has her absence erased every second.
 
 ## reldyn-v0.12 — Personality read from each NPC's own bio
 Each NPC's personality now comes from her own CHIM bio: one read turns it into the ten traits, each backed by a short
