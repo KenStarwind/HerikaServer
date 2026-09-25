@@ -302,7 +302,11 @@ class RelDynIntimacy
             }
         }
         if (!empty($in['creature'])) $add(((array) $cfg['creature'])[$in['creature']] ?? [], 1.0, "creature:{$in['creature']}");
-        if (!empty($in['temperament'])) $add(((array) $cfg['temperament'])[$in['temperament']] ?? [], 1.0, "temperament:{$in['temperament']}");
+        // A26 through the trait engine (Rule R: physical E, D; emotional W, G, E)
+        if (!empty($in['temperament'])) $add(RelDynTraits::rowParam($in['temperament'], (array) $cfg['temperament'], [
+            'physical'  => ['R', [0.02, 'E' => 0.19, 'D' => -0.21]],
+            'emotional' => ['R', [-0.64, 'W' => 0.96, 'G' => 0.54, 'E' => 0.18]],
+        ]), 1.0, "temperament:{$in['temperament']}");
         // attachment: a style name (a textbook NPC of it) or style => corner weight
         $att = $in['attachment'] ?? null;
         foreach (is_array($att) ? $att : (is_string($att) && $att !== '' ? [$att => 1.0] : []) as $style => $w) {

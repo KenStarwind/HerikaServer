@@ -637,7 +637,8 @@ class RelDynFacets
 
         $temperament = RelationshipDynamics::validTemperament($profile['temperament'] ?? null);
         if ($temperament !== null) {
-            $add((array) (((array) ($cfg['temperament_prefs'] ?? []))[$temperament] ?? []), 1.0, "temperament:{$temperament}");
+            // A28 through the trait engine (Rule I; place tastes leave temperament in phase 3)
+            $add(RelDynTraits::rowParam($temperament, (array) ($cfg['temperament_prefs'] ?? [])), 1.0, "temperament:{$temperament}");
         }
         foreach ((array) ($profile['traits'] ?? []) as $trait) {
             $trait = strtolower(trim((string) $trait));
