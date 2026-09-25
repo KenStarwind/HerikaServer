@@ -399,8 +399,13 @@ final class RelDynEvalEndToEndTest extends TestCase
 
         // Trust (0..100): -8 x R(Jealous trust LOSS) 1.8 x P(Adaptive down) 1.0, at baseline (decay 1)
         //   = -14.4 (traits phase 3, A16 split: the gain side is 0.4, a loss the MDD's fast 1.8)
-        $this->assertEqualsWithDelta(50.0 - 14.4,
-            (float) $after['dimensions']['trust']['x'], 1e-9, 'trust 50 -> 35.6');
+        //   x S: her social sensitivity curve at the bond the insult was spoken in (core 20, before
+        //   the same item's affinity loss)
+        $s = RelationshipDynamics::socialSensitivityFactor($before, 'trust', true, null, 20.0);
+        $this->assertGreaterThan(0.0, $s);
+        $this->assertLessThan(1.0, $s);
+        $this->assertEqualsWithDelta(50.0 - 14.4 * $s,
+            (float) $after['dimensions']['trust']['x'], 1e-4, 'trust 50 -> 50 - 14.4 x S');
 
         // Resentment (0..100), MDD 15.5 via recordGrievance: raw 5 x severity-2 mult 1.5
         //   x (1 + power_gap 0: romantic, not in party, no factions) = 7.5
@@ -418,9 +423,10 @@ final class RelDynEvalEndToEndTest extends TestCase
 
         // Jealousy (0..100 points), decisions §5: 10 x intensity-1 mult 1.0 x Jealous 2.0 (MDD 1.3)
         //   x secure 1.0 = 20, x the possessive trust damping (traits design §1.4) at the trust
-        //   the same item just left, 35.6 (after the phase-3 fast trust loss above):
-        //   1 - 0.7 x 0.356 = 0.7508 -> +15.016, rival Lydia; it does not add resentment directly.
-        $this->assertEqualsWithDelta(65.0 + 20.0 * (1.0 - 0.7 * 0.356), (float) $after['jealousy_anger'], 1e-9, 'jealousy 65 -> 80.016');
+        //   the same item just left (after the phase-3 fast trust loss above, x S):
+        //   1 - 0.7 x trust / 100, rival Lydia; it does not add resentment directly.
+        $trustLeft = (float) $after['dimensions']['trust']['x'];
+        $this->assertEqualsWithDelta(65.0 + 20.0 * (1.0 - 0.7 * $trustLeft / 100.0), (float) $after['jealousy_anger'], 1e-9, 'jealousy 65 -> 65 + 20 x damping');
         $this->assertSame('Lydia', $after['jealousy_trigger_npc']);
         $this->assertTrue($after['in_conflict'] ?? false, 'jealousy at 40+ opens a conflict');
         $this->assertEmpty($before['in_conflict'] ?? false);

@@ -80,10 +80,13 @@ final class RelDynEvalPipelineTest extends TestCase
         @unlink($this->errorLog);
     }
 
-    /** Stored config row = current defaults with these keys changed. */
+    /**
+     * Stored config row = current defaults with these keys changed. Social sensitivity is off:
+     * this class checks R x P x M; the bond-level curve S has RelDynSocialSensitivityTest.
+     */
     private function setConfig(array $overrides): void
     {
-        $cfg = array_merge(RelationshipDynamics::defaultConfig(), $overrides);
+        $cfg = array_merge(RelationshipDynamics::defaultConfig(), ['social_sensitivity_enabled' => false], $overrides);
         $this->db->confOpts['relationship_dynamics_config'] = json_encode($cfg);
         RelationshipDynamics::clearConfigCache();
     }

@@ -688,6 +688,15 @@ final class RelDynTimeline
         if (is_array($d[RelDynFulfillment::STATE_KEY] ?? null)) {
             $d[RelDynFulfillment::STATE_KEY] = self::rebaselineFulfillment($d[RelDynFulfillment::STATE_KEY], $T);
         }
+        // Baseline drift samples (one per game day of contact) of days after the loaded one: the
+        // loaded game never lived them
+        if (is_array($d['_baseline_drift_samples'] ?? null)) {
+            $loadDay = (int) floor($T / RelationshipDynamics::GAMETS_PER_DAY);
+            foreach ($d['_baseline_drift_samples'] as $dim => $list) {
+                $d['_baseline_drift_samples'][$dim] = array_values(array_filter((array) $list, static fn($s) =>
+                    !(is_array($s) && is_numeric($s['day'] ?? null) && intval($s['day']) > $loadDay)));
+            }
+        }
         // Affinity: core's value is the truth after a load; nothing uncommitted is pushed back.
         RelationshipDynamics::refreshAffinityMirror($d, intval($coreRel['aff'] ?? 0));
         $d['_pending_aff_delta'] = 0.0;

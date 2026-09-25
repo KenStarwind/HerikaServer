@@ -4556,24 +4556,31 @@ try {
     try { restoreDIConfig($aj4Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AJ5: 3 consistent samples above baseline → drift up ──
+// Drift samples are taken on contact, one per game day (recordBaselineDriftSample, prerequest);
+// processBaselineDrift reads them at the diary eval.
+function ajSampleDays(array &$dyn, array $trustByDay): void {
+    foreach ($trustByDay as $day => $trust) {
+        $dyn['dimensions']['trust']['x'] = $trust;
+        RelationshipDynamics::recordBaselineDriftSample($dyn, $day * RelationshipDynamics::GAMETS_PER_DAY + 1);
+    }
+}
+
+// ── AJ5: 3 consistent days above baseline → drift up ──
 try {
     $aj5Saved = setDIConfig(['baseline_drift_enabled' => true]);
     $aj5Dyn = RelationshipDynamics::defaultDynamics();
     $aj5Dyn['inferred_temperament'] = 'Stoic';
-    $aj5Dyn['dimensions']['trust']['x'] = 70;
     $aj5Dyn['dimensions']['trust']['baseline'] = 50;
-    $aj5Dyn['_baseline_drift_samples'] = [];
-
-    // Call 3 times to accumulate MIN_SAMPLES (3) consistent samples
-    RelationshipDynamics::processBaselineDrift('TestNPC_AJ5', $aj5Dyn);
-    RelationshipDynamics::processBaselineDrift('TestNPC_AJ5', $aj5Dyn);
+    ajSampleDays($aj5Dyn, [10 => 70, 11 => 70]);
+    $aj5Early = RelationshipDynamics::processBaselineDrift('TestNPC_AJ5', $aj5Dyn);
+    ajSampleDays($aj5Dyn, [12 => 70]);
     $aj5Result = RelationshipDynamics::processBaselineDrift('TestNPC_AJ5', $aj5Dyn);
 
     $aj5NewBaseline = $aj5Dyn['dimensions']['trust']['baseline'];
     // Drift = (70 - 50) * 0.05 = 1.0, so baseline should be 51.0
-    check('AJ5: Baseline drifted up after 3 samples', $aj5NewBaseline > 50, true);
-    check('AJ5b: Baseline approx 51.0', $aj5NewBaseline, 51.0, 0.5);
+    check('AJ5a: Two days are not sustained', isset($aj5Early['trust']), false);
+    check('AJ5: Baseline drifted up after 3 days', $aj5NewBaseline > 50, true);
+    check('AJ5b: Baseline approx 51.0', $aj5NewBaseline, 51.0, 0.01);
     echo "      trust baseline: 50 -> " . round($aj5NewBaseline, 2) . " drift_result=" . json_encode($aj5Result) . "\n";
     restoreDIConfig($aj5Saved);
 } catch (Throwable $e) {
@@ -4581,16 +4588,13 @@ try {
     try { restoreDIConfig($aj5Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AJ6: Mixed samples → no drift ──
+// ── AJ6: Mixed days → no drift ──
 try {
     $aj6Saved = setDIConfig(['baseline_drift_enabled' => true]);
     $aj6Dyn = RelationshipDynamics::defaultDynamics();
     $aj6Dyn['inferred_temperament'] = 'Stoic';
-    $aj6Dyn['dimensions']['trust']['x'] = 70;
     $aj6Dyn['dimensions']['trust']['baseline'] = 50;
-    // Pre-seed mixed samples: 70, 30, 70 — not all on same side
-    $aj6Dyn['_baseline_drift_samples'] = ['trust' => [70, 30]];
-    // 3rd sample at 70: now [70, 30, 70] — mixed so no drift
+    ajSampleDays($aj6Dyn, [10 => 70, 11 => 30, 12 => 70]);   // not all on one side
     $aj6Result = RelationshipDynamics::processBaselineDrift('TestNPC_AJ6', $aj6Dyn);
     $aj6NewBaseline = $aj6Dyn['dimensions']['trust']['baseline'];
     check('AJ6: Mixed samples → baseline unchanged', $aj6NewBaseline, 50.0, 0.01);
@@ -4601,19 +4605,18 @@ try {
     try { restoreDIConfig($aj6Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AJ7: Drift capped at ±20 from temperament default ──
+// ── AJ7: Drift capped at ±20 from where it started ──
 try {
     $aj7Saved = setDIConfig(['baseline_drift_enabled' => true]);
     $aj7Dyn = RelationshipDynamics::defaultDynamics();
-    $aj7Dyn['inferred_temperament'] = 'Stoic'; // Stoic trust baseline = 35
-    $aj7Dyn['dimensions']['trust']['x'] = 90;
-    $aj7Dyn['dimensions']['trust']['baseline'] = 54; // Already near cap (35+20=55)
-    $aj7Dyn['_baseline_drift_samples'] = ['trust' => [90, 90]];
-
-    $aj7Result = RelationshipDynamics::processBaselineDrift('TestNPC_AJ7', $aj7Dyn);
+    $aj7Dyn['inferred_temperament'] = 'Stoic';
+    $aj7Dyn['dimensions']['trust']['baseline'] = 35;
+    for ($day = 10; $day < 400; $day++) {
+        ajSampleDays($aj7Dyn, [$day => 100]);
+        RelationshipDynamics::processBaselineDrift('TestNPC_AJ7', $aj7Dyn);
+    }
     $aj7NewBaseline = $aj7Dyn['dimensions']['trust']['baseline'];
-    // Cap = temperament_default(35) + 20 = 55. Baseline should not exceed 55.
-    check('AJ7: Drift capped at temperament+20', $aj7NewBaseline <= 55.01, true);
+    check('AJ7: Drift capped at origin+20', $aj7NewBaseline, 55.0, 0.01);
     echo "      trust baseline capped: " . round($aj7NewBaseline, 2) . " (cap=55)\n";
     restoreDIConfig($aj7Saved);
 } catch (Throwable $e) {
@@ -4625,9 +4628,8 @@ try {
 try {
     $aj8Saved = setDIConfig(['baseline_drift_enabled' => false]);
     $aj8Dyn = RelationshipDynamics::defaultDynamics();
-    $aj8Dyn['dimensions']['trust']['x'] = 70;
     $aj8Dyn['dimensions']['trust']['baseline'] = 50;
-    $aj8Dyn['_baseline_drift_samples'] = ['trust' => [70, 70, 70]];
+    $aj8Dyn['_baseline_drift_samples'] = ['trust' => [['v' => 70, 'day' => 10], ['v' => 70, 'day' => 11], ['v' => 70, 'day' => 12]]];
 
     $aj8Result = RelationshipDynamics::processBaselineDrift('TestNPC_AJ8', $aj8Dyn);
     check('AJ8: Disabled drift returns empty', $aj8Result, []);
@@ -4642,15 +4644,14 @@ try {
 try {
     $aj9Saved = setDIConfig(['baseline_drift_enabled' => true]);
     $aj9Dyn = RelationshipDynamics::defaultDynamics();
-    $aj9Dyn['inferred_temperament'] = 'Nurturing'; // Nurturing trust baseline = 50, so cap = 70
-    $aj9Dyn['dimensions']['trust']['x'] = 80;
+    $aj9Dyn['inferred_temperament'] = 'Nurturing';
     $aj9Dyn['dimensions']['trust']['baseline'] = 40;
-    $aj9Dyn['_baseline_drift_samples'] = ['trust' => [80, 80]];
+    ajSampleDays($aj9Dyn, [10 => 80, 11 => 80, 12 => 80]);
 
     $aj9Result = RelationshipDynamics::processBaselineDrift('TestNPC_AJ9', $aj9Dyn);
     $aj9NewBaseline = $aj9Dyn['dimensions']['trust']['baseline'];
     // Drift = (80 - 40) * 0.05 = 2.0, baseline should go to 42.0
-    check('AJ9: Drift = 5% of gap (40→42)', $aj9NewBaseline, 42.0, 0.5);
+    check('AJ9: Drift = 5% of gap (40→42)', $aj9NewBaseline, 42.0, 0.01);
     echo "      trust baseline: 40 -> " . round($aj9NewBaseline, 2) . " (expected 42.0)\n";
     restoreDIConfig($aj9Saved);
 } catch (Throwable $e) {
@@ -5423,7 +5424,7 @@ try {
 // AL10: applySocialSensitivity bypasses global dimensions
 try {
     $alDyn = makeDynamics('maturity', 50, 50);
-    $alDyn['dimensions']['affinity'] = ['x' => 5, 'baseline' => 50];
+    RelationshipDynamics::refreshAffinityMirror($alDyn, 5);   // bond level = core affinity 5
     $result = RelationshipDynamics::applySocialSensitivity($alDyn, 'maturity', 10.0, 'Stoic');
     check('AL10: Global dimension (maturity) bypasses sensitivity', $result, 10.0, 0.001);
 } catch (Throwable $e) { skip('AL10', $e->getMessage()); }
@@ -5431,7 +5432,7 @@ try {
 // AL11: Proud exception — respect uses open_heart even with inner_circle temperament
 try {
     $alDyn = makeDynamics('respect', 50, 50);
-    $alDyn['dimensions']['affinity'] = ['x' => 5, 'baseline' => 50];
+    RelationshipDynamics::refreshAffinityMirror($alDyn, 5);   // bond level = core affinity 5
     $resultResp = RelationshipDynamics::applySocialSensitivity($alDyn, 'respect', -10.0, 'Proud');
     // open_heart at aff=5: sqrt(5)/10 ≈ 0.2236 → -10 * 0.2236 ≈ -2.236
     $resultTrust = RelationshipDynamics::applySocialSensitivity($alDyn, 'trust', -10.0, 'Proud');
@@ -5443,7 +5444,7 @@ try {
 // AL12: Per-NPC override takes priority over temperament
 try {
     $alDyn = makeDynamics('trust', 50, 50);
-    $alDyn['dimensions']['affinity'] = ['x' => 5, 'baseline' => 50];
+    RelationshipDynamics::refreshAffinityMirror($alDyn, 5);   // bond level = core affinity 5
     $alDyn['social_sensitivity_curve'] = 'open_heart';
     // Stoic normally uses inner_circle → near zero at aff=5
     // Override to open_heart → sqrt(5)/10 ≈ 0.2236
@@ -5465,7 +5466,7 @@ try {
 try {
     $al14Saved = setDIConfig(['social_sensitivity_enabled' => false]);
     $alDyn = makeDynamics('trust', 50, 50);
-    $alDyn['dimensions']['affinity'] = ['x' => 5, 'baseline' => 50];
+    RelationshipDynamics::refreshAffinityMirror($alDyn, 5);   // bond level = core affinity 5
     $result = RelationshipDynamics::applySocialSensitivity($alDyn, 'trust', 10.0, 'Stoic');
     check('AL14: Disabled sensitivity returns raw delta', $result, 10.0, 0.001);
     restoreDIConfig($al14Saved);

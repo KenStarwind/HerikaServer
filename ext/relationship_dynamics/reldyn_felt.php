@@ -244,6 +244,10 @@ final class RelDynFelt
             'edgy'      => "a slight edge, watches who they talk to",
         ],
         'rival_unknown' => "where they were and with whom",
+        // Self-confidence above 75 with maturity below 30 (config self_confidence): the band's
+        // keywords give way to this (dimension draft, Dimension 11: "confidence without wisdom
+        // is insufferable").
+        'self_confidence_arrogant' => "certain of being right about everything, brushes advice aside, talks down to anyone who disagrees",
         // Open conflict, by repair progress (positive interactions since it opened).
         'conflict' => [
             'none'   => "walls up after what they did; needs to see real effort before softening",
@@ -390,8 +394,11 @@ final class RelDynFelt
         }
 
         // --- Passion toward the player, with the urge its love language gives it ---
+        // (the band and its salience read passion as it shows in this bond: the per-bond display
+        // multiplier; the thresholds below, like every tension check, read the raw passion)
         $passion = RelationshipDynamics::getPassion($dynamics);
-        $pBand = RelationshipDynamics::getPassionBand($passion);
+        $shownPassion = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'passion', $passion);
+        $pBand = RelationshipDynamics::getPassionBand($shownPassion);
         // Not that kind of pull (the Attraction Matrix: not attracted, or a hard zero), outside
         // a romance core already holds: the platonic reading of the same passion, no urge
         $att = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
@@ -414,7 +421,7 @@ final class RelDynFelt
                 $text .= ', ' . self::fill((string) $t['urge'][$primary], $vars);
             }
             $lines[] = self::line('passion', self::SCOPE_BOND, self::LANE_CORE,
-                $passion / 100 + floatval($cfg['passion_salience_offset']), $text, ['intense' => true]);
+                $shownPassion / 100 + floatval($cfg['passion_salience_offset']), $text, ['intense' => true]);
         }
 
         // --- Blush: one-shot on a passion spike ---
@@ -760,9 +767,18 @@ final class RelDynFelt
                 $base = floatval($dims['affinity']['baseline'] ?? RelationshipDynamics::getTemperamentBaseline($dynamics['inferred_temperament'] ?? null, 'affinity', $dynamics));
                 $band = RelationshipDynamics::getAffinityBand($dynamics);
             } else {
-                $val = $x($dim);
-                $base = floatval($dims[$dim]['baseline'] ?? $def['default_baseline']);
+                // As it reads toward the player: the per-bond display multiplier (bond type x
+                // affinity bonus) on the value and on its global baseline alike; 1.0 for the
+                // NPC's own (global) dimensions and resentment
+                $val = RelationshipDynamics::getEffectiveDimensionValue($dynamics, $dim, $x($dim));
+                $base = RelationshipDynamics::getEffectiveDimensionValue($dynamics, $dim, floatval($dims[$dim]['baseline'] ?? $def['default_baseline']));
                 $band = RelationshipDynamics::getDimensionBand($dim, $val);
+                // Confidence without wisdom (dimension draft, Dimension 11): the arrogant override
+                $sc = (array) RelationshipDynamics::configValue('self_confidence') + RelationshipDynamics::SELF_CONFIDENCE_DEFAULTS;
+                if ($dim === 'self_confidence' && is_array($band) && $val > floatval($sc['arrogant_confidence_above'])
+                    && ($x('maturity') ?? 50.0) < floatval($sc['arrogant_maturity_below'])) {
+                    $band['keywords'] = (string) ($cfg['text']['self_confidence_arrogant'] ?? $band['keywords']);
+                }
             }
             if ($band === null || trim((string) $band['keywords']) === '') continue;   // e.g. resentment 'Clean'
             $all = RelationshipDynamics::DIMENSION_BANDS[$dim] ?? [];
