@@ -184,4 +184,34 @@ final class RelDynBaselineDriftTest extends TestCase
         $this->assertEqualsWithDelta(-1.0, $r['maturity']['drift'], 1e-9);
         $this->assertArrayNotHasKey('warmth', $r);
     }
+
+    /**
+     * A temporary offset held on a dimension (a creature row, a physical state), taken back
+     * exactly when its state ends, is not who the NPC is: the sample leaves it out. Three days
+     * injured under a full moon move no baseline; the same distance lived without them does.
+     */
+    public function testHeldTemporaryOffsetsAreLeftOutOfTheSample(): void
+    {
+        $d = $this->npc();
+        $base = floatval($d['dimensions']['maturity']['baseline']);
+        $d['_creature'] = ['type' => 'werewolf', 'state' => 'werewolf_moon', 'applied' => ['maturity' => -11.1, 'arousal' => 16.65]];
+        $d['_applied_physical_deltas'] = ['injured' => ['maturity' => -6.0, 'arousal' => 4.0]];
+        $this->assertEqualsWithDelta(-17.1, RelationshipDynamics::heldTemporaryOffset($d, 'maturity'), 1e-9);
+        $this->assertSame(0.0, RelationshipDynamics::heldTemporaryOffset($d, 'trust'));
+        foreach ([10, 11, 12] as $day) {
+            $d['dimensions']['maturity']['x'] = $base - 17.1;
+            RelationshipDynamics::recordBaselineDriftSample($d, $day * self::DAY);
+        }
+        $this->assertEqualsWithDelta($base, $d['_baseline_drift_samples']['maturity'][2]['v'], 1e-6, 'the NPC without the moon and the wound');
+        $this->assertArrayNotHasKey('maturity', RelationshipDynamics::processBaselineDrift('Tester', $d));
+        $this->assertSame($base, floatval($d['dimensions']['maturity']['baseline']));
+
+        unset($d['_creature'], $d['_applied_physical_deltas']);
+        foreach ([13, 14, 15] as $day) {
+            $d['dimensions']['maturity']['x'] = $base - 17.1;
+            RelationshipDynamics::recordBaselineDriftSample($d, $day * self::DAY);
+        }
+        $this->assertEqualsWithDelta(0.05 * -17.1, RelationshipDynamics::processBaselineDrift('Tester', $d)['maturity']['drift'], 1e-9,
+            'lived, the same distance drifts');
+    }
 }

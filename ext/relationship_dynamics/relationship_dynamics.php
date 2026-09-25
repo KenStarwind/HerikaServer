@@ -15266,7 +15266,9 @@ class RelationshipDynamics
 
     /**
      * The value a drift sample records for $dimId: affinity in core units (-100..100, the units
-     * of its baseline and physics), every other dimension its x. Null when unset.
+     * of its baseline and physics), every other dimension its x without the temporary offsets
+     * held on it right now (heldTemporaryOffset): a full moon or an injury is not who the NPC is,
+     * and is taken back exactly when it ends. Null when unset.
      */
     public static function driftSampleValue(array $dynamics, string $dimId): ?float
     {
@@ -15274,7 +15276,21 @@ class RelationshipDynamics
             return is_numeric($dynamics['_aff_mirror_x'] ?? null) ? self::getCoreAffinity($dynamics) : null;
         }
         $x = $dynamics['dimensions'][$dimId]['x'] ?? null;
-        return is_numeric($x) ? floatval($x) : null;
+        return is_numeric($x) ? floatval($x) - self::heldTemporaryOffset($dynamics, $dimId) : null;
+    }
+
+    /**
+     * Points currently held on $dimId's x by the temporary-offset pipeline, each taken back
+     * exactly when its state ends: the creature row (RelDynCreatures, _creature.applied) and the
+     * physical states (_applied_physical_deltas per state). Dimension points; 0 when none.
+     */
+    public static function heldTemporaryOffset(array $dynamics, string $dimId): float
+    {
+        $held = floatval($dynamics[RelDynCreatures::STATE_KEY]['applied'][$dimId] ?? 0.0);
+        foreach ((array) ($dynamics['_applied_physical_deltas'] ?? []) as $applied) {
+            if (is_array($applied)) $held += floatval($applied[$dimId] ?? 0.0);
+        }
+        return $held;
     }
 
     /**
