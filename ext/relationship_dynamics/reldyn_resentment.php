@@ -506,9 +506,10 @@ final class RelDynResentment
 
     /**
      * Take $points off resentment_self as is (recovery is not fought by the inverted rubber
-     * band: the open issue's trap). Returns the points taken.
+     * band: the open issue's trap). Returns the points taken. Also the diary's growth relief
+     * (RelDynDiary::applyReflection).
      */
-    private static function relieveSelf(array &$dynamics, float $points): float
+    public static function relieveSelf(array &$dynamics, float $points): float
     {
         $before = self::x($dynamics, 'resentment_self');
         if ($before <= 0.0 || $points <= 0.0) return 0.0;

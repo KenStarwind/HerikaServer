@@ -344,7 +344,7 @@ html, body {
                     Trajectory <span style="color:#888; font-size:0.85em;">(Rich &mdash; LLM call)</span>
                 </label>
             </div>
-            <span class="rd-hint">Baseline: compares dimensional snapshots with math. Trajectory: uses LLM to score diary text quality.</span>
+            <span class="rd-hint">Baseline: compares dimensional snapshots with math. Trajectory: one LLM call reads the NPC's recent entries in core's diary.</span>
         </div>
         <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
             <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 10: Behavioral Systems</p>

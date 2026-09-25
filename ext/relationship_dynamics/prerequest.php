@@ -332,6 +332,18 @@ if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $GLOBALS['RELDYN_ICK_ACTIVE'] = !empty($dynamics['_ick_tracker']['ick_active']);
 }
 
+// ========== SELF-REFLECTION ON CORE'S DIARY (roadmap diary-reflection-eval, decisions §7) ==========
+// Core writes the diary (the player's 'diary' request, AUTO_DIARY on sleep / wait); her entries
+// since the last one read are her reflection on the moments marked since (baseline: snapshot
+// math; trajectory: the worker's one LLM call, applied here once done). Before resentment_self's
+// thresholds below, which read what the reflection moved; while a consumable is on her the
+// entries wait for the sober self.
+try {
+    RelDynDiary::onPrerequest($npcName, $dynamics);
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('diary self-reflection', $e);
+}
+
 // ========== RESENTMENT THRESHOLD EVENTS (MDD 15.5, resentment_self, guilt bleed) ==========
 // resentment_self's standing effects (baselines, the self-reflection) and the guilt it bleeds
 // into comfort, then the confrontation at the NPC's threshold (said to the player's face in the
@@ -394,6 +406,8 @@ if (!empty($reldynCfg['hoover_enabled'] ?? true)) {
 RelationshipDynamics::recordBaselineDriftSample($dynamics, RelationshipDynamics::currentGamets());
 
 // ========== AUTONOMOUS DIARY TRIGGER (PR 14) ==========
+// Marks the meaningful moments since the last mark (postrequest keeps them for her next diary
+// entry, RelationshipDynamics::markDiaryCompleted).
 if (!empty($reldynCfg['autonomous_diary_enabled'])) {
     $diaryTriggered = RelationshipDynamics::checkDiaryTrigger($npcName, $dynamics, 'interaction');
     if ($diaryTriggered) {
