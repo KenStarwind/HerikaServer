@@ -17,7 +17,7 @@ becomes a real grievance, she draws a calm boundary, and if it goes on she steps
 one accuses, tries to forbid it or sulks, and in the end it boils over. One night counts once however she learns of
 it, and reassurance takes the edge off. Witnesses telling her comes later.
 Anxiety now counts once, from how she attaches rather than again from her temperament. Trust is slow to win and
-quick to lose. Stacked slow-burn romance no longer demands an absurd number of moments. Falling in battle is who she
+quick to lose. A guarded, avoidant slow burn no longer stacks into an endless climb. Falling in battle is who she
 is: the confident and proud fight harder, the reactive and unsure panic, and every fall is a jolt. Values that turned
 the wrong way just off a preset now follow the traits, the eval sees her personality in words, Jev sees the numbers,
 and the editor lists every preset. CHIM's once-a-second poll now only keeps the play clock and save loads in step and
