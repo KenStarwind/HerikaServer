@@ -413,7 +413,9 @@ final class RelDynPollPathPostgresTest extends TestCase
 
     /**
      * Polls touch no bond, whatever NPC name core left in HERIKA_NAME, and keep the heartbeat
-     * current; each runs at most POLL_QUERY_BUDGET statements, on conf_opts and eventlog only.
+     * current; each runs at most POLL_QUERY_BUDGET statements, on conf_opts and eventlog, plus the
+     * creature form watch (poll.creature_forms): one read of the plugin's form report
+     * (core_npc_master metadata transformation_state), never a bond.
      */
     public function testAPollBeatsThePlayClockAndTouchesNoBond(): void
     {
@@ -428,6 +430,12 @@ final class RelDynPollPathPostgresTest extends TestCase
             $this->assertLessThanOrEqual(self::POLL_QUERY_BUDGET, max($counts), "{$name}: a cheap poll");
             $stmts = $this->poll($name);
             foreach ($stmts as $q) {
+                if (str_contains($q, "metadata->'transformation_state'")) {
+                    $this->assertMatchesRegularExpression("/^\s*SELECT npc_name, metadata->'transformation_state' AS ts FROM core_npc_master\b/", $q,
+                        "{$name}: the form watch reads the plugin's form report");
+                    $this->assertDoesNotMatchRegularExpression('/plugin_extended_data|reldyn_|core_player/', $q, "{$name}: no bond is read");
+                    continue;
+                }
                 $this->assertMatchesRegularExpression('/\b(conf_opts|eventlog)\b/', $q, "{$name}: a poll reads only the clock rows");
                 $this->assertDoesNotMatchRegularExpression('/core_npc_master|reldyn_|core_player/', $q, "{$name}: no bond is read");
                 if (preg_match('/^\s*(INSERT|UPDATE|DELETE)/i', $q)) {
@@ -589,7 +597,7 @@ final class RelDynPollPathPostgresTest extends TestCase
 
     // ------------------------------------------------------------------ switches
 
-    /** poll.play_clock / poll.save_load switch each part off; RelDyn off leaves only the config read. */
+    /** poll.play_clock / poll.save_load / poll.creature_forms switch each part off; RelDyn off leaves only the config read. */
     public function testThePollPathSwitches(): void
     {
         $this->meetTheBeds();
@@ -598,7 +606,13 @@ final class RelDynPollPathPostgresTest extends TestCase
             pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID, json_encode($cfg)]);
             RelationshipDynamics::clearConfigCache();
         };
-        $this->assertSame(['play_clock' => true, 'save_load' => true], RelationshipDynamics::defaultConfig()['poll']);
+        $this->assertSame(['play_clock' => true, 'save_load' => true, 'creature_forms' => true], RelationshipDynamics::defaultConfig()['poll']);
+
+        $store(['poll' => ['creature_forms' => false]]);
+        $stmts = $this->poll('Aela the Huntress');
+        $this->assertSame([], array_values(array_filter($stmts, fn($q) => str_contains($q, 'core_npc_master'))),
+            'poll.creature_forms off: no form watch read');
+        $this->clearReldynGlobals();
 
         $store(['poll' => ['play_clock' => false]]);
         $hb = $this->heartbeat();

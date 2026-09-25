@@ -455,7 +455,8 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
         (static function (): void { require __DIR__ . '/../../ext/relationship_dynamics/postrequest.php'; })();
         RelationshipDynamics::endRequest();
         $this->clearReldynGlobals();
-        $this->assertSame('Kaida saved Lydia from 3 bandits; she now trusts Kaida more (trust +6).',
+        // The reason anchor is stored cleaned (dimensional memory): the event, never its scores or feelings
+        $this->assertSame('Kaida saved Lydia from three bandits',
             $this->dynamics('Lydia')['dimensions']['trust']['last_reason'] ?? null, 'the item was applied');
 
         $t = $this->turn('Lydia', 'You did well back there.');

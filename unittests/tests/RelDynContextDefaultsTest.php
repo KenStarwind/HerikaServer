@@ -192,10 +192,13 @@ final class RelDynContextDefaultsTest extends TestCase
     }
 
     /**
-     * dimensional-memory: at the MDD 15.5 confrontation threshold (resentment 50) the stored
-     * stings become the list of grievances the NPC is ready to bring up (the draft's
-     * "confrontation fuel"), distinct events, most significant first, cleaned text only; the
-     * memory line keeps what is not already there. Below the threshold only the memory line.
+     * dimensional-memory: the stored stings are the confrontation fuel (the draft's term),
+     * distinct events, most significant first, cleaned text only. With the resentment arc on
+     * (shipped), its confrontation is the one voice that raises them (prerequest decides it; the
+     * context alone never adds a standing grievances line). With the arc's confrontation off, at
+     * the MDD 15.5 threshold (resentment 50) they are a standing list of grievances the NPC is
+     * ready to bring up, and the memory line keeps what is not already there. Below the
+     * threshold only the memory line.
      */
     public function testConfrontationFuelSpeaksAtResentmentFifty(): void
     {
@@ -208,6 +211,13 @@ final class RelDynContextDefaultsTest extends TestCase
         $this->assertSame(['Kaida lied about the artifact', 'Kaida walked away mid-conversation'],
             RelationshipDynamics::getConfrontationFuel(['dimensional_memory' => $mem], 'Kaida'), 'distinct events, strongest first, cleaned');
 
+        $this->contextFor($this->baseState(90.0, ['resentment' => 55.0], ['dimensional_memory' => $mem]));
+        $this->assertArrayNotHasKey('grievances', RelDynFelt::lastRendered(), 'the arc on: its confrontation is the one voice');
+
+        $cfg = RelationshipDynamics::defaultConfig();
+        $cfg['resentment_arc']['confrontation']['enabled'] = false;
+        $this->db->config = json_encode($cfg);
+        RelationshipDynamics::clearConfigCache();
         $calm = $this->baseState(90.0, ['resentment' => 20.0], ['dimensional_memory' => $mem]);
         $this->contextFor($calm);
         $this->assertArrayNotHasKey('grievances', RelDynFelt::lastRendered(), 'below 50: no confrontation');
