@@ -348,9 +348,9 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
         $this->assertArrayNotHasKey('_intimacy_fed', $aela);
 
         // The needs vector (spider graph) carries the axes each one actually has
-        $this->assertArrayHasKey(RelDynIntimacy::EMOTIONAL, $ashe['_fulfillment']['w']);
-        $this->assertArrayNotHasKey(RelDynIntimacy::PHYSICAL, $ashe['_fulfillment']['w']);
-        $this->assertArrayHasKey(RelDynIntimacy::PHYSICAL, $aela['_fulfillment']['w']);
+        $this->assertArrayHasKey(RelDynIntimacy::EMOTIONAL, RelDynFulfillment::pairState($ashe)['w']);
+        $this->assertArrayNotHasKey(RelDynIntimacy::PHYSICAL, RelDynFulfillment::pairState($ashe)['w']);
+        $this->assertArrayHasKey(RelDynIntimacy::PHYSICAL, RelDynFulfillment::pairState($aela)['w']);
         $graph = array_column(RelationshipDynamics::fulfillmentGraph(self::AELA, $end)['axes'], null, 'axis');
         $this->assertSame('intimacy', $graph[RelDynIntimacy::PHYSICAL]['kind']);
         $this->assertLessThan(-0.4, $graph[RelDynIntimacy::PHYSICAL]['coverage'], 'a week of talks is not what she needs');

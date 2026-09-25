@@ -557,7 +557,7 @@ class RelDynIntimacy
     public static function axesAt(array $dynamics, float $now, ?array $cfg = null): array
     {
         $cfg = $cfg ?? self::config();
-        $state = $dynamics[RelDynFulfillment::STATE_KEY] ?? null;
+        $state = RelDynFulfillment::pairState($dynamics);   // the player pair
         if (empty($cfg['enabled']) || $now <= 0 || !RelDynFulfillment::enabled() || !is_array($state) || !is_array($state['w'] ?? null)) return [];
         $weights = array_intersect_key(array_map('floatval', $state['w']), array_flip(self::AXES));
         if ($weights === []) return [];

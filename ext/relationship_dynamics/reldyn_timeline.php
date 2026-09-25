@@ -685,8 +685,19 @@ final class RelDynTimeline
                 !(is_array($m) && is_numeric($m['gamets'] ?? null) && floatval($m['gamets']) >= $T)));
             if ($pending === []) unset($d['_romance']['pending']); else $d['_romance']['pending'] = $pending;
         }
-        if (is_array($d[RelDynFulfillment::STATE_KEY] ?? null)) {
-            $d[RelDynFulfillment::STATE_KEY] = self::rebaselineFulfillment($d[RelDynFulfillment::STATE_KEY], $T);
+        // Every relationship pair's fulfillment (rulings §11), each on the same load
+        foreach (RelDynFulfillment::pairs($d) as $target => $state) {
+            RelDynFulfillment::setPairState($d, (string) $target, self::rebaselineFulfillment($state, $T));
+        }
+        // Natural exclusivity's suitor ledger (decisions §17): a move the load discarded never
+        // happened (it no longer steers her), and no entry is stamped after the loaded time
+        if (is_array($d[RelDynExclusivity::STATE_KEY]['suitors'] ?? null)) {
+            foreach ($d[RelDynExclusivity::STATE_KEY]['suitors'] as $key => $e) {
+                if (!is_array($e)) continue;
+                if (is_numeric($e['last_move_gamets'] ?? null) && floatval($e['last_move_gamets']) > $T) unset($e['last_move_gamets']);
+                self::clampIn($e, ['gamets'], $T);
+                $d[RelDynExclusivity::STATE_KEY]['suitors'][$key] = $e;
+            }
         }
         // Baseline drift samples (one per game day of contact) of days after the loaded one: the
         // loaded game never lived them

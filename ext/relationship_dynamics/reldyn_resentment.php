@@ -277,7 +277,7 @@ final class RelDynResentment
      */
     private static function boundarySaying(array $dynamics): bool
     {
-        $f = (string) ($dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? 'none');
+        $f = (string) (RelDynFulfillment::pairState($dynamics)['boundary']['state'] ?? 'none');
         $cb = (array) ($dynamics[RelDynConcern::STATE_KEY]['boundary'] ?? []);
         $c = (string) ($cb['state'] ?? 'none');
         return in_array($f, ['pending', 'failed'], true) || in_array($c, ['pending', 'failed'], true)

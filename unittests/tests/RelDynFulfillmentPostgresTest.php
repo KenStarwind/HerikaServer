@@ -366,8 +366,8 @@ final class RelDynFulfillmentPostgresTest extends TestCase
             $this->talkTo('Aela', $t);         // the contact at day 5 leaves a high band behind
             $this->talkTo('Serana', $t);       // ... and a low one here
         }
-        $aelaBand = $this->dynamics('Aela')['_fulfillment']['contact_band'];
-        $seranaBand = $this->dynamics('Serana')['_fulfillment']['contact_band'];
+        $aelaBand = RelDynFulfillment::pairState($this->dynamics('Aela'))['contact_band'];
+        $seranaBand = RelDynFulfillment::pairState($this->dynamics('Serana'))['contact_band'];
         $this->assertGreaterThan(0.4, $aelaBand);
         $this->assertLessThan(-0.5, $seranaBand);
 
@@ -443,21 +443,21 @@ final class RelDynFulfillmentPostgresTest extends TestCase
             $this->talkTo('Serana', self::T0 + $k * self::DAY);
         }
         $d = $this->dynamics('Aela');
-        $this->assertLessThan(-0.25, RelDynFulfillment::bandAt($d['_fulfillment'], self::T0 + 6 * self::DAY), 'nothing delivered: the band sank');
+        $this->assertLessThan(-0.25, RelDynFulfillment::bandAt(RelDynFulfillment::pairState($d), self::T0 + 6 * self::DAY), 'nothing delivered: the band sank');
         $this->assertEquals(0.0, floatval($d['_calendar_neglect_raw'] ?? 0), 'away inside the grace: no neglect raw');
         $unfulfilled = array_filter($d['dimensions']['resentment']['grievance_log'] ?? [], fn($g) => ($g['kind'] ?? null) === 'unfulfilled');
         $this->assertSame([], array_values($unfulfilled), 'no "needs unmet" grievance for an excused absence');
-        $this->assertArrayNotHasKey('low_since_gamets', $d['_fulfillment'], 'the absence does not count toward the boundary');
+        $this->assertArrayNotHasKey('low_since_gamets', RelDynFulfillment::pairState($d), 'the absence does not count toward the boundary');
         $this->assertSame(0.0, $this->resentment('Aela'));
 
         $s = $this->dynamics('Serana');
         $this->assertGreaterThan(0.0, floatval($s['_calendar_neglect_raw'] ?? 0) + $this->resentment('Serana'), 'present and unfulfilled: neglect');
-        $this->assertArrayHasKey('low_since_gamets', $s['_fulfillment']);
+        $this->assertArrayHasKey('low_since_gamets', RelDynFulfillment::pairState($s));
         $this->assertNotEmpty(array_filter($s['dimensions']['resentment']['grievance_log'] ?? [], fn($g) => ($g['kind'] ?? null) === 'unfulfilled'));
 
         // Back on day 6: the low stretch starts with the return, not with the absence
         $this->talkTo('Aela', self::T0 + 6 * self::DAY + self::HOUR);
-        $this->assertEqualsWithDelta(self::T0 + 6 * self::DAY + self::HOUR, $this->dynamics('Aela')['_fulfillment']['low_since_gamets'], 1.0);
+        $this->assertEqualsWithDelta(self::T0 + 6 * self::DAY + self::HOUR, RelDynFulfillment::pairState($this->dynamics('Aela'))['low_since_gamets'], 1.0);
         $this->assertNoFailedStatements();
     }
 
@@ -471,15 +471,15 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $this->seed('Aela', 50.0);
         $this->talkTo('Aela', self::T0);
         $this->talkTo('Aela', self::T0 + 4 * self::DAY);   // four days of nothing
-        $start = $this->dynamics('Aela')['_fulfillment']['contact_band'];
+        $start = RelDynFulfillment::pairState($this->dynamics('Aela'))['contact_band'];
         $this->assertLessThan(-0.5, $start, 'the visit starts low');
 
         $this->attentiveDay('Aela', self::T0 + 4 * self::DAY);
         $this->attentiveDay('Aela', self::T0 + 4 * self::DAY + 4 * self::HOUR);
         $d = $this->dynamics('Aela');
-        $after = RelDynFulfillment::bandAt($d['_fulfillment'], self::T0 + 4 * self::DAY + 7 * self::HOUR);
+        $after = RelDynFulfillment::bandAt(RelDynFulfillment::pairState($d), self::T0 + 4 * self::DAY + 7 * self::HOUR);
         $this->assertGreaterThan(0.5, $after, 'an attentive visit');
-        $this->assertEqualsWithDelta($after, $d['_fulfillment']['contact_band'], 0.02, 'the visit leaves its delivered band behind');
+        $this->assertEqualsWithDelta($after, RelDynFulfillment::pairState($d)['contact_band'], 0.02, 'the visit leaves its delivered band behind');
         $f = RelationshipDynamics::absenceBandFactors($d);
         $this->assertGreaterThan(1.3, $f['grace'], 'and the next absence is buffered, not sharpened');
         $this->assertLessThan(0.8, $f['rate']);
@@ -500,14 +500,14 @@ final class RelDynFulfillmentPostgresTest extends TestCase
     private function boundaryStated(string $name): float
     {
         $this->politeDays($name, 0, 7);
-        $this->assertSame('pending', $this->dynamics($name)['_fulfillment']['boundary']['state'],
+        $this->assertSame('pending', RelDynFulfillment::pairState($this->dynamics($name))['boundary']['state'],
             'low since the day-2 end, five game days sustained');
         $at = self::T0 + 7 * self::DAY;
         $ctx = $this->context($name, $at);
         $this->assertStringContainsString("- {$name} has thought about this calmly", $ctx);
         $this->assertStringContainsString('it has to change consistently', $ctx);
         $this->assertDoesNotMatchRegularExpression('/\d/', $ctx, 'a feeling, never a number');
-        $b = $this->dynamics($name)['_fulfillment']['boundary'];
+        $b = RelDynFulfillment::pairState($this->dynamics($name))['boundary'];
         $this->assertSame('probation', $b['state']);
         $this->assertEqualsWithDelta($at + 7 * self::DAY, $b['until_gamets'], 1.0, 'probation: seven game days from the statement');
 
@@ -537,16 +537,16 @@ final class RelDynFulfillmentPostgresTest extends TestCase
     {
         $this->seed('Aela', 80.0);
         $this->politeDays('Aela', 0, 7);
-        $this->assertSame('pending', $this->dynamics('Aela')['_fulfillment']['boundary']['state']);
+        $this->assertSame('pending', RelDynFulfillment::pairState($this->dynamics('Aela'))['boundary']['state']);
         $at = self::T0 + 7 * self::DAY;
         foreach (['radiant', 'rechat'] as $i => $type) {
             $ctx = $this->npcRoundContext('Aela', $at + ($i + 1) * self::HOUR, $type);
             $this->assertStringNotContainsString('has thought about this calmly', $ctx, "{$type}: not said over the player's head");
-            $this->assertSame('pending', $this->dynamics('Aela')['_fulfillment']['boundary']['state'], "{$type}: not consumed");
+            $this->assertSame('pending', RelDynFulfillment::pairState($this->dynamics('Aela'))['boundary']['state'], "{$type}: not consumed");
         }
         $ctx = $this->context('Aela', $at + 3 * self::HOUR);
         $this->assertStringContainsString('- Aela has thought about this calmly', $ctx);
-        $b = $this->dynamics('Aela')['_fulfillment']['boundary'];
+        $b = RelDynFulfillment::pairState($this->dynamics('Aela'))['boundary'];
         $this->assertSame('probation', $b['state']);
         $this->assertEqualsWithDelta($at + 3 * self::HOUR, $b['started_gamets'], 1.0, 'the window starts when she said it to the player');
         $this->assertNoFailedStatements();
@@ -576,8 +576,9 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $d = $this->dynamics('Aela');
         $this->assertSame('platonic', $d['_core_rel_type']);
         $this->assertSame('friend', RelationshipDynamics::getRelationshipType('Aela', $d));
-        $this->assertSame('none', $d['_fulfillment']['boundary']['state']);
-        $step = end($d['_fulfillment']['step_backs']);
+        $this->assertSame('none', RelDynFulfillment::pairState($d)['boundary']['state']);
+        $steps = RelDynFulfillment::pairState($d)['step_backs'];
+        $step = end($steps);
         $this->assertSame(['romantic', 'platonic'], [$step['from'], $step['to']]);
         $this->assertStringContainsString('mature boundary', $step['reason']);
         $this->assertStringContainsString('type romantic -> platonic (mature boundary', (string) file_get_contents($this->errorLog));
@@ -602,8 +603,8 @@ final class RelDynFulfillmentPostgresTest extends TestCase
             $this->attentiveDay('Aela', $t + 4 * self::HOUR);
         }
         $d = $this->dynamics('Aela');
-        $this->assertSame('none', $d['_fulfillment']['boundary']['state']);
-        $this->assertArrayHasKey('resolved_gamets', $d['_fulfillment']['boundary']);
+        $this->assertSame('none', RelDynFulfillment::pairState($d)['boundary']['state']);
+        $this->assertArrayHasKey('resolved_gamets', RelDynFulfillment::pairState($d)['boundary']);
         $this->assertSame('romantic', $this->corePlayer('Aela')['type'], 'the change held: nothing stepped back');
         $this->assertStringContainsString('the change in Kaida and it has held', $this->context('Aela', $at + 7 * self::DAY + self::HOUR));
         $this->assertNoFailedStatements();
@@ -615,7 +616,7 @@ final class RelDynFulfillmentPostgresTest extends TestCase
         $at = $this->boundaryStated('Aela');
         $this->politeDays('Aela', 8, 14);
         $this->assertSame('romantic', $this->corePlayer('Aela')['type'], 'relationships_locked: manual edits protected');
-        $b = $this->dynamics('Aela')['_fulfillment']['boundary'];
+        $b = RelDynFulfillment::pairState($this->dynamics('Aela'))['boundary'];
         $this->assertSame('none', $b['state'], 'closed, not retried every turn');
         $this->assertArrayHasKey('blocked_gamets', $b);
         $this->assertStringContainsString('relationships_locked', (string) file_get_contents($this->errorLog));
@@ -632,7 +633,7 @@ final class RelDynFulfillmentPostgresTest extends TestCase
             $this->talkTo('Serana', self::T0 + $k * self::DAY);
         }
         $serana = $this->dynamics('Serana');
-        $this->assertSame('none', $serana['_fulfillment']['boundary']['state'], 'no calm boundary');
+        $this->assertSame('none', RelDynFulfillment::pairState($serana)['boundary']['state'], 'no calm boundary');
         $this->assertSame('romantic', $this->corePlayer('Serana')['type']);
         $this->assertGreaterThan(3.0 * $this->resentment('Aela'), $this->resentment('Serana'), 'it festers');
         $this->assertGreaterThan(RelationshipDynamics::getNeglectProfile($this->dynamics('Aela'))['ceiling'], $this->resentment('Serana'),

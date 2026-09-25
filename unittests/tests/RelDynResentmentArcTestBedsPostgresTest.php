@@ -480,7 +480,7 @@ final class RelDynResentmentArcTestBedsPostgresTest extends TestCase
                 $dd = $this->dynamics($npc);
                 $type[$npc]["r{$k}"] = $this->coreType($npc);
                 $trace[$npc][$k] = round(self::x($dd, 'resentment'), 1) . '/' . ($dd['_concern']['boundary']['state'] ?? '-')
-                    . '/' . ($dd['_fulfillment']['boundary']['state'] ?? '-') . '/' . ($dd['_walkaway_state'] ?? '-') . '/' . $type[$npc]["r{$k}"]
+                    . '/' . (RelDynFulfillment::pairState($dd)['boundary']['state'] ?? '-') . '/' . ($dd['_walkaway_state'] ?? '-') . '/' . $type[$npc]["r{$k}"]
                     . '/' . implode(',', array_filter(array_keys((array) ($this->felt[$npc]["r{$k}"] ?? [])),
                         fn($key) => preg_match('/^(resentment_confront|concern_|fulfillment_boundary)/', $key) === 1));
             }
