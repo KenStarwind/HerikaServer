@@ -397,6 +397,10 @@ final class RelDynFelt
         $att = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
         $coreRomance = in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) $cfg['romantic_types'], true);
         $platonic = !empty($att['enabled']) && (!empty($att['hard_zero']) || (($att['attracted'] ?? true) === false && !$coreRomance));
+        // A deliberate step-back out of the romance (rulings §9, either lane): she decided, kind
+        // but that closeness is over. Whatever passion is left reads as affection, not pursuit.
+        $steppedBack = RelDynFulfillment::romanceSteppedBack($dynamics) !== null;
+        $platonic = $platonic || $steppedBack;
         // An asexual NPC's passion is emotional (decisions §15): longing without desire, and no
         // physical urge
         $emotional = !$platonic && ($att['passion_channel'] ?? null) === 'emotional';
@@ -471,6 +475,11 @@ final class RelDynFelt
         if (!empty($rd['ambient_enabled'])) {
             $placeTurn = RelDynFacets::contextTurn($npc, $dynamics, $now);
             if ($placeTurn['changed']) $changed = true;
+            // the present route of protective concern (design §1.2): she is here, and sees the danger
+            if (is_array($placeTurn['ctx'] ?? null)
+                && RelDynConcern::onPresentPlace($npc, $dynamics, $placeTurn['ctx'], (array) $placeTurn['facets'], $now)['events'] !== []) {
+                $changed = true;
+            }
             if ($placeTurn['text'] !== null) {
                 $lines[] = self::line('place', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['place']), (string) $placeTurn['text']);
             }
@@ -515,6 +524,7 @@ final class RelDynFelt
                 || floatval($dims['resentment']['x'] ?? 0) >= floatval($ac['strain_resentment_min'] ?? 51.0)
                 || $jealousy >= floatval($ac['strain_jealousy_min'] ?? 60.0),
             'romantic' => in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) $cfg['romantic_types'], true),
+            'stepped_back' => $steppedBack,
             'flirt_min_tier' => intval($ac['flirt_min_tier'] ?? 2),
             'flirt_passion_min' => floatval($ac['flirt_passion_min'] ?? 40.0),
         ]);

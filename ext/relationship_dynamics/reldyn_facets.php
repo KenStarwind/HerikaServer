@@ -1393,6 +1393,7 @@ class RelDynFacets
         $changed = self::ensurePreferences($npcName, $dynamics);
         $ctx = static::currentPlaceContext($npcName);
         $place = null;
+        $facets = [];
         // known = false: core has logged no location context at all (not even the wilderness).
         if ($ctx && ($ctx['known'] ?? true) !== false) {
             $place = trim((string) ($ctx['name'] ?? ''));
@@ -1404,7 +1405,8 @@ class RelDynFacets
                 $npcName, $place, $a['valence'], $a['intensity'], $a['dominant'] ?? '-', $a['dominant'] ? ($a['dominant_sign'] < 0 ? '-' : '+') : '',
                 $r['comfort'], $r['mood'], $r['discomfort'], $r['pressure'], $r['poi_floor'] !== null ? ', POI floor' : ''));
         }
-        return ['text' => self::placeFeltText($npcName, $dynamics, $now), 'changed' => $changed, 'place' => $place];
+        return ['text' => self::placeFeltText($npcName, $dynamics, $now), 'changed' => $changed, 'place' => $place,
+                'ctx' => $place !== null ? $ctx : null, 'facets' => $facets];
     }
 
     /**

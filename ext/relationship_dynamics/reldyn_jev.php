@@ -34,7 +34,8 @@
  *   boundary         string none|pending|probation|failed (mature boundary, rulings §9)
  *   concern          ['level' => concern points 0..100 (protective worry, traits design §1.4),
  *                     'band' => none|uneasy|raise|insist, 'possessive_incidents' /
- *                     'protective_incidents' => counted incidents in the values window (§1.5),
+ *                     'protective_incidents' => the channel's highest pattern[kind] in the values
+ *                     window (§1.5), 'pattern' => kind => counted nights of that kind,
  *                     'values_boundary' => none|pending|probation|failed]
  *   walkaway         string normal|pending|active|boundary_test|recovery|permanent
  *   fulfillment      ['band' => -1..1, 'trend' => band per game day, 'low' => bool, 'known' => bool]
@@ -81,7 +82,8 @@ final class RelDynJev
         'attraction.score' => '0..1',
         'attachment_anxiety' => 'axis 0..1 (fear of abandonment)',
         'attachment_avoidance' => 'axis 0..1 (discomfort with closeness once in)',
-        'concern.level' => 'concern points 0..100', 'concern.incidents' => 'counted incidents in the values window',
+        'concern.level' => 'concern points 0..100', 'concern.incidents' => 'highest pattern[kind] per channel in the values window (counted nights)',
+        'concern.pattern' => 'kind => counted nights in the values window',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
     ];
 
@@ -211,7 +213,10 @@ final class RelDynJev
         $parts[] = 'conflict=' . ($s['open_conflict'] ? 'open' : 'none');
         $parts[] = "boundary={$s['boundary']}";
         $c = $s['concern'];
+        $pattern = [];
+        foreach ((array) ($c['pattern'] ?? []) as $kind => $n) $pattern[] = "{$kind}:" . intval($n);
         $parts[] = 'concern=' . $f($c['level']) . "({$c['band']}) incidents=" . $c['possessive_incidents'] . '/' . $c['protective_incidents']
+            . ($pattern ? ' pattern=' . implode(',', $pattern) : '')
             . ($c['values_boundary'] !== 'none' ? " values_boundary={$c['values_boundary']}" : '');
         $parts[] = "walkaway={$s['walkaway']}";
         $parts[] = 'fulfillment=' . number_format($s['fulfillment']['band'], 2, '.', '') . ($s['fulfillment']['low'] ? '(low)' : '');

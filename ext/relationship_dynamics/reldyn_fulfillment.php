@@ -584,6 +584,36 @@ class RelDynFulfillment
         return floatval($dynamics['dimensions']['maturity']['x'] ?? 50) >= floatval($cfg['mature_at']);
     }
 
+    /** The fulfillment boundary is running (pending, probation or failed): one boundary at a time per bond. */
+    public static function boundaryActive(array $dynamics): bool
+    {
+        return in_array($dynamics[self::STATE_KEY]['boundary']['state'] ?? 'none', ['pending', 'probation', 'failed'], true);
+    }
+
+    /** Core types a deliberate step-back can leave a romance from. */
+    const ROMANCE_TYPES = ['romantic', 'crush'];
+
+    /**
+     * The deliberate step-back out of a romance that still stands (rulings §9: "kind, but that
+     * closeness is over"): the latest record of either lane (this one's §9 boundary, the concern
+     * lane's values boundary) whose 'from' was a romance type, while core still holds the type
+     * it stepped back to. ['lane', 'from', 'to', 'gamets'], or null. A new romance (core back in
+     * a romance type) ends it. Pure.
+     */
+    public static function romanceSteppedBack(array $dynamics): ?array
+    {
+        $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
+        if ($core === '' || in_array($core, self::ROMANCE_TYPES, true)) return null;
+        $best = null;
+        foreach (['fulfillment' => $dynamics[self::STATE_KEY]['boundary'] ?? null, 'concern' => $dynamics[RelDynConcern::STATE_KEY]['boundary'] ?? null] as $lane => $b) {
+            if (!is_array($b) || !isset($b['stepped_back_gamets'])) continue;
+            if (!in_array((string) ($b['from'] ?? ''), self::ROMANCE_TYPES, true) || (string) ($b['to'] ?? '') !== $core) continue;
+            $rec = ['lane' => $lane, 'from' => (string) $b['from'], 'to' => $core, 'gamets' => floatval($b['stepped_back_gamets'])];
+            if ($best === null || $rec['gamets'] > $best['gamets']) $best = $rec;
+        }
+        return $best;
+    }
+
     /** The core type a failed probation steps back to, from core's Player.type, or null (no boundary). */
     public static function stepBackTarget(array $dynamics, ?array $cfg = null): ?string
     {
@@ -673,7 +703,9 @@ class RelDynFulfillment
         switch ($b['state'] ?? 'none') {
             case 'none':
                 $low = $state['low_since_gamets'] ?? null;
-                if ($eligible && $low !== null && ($t - floatval($low)) / $day >= floatval($cfg['boundary_sustain_game_days'])) {
+                // one boundary at a time per bond: not while the concern lane's values boundary runs
+                if ($eligible && $low !== null && ($t - floatval($low)) / $day >= floatval($cfg['boundary_sustain_game_days'])
+                    && !RelDynConcern::boundaryActive($dynamics)) {
                     $b = ['state' => 'pending', 'decided_gamets' => $t];
                     $events[] = 'boundary_due';
                 }

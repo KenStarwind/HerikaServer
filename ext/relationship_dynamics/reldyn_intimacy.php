@@ -442,7 +442,8 @@ class RelDynIntimacy
     }
 
     /**
-     * Intimacy is in play with the player (module doc): never while friendzoned; a romance
+     * Intimacy is in play with the player (module doc): never while friendzoned or after a
+     * deliberate step-back out of the romance (RelDynFulfillment::romanceSteppedBack); a romance
      * core type; else attracted (decisions §13 lets passion climb past 20 on the uphill, but a
      * curve under the friendzone line is not that kind of pull) with passion at min_passion; a
      * latched NPC stays in play down to release_passion. This is the romance's intimacy, of
@@ -454,6 +455,8 @@ class RelDynIntimacy
     {
         $cfg = $cfg ?? self::config();
         if (!empty($dynamics['_attraction']['friendzoned'])) return false;
+        // she stepped back from the romance (rulings §9): that closeness is over, whatever passion is left
+        if (RelDynFulfillment::romanceSteppedBack($dynamics) !== null) return false;
         $p = (array) $cfg['physical_in_play'];
         $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         if ($core !== '' && in_array($core, array_map('strtolower', (array) ($p['core_types'] ?? [])), true)) return true;

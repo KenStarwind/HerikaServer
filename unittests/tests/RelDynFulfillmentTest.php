@@ -291,6 +291,22 @@ final class RelDynFulfillmentTest extends TestCase
         $this->assertArrayNotHasKey('resolved', RelDynFulfillment::takeFeltTexts($d, 'Aela', 'Kaida', $now + 4 * self::DAY)['texts']);
     }
 
+    /** One boundary at a time per bond: while the concern lane's values boundary runs, this one waits. */
+    public function testTheBoundaryWaitsWhileTheValuesBoundaryRuns(): void
+    {
+        $d = $this->npc();
+        RelDynFulfillment::ensure($d, $this->prefs(), self::T0);
+        $d['_concern'] = ['v' => 1, 'level' => 0.0, 'incidents' => [], 'say' => [],
+            'boundary' => ['state' => 'probation', 'channel' => 'protective', 'kind' => 'place', 'until_gamets' => self::T0 + 30 * self::DAY]];
+        for ($h = 12; $h <= 6 * 24 + 12; $h += 12) RelDynFulfillment::tick($d, self::T0 + $h * self::HOUR);
+        $this->assertSame('none', $d['_fulfillment']['boundary']['state'] ?? 'none', 'the values boundary is running');
+        $this->assertArrayHasKey('low_since_gamets', $d['_fulfillment'], 'the low stretch is still tracked');
+        // it closes (resolved): the fulfillment boundary follows on the next tick
+        $d['_concern']['boundary'] = ['state' => 'none', 'resolved_gamets' => self::T0 + 6.6 * self::DAY];
+        RelDynFulfillment::tick($d, self::T0 + 6.7 * self::DAY);
+        $this->assertSame('pending', $d['_fulfillment']['boundary']['state']);
+    }
+
     public function testOneGoodDayDoesNotPassTheProbation(): void
     {
         $d = $this->npc();

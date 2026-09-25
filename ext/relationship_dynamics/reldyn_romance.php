@@ -433,7 +433,7 @@ final class RelDynRomance
                 'required' => self::requiredMomentum($dynamics, $npcId, $cfg)];
     }
 
-    /** RelDyn states that hold a promotion back: walkaway, conflict, ick, withdrawn. */
+    /** RelDyn states that hold a promotion back: walkaway, conflict, ick, withdrawn, a boundary (either lane's). */
     public static function blockingStates(array $dynamics): array
     {
         $out = [];
@@ -441,8 +441,8 @@ final class RelDynRomance
         if (!empty($dynamics['in_conflict'])) $out[] = 'conflict';
         if (!empty($dynamics['_ick_tracker']['ick_active'])) $out[] = 'ick';
         if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) >= RelationshipDynamics::RESENTMENT_WITHDRAWAL_AT) $out[] = 'withdrawn';
-        $boundary = $dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? 'none';
-        if (in_array($boundary, ['pending', 'probation', 'failed'], true)) $out[] = 'boundary';
+        // the §9 boundary of the fulfillment lane or the concern lane's values boundary
+        if (RelDynFulfillment::boundaryActive($dynamics) || RelDynConcern::boundaryActive($dynamics)) $out[] = 'boundary';
         return $out;
     }
 

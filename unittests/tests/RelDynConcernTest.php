@@ -169,23 +169,41 @@ final class RelDynConcernTest extends TestCase
         $this->assertSame(0.0, $a($crypt, ['pref_combat' => 0.8, 'C' => 0.77])['risk'], "her appetite covers it");
     }
 
-    public function testAFightersRoughToleranceCoversTheTavernButNotSkooma(): void
+    public function testAFightersTasteForCombatIsNoTavernToleranceButABardsTasteForTheInnIs(): void
     {
-        $fighter = ['pref_combat' => 0.9, 'C' => 0.74];
-        $mare = ['venue' => 'inn', 'night' => true, 'crowd' => 0.6, 'strangers' => null];
-        $a = RelDynConcern::appraise($mare + ['consumed' => 'ale'], $fighter);
-        $this->assertSame(0, $a['intensity'], 'a mead hall regular: a tavern night with ale barely registers');
-        $this->assertSame([], $a['kinds']);
-        $this->assertGreaterThan(0.7, $a['design_risk'], 'the design formula alone would call it I3');
-        $s = RelDynConcern::appraise($mare + ['consumed' => 'skooma'], $fighter);
-        $this->assertSame(2, $s['kinds']['vice'] ?? 0, 'skooma still registers');
+        $cfg = RelDynConcern::config();
+        $this->assertArrayNotHasKey('rough_combat', $cfg['risk'], 'the invented combat-based tolerance is gone');
+        $mare = ['venue' => 'inn', 'night' => true, 'strangers' => 6];
+        // Ken's bar example holds exactly for a fighter: the §1.3 table, whatever her combat taste
+        foreach ([0.0, 0.5, 0.9] as $combat) {
+            $a = RelDynConcern::appraise($mare + ['consumed' => 'ale'], ['pref_combat' => $combat, 'C' => 0.74]);
+            $this->assertEqualsWithDelta(0.80, $a['risk'], 1e-9, "combat {$combat}: the design's risk");
+            $this->assertSame(['place' => 3, 'vice' => 2], $a['kinds'], "combat {$combat}: place + vice");
+            $this->assertSame(3, RelDynConcern::perceive('place', 3, ['pref_combat' => $combat, 'C' => 0.74]), "combat {$combat}: told");
+        }
+        // ... and her appetite still covers danger (§1.3 crypt row)
+        $this->assertSame([], RelDynConcern::appraise(['venue' => 'other', 'danger' => 0.6, 'strangers' => 0], ['pref_combat' => 0.8, 'C' => 0.77])['kinds']);
 
-        // Route A reads a disclosed intensity the same way
-        $this->assertSame(1, RelDynConcern::perceive('place', 3, $fighter), 'a serious tavern night, told: barely');
-        $this->assertSame(3, RelDynConcern::perceive('place', 3, ['pref_combat' => 0.0, 'C' => 0.5]));
-        $this->assertSame(2, RelDynConcern::perceive('rival_exposure', 2, $fighter), 'suitors are not a risk she can shrug off');
-        // rough_combat 0 is the design formula exactly
-        $this->assertSame(0.0, RelDynConcern::appraise($mare, ['pref_combat' => 0.0, 'C' => 0.5])['parts']['rough']);
+        // A bard whose life is the inn (her own appraisal of an Inn's facets, +0.6): a tavern
+        // night with a mead is her world, not a risk; skooma still is
+        $bard = ['pref_combat' => 0.0, 'C' => 0.56, 'venue_taste' => 0.6];
+        $a = RelDynConcern::appraise($mare + ['consumed' => 'ale'], $bard);
+        $this->assertEqualsWithDelta(0.42, $a['parts']['venue_ease'], 1e-9, 'venue_taste 0.7 x her taste 0.6');
+        $this->assertSame([], $a['kinds'], 'nothing registers');
+        $this->assertSame(2, RelDynConcern::appraise($mare + ['consumed' => 'skooma'], $bard)['kinds']['vice'] ?? 0, 'skooma still does');
+        $this->assertSame(0, RelDynConcern::perceive('place', 2, $bard), 'a tavern night, told');
+        $this->assertSame(2, RelDynConcern::perceive('rival_exposure', 2, $bard), 'suitors are not a risk she can shrug off');
+        // disliking the venue gives no extra risk (the design's table is the floor of it)
+        $this->assertEqualsWithDelta(0.75, RelDynConcern::appraise($mare, ['pref_combat' => 0.0, 'C' => 0.5, 'venue_taste' => -0.8])['risk'], 1e-9);
+        // venue_taste 0 is the design formula exactly, for everyone
+        $design = $cfg;
+        $design['risk']['venue_taste'] = 0.0;
+        $this->assertSame(['place' => 3, 'vice' => 2], RelDynConcern::appraise($mare + ['consumed' => 'ale'], $bard, $design)['kinds']);
+        // the NPC's taste is her appraisal of the venue's facets against her own preferences
+        $d = $this->npc([], 70.0, 80.0, 60.0, 'romantic', ['facet_pref_overrides' => ['social' => 0.83, 'crowd' => 0.55]]);
+        $this->assertGreaterThan(0.5, RelDynConcern::venueTaste($d, 'Ysgerd'), 'social and crowd: an Inn is her kind of place');
+        $d = $this->npc([], 70.0, 80.0, 60.0, 'romantic', ['facet_pref_overrides' => ['combat' => 0.9, 'crowd' => -0.3]]);
+        $this->assertLessThanOrEqual(0.0, RelDynConcern::venueTaste($d, 'Ysgerd'), 'a fighter who dislikes a crowd');
     }
 
     // ------------------------------------------------------------ §1.4 gains, units
@@ -329,6 +347,149 @@ final class RelDynConcernTest extends TestCase
         $this->assertSame(0, RelDynConcern::count($d, RelDynConcern::POSSESSIVE, $now), 'Po .1 never files a bar night under values');
         $this->assertSame(['values_conflict:place'], self::grievanceKinds($d), 'the place / drink pattern does');
         $this->assertGreaterThan(0.0, $d['jealousy_anger'], 'she still feels a little of it');
+    }
+
+    /**
+     * §1.5 / §1.6: the counter is pattern[kind], deduplicated by (kind, game day). A danger day,
+     * a tavern night and a drink on another day are three patterns at one each, not one
+     * pattern at three; three tavern nights are a values conflict.
+     */
+    public function testMixedProtectiveKindsDoNotAddUpToAValuesConflict(): void
+    {
+        $d = $this->npc(['Po' => 0.1, 'Pr' => 0.7], 70.0);
+        $r = [];
+        $r[] = $this->tell($d, self::at(self::D0, 20.0), ['danger'], 2, 'today')['concern']['events'];
+        $r[] = $this->tell($d, self::at(self::D0 + 2, 9.0), ['place'], 2, 'last_night')['concern']['events'];
+        $r[] = $this->tell($d, self::at(self::D0 + 3, 20.0), ['vice'], 2, 'today')['concern']['events'];
+        $now = self::at(self::D0 + 3, 21.0);
+        $this->assertSame([['stated'], ['stated'], ['stated']], $r, 'each kind is stated once, on its own first night');
+        $this->assertSame(['place' => 1, 'vice' => 1, 'danger' => 1], RelDynConcern::patterns($d, $now));
+        $this->assertSame(1, RelDynConcern::count($d, RelDynConcern::PROTECTIVE, $now), 'the channel is as far as its furthest kind');
+        $this->assertSame([], self::grievanceKinds($d), 'three different kinds are not three of the same');
+        $this->assertSame(1, RelDynConcern::count($d, 'place', $now));
+        // two more tavern nights in the week: the place pattern reaches three
+        $this->tell($d, self::at(self::D0 + 5, 9.0), ['place'], 2, 'last_night');
+        $this->assertArrayHasKey('reminder_protective', $this->lines($d, self::at(self::D0 + 5, 9.0)), 'the second tavern night: a reminder');
+        $e = $this->tell($d, self::at(self::D0 + 6, 9.0), ['place'], 2, 'last_night')['concern']['events'];
+        $this->assertContains('values_conflict:place', $e);
+        $this->assertSame(['values_conflict:place'], self::grievanceKinds($d));
+        $this->assertSame(['vice' => 1, 'danger' => 1], RelDynConcern::patterns($d, self::at(self::D0 + 6, 9.0)), 'the tavern nights are filed; the rest stay');
+        $this->assertSame(['place'], $d['_concern']['boundary']['kinds'] ?? null);
+        $this->assertSame(['vice' => 1, 'danger' => 1], RelDynConcern::jev($d, self::at(self::D0 + 6, 9.0))['pattern'], 'Jev gets the pattern');
+    }
+
+    /**
+     * The values path is mature for an in-between NPC (w >= 0.5) while her band is 'mixed': her
+     * first word slips out sharp, but once the calm boundary is under way her worry is said
+     * calmly too. One voice per prompt: never "sharp, as blame" next to "no shouting".
+     */
+    public function testAnInBetweenPartnerSpeaksInOneVoiceOnceTheBoundaryIsUnderWay(): void
+    {
+        $d = $this->npc(['Po' => 0.1, 'Pr' => 0.95, 'L' => 0.8, 'Pd' => 0.6], 52.0, 20.0, 90.0);
+        $x = RelDynConcern::expression($d, RelDynConcern::traitsOf($d));
+        $this->assertSame(['mixed', 'mature', 'accusation'], [$x['band'], $x['path'], $x['style']]);
+        $this->returnsFromTheMare($d, self::D0);
+        $this->returnsFromTheMare($d, self::D0 + 1);
+        $l = $this->lines($d, self::at(self::D0 + 2, 1.5));
+        $this->assertStringContainsString('as blame', $l['worry'], 'before the boundary: the in-between band shows');
+        $this->returnsFromTheMare($d, self::D0 + 3);
+        $this->assertSame('pending', $d['_concern']['boundary']['state']);
+        $l = $this->lines($d, self::at(self::D0 + 4, 1.5));
+        $this->assertArrayHasKey('boundary', $l);
+        $this->assertStringContainsString('No shouting, no ultimatum', $l['boundary']);
+        $this->assertStringContainsString('without blame', $l['worry'], 'the same prompt: calm');
+        $this->assertStringNotContainsString('as blame', $l['worry']);
+        $this->assertStringNotContainsString('as blame', $this->lines($d, self::at(self::D0 + 4, 3.0))['worry'], 'on probation: calm');
+        // after the step-back (the lane's record), still one voice
+        $d['_concern']['boundary'] = ['state' => 'none', 'stepped_back_gamets' => self::at(self::D0 + 6, 1.0), 'from' => 'romantic', 'to' => 'platonic', 'kind' => 'place'];
+        $this->assertStringNotContainsString('as blame', $this->lines($d, self::at(self::D0 + 6, 2.0))['worry']);
+        // an immature partner keeps her own voice throughout (her path is the blow-up)
+        $i = $this->npc(['Po' => 0.1, 'Pr' => 0.95, 'L' => 0.8, 'Pd' => 0.6], 30.0, 20.0, 90.0);
+        foreach ([0, 1, 3] as $n) $this->returnsFromTheMare($i, self::D0 + $n);
+        $this->assertStringContainsString('as blame', $this->lines($i, self::at(self::D0 + 4, 1.5))['worry']);
+    }
+
+    /**
+     * One boundary at a time per bond: the values boundary waits while the fulfillment lane's
+     * §9 boundary runs (its third counted night is said plainly instead), and either lane's
+     * boundary holds a romance promotion back.
+     */
+    public function testOneBoundaryAtATimeAndEitherHoldsRomanceBack(): void
+    {
+        $d = $this->npc(['Po' => 0.1, 'Pr' => 0.7], 70.0);
+        $d['_fulfillment'] = ['boundary' => ['state' => 'probation', 'started_gamets' => self::at(self::D0, 9.0), 'until_gamets' => self::at(self::D0 + 7, 9.0)]];
+        $this->assertContains('boundary', RelDynRomance::blockingStates($d), 'the fulfillment lane');
+        foreach ([0, 1, 2] as $n) $r = $this->returnsFromTheMare($d, self::D0 + $n);
+        $this->assertContains('values_conflict:place', $r['events'], 'the values conflict is still filed');
+        $this->assertSame('none', $d['_concern']['boundary']['state'], 'no second boundary while the first runs');
+        $this->assertContains('stated', $r['events'], 'said plainly instead');
+
+        $c = $this->npc(['Po' => 0.1, 'Pr' => 0.7], 70.0);
+        foreach ([0, 1, 2] as $n) $this->returnsFromTheMare($c, self::D0 + $n);
+        $this->assertSame('pending', $c['_concern']['boundary']['state']);
+        $this->assertTrue(RelDynConcern::boundaryActive($c));
+        $this->assertContains('boundary', RelDynRomance::blockingStates($c), 'the concern lane holds a promotion back too');
+        $this->assertNotContains('boundary', RelDynRomance::blockingStates($this->npc(['Pr' => 0.7], 70.0)));
+    }
+
+    /**
+     * After a deliberate step-back out of the romance (either lane's record, core now holding
+     * the type it stepped back to), the romance's intimacy is over; a new romance ends it.
+     */
+    public function testAStepBackEndsTheRomancesIntimacyUntilANewRomance(): void
+    {
+        $d = $this->npc(['Pr' => 0.7], 70.0, 80.0, 60.0, 'platonic');
+        RelationshipDynamics::setPassion($d, 60.0);
+        $d['_attraction'] = ['enabled' => true, 'attracted' => true, 'outcome' => 'drawn'];
+        $this->assertTrue(RelDynIntimacy::inPlay($d), 'drawn, passion 60: in play before');
+        $d['_concern']['boundary'] = ['state' => 'none', 'stepped_back_gamets' => self::at(self::D0, 1.0), 'from' => 'romantic', 'to' => 'platonic', 'kind' => 'place'];
+        $this->assertSame(['lane' => 'concern', 'from' => 'romantic', 'to' => 'platonic', 'gamets' => (float) self::at(self::D0, 1.0)],
+            RelDynFulfillment::romanceSteppedBack($d));
+        $this->assertFalse(RelDynIntimacy::inPlay($d), 'that closeness is over');
+        $this->assertFalse(RelDynIntimacy::physicalInPlay($d));
+        $this->assertStringContainsString('kind deflection', (string) RelDynAttraction::feltText('Ysgerd', $d['_attraction'] + ['passion' => ['curve' => 1.2]],
+            ['player' => 'Kaida', 'tier' => 2, 'passion' => 60.0, 'stepped_back' => true]), 'flirtation: the friend\'s kind deflection');
+        // the fulfillment lane's record reads the same
+        $f = $d;
+        unset($f['_concern']);
+        $f['_fulfillment']['boundary'] = ['state' => 'none', 'stepped_back_gamets' => self::at(self::D0, 2.0), 'from' => 'crush', 'to' => 'platonic'];
+        $this->assertSame('fulfillment', RelDynFulfillment::romanceSteppedBack($f)['lane']);
+        // a new romance (core back in a romance type) ends it; so does a step-back that core no longer holds
+        $d['_core_rel_type'] = 'romantic';
+        $this->assertNull(RelDynFulfillment::romanceSteppedBack($d));
+        $this->assertTrue(RelDynIntimacy::inPlay($d));
+        $d['_core_rel_type'] = 'professional';
+        $this->assertNull(RelDynFulfillment::romanceSteppedBack($d), 'core moved on to another type');
+    }
+
+    /**
+     * §1.2 present route: "the place appraisal sees it directly". With the player at a crypt,
+     * a scholar's appetite does not cover the danger: a 'danger' exposure (one per game day,
+     * at its worst); a fighter's appetite does. A tavern with her there is a shared night:
+     * nothing.
+     */
+    public function testAPresentPartnerSeesTheDangerDirectly(): void
+    {
+        $crypt = ['name' => 'Bleak Falls Barrow', 'tags' => ['Dungeon']];
+        $facets = RelDynFacets::placeFacets($crypt);
+        $this->assertGreaterThanOrEqual(0.6, $facets['danger'], 'a barrow: a dungeon');
+        $scholar = $this->npc(['Pr' => 0.7, 'C' => 0.4], 70.0, 80.0, 60.0, 'romantic', ['facet_pref_overrides' => ['combat' => -0.2, 'scholarly' => 0.9]]);
+        $fighter = $this->npc(['Pr' => 0.7, 'C' => 0.77], 70.0, 80.0, 60.0, 'romantic', ['facet_pref_overrides' => ['combat' => 0.8]]);
+        $now = self::at(self::D0, 14.0);
+        $s = RelDynConcern::onPresentPlace('Ysgerd', $scholar, $crypt, $facets, $now);
+        $this->assertGreaterThan(0.0, $s['concern'], 'the scholar worries');
+        $this->assertSame(['stated'], $s['events']);
+        $this->assertSame(['danger' => 2], $scholar['_concern']['incidents'][0]['kinds']);
+        $this->assertSame(['present'], $scholar['_concern']['incidents'][0]['routes']);
+        $again = RelDynConcern::onPresentPlace('Ysgerd', $scholar, $crypt, $facets, $now + self::HOUR);
+        $this->assertSame(0.0, $again['concern'], 'the same day: counted once');
+        $this->assertSame(1, RelDynConcern::count($scholar, 'danger', $now + self::HOUR));
+        $f = RelDynConcern::onPresentPlace('Ysgerd', $fighter, $crypt, $facets, $now);
+        $this->assertSame([0.0, []], [$f['concern'], $f['events']], 'her appetite covers it');
+        $this->assertArrayNotHasKey('_concern', $fighter);
+        $inn = ['name' => 'The Bannered Mare', 'tags' => ['Inn']];
+        $t = RelDynConcern::onPresentPlace('Ysgerd', $fighter, $inn, RelDynFacets::placeFacets($inn), self::at(self::D0, 22.0));
+        $this->assertSame([], $t['events'], 'out together is a shared night');
     }
 
     public function testOneNightCountsOnceHoweverManyRoutesRevealIt(): void

@@ -78,16 +78,18 @@ final class RelDynTestBedsNightPgDb
  *
  * What the design promises and this asserts (all four, both players):
  *   floors      each NPC's attraction floor is her own standards (decisions §15, design §5.1):
- *               the same whoever the player is, Ashe > Aela (Ken's "high 60s") > Muiri > Lynly;
+ *               the same whoever the player is, Ashe (72) > Aela > Muiri > Lynly;
  *   passion     who she is drawn to (rulings §9, §13): Aela's passion climbs for the warrior and
  *               barely moves for the bard ("a bard she can tolerate but feels no passion for");
  *               Ashe's rigid bar holds against both; attraction is about the player, the floor is not;
  *   concern vs jealousy  (decisions §14) the suitors at the inn are felt as jealousy (possessive,
  *               trust-damped, never counted: nobody's Po reaches the line); the night itself is
- *               worry (protective): Aela, who lives in mead halls, does not worry at all; the three
- *               others notice on the return and count the night once, however they learn of it;
- *   expression  by maturity (§14, §9): Ashe (mature) states it once, plainly and without blame;
- *               Muiri and Lynly (in-between) mean to say it evenly, and Muiri's comes out as an
+ *               worry (protective), through who each is: Aela, the most protective, worries most
+ *               (a taste for a fight is no tolerance for a tavern night); Lynly, the Vilemyr Inn's
+ *               bard, is at home in an inn and does not worry at all; Aela, Ashe and Muiri notice
+ *               on the return and count the night once, however they learn of it;
+ *   expression  by maturity (§14, §9): Aela and Ashe (mature) state it once, plainly and without
+ *               blame; Muiri (in-between) means to say it evenly and it comes out as an
  *               accusation; reassurance eases it; felt text never carries numbers, Jev does;
  *   the poll    core's once-a-second poll touches no bond (prerequest-on-poll), so an NPC named as
  *               the server default still has her night apart and notices the return.
@@ -536,7 +538,7 @@ final class RelDynTestBedsNightTest extends TestCase
             array_diff_key($s, ['felt_all' => 1, 'jev_ashe' => 1])), $r));
         $w = $r['warrior'];
         $b = $r['bard'];
-        $worriers = ['Ashe', 'Muiri', 'Lynly Star-Sung'];
+        $worriers = ['Aela the Huntress', 'Ashe', 'Muiri'];
 
         foreach ($r as $build => $s) {
             $this->assertSame([], $s['db_failures'], "{$build}: no failed statement");
@@ -601,17 +603,20 @@ final class RelDynTestBedsNightTest extends TestCase
                 $this->assertLessThan(1.0, $x['damping'], "{$build} {$npc}: trust damps the jealousy");
                 $this->assertSame(0, $x['possessive'], "{$build} {$npc}: felt, never filed");
                 $this->assertSame('romantic', $x['core_type'], "{$build} {$npc}: one night is not a values conflict");
-                $this->assertEqualsWithDelta($w[$npc]['concern'], $x['concern'], 1e-6, "{$build} {$npc}: the worry is hers, not his build");
+                // the worry is hers (her Pr) and the bond's (trust, core affinity: concern gain §1.4), not his build:
+                // Aela's bond grew a little more with the warrior she is drawn to, the others' alike
+                $this->assertEqualsWithDelta($w[$npc]['concern'], $x['concern'], 0.05 * max(1.0, $w[$npc]['concern']), "{$build} {$npc}: the worry is hers, not his build");
             }
-            // Aela lives in mead halls: no worry, nothing counted, nothing said
-            $aela = $s['Aela the Huntress'];
-            $this->assertSame(0.0, floatval($aela['concern']), "{$build} Aela: no worry");
-            $this->assertSame(0, $aela['protective'], "{$build} Aela");
+            // Lynly, the inn's bard: the night is her world: no worry, nothing counted, nothing said
+            $lynly = $s['Lynly Star-Sung'];
+            $this->assertSame(0.0, floatval($lynly['concern']), "{$build} Lynly: no worry");
+            $this->assertSame(0, $lynly['protective'], "{$build} Lynly");
             foreach (['felt_return', 'felt_told'] as $turn) {
-                $this->assertSame([], array_values(array_filter(array_keys($aela[$turn]), fn($k) => str_starts_with((string) $k, 'concern_'))), "{$build} Aela {$turn}");
+                $this->assertSame([], array_values(array_filter(array_keys($lynly[$turn]), fn($k) => str_starts_with((string) $k, 'concern_'))), "{$build} Lynly {$turn}");
             }
             // the other three worry: noticed on the return (route B; Ashe despite the night of
-            // polls under her name), one night counted once whether seen or told
+            // polls under her name), one night counted once whether seen or told; the most
+            // protective (Aela) the most
             foreach ($worriers as $npc) {
                 $x = $s[$npc];
                 $this->assertArrayHasKey('concern_noticed', $x['felt_return'], "{$build} {$npc}: route B");
@@ -622,19 +627,21 @@ final class RelDynTestBedsNightTest extends TestCase
                 $this->assertLessThan(25.0, $x['concern'], "{$build} {$npc}: one night is tolerated");
                 $this->assertLessThan($x['concern'], $x['concern_after'], "{$build} {$npc}: reassurance eases it");
             }
+            $this->assertGreaterThan(1.15 * max($s['Ashe']['concern'], $s['Muiri']['concern']), $s['Aela the Huntress']['concern'], "{$build}: Aela, Pr highest " . $why);
             $j = array_map(fn($npc) => $s[$npc]['jealousy'], array_combine(array_keys(self::BEDS), array_keys(self::BEDS)));
             arsort($j);
             $this->assertSame('Muiri', array_key_first($j), "{$build}: Muiri is the most jealous about the suitors " . $why);
 
             // ---------------- expression by maturity
             $this->assertSame('mature', $s['Ashe']['expression']['band'], "{$build} Ashe: maturity 75");
-            $this->assertStringContainsString('once, plainly and without blame', $s['Ashe']['felt_return']['concern_stated_mature'] ?? '', $build);
-            $this->assertArrayNotHasKey('concern_stated_mixed', $s['Ashe']['felt_return'], $build);
-            foreach (['Muiri', 'Lynly Star-Sung'] as $npc) {
-                $this->assertSame('mixed', $s[$npc]['expression']['band'], "{$build} {$npc}: in between");
-                $this->assertStringContainsString('means to say it evenly', $s[$npc]['felt_return']['concern_stated_mixed'] ?? '', "{$build} {$npc}");
-                $this->assertArrayNotHasKey('concern_stated_mature', $s[$npc]['felt_return'], "{$build} {$npc}");
+            $this->assertSame('mature', $s['Aela the Huntress']['expression']['band'], "{$build} Aela");
+            foreach (['Aela the Huntress', 'Ashe'] as $npc) {
+                $this->assertStringContainsString('once, plainly and without blame', $s[$npc]['felt_return']['concern_stated_mature'] ?? '', "{$build} {$npc}");
+                $this->assertArrayNotHasKey('concern_stated_mixed', $s[$npc]['felt_return'], "{$build} {$npc}");
             }
+            $this->assertSame('mixed', $s['Muiri']['expression']['band'], "{$build} Muiri: in between");
+            $this->assertStringContainsString('means to say it evenly', $s['Muiri']['felt_return']['concern_stated_mixed'] ?? '', $build);
+            $this->assertArrayNotHasKey('concern_stated_mature', $s['Muiri']['felt_return'], $build);
             $this->assertSame('accusation', $s['Muiri']['expression']['style'], "{$build}: Muiri, the most reactive");
             $this->assertStringContainsString('as an accusation', $s['Muiri']['felt_return']['concern_stated_mixed'], $build);
 

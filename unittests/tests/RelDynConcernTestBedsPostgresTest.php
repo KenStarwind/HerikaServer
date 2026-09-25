@@ -75,16 +75,23 @@ final class RelDynConcernBedsPgDb
  * eval producer and worker, and the core relationship write. No LLM call.
  *
  * What the design says, and what the four do (their real vectors, not caricatures):
- *   - Aela (danger-loving: signed combat preference high): the tavern night registers as
- *     nothing (rough-place tolerance), so no worry, no count, no grievance; her low
- *     possessiveness (Po 0.24) feels a little jealousy about the suitors and never files it.
+ *   - Aela (the most protective, Pr 0.68; maturity 55, mature band): a taste for a fight is no
+ *     tolerance for a tavern night (Ken's bar example holds for a warrior too): she worries the
+ *     most, states it plainly, and walks the calm §9 boundary to a step-back.
  *   - Ashe (maturity 75, mature): notices, states her values once and plainly, a reminder, then
  *     the values conflict and a calm §9 boundary; the pattern goes on through the probation and
  *     she steps back (romantic -> platonic), with no blow-up.
  *   - Muiri (maturity 52, the most reactive, accusation her style): the in-between band: she
  *     means to say it evenly and it comes out as an accusation; the most jealous of the four.
- *   - Lynly (maturity 51, the least protective of the three that worry): the in-between band
- *     too, her worry the smallest of the three.
+ *     Her values path is the mature one (w >= 0.5), so once her boundary is under way her worry
+ *     is said calmly too. The same Muiri at maturity 30 (a separate run, the editor's maturity)
+ *     takes the immature path: accusation, then a blow-up with +50% resentment and no boundary.
+ *   - Lynly (the Vilemyr Inn's bard: her own taste for an inn): the tavern night is her world,
+ *     not a risk: nothing noticed, nothing counted, no worry, the romance untouched.
+ * After the step-back the romance's lines go quiet: passion reads as loyal affection, flirtation
+ * meets a kind deflection, and the romance's intimacy is over (rulings §9: "kind, but that
+ * closeness is over"). Present, at a barrow with the player, each sees its danger through her
+ * own appetite: Aela's covers it, the other three worry (design §1.2, §1.3).
  * Nobody's possessiveness reaches the 0.35 sensitivity line (Muiri 0.33 from her prior), so the
  * suitors are felt (jealousy, trust-damped) and never counted: the possessive values path is
  * RelDynConcernTest's (design walkthrough, Po 0.5).
@@ -366,9 +373,9 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
             fn($k) => is_string($k) && str_starts_with($k, 'values_conflict:')));
     }
 
-    public function testTheSameBarNightsDivergeAcrossTheFourTestBeds(): void
+    /** Evening: everyone at home with the player; their dynamics, after the hello. */
+    private function hello(): array
     {
-        // Evening: everyone at home with the player
         $this->event('infoloc', self::HOME, self::at(self::N0, 18.0), $this->home());
         $i = 0;
         foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'Well met, love.', self::at(self::N0, 18.0) + 600 * $i++, 'hello');
@@ -378,17 +385,40 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
             $this->assertSame('read', $d[$npc]['_trait_vector_src']['assignment'] ?? null, "{$npc}: her own vector");
             $this->assertSame('romantic', $d[$npc]['_core_rel_type'], "{$npc}: a partner");
         }
+        return $d;
+    }
+
+    /** Edit $npc's stored RelDyn state (as the NPC editor would). */
+    private function editDynamics(string $npc, callable $edit): void
+    {
+        $r = pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT plugin_extended_data FROM core_npc_master WHERE npc_name = $1', [$npc]));
+        $ped = json_decode($r['plugin_extended_data'], true);
+        $edit($ped['reldyn']['dynamics']);
+        pg_query_params($this->db->link, 'UPDATE core_npc_master SET plugin_extended_data = $2::jsonb WHERE npc_name = $1', [$npc, json_encode($ped)]);
+    }
+
+    public function testTheSameBarNightsDivergeAcrossTheFourTestBeds(): void
+    {
+        $d = $this->hello();
+        $worriers = ['Aela the Huntress', 'Ashe', 'Muiri'];
         $x = array_map(fn($dd) => RelDynConcern::traitsOf($dd), $d);
         $expr = array_map(fn($npc) => RelDynConcern::expression($d[$npc], $x[$npc]), array_combine(array_keys($d), array_keys($d)));
         $combat = array_map(fn($npc) => RelDynFacets::preferences($d[$npc], $npc)['combat'], array_combine(array_keys($d), array_keys($d)));
+        $taste = array_map(fn($npc) => RelDynConcern::venueTaste($d[$npc], $npc), array_combine(array_keys($d), array_keys($d)));
+        $why = json_encode(['expr' => $expr, 'combat' => $combat, 'taste' => $taste, 'Pr' => array_map(fn($t) => $t['Pr'], $x)]);
 
         // Who they are, for the concern (their real vectors)
+        $this->assertSame('mature', $expr['Aela the Huntress']['band'], $why);
         $this->assertSame('mature', $expr['Ashe']['band'], 'Ashe: maturity 75');
         $this->assertSame('mixed', $expr['Muiri']['band']);
-        $this->assertSame('mixed', $expr['Lynly Star-Sung']['band']);
+        $this->assertSame('mature', $expr['Muiri']['path'], 'in between, but her values path is the mature one');
         $this->assertSame('accusation', $expr['Muiri']['style'], 'Muiri: the most reactive; blame is how it comes out');
         $this->assertGreaterThan(0.4, $combat['Aela the Huntress'], 'Aela loves a fight');
-        foreach (['Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) $this->assertLessThan(0.2, $combat[$npc], "{$npc}: no fighter's tolerance");
+        $this->assertGreaterThan(0.5, $taste['Lynly Star-Sung'], 'Lynly: an inn is her kind of place ' . $why);
+        foreach ($worriers as $npc) $this->assertLessThan(0.1, $taste[$npc], "{$npc}: no taste for a tavern " . $why);
+        $pr = array_map(fn($t) => $t['Pr'], $x);
+        arsort($pr);
+        $this->assertSame('Aela the Huntress', array_key_first($pr), 'Aela: the most protective ' . $why);
         foreach ($x as $npc => $t) {
             $this->assertLessThan(0.35, $t['Po'], "{$npc}: possessiveness below the sensitivity line");
             $this->assertGreaterThanOrEqual(0.35, $t['Pr'], "{$npc}: protective enough to count");
@@ -399,34 +429,36 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
         foreach (array_keys(self::BEDS) as $npc) $d[$npc] = $this->dynamics($npc);
         $now = self::at(self::N0 + 1, 10.0);
 
-        // Aela: the tavern night barely registers: nothing noticed, nothing counted, no worry
-        $aela = $d['Aela the Huntress'];
-        $this->assertSame(0.0, RelDynConcern::level($aela), 'Aela: no worry');
-        $this->assertSame(0, RelDynConcern::count($aela, RelDynConcern::PROTECTIVE, $now));
-        $this->assertSame([], array_filter(array_keys($this->felt['Aela the Huntress']['return1']), fn($k) => str_starts_with($k, 'concern_')));
-        $this->assertGreaterThan(0.0, $aela['jealousy_anger'], 'the suitors: a little jealousy');
+        // Lynly: the tavern night is her world: nothing noticed, nothing counted, no worry
+        $lynly = $d['Lynly Star-Sung'];
+        $this->assertSame(0.0, RelDynConcern::level($lynly), 'Lynly: no worry ' . json_encode($lynly['_concern'] ?? null));
+        $this->assertSame(0, RelDynConcern::count($lynly, RelDynConcern::PROTECTIVE, $now));
+        $this->assertSame([], array_values(array_filter(array_keys($this->felt['Lynly Star-Sung']['return1']), fn($k) => str_starts_with($k, 'concern_'))));
+        $this->assertGreaterThan(0.0, $lynly['jealousy_anger'], 'the suitors: a little jealousy');
 
         // The other three noticed on the return (route B) and counted one night
-        foreach (['Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) {
+        foreach ($worriers as $npc) {
             $f = $this->felt[$npc]['return1'];
             $this->assertArrayHasKey('concern_noticed', $f, "{$npc}: route B");
             $this->assertStringContainsString('the drink on Kaida', $f['concern_noticed']);
             $this->assertStringContainsString('coming in late from the tavern', $f['concern_noticed']);
             $this->assertSame(1, RelDynConcern::count($d[$npc], RelDynConcern::PROTECTIVE, $now), "{$npc}: one night, however many routes");
+            $this->assertSame(['place' => 1, 'vice' => 1], RelDynConcern::patterns($d[$npc], $now), "{$npc}: pattern[kind], once each");
             $this->assertSame(['B', 'A'], $d[$npc]['_concern']['incidents'][0]['routes'], "{$npc}: B at 01:00, A next morning, one incident");
             $this->assertSame(0, RelDynConcern::count($d[$npc], RelDynConcern::POSSESSIVE, $now), "{$npc}: the suitors felt, not filed");
             $this->assertGreaterThan(0.0, RelDynConcern::level($d[$npc]));
             $this->assertLessThan(25.0, RelDynConcern::level($d[$npc]), "{$npc}: one night is tolerated");
         }
         // Expression diverges by maturity and style
-        $this->assertStringContainsString('once, plainly and without blame', $this->felt['Ashe']['return1']['concern_stated_mature']);
+        foreach (['Aela the Huntress', 'Ashe'] as $npc) {
+            $this->assertStringContainsString('once, plainly and without blame', $this->felt[$npc]['return1']['concern_stated_mature'] ?? '', $npc);
+        }
         $this->assertStringContainsString('means to say it evenly', $this->felt['Muiri']['return1']['concern_stated_mixed']);
         $this->assertStringContainsString('as an accusation', $this->felt['Muiri']['return1']['concern_stated_mixed']);
-        $this->assertArrayHasKey('concern_stated_mixed', $this->felt['Lynly Star-Sung']['return1']);
         $this->assertArrayNotHasKey('concern_stated_mixed', $this->felt['Ashe']['return1']);
-        // How much: Lynly (the least protective of the three) worries least
+        // How much: the most protective worries most; Ashe and Muiri (Pr .55 / .545) alike
         $lv = array_map(fn($dd) => RelDynConcern::level($dd), $d);
-        $this->assertLessThan(min($lv['Ashe'], $lv['Muiri']), $lv['Lynly Star-Sung']);
+        $this->assertGreaterThan(1.15 * max($lv['Ashe'], $lv['Muiri']), $lv['Aela the Huntress'], json_encode($lv));
         // Jealousy: trust-damped for all; Muiri, the most jealousy-prone, feels it most
         $j = array_map(fn($dd) => floatval($dd['jealousy_anger']), $d);
         arsort($j);
@@ -437,24 +469,53 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
         $this->night(2, self::N0 + 2);
         $this->night(3, self::N0 + 4);
         foreach (array_keys(self::BEDS) as $npc) $d[$npc] = $this->dynamics($npc);
-        $this->assertSame([], self::grievances($d['Aela the Huntress']), 'Aela: no values conflict over a mead hall');
-        foreach (['Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) {
+        $this->assertSame([], self::grievances($d['Lynly Star-Sung']), 'Lynly: no values conflict over an inn');
+        foreach ($worriers as $npc) {
             $this->assertArrayHasKey('concern_reminder_protective', $this->felt[$npc]['return2'], "{$npc}: night 2, a reminder");
-            $this->assertSame(['values_conflict:place'], self::grievances($d[$npc]), "{$npc}: the third night in the week");
+            $this->assertSame(['values_conflict:place'], self::grievances($d[$npc]), "{$npc}: the third night in the week (place and vice file together)");
             $this->assertArrayHasKey('concern_boundary', $this->felt[$npc]['return3'], "{$npc}: the calm boundary, said on the return");
             $this->assertSame('probation', $d[$npc]['_concern']['boundary']['state']);
             $this->assertArrayNotHasKey('concern_blowup', $this->felt[$npc]['return3']);
+            // one voice in the prompt: the worry beside the calm boundary is calm too
+            foreach (['return3', 'told3'] as $turn) {
+                $this->assertStringNotContainsString('as blame', (string) ($this->felt[$npc][$turn]['concern_worry'] ?? ''), "{$npc} {$turn}");
+            }
         }
         $values = array_values(array_filter($d['Ashe']['dimensions']['resentment']['grievance_log'], fn($g) => ($g['kind'] ?? '') === 'values_conflict:place'));
         $this->assertEqualsWithDelta(5.0, $values[0]['raw'], 1e-9, 'MDD 15.5 +5: not amplified');
 
         // ---- Night 4, inside the probation: the pattern goes on -> a deliberate step back
         $this->night(4, self::N0 + 6);
-        foreach (['Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) {
+        foreach ($worriers as $npc) {
             $this->assertSame('platonic', $this->coreType($npc), "{$npc}: stepped back from romance on the return");
             $this->assertStringContainsString('stepping back from a romance to friendship', $this->felt[$npc]['return4']['concern_step_back'] ?? '');
+            $this->assertStringNotContainsString('as blame', (string) ($this->felt[$npc]['return4']['concern_worry'] ?? ''), "{$npc}: calm beside the step-back");
         }
-        $this->assertSame('romantic', $this->coreType('Aela the Huntress'), 'Aela: nothing to step back from');
+        $this->assertSame('romantic', $this->coreType('Lynly Star-Sung'), 'Lynly: nothing to step back from');
+
+        // ---- After the step-back, still fond (passion 60, the attraction she had): the romance's
+        // lines are over; for Lynly, still his partner, the same passion reads as romance
+        foreach (['Aela the Huntress', 'Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) {
+            $this->editDynamics($npc, function (array &$dd): void { RelationshipDynamics::setPassion($dd, 60.0); });
+        }
+        $i = 0;
+        foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'Walk with me a while?', self::at(self::N0 + 7, 16.0) + 600 * $i++, 'after');
+        foreach ($worriers as $npc) {
+            $f = $this->felt[$npc]['after'];
+            $dd = $this->dynamics($npc);
+            $this->assertNotNull(RelDynFulfillment::romanceSteppedBack($dd), $npc);
+            $this->assertArrayHasKey('passion', $f, $npc);
+            // (the felt intensity formatting may re-punctuate the line: compare the words)
+            $words = fn(string $t) => strtolower(trim(preg_replace('/[^a-z ]+/i', ' ', $t) ?? ''));
+            $this->assertContains(preg_replace('/\s+/', ' ', $words($f['passion'])), array_map(fn($t) => preg_replace('/\s+/', ' ', $words($t)),
+                (array) RelDynFelt::config()['text']['passion_platonic']), "{$npc}: affection, not pursuit: {$f['passion']}");
+            $this->assertStringNotContainsString('flirtation gets', (string) ($f['attraction'] ?? ''), $npc);
+            $this->assertArrayNotHasKey('intimacy', $f, "{$npc}: that closeness is over");
+            $this->assertFalse(RelDynIntimacy::inPlay($dd), $npc);
+        }
+        $this->assertNotContains(preg_replace('/\s+/', ' ', $words((string) ($this->felt['Lynly Star-Sung']['after']['passion'] ?? ''))),
+            array_map(fn($t) => preg_replace('/\s+/', ' ', $words($t)), (array) RelDynFelt::config()['text']['passion_platonic']), 'Lynly: the same passion is romance');
+        $this->assertTrue(RelDynIntimacy::inPlay($this->dynamics('Lynly Star-Sung')));
 
         // Feelings, never numbers, in front of the LLM; Jev gets the numbers
         foreach ($this->felt as $npc => $turns) {
@@ -467,8 +528,81 @@ final class RelDynConcernTestBedsPostgresTest extends TestCase
         $jev = RelationshipDynamics::jevStateBlock('Ashe');
         $this->assertArrayHasKey('concern', $jev);
         $this->assertStringContainsString('concern=', $jev['text']);
+        $this->assertMatchesRegularExpression('/pattern=place:\d/', $jev['text'], 'Jev gets pattern[kind]');
         $this->assertSame(0, $this->llmCalls, 'no trait read');
         $this->assertGreaterThan(0, $this->evalCalls, 'the eval worker scored the mornings (stubbed)');
         $this->assertSame([], $this->db->failures, 'no failed statement');
+    }
+
+    /**
+     * The immature contrast on a test bed: Muiri at maturity 30 (the editor's maturity, her own
+     * vector otherwise) accuses on the first night and blows up at the third, resentment +50%
+     * (MDD 15.5), with no calm boundary and no step-back. Beside her, Ashe (75) walks the calm
+     * boundary over the same nights.
+     */
+    public function testAnImmatureMuiriBlowsUpWhereAsheDrawsABoundary(): void
+    {
+        $this->hello();
+        $this->editDynamics('Muiri', function (array &$dd): void {
+            $dd['dimensions']['maturity']['x'] = 30.0;
+            $dd['dimensions']['maturity']['baseline'] = 30.0;
+        });
+        $m = $this->dynamics('Muiri');
+        $e = RelDynConcern::expression($m, RelDynConcern::traitsOf($m));
+        $this->assertSame(['immature', 'immature', 'accusation'], [$e['band'], $e['path'], $e['style']], json_encode($e));
+        $this->night(1, self::N0);
+        $this->assertStringContainsString('as an accusation', $this->felt['Muiri']['return1']['concern_stated_accusation'] ?? '', 'night 1: an accusation');
+        $this->night(2, self::N0 + 2);
+        $this->night(3, self::N0 + 4);
+        $m = $this->dynamics('Muiri');
+        $a = $this->dynamics('Ashe');
+        $this->assertStringContainsString('It boils over', $this->felt['Muiri']['return3']['concern_blowup'] ?? '');
+        $this->assertArrayNotHasKey('concern_boundary', $this->felt['Muiri']['return3']);
+        $this->assertSame('none', $m['_concern']['boundary']['state'], 'no calm boundary: it festers and blows up');
+        $g = array_values(array_filter($m['dimensions']['resentment']['grievance_log'], fn($g) => ($g['kind'] ?? '') === 'values_conflict:place'));
+        $this->assertEqualsWithDelta(7.5, $g[0]['raw'], 1e-9, 'resentment amplified +50% (MDD 15.5)');
+        $this->assertArrayHasKey('concern_boundary', $this->felt['Ashe']['return3'], 'Ashe, the same nights: the calm boundary');
+        $this->assertSame('probation', $a['_concern']['boundary']['state']);
+        $this->night(4, self::N0 + 6);
+        $this->assertSame('romantic', $this->coreType('Muiri'), 'a blow-up is not a step-back');
+        $this->assertSame('platonic', $this->coreType('Ashe'));
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Present (design §1.2: "the place appraisal sees it directly"): the four with the player
+     * at Bleak Falls Barrow (a Dungeon in core's locations). Aela's appetite for a fight covers
+     * the danger; the other three see it through their own appetite and worry, once for the day
+     * however many turns it takes; a warm tavern evening together is nothing (a shared night).
+     */
+    public function testAtABarrowTogetherEachSeesTheDangerThroughHerOwnAppetite(): void
+    {
+        $this->hello();
+        pg_query($this->db->link, "INSERT INTO locations (name, hold, tags, is_interior, world) VALUES ('Bleak Falls Barrow', 'Falkreath', 'Dungeon,', 1, 'Skyrim')");
+        $barrow = '(Context location: Bleak Falls Barrow ,Hold: Falkreath, Buildings to go:, Current Date in Skyrim World: Morndas, 2:00 PM, 18th of Last Seed, 4E 201, current weather: outdoors it is Cloudy)';
+        $party = '|' . implode('|', array_keys(self::BEDS)) . '|' . self::PLAYER . '|';
+        $day = self::N0 + 1;
+        foreach ([14.0, 15.0] as $k => $h) {
+            $this->event('infoloc', $barrow, self::at($day, $h), $party);
+            $i = 0;
+            foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'Stay close in here.', self::at($day, $h) + 60 * $i++, "barrow{$k}");
+        }
+        $level = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $dd = $this->dynamics($npc);
+            $level[$npc] = RelDynConcern::level($dd);
+            $inc = $dd['_concern']['incidents'] ?? [];
+            if ($npc === 'Aela the Huntress') {
+                $this->assertSame(0.0, $level[$npc], 'Aela: her appetite covers a barrow');
+                $this->assertSame([], $inc);
+                continue;
+            }
+            $this->assertGreaterThan(0.0, $level[$npc], "{$npc}: she worries");
+            $this->assertCount(1, $inc, "{$npc}: one day, however many turns");
+            $this->assertSame(['present'], $inc[0]['routes'], $npc);
+            $this->assertArrayHasKey('danger', $inc[0]['kinds'], $npc);
+            $this->assertStringContainsString('the risks Kaida keeps taking', $this->felt[$npc]['barrow0']['concern_stated_mature'] ?? $this->felt[$npc]['barrow0']['concern_stated_mixed'] ?? '', $npc);
+        }
+        $this->assertSame([], $this->db->failures);
     }
 }

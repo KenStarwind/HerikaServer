@@ -15,21 +15,31 @@
  *     damped only SLIGHTLY by trust.
  * Crowd alone is not risk (§1.3): a busy market by day is not the Bannered Mare at night.
  *
- * One repetition counter per channel (§1.5): an incident is one channel on one "night"
- * (social day), deduplicated however many routes reveal it. It counts when the NPC's
- * sensitivity to it (Po / Pr) reaches sensitivity_min; trust damps the feeling, never the
- * count. First counted incident: a mature NPC states its values once, plainly; an immature
- * one controls, accuses or sulks (its style from its traits). Second: a felt reminder. The
- * values_at-th within window_game_days: grievance values_conflict:<kind> through the §5
- * grievance channel, then the §9 boundary flow for a mature NPC (calm statement, probation,
- * a deliberate step-back if it happens again) or a blow-up with +50% resentment for an
- * immature one. Reassurance addresses one incident.
+ * The repetition counter is pattern[kind] (§1.5, §1.6): an incident is one channel on one
+ * "night" (social day) with the kinds seen that night, deduplicated however many routes reveal
+ * it; each kind counts once per night. The feeling is per channel and night; the count is per
+ * kind, so a danger day, a tavern night and a drink on another day are three different
+ * patterns, not one. An incident counts when the NPC's sensitivity to it (Po / Pr) reaches
+ * sensitivity_min; trust damps the feeling, never the count. First counted exposure of a
+ * kind: a mature NPC states its values once, plainly; an immature one controls, accuses or
+ * sulks (its style from its traits). Second: a felt reminder. The values_at-th of a kind
+ * within window_game_days: grievance values_conflict:<kind> through the §5 grievance channel
+ * (one per channel and night: kinds that reach it together file together under the first in
+ * KINDS order), then the §9 boundary flow for a mature NPC (calm statement, probation, a
+ * deliberate step-back if that kind happens again) or a blow-up with +50% resentment for an
+ * immature one. Reassurance addresses one incident. One boundary at a time per bond: the
+ * values boundary waits while the fulfillment boundary (§9) runs, and holds a romance
+ * promotion back (RelDynRomance::blockingStates).
  *
  * How an NPC who was not there finds out (§1.2):
  *   route A  the player says so: the eval contract's optional 'exposure' field (onEvalItem);
  *   route B  the return check at the first contact after an absence: eventlog cues the NPC
  *            can perceive (the player drank ale / skooma within drunk_window_game_hours, the
  *            player comes back late from an inn) (onContact);
+ *   present  the NPC is with the player: the place appraisal sees the place's danger directly
+ *            (onPresentPlace, from the felt turn's place read; §1.3's crypt rows). A shared
+ *            tavern night is not an exposure (§1.2), so only 'danger' is read here. 'company'
+ *            (bad company) has no 3.4.1 detector: route A (or route C, later) only.
  *   route C  a witness tells (NPC <-> NPC): LATER, after per-relationship data (decisions
  *            §11). The hook is learn() with route 'C': a witness report is a learn() call like
  *            the others, deduplicated by the same (channel, social day) key.
@@ -86,12 +96,15 @@ class RelDynConcern
                 // danger appetite = combat x max(0, pref_combat) + confidence x C: covers danger
                 'appetite_combat' => 0.5,
                 'appetite_confidence' => 0.3,
-                // Rough-place tolerance (NOT in the design; Serene, for Ken's review): a fighter
-                // at home in mead halls (signed combat preference > 0) sees less risk in the
-                // venue's drink and strangers: vice_r and stranger_r lose rough_combat x
-                // max(0, pref_combat). 0 = the design's formula exactly. An NPC with no taste for
-                // combat is unaffected, so the design's place table holds for them.
-                'rough_combat' => 0.5,
+                // Venue taste (Serene, for Ken's review; the design's danger appetite applied to
+                // the venue kinds): an NPC who likes that kind of place herself (the bard whose
+                // life is the inn) sees less risk in its drink and strangers: vice_r and
+                // stranger_r lose venue_taste x max(0, her appraisal valence of the venue's
+                // facets) (RelDynFacets::appraise, -1..1; decisions §6: places belong to
+                // interests, §14). A taste for fighting is not a taste for taverns: the invented
+                // combat-based tolerance is gone. 0 = the design's formula exactly; an NPC who
+                // does not like the venue is unaffected, so the design's place table holds.
+                'venue_taste' => 0.7,
                 // venue class => vice risk (at night; x vice_day_mult by day)
                 'venue_vice' => ['inn' => 0.5, 'den' => 1.0],
                 'vice_day_mult' => 0.6,
@@ -348,12 +361,14 @@ class RelDynConcern
      *   crowd      place crowd facet 0..1 (strangers estimate when 'strangers' is null)
      *   strangers  ?int people there not in the party and not bonded to the player
      *   consumed   null | ale | skooma (the player drank)
-     * $npc: 'pref_combat' (signed -1..1, RelDynFacets preferences), 'C' confidence 0..1.
+     * $npc: 'pref_combat' (signed -1..1, RelDynFacets preferences), 'C' confidence 0..1,
+     * 'venue_taste' her appraisal valence of this venue's facets (-1..1; venueTaste()).
      *
      *   danger_r   = max(0, danger - appetite), appetite = 0.5 max(0, pref_combat) + 0.3 C
      *   vice_r     = max(venue_vice x (night ? 1 : 0.6), consume lift)
      *   stranger_r = min(1, strangers / 6) x social_venue x (night ? 0.5 : 0.25)
-     *   risk       = 1 - (1 - danger_r)(1 - vice_r')(1 - stranger_r')   (' = less rough tolerance)
+     *   risk       = 1 - (1 - danger_r)(1 - vice_r')(1 - stranger_r')   (' = less her venue ease,
+     *                risk.venue_taste x max(0, venue_taste))
      *
      * @return array{risk: float, design_risk: float, intensity: int, kinds: array<string,int>,
      *   rival_exposure: int, parts: array}
@@ -368,7 +383,7 @@ class RelDynConcern
         $night = !empty($facts['night']);
         $combat = max(0.0, floatval($npc['pref_combat'] ?? 0.0));
         $appetite = floatval($r['appetite_combat']) * $combat + floatval($r['appetite_confidence']) * floatval($npc['C'] ?? 0.5);
-        $rough = floatval($r['rough_combat']) * $combat;
+        $ease = floatval($r['venue_taste']) * max(0.0, min(1.0, floatval($npc['venue_taste'] ?? 0.0)));
 
         $danger = max(0.0, floatval($facts['danger'] ?? 0.0) - $appetite);
         $venueVice = floatval(((array) $r['venue_vice'])[$venue] ?? 0.0) * ($night ? 1.0 : floatval($r['vice_day_mult']));
@@ -384,15 +399,15 @@ class RelDynConcern
             * floatval($night ? $r['stranger_night_mult'] : $r['stranger_day_mult']);
 
         $design = 1.0 - (1.0 - $danger) * (1.0 - $vice) * (1.0 - $stranger);
-        $viceP = max(0.0, $vice - $rough);
-        $strangerP = max(0.0, $stranger - $rough);
-        $venueViceP = max(0.0, $venueVice - $rough);
+        $viceP = max(0.0, $vice - $ease);
+        $strangerP = max(0.0, $stranger - $ease);
+        $venueViceP = max(0.0, $venueVice - $ease);
         $risk = 1.0 - (1.0 - $danger) * (1.0 - $viceP) * (1.0 - $strangerP);
 
         $kinds = [];
         $placeRisk = 1.0 - (1.0 - $venueViceP) * (1.0 - $strangerP);
         if (($i = self::intensityOf($placeRisk, $cfg)) > 0) $kinds['place'] = $i;
-        if ($consumed !== null && ($i = self::intensityOf(max(0.0, $lift - $rough), $cfg)) > 0) $kinds['vice'] = $i;
+        if ($consumed !== null && ($i = self::intensityOf(max(0.0, $lift - $ease), $cfg)) > 0) $kinds['vice'] = $i;
         if (($i = self::intensityOf($danger, $cfg)) > 0) $kinds['danger'] = $i;
 
         $rival = 0;
@@ -404,14 +419,15 @@ class RelDynConcern
             'risk' => round($risk, 4), 'design_risk' => round($design, 4), 'intensity' => self::intensityOf($risk, $cfg),
             'kinds' => $kinds, 'rival_exposure' => $rival,
             'parts' => ['danger' => round($danger, 4), 'vice' => round($vice, 4), 'stranger' => round($stranger, 4),
-                        'appetite' => round($appetite, 4), 'rough' => round($rough, 4), 'strangers' => $strangers],
+                        'appetite' => round($appetite, 4), 'venue_ease' => round($ease, 4), 'strangers' => $strangers],
         ];
     }
 
     /**
      * Route A: a disclosed kind at the eval's intensity, as this NPC perceives it. Protective
      * kinds read the intensity as a risk (risk.intensity_risk) less the NPC's tolerance
-     * (danger: its danger appetite; the rest: rough tolerance); possessive kinds are not risk.
+     * (danger: its danger appetite; the rest: its venue ease, $npc['venue_taste'] being its
+     * taste for the tavern the kinds are phrased around); possessive kinds are not risk.
      */
     public static function perceive(string $kind, int $intensity, array $npc, ?array $cfg = null): int
     {
@@ -422,9 +438,33 @@ class RelDynConcern
         $combat = max(0.0, floatval($npc['pref_combat'] ?? 0.0));
         $tolerance = $kind === 'danger'
             ? floatval($r['appetite_combat']) * $combat + floatval($r['appetite_confidence']) * floatval($npc['C'] ?? 0.5)
-            : floatval($r['rough_combat']) * $combat;
+            : floatval($r['venue_taste']) * max(0.0, min(1.0, floatval($npc['venue_taste'] ?? 0.0)));
         $risk = floatval(array_values((array) $r['intensity_risk'])[$intensity] ?? 0.0);
         return self::intensityOf(max(0.0, $risk - $tolerance), $cfg);
+    }
+
+    /** Core place context of a venue class (venueOf), for its facets: the class, not one night's incidentals. */
+    const VENUE_PLACES = ['inn' => ['name' => '', 'tags' => ['Inn']], 'town' => ['name' => '', 'tags' => ['Town']],
+                          'den' => ['name' => 'skooma den', 'tags' => []]];
+
+    /**
+     * The NPC's own taste for a kind of venue (inn | town | den; the protective kinds are
+     * phrased around the inn): her appraisal valence (-1..1) of the venue class's facets
+     * (RelDynFacets::placeFacets of VENUE_PLACES) against her preferences (RelDynFacets::appraise;
+     * decisions §6). 0 for any other place.
+     */
+    public static function venueTaste(array $dynamics, string $npcName, string $venue = 'inn'): float
+    {
+        $place = self::VENUE_PLACES[$venue] ?? null;
+        if ($place === null) return 0.0;
+        return floatval(RelDynFacets::appraise(RelDynFacets::preferences($dynamics, $npcName), RelDynFacets::placeFacets($place))['valence']);
+    }
+
+    /** Who is appraising, for appraise() / perceive(): combat preference, confidence, taste for the venue. */
+    private static function npcFacts(array $dynamics, string $npcName, array $traits, string $venue = 'inn'): array
+    {
+        return ['pref_combat' => floatval(RelDynFacets::preferences($dynamics, $npcName)['combat'] ?? 0.0), 'C' => $traits['C'],
+                'venue_taste' => self::venueTaste($dynamics, $npcName, $venue)];
     }
 
     // =====================================================================
@@ -472,8 +512,9 @@ class RelDynConcern
      * $dynamics['_concern'], created empty when missing:
      *   level        concern points 0..100 (protective feeling)
      *   incidents    [{channel, day (socialDay), gamets, kinds: kind => intensity, intensity,
-     *                  routes[], counted, filed, addressed}]
-     *   boundary     ['state' => none|pending|probation|failed, 'channel', 'kind',
+     *                  routes[], counted, filed_kinds: kind => true, addressed}] (a stored
+     *                  'filed' true, from before per-kind filing, files every kind)
+     *   boundary     ['state' => none|pending|probation|failed, 'channel', 'kind', 'kinds',
      *                  'decided_gamets', 'started_gamets', 'until_gamets']
      *   say          one-shots for the player's face: [{key, channel, kind, style?, cues?, from?, to?}]
      */
@@ -491,19 +532,53 @@ class RelDynConcern
         return floatval($dynamics[self::STATE_KEY]['level'] ?? 0.0);
     }
 
-    /** Counted, unfiled, unaddressed incidents of a channel within the window before $now. */
-    public static function count(array $dynamics, string $channel, float $now, ?array $cfg = null): int
+    /**
+     * pattern[kind] (§1.5): counted, unaddressed nights within the window before $now on which
+     * $kind was seen and not yet filed. For a channel ($kindOrChannel = POSSESSIVE /
+     * PROTECTIVE): the highest pattern of its kinds (how far along its values path is).
+     */
+    public static function count(array $dynamics, string $kindOrChannel, float $now, ?array $cfg = null): int
     {
         $cfg = $cfg ?? self::config();
+        if (in_array($kindOrChannel, [self::POSSESSIVE, self::PROTECTIVE], true)) {
+            $n = 0;
+            foreach (self::KINDS as $kind => $ch) {
+                if ($ch === $kindOrChannel) $n = max($n, self::count($dynamics, $kind, $now, $cfg));
+            }
+            return $n;
+        }
         $from = $now - floatval($cfg['window_game_days']) * self::day();
         $n = 0;
         foreach ((array) ($dynamics[self::STATE_KEY]['incidents'] ?? []) as $inc) {
-            if (($inc['channel'] ?? null) === $channel && !empty($inc['counted']) && empty($inc['filed'])
-                && empty($inc['addressed']) && floatval($inc['gamets'] ?? 0) > $from) {
+            if (!empty($inc['counted']) && empty($inc['addressed']) && floatval($inc['gamets'] ?? 0) > $from
+                && isset(((array) ($inc['kinds'] ?? []))[$kindOrChannel]) && !self::filed($inc, $kindOrChannel)) {
                 $n++;
             }
         }
         return $n;
+    }
+
+    /** Whether an incident's $kind is already filed (a stored 'filed' true files every kind). */
+    private static function filed(array $inc, string $kind): bool
+    {
+        return !empty($inc['filed']) || !empty(((array) ($inc['filed_kinds'] ?? []))[$kind]);
+    }
+
+    /** pattern[kind] of every kind with a count, for Jev. */
+    public static function patterns(array $dynamics, float $now, ?array $cfg = null): array
+    {
+        $out = [];
+        foreach (array_keys(self::KINDS) as $kind) {
+            $n = self::count($dynamics, $kind, $now, $cfg);
+            if ($n > 0) $out[$kind] = $n;
+        }
+        return $out;
+    }
+
+    /** The values boundary is running (pending, probation or failed): one boundary at a time per bond. */
+    public static function boundaryActive(array $dynamics): bool
+    {
+        return in_array($dynamics[self::STATE_KEY]['boundary']['state'] ?? 'none', ['pending', 'probation', 'failed'], true);
     }
 
     /** The kind a channel's incidents are about: the most frequent in the window (KINDS order on ties). */
@@ -564,6 +639,7 @@ class RelDynConcern
                 if (($inc['channel'] ?? null) === $channel && intval($inc['day'] ?? PHP_INT_MIN) === $day) { $idx = $n; break; }
             }
             $prevI = $idx !== null ? intval($state['incidents'][$idx]['intensity'] ?? 0) : 0;
+            $prevKinds = $idx !== null ? array_keys((array) ($state['incidents'][$idx]['kinds'] ?? [])) : [];
             if ($idx === null) {
                 $state['incidents'][] = ['channel' => $channel, 'day' => $day, 'gamets' => $at, 'kinds' => [], 'intensity' => 0,
                     'routes' => [], 'counted' => false, 'filed' => false, 'addressed' => false];
@@ -597,8 +673,14 @@ class RelDynConcern
             // The count (trust never enters)
             if (empty($inc['counted']) && self::counts($dynamics, $channel, $kinds, $traits, $cfg)) {
                 $inc['counted'] = true;
+                $seen = array_keys((array) $inc['kinds']);
                 unset($inc);
-                $out['events'] = array_merge($out['events'], self::advance($npcName, $dynamics, $state, $channel, $at, $now, $traits, $cfg));
+                $out['events'] = array_merge($out['events'], self::advance($npcName, $dynamics, $state, $channel, $seen, $at, $now, $traits, $cfg));
+            } elseif (!empty($inc['counted']) && array_diff_key($kinds, $before = array_flip($prevKinds)) !== []) {
+                // a kind this night had not shown yet (told later, or seen on the return): its own pattern moves
+                $seen = array_keys(array_diff_key($kinds, $before));
+                unset($inc);
+                $out['events'] = array_merge($out['events'], self::advance($npcName, $dynamics, $state, $channel, $seen, $at, $now, $traits, $cfg));
             } else {
                 unset($inc);
             }
@@ -628,26 +710,36 @@ class RelDynConcern
     }
 
     /**
-     * A new counted incident of $channel: the values path (§1.5). Returns event names.
-     *   probation open on this channel -> 'failed' (the step-back is onContact's);
-     *   count >= values_at -> grievance values_conflict:<kind>, the window's incidents filed;
-     *     mature path with a step-back target -> boundary 'pending' (statement said to the
-     *     player's face, then probation); else a blow-up (immature path: severity +50%);
-     *   count == 1 -> the one-time statement of values (mature) / control-accusation-sulk.
+     * A counted night of $channel that showed $kinds: the values path (§1.5), per kind. Returns
+     * event names.
+     *   probation open on this channel for one of $kinds -> 'failed' (the step-back is onContact's);
+     *   a kind at values_at -> grievance values_conflict:<kind> (the first such kind in KINDS
+     *     order; kinds reaching it together file together), the window's nights of those kinds
+     *     filed; mature path with a step-back target and no other boundary running (this
+     *     lane's, the fulfillment lane's) -> boundary 'pending' (statement said to the player's
+     *     face, then probation); else a blow-up (immature path: severity +50%);
+     *   a kind's first counted night -> the one-time statement of values (mature) /
+     *     control-accusation-sulk; its second -> a reminder.
      */
-    private static function advance(string $npcName, array &$dynamics, array &$state, string $channel, float $at, float $now, array $traits, array $cfg): array
+    private static function advance(string $npcName, array &$dynamics, array &$state, string $channel, array $kinds, float $at, float $now, array $traits, array $cfg): array
     {
         $events = [];
         $expr = self::expression($dynamics, $traits, $cfg);
         $b = (array) $state['boundary'];
-        if (($b['state'] ?? 'none') === 'probation' && ($b['channel'] ?? null) === $channel) {
+        $kinds = array_values(array_filter(array_keys(self::KINDS), fn($k) => in_array($k, $kinds, true) && self::KINDS[$k] === $channel));
+        if ($kinds === []) return $events;
+        $watched = array_merge((array) ($b['kinds'] ?? []), [(string) ($b['kind'] ?? '')]);
+        if (($b['state'] ?? 'none') === 'probation' && ($b['channel'] ?? null) === $channel && array_intersect($kinds, $watched) !== []) {
             $state['boundary']['state'] = 'failed';
             $state['boundary']['failed_gamets'] = $now;
             return ['step_back_due'];
         }
-        $n = self::count($dynamics, $channel, max($now, $at), $cfg);
-        $kind = self::mainKind($state, $channel, max($now, $at), $cfg);
-        if ($n >= intval($cfg['values_at'])) {
+        $when = max($now, $at);
+        $n = [];
+        foreach ($kinds as $k) $n[$k] = self::count($dynamics, $k, $when, $cfg);
+        $reached = array_keys(array_filter($n, fn($c) => $c >= intval($cfg['values_at'])));
+        if ($reached !== []) {
+            $kind = $reached[0];
             $mature = $expr['path'] === 'mature';
             $severity = intval($mature ? $cfg['mature_severity'] : $cfg['immature_severity']);
             if (RelationshipDynamics::configValue('dimension_engine_enabled')) {
@@ -655,17 +747,22 @@ class RelDynConcern
                 $g = RelationshipDynamics::recordGrievance($dynamics, ['flag' => true, 'kind' => "values_conflict:{$kind}", 'severity' => $severity],
                     RelationshipDynamics::powerGapFacts($npcName, $dynamics), "values conflict: {$phrase}");
                 $events[] = "values_conflict:{$kind}";
-                RelationshipDynamics::log("[CONCERN] {$npcName}: values_conflict:{$kind} ({$n} counted in the window, {$expr['path']} path) resentment +" . round($g['amount'], 3));
+                RelationshipDynamics::log("[CONCERN] {$npcName}: values_conflict:{$kind} (pattern " . json_encode($n)
+                    . " in the window, {$expr['path']} path) resentment +" . round($g['amount'], 3));
             }
-            $from = max($now, $at) - floatval($cfg['window_game_days']) * self::day();
+            $from = $when - floatval($cfg['window_game_days']) * self::day();
             foreach ($state['incidents'] as &$inc) {
-                if (($inc['channel'] ?? null) === $channel && !empty($inc['counted']) && floatval($inc['gamets'] ?? 0) > $from) $inc['filed'] = true;
+                if (($inc['channel'] ?? null) !== $channel || empty($inc['counted']) || floatval($inc['gamets'] ?? 0) <= $from) continue;
+                foreach ($reached as $k) {
+                    if (isset(((array) ($inc['kinds'] ?? []))[$k])) $inc['filed_kinds'][$k] = true;
+                }
             }
             unset($inc);
             $eligible = $mature && RelDynFulfillment::stepBackTarget($dynamics) !== null
-                && ($dynamics['_walkaway_state'] ?? 'normal') === 'normal' && ($b['state'] ?? 'none') === 'none';
+                && ($dynamics['_walkaway_state'] ?? 'normal') === 'normal' && ($b['state'] ?? 'none') === 'none'
+                && !RelDynFulfillment::boundaryActive($dynamics);
             if ($eligible) {
-                $state['boundary'] = ['state' => 'pending', 'channel' => $channel, 'kind' => $kind, 'decided_gamets' => $now];
+                $state['boundary'] = ['state' => 'pending', 'channel' => $channel, 'kind' => $kind, 'kinds' => $reached, 'decided_gamets' => $now];
                 $events[] = 'boundary_due';
             } elseif ($mature) {
                 self::queue($state, ['key' => 'stated_mature', 'channel' => $channel, 'kind' => $kind]);
@@ -674,11 +771,11 @@ class RelDynConcern
                 self::queue($state, ['key' => 'blowup', 'channel' => $channel, 'kind' => $kind, 'style' => $expr['style']]);
                 $events[] = 'blowup';
             }
-        } elseif ($n === 1) {
+        } elseif (($first = array_keys(array_filter($n, fn($c) => $c === 1))) !== []) {
             $key = $expr['band'] === 'mature' ? 'stated_mature' : ($expr['band'] === 'mixed' ? 'stated_mixed' : 'stated_' . $expr['style']);
-            self::queue($state, ['key' => $key, 'channel' => $channel, 'kind' => $kind, 'style' => $expr['style']]);
+            self::queue($state, ['key' => $key, 'channel' => $channel, 'kind' => $first[0], 'style' => $expr['style']]);
             $events[] = 'stated';
-        } elseif ($n === 2) {
+        } elseif (in_array(2, $n, true)) {
             $events[] = 'reminder';
         }
         return $events;
@@ -757,8 +854,7 @@ class RelDynConcern
 
         $e = is_array($n['exposure'] ?? null) ? $n['exposure'] : null;
         if ($e !== null && !empty($e['flag'])) {
-            $traits = self::traitsOf($dynamics, $cfg);
-            $npc = ['pref_combat' => floatval(RelDynFacets::preferences($dynamics, $npcName)['combat'] ?? 0.0), 'C' => $traits['C']];
+            $npc = self::npcFacts($dynamics, $npcName, self::traitsOf($dynamics, $cfg));
             $kinds = [];
             foreach ((array) $e['kinds'] as $kind) {
                 $i = self::perceive((string) $kind, intval($e['intensity'] ?? 1), $npc, $cfg);
@@ -846,6 +942,27 @@ class RelDynConcern
         }
         foreach ($out['events'] as $event) RelationshipDynamics::log("[CONCERN] {$npcName}: {$event}");
         return $out;
+    }
+
+    /**
+     * The present route (§1.2: "the place appraisal sees it directly"): the NPC is with the
+     * player at a place ($place: core's place context, $facets: its facet vector); its danger,
+     * less her appetite (§1.3), is a 'danger' exposure learned now (route 'present', one per
+     * game day at its worst). Only danger: out together is a shared night, so a tavern with her
+     * there is neither 'place' nor 'rival_exposure'. Returns learn()'s result (empty without
+     * danger).
+     */
+    public static function onPresentPlace(string $npcName, array &$dynamics, array $place, array $facets, float $now): array
+    {
+        $out = ['concern' => 0.0, 'jealousy' => 0.0, 'events' => []];
+        if ($now <= 0 || !self::enabled() || floatval($facets['danger'] ?? 0.0) <= 0.0) return $out;
+        $cfg = self::config();
+        $venue = self::venueOf($place, $cfg);
+        $npc = self::npcFacts($dynamics, $npcName, self::traitsOf($dynamics, $cfg), $venue);
+        $a = self::appraise(['venue' => $venue, 'night' => false, 'danger' => floatval($facets['danger']),
+                             'strangers' => 0, 'consumed' => null], $npc, $cfg);
+        if (!isset($a['kinds']['danger'])) return $out;
+        return self::learn($npcName, $dynamics, ['kinds' => ['danger' => $a['kinds']['danger']], 'gamets' => $now, 'route' => 'present'], $now);
     }
 
     /** A failed values probation: the deliberate step-back of core's Player.type (§9). */
@@ -938,7 +1055,7 @@ class RelDynConcern
         if (!$late && $consumed === null) return null;
 
         $traits = self::traitsOf($dynamics, $cfg);
-        $npc = ['pref_combat' => floatval(RelDynFacets::preferences($dynamics, $npcName)['combat'] ?? 0.0), 'C' => $traits['C']];
+        $npc = self::npcFacts($dynamics, $npcName, $traits, $late ? $inn['venue'] : 'inn');
         $facts = ['venue' => 'other', 'night' => false, 'crowd' => 0.0, 'strangers' => $late ? null : 0, 'consumed' => $consumed];
         $at = $consumedAt ?? $now;
         if ($late) {
@@ -953,7 +1070,7 @@ class RelDynConcern
         $kinds = array_intersect_key($a['kinds'], array_flip($late ? ['place', 'vice'] : ['vice']));
         if ($kinds === []) {
             RelationshipDynamics::log("[CONCERN] {$npcName}: return cues (" . ($late ? 'late' : '') . ($consumed ? " {$consumed}" : '')
-                . ") do not register (risk {$a['risk']}, tolerance {$a['parts']['rough']})");
+                . ") do not register (risk {$a['risk']}, venue ease {$a['parts']['venue_ease']})");
             return null;
         }
         $cues = [];
@@ -1062,19 +1179,26 @@ class RelDynConcern
         if ($level >= ($levels[0] ?? 25.0)) {
             $band = $level >= ($levels[2] ?? 75.0) ? 'worry_insist' : ($level >= ($levels[1] ?? 50.0) ? 'worry_raise' : 'worry_uneasy');
             $kind = self::mainKind($state, self::PROTECTIVE, $now, $cfg);
+            // One voice per prompt: an in-between NPC whose values path is the mature one says it
+            // calmly once that path is under way (the boundary said or watching, or the step-back
+            // made), never "sharp, as blame" beside "no shouting, no ultimatum"
+            $bs = (array) $state['boundary'];
+            $calm = $expr['band'] === 'mature' || ($expr['path'] === 'mature'
+                && (in_array($bs['state'] ?? 'none', ['pending', 'probation', 'failed'], true) || isset($bs['stepped_back_gamets'])));
             $text = strtr((string) $t[$band], $vars + ['{KIND}' => self::kindPhrase($kind, $cfg, $vars)])
-                . ($expr['band'] === 'mature' ? (string) $t['worry_mature'] : '; ' . $vars['{STYLE}']);
+                . ($calm ? (string) $t['worry_mature'] : '; ' . $vars['{STYLE}']);
             // at the top level the NPC insists or intervenes (§1.4): a line that is never cut
             $out['lines'][] = ['key' => 'worry', 'lane' => 'core', 'salience' => $level / 100.0 + floatval($sal['worry_offset']),
                 'must' => $band === 'worry_insist', 'intense' => true, 'text' => $text];
         }
 
-        // The reminder: a channel at two counted incidents
+        // The reminder: a kind at two counted nights (the first such kind of the channel)
         foreach ([self::POSSESSIVE, self::PROTECTIVE] as $channel) {
-            if (self::count($dynamics, $channel, $now, $cfg) === 2) {
+            foreach (self::KINDS as $kind => $ch) {
+                if ($ch !== $channel || self::count($dynamics, $kind, $now, $cfg) !== 2) continue;
                 $out['lines'][] = ['key' => "reminder_{$channel}", 'lane' => 'core', 'salience' => floatval($sal['reminder']), 'must' => false,
-                    'intense' => false, 'text' => strtr((string) $t['reminder'],
-                        $vars + ['{KIND}' => ucfirst(self::kindPhrase(self::mainKind($state, $channel, $now, $cfg), $cfg, $vars))])];
+                    'intense' => false, 'text' => strtr((string) $t['reminder'], $vars + ['{KIND}' => ucfirst(self::kindPhrase($kind, $cfg, $vars))])];
+                break;
             }
         }
         unset($state);
@@ -1085,7 +1209,7 @@ class RelDynConcern
     // JEV (numbers are fine here, never for the LLM)
     // =====================================================================
 
-    /** Concern numbers for Jev: level (points 0..100), counted incidents per channel, boundary state. */
+    /** Concern numbers for Jev: level (points 0..100), pattern per channel (its highest kind) and per kind, boundary state. */
     public static function jev(array $dynamics, float $now): array
     {
         $cfg = self::config();
@@ -1096,6 +1220,7 @@ class RelDynConcern
             'level' => $level, 'band' => $band,
             'possessive_incidents' => $now > 0 ? self::count($dynamics, self::POSSESSIVE, $now, $cfg) : 0,
             'protective_incidents' => $now > 0 ? self::count($dynamics, self::PROTECTIVE, $now, $cfg) : 0,
+            'pattern' => $now > 0 ? self::patterns($dynamics, $now, $cfg) : [],
             'values_boundary' => (string) ($dynamics[self::STATE_KEY]['boundary']['state'] ?? 'none'),
         ];
     }

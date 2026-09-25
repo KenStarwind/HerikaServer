@@ -1946,6 +1946,8 @@ class RelDynAttraction
      *   strained bool    open conflict, an active ick, resentment or jealousy past the felt
      *                    strain bands: the pull is not what drives this bond right now
      *   romantic bool    core already holds a romance type with the player
+     *   stepped_back bool she deliberately stepped back from a romance with the player (rulings
+     *                    §9): flirtation meets the friend's kind deflection, whatever the pull
      *   flirt_min_tier int, flirt_passion_min float: below both (and not romantic / an earned
      *                    crush) the pull shows only as looks, never as answered flirtation
      *                    (MDD 8.1: at Unknown / Acquaintance romantic gestures meet the Ick)
@@ -1980,7 +1982,7 @@ class RelDynAttraction
             if ($curve < floatval($fp['faint_below_curve'])) $strength = 'faint';
             elseif ($curve >= floatval($fp['strong_from_curve'])) $strength = 'strong';
         }
-        switch ($summary['outcome'] ?? null) {
+        switch (!empty($ctx['stepped_back']) ? 'friendzone' : ($summary['outcome'] ?? null)) {
             case 'drawn':
                 $glance = ['faint' => ', now and then, in a passing glance', 'plain' => '', 'strong' => ' and linger there'][$strength];
                 $lead = "{$npcName}'s eyes keep finding {$P}{$glance}" . ($valued ? "; {$valued} holds {$npcName}'s attention" : '');
