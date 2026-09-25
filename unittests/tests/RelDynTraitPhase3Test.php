@@ -173,11 +173,12 @@ final class RelDynTraitPhase3Test extends TestCase
         // slow gain, fast loss for the guarded: Guarded wins trust at x0.4 and loses it at x1.5
         $g = self::preset('Guarded');
         $this->assertGreaterThan(3.0 * $R($g, 'trust', false), $R($g, 'trust', true));
-        // Ashe (her own vector, far from every preset: the pure models): slow to trust
-        // (guard .75), and losing it is betrayal-sensitive but moderate (low possessiveness)
+        // Ashe (her own vector, far from every preset): slow to trust (guard .75, the pure Rule-R
+        // model), and losing it is betrayal-sensitive but moderate (low possessiveness; Rule RI:
+        // the model plus the inverse-distance residual)
         $ashe = self::at(self::asheVector());
         $this->assertEqualsWithDelta(1.19 - 0.86 * 0.75, $R($ashe, 'trust', false), 1e-9);
-        $this->assertEqualsWithDelta(0.80 + 0.93 * 0.20 + 0.40 * 0.40, $R($ashe, 'trust', true), 1e-9);
+        $this->assertEqualsWithDelta(0.80 + 0.93 * 0.20 + 0.40 * 0.40, $R($ashe, 'trust', true), 0.1);
         // between presets the loss side rises with possessiveness and pride (betrayal sensitivity)
         $prev = -INF;
         foreach ([0.05, 0.25, 0.45, 0.65, 0.85] as $po) {

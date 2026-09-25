@@ -16,6 +16,11 @@
  *          at runtime from today's table, so rounding the coefficients cannot break exactness.
  *   Rule I (low R^2 columns): inverse-distance blend of the table, w_p = |x-p|^-4; a convex
  *          combination, bounded by the table.
+ *   Rule RI (phase 3, the preset-quirk columns where Rule R turned the wrong way):
+ *          clamp( f(x) + sum_p w_p (T[p] - f(p)) / sum_p w_p ), w_p = |x-p|^-4: the trait model
+ *          plus the residuals blended by inverse distance instead of Rule R's short kernel. The
+ *          residual term has zero slope at every preset and moves between presets over their
+ *          whole distance, so near a preset the column follows its model (RI_COLUMNS).
  * At a preset point both rules equal the table value exactly; the engine returns the table
  * value itself there (the same number the formula gives, without floating-point noise).
  * Label-valued surfaces (reunion text, love language, curve names, tags) use the nearest preset.
@@ -111,6 +116,16 @@ final class RelDynTraits
         'Independent' => ['G' => 0.70, 'E' => 0.30, 'C' => 0.75, 'Pd' => 0.50, 'W' => 0.15, 'D' => 0.50, 'Po' => 0.10, 'Pr' => 0.40],
         'Stoic'       => ['G' => 0.65, 'E' => 0.15, 'C' => 0.60, 'Pd' => 0.40, 'W' => 0.20, 'D' => 0.90, 'Po' => 0.10, 'Pr' => 0.70],
     ];
+
+    /**
+     * Phase 3 (design §6.1 item 3, preset quirks): the Rule-R columns whose residual fade turned the
+     * column against its own model by 20% or more of the column's table span inside the reach
+     * (review 2026-09-25: coord_m at Bold along restraint 25%, coord_f at Bold along
+     * expressiveness 22%, tier retention at Independent along resilience 29%, ...). They use
+     * Rule RI; its worst wrong-way excursion over half an axis is at most 18% of the span.
+     */
+    const RI_COLUMNS = ['baseline_coord_m', 'baseline_coord_f', 'y_trust_down', 'resist_comfort', 'resist_respect',
+        'resist_trust_down', 'tier_retention', 'charisma_catalyst'];
 
     /** Rule R reach (trait-space distance, unitless); rho = min(this or config traits.residual_reach, d_min). */
     const RESIDUAL_REACH = 0.317;
@@ -326,6 +341,18 @@ final class RelDynTraits
         $on = self::presetAt($x);
         if ($on !== null) return $table[$on];
         $pts = self::points();
+        if ($rule === 'RI' && $model !== null) {
+            // residual_reach 0 = the pure trait model, as for Rule R (the tuning knob, design §3.3)
+            if (self::residualReach() <= 0.0) return self::clampUnit(self::evalModel($model, $x), $unit);
+            $num = 0.0;
+            $den = 0.0;
+            foreach ($pts as $name => $p) {
+                $w = self::distance($x, $p) ** -4;
+                $num += $w * (floatval($table[$name]) - self::evalModel($model, $p));
+                $den += $w;
+            }
+            return self::clampUnit(self::evalModel($model, $x) + $num / $den, $unit);
+        }
         if ($rule === 'R' && $model !== null) {
             $rho = self::residualReach();
             $v = self::evalModel($model, $x);
@@ -530,6 +557,7 @@ final class RelDynTraits
         $RD = 'RelationshipDynamics';
         $cols = [];
         $add = function (string $id, string $ref, string $rule, array $owners, $model, string $unit, callable $table, ?callable $legacy = null) use (&$cols) {
+            if ($rule === 'R' && in_array($id, self::RI_COLUMNS, true)) $rule = 'RI';   // phase 3 preset quirks
             $cols[$id] = compact('ref', 'rule', 'owners', 'model', 'unit', 'table', 'legacy');
         };
 

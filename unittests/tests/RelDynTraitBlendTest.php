@@ -215,7 +215,7 @@ final class RelDynTraitBlendTest extends TestCase
         $h = 1e-5;
         $found = ['model' => [], 'clamp' => []];
         foreach (RelDynTraits::columns() as $col => $spec) {
-            if ($spec['rule'] !== 'R') continue;
+            if (!in_array($spec['rule'], ['R', 'RI'], true)) continue;   // RI: flat residual at a preset too
             $m = $spec['model'];
             $f = is_callable($m) ? fn(array $x) => floatval($m($x)) : function (array $x) use ($m) {
                 $v = floatval($m[0] ?? 0.0);
@@ -310,12 +310,73 @@ final class RelDynTraitBlendTest extends TestCase
                 }
             }
         }
-        $this->assertGreaterThan(300, $checked);
-        // the reviewed magnitudes (units: coordinate points, core affinity points, multiplier)
-        $this->assertEqualsWithDelta(20.35, $worst['baseline_coord_m'], 0.05);
-        $this->assertEqualsWithDelta(7.13, $worst['tier_retention'], 0.05);
+        $this->assertGreaterThan(250, $checked);
+        // the reviewed magnitudes (units: multiplier); coord_m (20.35 coordinate points) and
+        // tier_retention (7.13 core points) moved to Rule RI in phase 3 (next test)
         $this->assertEqualsWithDelta(0.076, $worst['passion_mult'], 0.005);
         $this->assertEqualsWithDelta(0.163, $worst['jealousy_mult'], 0.005);
+        // every Rule-R column left turns the wrong way by less than 20% of its table span
+        foreach ($worst as $col => $w) {
+            $t = array_map('floatval', RelDynTraits::table($col));
+            $this->assertLessThan(0.20 * (max($t) - min($t)), $w, $col);
+        }
+    }
+
+    /**
+     * Phase 3, the preset-quirk columns (Rule RI: the model plus the residuals blended by inverse
+     * distance): exact at every preset, and near a preset they follow their model. Walking each
+     * owner half an axis away from each preset, the excursion against the model stays under 20%
+     * of the table span (Rule R turned coord_m 25%, coord_f 22%, tier_retention 29% within rho).
+     */
+    public function testPresetQuirkColumnsFollowTheirModelNearThePresets(): void
+    {
+        $pts = RelDynTraits::points();
+        $ri = array_keys(array_filter(RelDynTraits::columns(), fn($c) => $c['rule'] === 'RI'));
+        sort($ri);
+        $want = RelDynTraits::RI_COLUMNS;
+        sort($want);
+        $this->assertSame($want, $ri);
+        foreach ($ri as $col) {
+            $spec = RelDynTraits::columns()[$col];
+            $m = $spec['model'];
+            $f = function (array $x) use ($m) {
+                $v = floatval($m[0] ?? 0.0);
+                foreach ($m as $k => $c) if ($k !== 0) $v += floatval($c) * floatval($x[$k]);
+                return $v;
+            };
+            $t = array_map('floatval', RelDynTraits::table($col));
+            $span = max($t) - min($t);
+            $worst = 0.0;
+            foreach ($pts as $name => $p) {
+                $at = floatval(RelDynTraits::value($p, $col));
+                $this->assertSame($t[$name], $at, "{$col} exact at {$name}");
+                foreach ($spec['owners'] as $code) {
+                    foreach ([1.0, -1.0] as $dir) {
+                        for ($s = 0.01; $s <= 0.5; $s += 0.01) {
+                            $x = $p;
+                            $x[$code] += $dir * $s;
+                            if ($x[$code] < 0.0 || $x[$code] > 1.0) break;
+                            $sign = $f($x) > $f($p) ? 1.0 : -1.0;
+                            $worst = max($worst, -$sign * (floatval(RelDynTraits::value($x, $col)) - $at));
+                        }
+                    }
+                }
+            }
+            $this->assertLessThan(0.20 * $span, $worst, $col);
+        }
+        // coord_m at Bold along restraint, the reviewed case: as restraint drops the model rises
+        // (-3 D) but Rule R fell 20.35 coordinate points inside the reach (60 -> 39.7). Rule RI
+        // follows the model near Bold (a flat residual) and drifts gently toward the neighbouring
+        // presets' values over the whole way (7 points by D = 0)
+        $bold = $pts['Bold'];
+        $vals = [];
+        for ($s = 0.0; $s <= $bold['D'] + 1e-9; $s += 0.01) {
+            $x = $bold;
+            $x['D'] = $bold['D'] - $s;
+            $vals[] = RelDynTraits::value($x, 'baseline_coord_m');
+        }
+        $this->assertGreaterThanOrEqual($vals[0], $vals[5], 'within 0.05 of Bold it moves with its model');
+        $this->assertLessThan(7.5, $vals[0] - min($vals));
     }
 
     /** Away from every preset (beyond rho) Rule R is the pure model: monotone in each owner. */
