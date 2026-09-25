@@ -494,6 +494,14 @@ final class RelDynP3oGoalsTestBedsPostgresTest extends TestCase
             'quest-scripted friction is not held against the bond ' . json_encode([$actual, $plain]));
         $muiri = self::x($this->dynamics('Muiri'), 'trust') - self::x($before['Muiri'], 'trust');
         $this->assertLessThan($actual, $muiri, 'Muiri takes the insult in full');
+        // The grievance path too (batch O review): the insult's resentment lands on Aela at the
+        // duty factor, logged with it; Muiri's in full
+        $grievance = fn(string $npc) => end($this->dynamics($npc)['dimensions']['resentment']['grievance_log']) ?: [];
+        $this->assertSame(0.1, $grievance(self::AELA)['duty'] ?? null, json_encode($grievance(self::AELA)));
+        $this->assertArrayNotHasKey('duty', $grievance('Muiri'));
+        $this->assertGreaterThan(0.0, floatval($grievance('Muiri')['raw'] ?? 0));
+        $this->assertLessThan(0.25 * floatval($grievance('Muiri')['raw']), floatval($grievance(self::AELA)['raw'] ?? 0),
+            'her quest friction is not held against the bond ' . json_encode([$grievance(self::AELA), $grievance('Muiri')]));
         $this->assertSame('Proving Honor', RelationshipDynamics::jevStateBlock(self::AELA)['duty']['quest'] ?? null);
         $this->assertFeelingsNotNumbers();
         $this->assertSame(0, $this->llmCalls);
@@ -540,6 +548,49 @@ final class RelDynP3oGoalsTestBedsPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures);
     }
 
+    /**
+     * batch O review: Aela's Silver Hand revenge is who she is, not a mood. Two idle months later
+     * it is quieter but still hers and still felt, where Lynly's and Muiri's interests have faded
+     * (divergence: backstory vs interest). A blob from before this fix, whose revenge had already
+     * "faded", has it back on her next turn from her backstory; Ashe's template is never read.
+     */
+    public function testAelasSilverHandRevengeIsNotWornAwayByTime(): void
+    {
+        $this->seed();
+        $this->hello();
+        $later = self::N0 + 60;
+        $i = 0;
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->event('infoloc', self::HOME, self::at($later, 17.9));
+            $this->turn($npc, 'Two months on the road. I am back.', self::at($later, 18.0) + 600 * $i++, 'later');
+        }
+        $aela = array_column(RelDynGoals::active($this->dynamics(self::AELA)), null, 'type');
+        $this->assertArrayHasKey('revenge', $aela, json_encode($aela));
+        $this->assertEqualsWithDelta(RelDynGoals::configDefaults()['backstory_priority_floor'], $aela['revenge']['priority'], 1e-9);
+        $this->assertStringContainsString('Silver Hand', $this->felt[self::AELA]['later']['intrinsic_goal'] ?? '', 'still felt');
+        foreach (['Muiri', self::LYNLY] as $npc) {
+            $history = array_column((array) ($this->dynamics($npc)[RelDynGoals::HISTORY_KEY] ?? []), 'outcome', 'type');
+            $this->assertSame('faded', $history['mastery'] ?? null, "{$npc}: an interest left idle fades " . json_encode($history));
+        }
+        // A blob from before the fix: the revenge had faded and the bio was marked read
+        $this->editDynamics(self::AELA, function (array &$d) use ($later): void {
+            $goal = null;
+            foreach ($d[RelDynGoals::KEY] as $k => $g) if ($g['type'] === 'revenge') { $goal = $g; unset($d[RelDynGoals::KEY][$k]); }
+            $d[RelDynGoals::KEY] = array_values($d[RelDynGoals::KEY]);
+            $d[RelDynGoals::HISTORY_KEY] = [array_merge($goal, ['active' => false, 'outcome' => 'faded', 'ended_day' => $later - 20])];
+            unset($d[RelDynGoals::META_KEY]['backstory']);
+        });
+        $this->turn(self::AELA, 'Anything on your mind?', self::at($later + 1, 9.0), 'again');
+        $again = array_column(RelDynGoals::active($this->dynamics(self::AELA)), null, 'type');
+        $this->assertArrayHasKey('revenge', $again, 'her backstory forms it again');
+        $this->assertSame(['Silver Hand'], $again['revenge']['keywords']);
+        $this->assertArrayNotHasKey('revenge', array_column(RelDynGoals::active($this->dynamics('Ashe')), null, 'type'));
+        $this->assertArrayNotHasKey('backstory', $this->dynamics('Ashe')[RelDynGoals::META_KEY] ?? [], 'Ashe: never read');
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls);
+        $this->assertSame([], $this->db->failures);
+    }
+
     // ------------------------------------------------------------------ reputation-layer
 
     public function testAFamousAndInfamousStrangerIsMetWarilyAndDifferently(): void
@@ -574,6 +625,34 @@ final class RelDynP3oGoalsTestBedsPostgresTest extends TestCase
         $this->assertSame(5, $r['meaningful']);
         $this->assertLessThan(0.1, RelDynReputation::weight($r));
         $this->assertArrayNotHasKey('reputation', $this->felt[self::AELA]['night']);
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * batch O review: the upgrade onto an existing save. The four are the player's partners in
+     * core (romantic, affinity 60) with fresh RelDyn blobs, and the player has the same murders
+     * and dragons: none of them "has heard dark things" about someone she already shares a life
+     * with. No offset, no felt line; trust starts where it would without the layer.
+     */
+    public function testAPartnerOfMonthsHearsNoRumoursOnTheUpgrade(): void
+    {
+        $this->seed();
+        foreach (['Dragon Souls Collected' => '4', 'Murders' => '3', 'Quests Completed' => '30'] as $stat => $v) {
+            pg_query_params($this->db->link, 'INSERT INTO core_player (id, value) VALUES ($1, $2)', [$stat, $v]);
+        }
+        $this->assertGreaterThan(0.5, RelDynReputation::scores()['infamy'], 'the player is infamous');
+        $this->hello();
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $r = $d[RelDynReputation::KEY] ?? [];
+            $this->assertEquals(['comfort' => 0.0, 'respect' => 0.0, 'trust' => 0.0], $r['raw'] ?? null, "{$npc}: she knows the player " . json_encode($r));
+            $this->assertSame([], $r['effective'] ?? [], $npc);
+            $this->assertArrayNotHasKey('reputation', $this->felt[$npc]['hello'], "{$npc}: no rumour between partners");
+            $this->assertSame(0.0, RelationshipDynamics::heldTemporaryOffset($d, 'trust') - floatval($d['_creature']['applied']['trust'] ?? 0.0)
+                - floatval($d['_env_applied_effects']['trust'] ?? 0.0), "{$npc}: nothing of the layer held on trust");
+        }
         $this->assertFeelingsNotNumbers();
         $this->assertSame(0, $this->llmCalls);
         $this->assertSame([], $this->db->failures);

@@ -679,6 +679,18 @@ final class RelDynTimeline
         }
         // A load starts a new conflict session (the high was seen in another timeline)
         unset($d['_conflict_aff_session']);
+        // Protocols (reldyn_protocols.php): a crisis window that opened after the loaded time
+        // starts there, its length kept; the ick's trigger stamp and the parasite's passion clock
+        // come back to it. A grief from a death after the loaded time is kept (the policy kept the
+        // state) but its phases count from the loaded time.
+        if (is_array($d['_unstable_window'] ?? null)) {
+            self::clampIn($d, ['_unstable_window', 'start_gamets'], $T);
+        }
+        self::clampIn($d, ['_ick_tracker', 'ick_triggered_gamets'], $T);
+        self::clampIn($d, [RelDynProtocols::PARASITE_CLOCK_KEY], $T);
+        foreach (array_keys(is_array($d['_grief_bonds'] ?? null) ? $d['_grief_bonds'] : []) as $deceased) {
+            self::clampIn($d, ['_grief_bonds', $deceased, 'death_gamets'], $T);
+        }
         // Pending romance moments from exchanges the load discarded
         if (is_array($d['_romance']['pending'] ?? null)) {
             $pending = array_values(array_filter($d['_romance']['pending'], static fn($m) =>

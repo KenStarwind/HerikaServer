@@ -34,6 +34,14 @@
  *      positive self-eval from diary"); self-confidence, never eval-scored, follows its own
  *      evidence (RelationshipDynamics::deriveConfidenceInput) since the previous entry.
  *
+ * Not reachable on CHIM 3.4.1 without a core hook (open question, batch O review): the marked
+ * moments and the maturity-gated depth in the diary TEXT itself. generateFollowerDiary rebuilds
+ * the NPC from the database (setOldGlobalsFromCurrentNpcData) and calls the connector with no
+ * ext hook, so what context_pre adds never reaches it; RelationshipDynamics::
+ * generateDiaryPromptContext / shouldGenerateDiaryReflection wait for such a hook. Core's presets
+ * also ship AUTO_DIARY off: without the player's diary requests or the follower preset no
+ * diarylog row arrives and no reflection runs (the moments stay kept, at most max_moments).
+ *
  * In front of the LLM: feelings, never numbers (the moments as she would feel them, her state in
  * band words, her depth in words) and her own diary text.
  * Units: gamets = raw game-calendar gamets; rowids = diarylog rowids; dimension points 0..100,

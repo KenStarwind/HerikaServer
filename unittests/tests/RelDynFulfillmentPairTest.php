@@ -4,6 +4,7 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
+require_once __DIR__ . '/RelDynFacetAppraisalTest.php';
 
 /**
  * Rulings 2026-09-24 §11, fulfillment-per-pair: fulfillment is stored and computed per
@@ -182,6 +183,63 @@ final class RelDynFulfillmentPairTest extends TestCase
             'an NPC remark the player never answered is not presence');
         RelationshipDynamics::advanceFulfillment('Aela', $d, self::T0 + 2 * self::HOUR, true, true);
         $this->assertTrue(RelDynFulfillment::wasPresentOn(RelDynFulfillment::pairState($d), RelDynFulfillment::gameDayOf(self::T0)));
+    }
+
+    /**
+     * Place time and shared experiences fill the player pair only on turns of that pair (batch O
+     * review; rulings §11): her own remarks in a forest the player never answers, a fight she
+     * only watched and her own drink are not time with the player.
+     */
+    public function testPlaceTimeAndExperiencesFillThePlayerPairOnlyOnItsOwnTurns(): void
+    {
+        $prefs = $this->prefs();
+        $levels = fn(array $d) => RelDynFulfillment::pairState($d)['lv'];
+        $alone = $this->npc();
+        RelDynFulfillment::ensure($alone, $prefs, self::T0);
+        $start = $levels($alone);
+        // Six of her own remarks an hour apart in the woods: no word from the player
+        for ($h = 0; $h <= 5; $h++) {
+            RelDynFacets::placeTurn('Aela', $alone, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0 + $h * self::HOUR, false);
+        }
+        $this->assertEquals($start, $levels($alone), 'a follower the player never talks to is not fulfilling the player pair');
+        // A fight she only watched and her own drink: hers alone
+        RelDynFacets::experienceThing('Aela', $alone, 'activity', 'combat', $prefs, self::T0 + 6 * self::HOUR, null, null);
+        RelDynFacets::experienceThing('Aela', $alone, 'item', 'Nord Mead', $prefs, self::T0 + 6 * self::HOUR, ['nature' => 0.5], null);
+        $this->assertEquals($start, $levels($alone), 'experiences outside the pair');
+
+        // The same woods with the player's word each hour: the hours between those turns are the pair's
+        $together = $this->npc();
+        RelDynFulfillment::ensure($together, $prefs, self::T0);
+        for ($h = 0; $h <= 5; $h++) {
+            RelDynFacets::placeTurn('Aela', $together, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0 + $h * self::HOUR, true);
+        }
+        $this->assertGreaterThan($start['nature'], $levels($together)['nature'], 'time in the woods together');
+
+        // Her own remarks between two turns of the pair in the same place do not break the stretch;
+        // a remark of hers somewhere else does
+        $mixed = $this->npc();
+        RelDynFulfillment::ensure($mixed, $prefs, self::T0);
+        RelDynFacets::placeTurn('Aela', $mixed, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0, true);
+        RelDynFacets::placeTurn('Aela', $mixed, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0 + 2 * self::HOUR, false);
+        RelDynFacets::placeTurn('Aela', $mixed, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0 + 5 * self::HOUR, true);
+        $pairOnly = $this->npc();
+        RelDynFulfillment::ensure($pairOnly, $prefs, self::T0);
+        RelDynFacets::placeTurn('Aela', $pairOnly, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0, true);
+        RelDynFacets::placeTurn('Aela', $pairOnly, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0 + 5 * self::HOUR, true);
+        $this->assertGreaterThan($start['nature'], $levels($mixed)['nature']);
+        $this->assertEquals($levels($pairOnly), $levels($mixed), 'the same five hours together, her remark in between or not');
+        $apart = $this->npc();
+        RelDynFulfillment::ensure($apart, $prefs, self::T0);
+        RelDynFacets::placeTurn('Aela', $apart, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0, true);
+        RelDynFacets::placeTurn('Aela', $apart, 'Jorrvaskr', ['combat' => 0.6, 'crowd' => 0.5], $prefs, self::T0 + 2 * self::HOUR, false);
+        RelDynFacets::placeTurn('Aela', $apart, 'Fallowstone Woods', RelDynFacetAppraisalTest::FOREST, $prefs, self::T0 + 5 * self::HOUR, true);
+        $this->assertEquals($start['nature'], $levels($apart)['nature'], 'she was in Jorrvaskr in between: arrival, no stretch');
+
+        // A fight beside the player is the pair's
+        $fought = $this->npc();
+        RelDynFulfillment::ensure($fought, $prefs, self::T0);
+        RelDynFacets::experienceThing('Aela', $fought, 'activity', 'combat', $prefs, self::T0 + self::HOUR, ['combat' => 1.0]);
+        $this->assertGreaterThan($start['combat'], $levels($fought)['combat']);
     }
 
     public function testASaveLoadRebaselinesEveryPair(): void

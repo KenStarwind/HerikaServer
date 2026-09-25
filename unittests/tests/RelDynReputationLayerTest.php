@@ -127,4 +127,73 @@ final class RelDynReputationLayerTest extends TestCase
         $this->assertSame(['trust' => 0.0, 'respect' => 0.0, 'comfort' => 0.0], $d[RelDynReputation::KEY]['raw']);
         $this->assertEqualsWithDelta(30.0, $d['dimensions']['trust']['x'], 1e-9);
     }
+
+    /**
+     * batch O review: a held offset is neutral at the edge of the range. An NPC whose trust is 8
+     * meets an infamous player (trust -20 wanted): only the 8 there are is taken, only 8 is held,
+     * and when the first impression has faded she is back at 8, not 20.
+     */
+    public function testAnOffsetAtTheEdgeOfTheRangeHoldsOnlyWhatItTookAndGivesBackExactly(): void
+    {
+        $d = self::npc(['raw' => ['trust' => -20.0, 'respect' => 0.0, 'comfort' => -15.0], 'fame' => 0.0, 'infamy' => 1.0, 'meaningful' => 0]);
+        $d['dimensions']['trust'] = ['x' => 8.0, 'baseline' => 8.0];
+        $d['dimensions']['comfort'] = ['x' => 4.0, 'baseline' => 4.0];
+        RelDynReputation::apply($d, 'Muiri');
+        $this->assertEqualsWithDelta(0.0, $d['dimensions']['trust']['x'], 1e-9);
+        $this->assertEqualsWithDelta(-8.0, RelDynReputation::heldOffset($d, 'trust'), 1e-9, 'held = what was taken');
+        $this->assertEqualsWithDelta(-4.0, RelDynReputation::heldOffset($d, 'comfort'), 1e-9);
+        $this->assertEqualsWithDelta(-8.0, RelationshipDynamics::heldTemporaryOffset($d, 'trust'), 1e-9, 'the physics sees her at 8');
+        // Life goes on meanwhile: a kind word lifts her trust by 5 while the rumour still holds
+        $d['dimensions']['trust']['x'] += 5.0;
+        RelDynReputation::apply($d, 'Muiri');
+        $this->assertEqualsWithDelta(0.0, $d['dimensions']['trust']['x'], 1e-9, 'the rumour takes what it could not before');
+        $this->assertEqualsWithDelta(-13.0, RelDynReputation::heldOffset($d, 'trust'), 1e-9);
+        // Faded: everything held comes back, nothing more
+        for ($i = 0; $i < 30; $i++) RelDynReputation::countInteraction($d, 1.0);
+        RelDynReputation::apply($d, 'Muiri');
+        $this->assertEqualsWithDelta(13.0, $d['dimensions']['trust']['x'], 1e-3, '8 + the kind word');
+        $this->assertEqualsWithDelta(4.0, $d['dimensions']['comfort']['x'], 1e-3);
+        $this->assertEqualsWithDelta(0.0, RelDynReputation::heldOffset($d, 'trust'), 1e-3);
+        // The same at the top: fame's respect near the cap
+        $f = self::npc(['raw' => ['trust' => 0.0, 'respect' => 20.0, 'comfort' => 0.0], 'fame' => 1.0, 'infamy' => 0.0, 'meaningful' => 0]);
+        $f['dimensions']['respect'] = ['x' => 95.0, 'baseline' => 95.0];
+        RelDynReputation::apply($f, 'Aela the Huntress');
+        $this->assertEqualsWithDelta(100.0, $f['dimensions']['respect']['x'], 1e-9);
+        $this->assertEqualsWithDelta(5.0, RelDynReputation::heldOffset($f, 'respect'), 1e-9);
+        for ($i = 0; $i < 30; $i++) RelDynReputation::countInteraction($f, 1.0);
+        RelDynReputation::apply($f, 'Aela the Huntress');
+        $this->assertEqualsWithDelta(95.0, $f['dimensions']['respect']['x'], 1e-3);
+    }
+
+    /**
+     * batch O review: the first impression is a stranger's. Someone who already knows the player
+     * (an interaction history from before this layer, core's bond with a title or an affinity
+     * outside the stranger band, a context tier reached) heard nothing new: no offset, no felt
+     * line, and no player profile is needed to know it.
+     */
+    public function testSomeoneWhoAlreadyKnowsThePlayerHearsNoFirstImpression(): void
+    {
+        $cases = [
+            'history' => [['interaction_count' => 40, 'total_positive_interactions' => 25], null],
+            'spouse (core, a fresh RelDyn blob)' => [['_core_rel_type' => 'romantic'], 70.0],
+            'long-time companion (core affinity)' => [['_core_rel_type' => 'neutral'], 45.0],
+            'an enemy (core affinity)' => [['_core_rel_type' => 'neutral'], -40.0],
+            'a context tier reached' => [['context_tier_hwm' => 2], null],
+        ];
+        foreach ($cases as $why => [$extra, $coreAff]) {
+            $d = self::npc() + $extra;
+            RelDynReputation::apply($d, 'Aela the Huntress', $coreAff);
+            $this->assertSame(['trust' => 0.0, 'respect' => 0.0, 'comfort' => 0.0], $d[RelDynReputation::KEY]['raw'] ?? null, $why);
+            $this->assertEqualsWithDelta(30.0, $d['dimensions']['trust']['x'], 1e-9, $why);
+            $this->assertNull(RelDynReputation::feltText('Aela the Huntress', 'Kaida', $d), $why);
+            $this->assertSame([], RelDynReputation::jev($d)['offsets'], $why);
+        }
+        // A stranger (neutral, affinity 0, nothing between them yet) waits for what is known
+        $stranger = self::npc() + ['_core_rel_type' => 'neutral'];
+        RelDynReputation::apply($stranger, 'Aela the Huntress', 0.0);
+        $this->assertArrayNotHasKey('raw', $stranger[RelDynReputation::KEY] ?? [], 'no profile here: asked again next time');
+        $this->assertFalse(RelDynReputation::metBefore($stranger, 0.0));
+        $this->assertFalse(RelDynReputation::metBefore($stranger, 5.0), 'core stranger band -5..5');
+        $this->assertTrue(RelDynReputation::metBefore($stranger, 6.0));
+    }
 }

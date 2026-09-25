@@ -16,7 +16,8 @@
  *                          prompt-gating port is the consolidation point).
  *   <emotional_core>       the most salient enduring felt lines (RelDynFelt::splitCore).
  * The rest of the lines go to context.php's <subtext> (recency). Toggle: context_pre_enabled.
- * NPC-to-NPC radiant requests get none of it (the player is not in the exchange).
+ * NPC-to-NPC exchanges (a radiant round, or a rechat / continue answering another NPC:
+ * RelationshipDynamics::isNpcExchange) get none of it (the player is not in the exchange).
  */
 
 $npcName = $GLOBALS['HERIKA_NAME'] ?? '';
@@ -26,9 +27,10 @@ if (empty($npcName) || $npcName === 'The Narrator') {
 
 require_once __DIR__ . '/relationship_dynamics.php';
 
-// NPC-to-NPC radiant dialogue: the player is not in this exchange (prerequest skips it too), so
-// no player-directed steering, and the player's one-shots (blush, boundary) wait for the player.
-if (RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'] ?? null)) {
+// NPC-to-NPC exchange (radiant, or a rechat / continue answering another NPC): the player is not
+// in it (prerequest skips it too), so no player-directed steering, and the player's one-shots
+// (blush, boundary) wait for the player.
+if (RelationshipDynamics::isNpcExchange($GLOBALS['gameRequest'] ?? null, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'), (string) $npcName)) {
     unset($GLOBALS[RelDynFelt::HANDOFF_GLOBAL]);
     return;
 }

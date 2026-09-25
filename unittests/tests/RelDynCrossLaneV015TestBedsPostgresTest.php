@@ -605,6 +605,60 @@ final class RelDynCrossLaneV015TestBedsPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures);
     }
 
+    // ------------------------------------------------------------------ an NPC-NPC rechat is no turn of the player pair
+
+    /**
+     * batch O review: a rechat with Mikael is an NPC-to-NPC exchange. Her reply gets his
+     * exclusivity line and nothing player-directed (no passion toward the player, no refusal of
+     * the player's demands, no contempt for the player beside "their heart is with Kaida"), and his
+     * flirts feed nothing of the player pair (passion, interaction count, contact, fulfillment,
+     * so neither the pull he meets). The player's own word afterwards is a turn of the pair again.
+     */
+    public function testARechatWithTheSuitorIsNoTurnOfThePlayerPair(): void
+    {
+        $this->hello();
+        $this->fond(45.0);
+        $this->aggrieved();
+        $beds = array_keys(self::BEDS);
+        $before = array_combine($beds, array_map(fn($npc) => $this->dynamics($npc), $beds));
+        $t = self::at(self::N0, 19.0);
+        $lines = ['You look lovely today. Share a drink with me?', 'How was the hunt?',
+                  'Come now, one dance with me. You are stunning.', 'How was the hunt?'];
+        $pulls = [];
+        foreach ($lines as $i => $line) {
+            foreach ($beds as $k => $npc) {
+                $block = $this->flirt($npc, $line, $t + 3600 * $i + 600 * $k, "rechat{$i}");
+                $this->assertSame([], $this->felt[$npc]["rechat{$i}"], "{$npc}: nothing player-directed in her reply to Mikael ({$line})");
+                if (RelDynExclusivity::isRomanticLine($line)) {
+                    $this->assertNotNull($block, "{$npc}: his move is turned aside");
+                    $this->assertStringContainsString(self::PLAYER, $block, "{$npc}: a partner names the player");
+                }
+                $pulls[$npc][] = $this->metPull($npc);
+            }
+        }
+        foreach ($beds as $npc) {
+            $after = $this->dynamics($npc);
+            $this->assertNotNull(RelDynExclusivity::suitor($after, self::SUITOR), "{$npc}: her ledger of him");
+            $b = $before[$npc];
+            unset($after[RelDynExclusivity::STATE_KEY], $b[RelDynExclusivity::STATE_KEY]);
+            $this->assertEquals($b, $after, "{$npc}: four rechats with Mikael moved nothing of the player pair");
+            $this->assertLessThanOrEqual($pulls[$npc][0] + 1e-9, max($pulls[$npc]), "{$npc}: his flirts do not raise the pull he meets " . json_encode($pulls[$npc]));
+        }
+
+        // The player's word: a turn of the pair, steered toward the player again
+        $i = 0;
+        foreach ($beds as $npc) $this->turn($npc, 'I am back, love.', self::at(self::N0 + 1, 9.0) + 600 * $i++, 'back');
+        foreach ($beds as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertSame(intval($before[$npc]['interaction_count'] ?? 0) + 1, intval($d['interaction_count'] ?? 0), $npc);
+            $this->assertGreaterThan(floatval($before[$npc]['_last_contact_gamets'] ?? 0), floatval($d['_last_contact_gamets'] ?? 0), $npc);
+            $this->assertNotSame([], $this->felt[$npc]['back'], "{$npc}: the player's turn is steered");
+        }
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls, 'no trait read');
+        $this->assertSame([], $this->db->failures);
+    }
+
     // ------------------------------------------------------------------ command denial x boundaries
 
     public function testTheSameOrderMeetsTheBoundaryInHerOwnWay(): void

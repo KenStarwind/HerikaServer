@@ -167,6 +167,43 @@ final class RelDynItemModifiersPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures);
     }
 
+    /**
+     * batch O review: the watermark loses nothing. Twelve gifts in one handover are all counted
+     * over her next requests (the oldest first); her own drink is still found behind ten meals of
+     * other people's; each row still counts once.
+     */
+    public function testNothingIsLostBehindTheWatermark(): void
+    {
+        $d = self::npc(['social' => 0.8]);
+        $this->event('itemfound', 'Kaida gave 1 Sweetroll to Lynly Star-Sung,(value 2 gold)', self::NOW - 3000);
+        $this->assertSame(['Sweetroll'], array_column(RelationshipDynamics::processItemEvents($d, $GLOBALS['gameRequest'], 'Lynly Star-Sung', 'Kaida', 'Stoic')['gift'], 'item'));
+
+        for ($i = 0; $i < 12; $i++) $this->event('itemfound', "Kaida gave 1 Flower{$i} to Lynly Star-Sung,(value 1 gold)", self::NOW - 2900 + $i);
+        $seen = [];
+        for ($r = 0; $r < 3; $r++) {
+            $res = RelationshipDynamics::processItemEvents($d, $GLOBALS['gameRequest'], 'Lynly Star-Sung', 'Kaida', 'Stoic');
+            $seen = array_merge($seen, array_column($res['gift'] ?? [], 'item'));
+        }
+        $this->assertSame(array_map(fn($i) => "Flower{$i}", range(0, 11)), $seen, 'all twelve, in order, once');
+
+        // She drinks; then ten meals of other people's; then the player hands her lavender
+        $this->event('itemfound', 'Lynly Star-Sung drank Honningbrew Mead', self::NOW - 2000);
+        for ($i = 0; $i < 10; $i++) $this->event('itemfound', ($i % 2 ? 'Kaida' : 'Mikael') . ' ate Apple', self::NOW - 1900 + $i);
+        $this->event('infoaction', 'Mikael consumes Nord Mead.', self::NOW - 1500);
+        $this->event('itemfound', 'Kaida gave 1 Lavender to Lynly Star-Sung,(value 1 gold)', self::NOW - 1000);
+        $next = RelationshipDynamics::processItemEvents($d, $GLOBALS['gameRequest'], 'Lynly Star-Sung', 'Kaida', 'Stoic');
+        $this->assertSame(['Honningbrew Mead'], array_column($next['consumable'] ?? [], 'item'), 'her mead, behind the others');
+        $this->assertSame(['Lavender'], array_column($next['gift'] ?? [], 'item'));
+        $this->assertSame([], RelationshipDynamics::processItemEvents($d, $GLOBALS['gameRequest'], 'Lynly Star-Sung', 'Kaida', 'Stoic'), 'once');
+
+        // A blob from before the two watermarks (one mark): the consumables start from it
+        $old = self::npc(['social' => 0.8]);
+        $old['_item_event_rowid'] = intval($d['_item_event_rowid']);
+        $this->event('itemfound', 'Lynly Star-Sung drank Nord Mead', self::NOW - 500);
+        $this->assertSame(['Nord Mead'], array_column(RelationshipDynamics::processItemEvents($old, $GLOBALS['gameRequest'], 'Lynly Star-Sung', 'Kaida', 'Stoic')['consumable'] ?? [], 'item'));
+        $this->assertSame([], $this->db->failures);
+    }
+
     public function testADrinkSheLikesFeelsBetterAndWearsOffExactly(): void
     {
         // Mead reads social .8 / domestic .3: Lynly (social +.8) enjoys it, a loner (social -.8) does not

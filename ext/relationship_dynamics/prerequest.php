@@ -62,6 +62,12 @@ require_once __DIR__ . '/relationship_dynamics.php';
 if (RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'])) {
     return;
 }
+// A rechat answering another NPC is NPC-to-NPC too (its payload names that speaker; core sets
+// RECHAT_PREVIOUS_SPEAKER only after these hooks): no contact, reunion, passion or fulfillment
+// of the player pair for anyone in it.
+if (RelationshipDynamics::isNpcExchange($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')))) {
+    return;
+}
 
 // Skip narrator
 $npcName = $GLOBALS['HERIKA_NAME'] ?? '';
@@ -143,12 +149,6 @@ if ($gametsDelta > 0) {
 // Auto-generate love language if missing
 RelationshipDynamics::ensureLoveLanguage($npcName, $dynamics);
 
-// ========== REPUTATION (reputation-layer) ==========
-// What she heard of the player before meeting them (fixed at the first contact the player
-// profile knows anything), held on trust / respect / comfort and fading with every meaningful
-// interaction since.
-RelDynReputation::apply($dynamics, $npcName);
-
 // Load config toggles
 $reldynCfg = RelationshipDynamics::getConfig();
 
@@ -156,6 +156,8 @@ $reldynCfg = RelationshipDynamics::getConfig();
 if ($reldynCfg['passion_enabled'] ?? true) {
     RelationshipDynamics::decayPassion($dynamics);
 }
+// MDD 6.2 Parasite: a transactional bond's passion halves every 2 game hours (reldyn_protocols.php)
+RelDynProtocols::parasitePassionDecay($dynamics, RelationshipDynamics::currentGamets());
 if ($reldynCfg['jealousy_enabled'] ?? true) {
     RelationshipDynamics::decayJealousy($dynamics);
 }
@@ -211,6 +213,13 @@ try {
     // Best effort
     error_log("[RelDyn-PRE] Affinity snapshot read failed for {$npcName}: " . $e->getMessage());
 }
+
+// ========== REPUTATION (reputation-layer) ==========
+// What she heard of the player before meeting them (fixed at the first contact the player
+// profile knows anything; nothing for someone who already knows the player, read against core's
+// Player entry just snapshot), held on trust / respect / comfort and fading with every
+// meaningful interaction since.
+RelDynReputation::apply($dynamics, $npcName, $GLOBALS['RELDYN_PRE_AFF'] !== null ? floatval($GLOBALS['RELDYN_PRE_AFF']) : null);
 
 // ========== CHIM → RelDyn AFFINITY DIMENSION SYNC ==========
 // CHIM owns aff (-100..+100); RelDyn XYZ uses dimensions.affinity.x (0..100) as a
@@ -416,11 +425,13 @@ if (!empty($reldynCfg['autonomous_diary_enabled'])) {
 }
 
 // ========== UNSTABLE WINDOW CHECK (PR 10) ==========
+// The player showing up is this request; the NPCs around are read by the context hook, where
+// core's CACHE_PEOPLE is set (RelDynProtocols::crisisTurn).
 if (!empty($reldynCfg['divine_intervention_enabled'])) {
     $unstableWindow = $dynamics['_unstable_window'] ?? null;
     if ($unstableWindow && empty($unstableWindow['resolved'])) {
         $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
-        $windowResult = RelationshipDynamics::checkUnstableWindow($npcName, $dynamics, $playerName);
+        $windowResult = RelationshipDynamics::checkUnstableWindow($npcName, $dynamics, $playerName, []);
         if ($windowResult && $windowResult !== 'active') {
             RelationshipDynamics::log("[RelDyn-PRE] Unstable window resolved: {$windowResult} for {$npcName}");
         }

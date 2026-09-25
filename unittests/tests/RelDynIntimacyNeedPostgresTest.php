@@ -391,6 +391,13 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
     public function testIntimacyThePluginReportsKeepsHerCoveredWithoutTheEval(): void
     {
         $this->talkTo(self::AELA, self::T0);
+        // A partner at ease with the player (the protocols lane, MDD 6.3: touching a partner who is
+        // cold toward the player, comfort low and passion gone, is the Ick, not intimacy)
+        $d = RelationshipDynamics::getDynamics(self::AELA);
+        foreach (['comfort' => 55.0, 'warmth' => 55.0] as $dim => $x) $d['dimensions'][$dim]['x'] = $d['dimensions'][$dim]['baseline'] = $x;
+        RelationshipDynamics::setPassion($d, 35.0);
+        RelationshipDynamics::saveDynamics(self::AELA, $d);
+        RelationshipDynamics::endRequest();
         for ($k = 0; $k < 7; $k++) {
             $day = self::T0 + $k * self::DAY;
             $this->talkTo(self::AELA, $day + self::HOUR);

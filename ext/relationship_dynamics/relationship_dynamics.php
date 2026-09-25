@@ -198,11 +198,13 @@ class RelationshipDynamics
     /** Minimum play gamets between DI checks (one decay tick = ~10 real min). */
     const DI_COOLDOWN_GAMETS = 1389000; // same as GAMETS_PER_DECAY_TICK
 
-    /** Unstable window duration: 24 real hours of play time. */
+    /**
+     * April's unstable window: 24 real hours of play time (the debug harness still builds windows
+     * with it). The window now runs on the game calendar: config protocols.divine.
+     */
     const UNSTABLE_WINDOW_GAMETS = 200016000; // 24 * GAMETS_PER_REAL_HOUR
 
-    // ========== GRIEF CONSTANTS (PR 10) ==========
-    const GRIEF_PHASE_HOURS = [1 => 0, 2 => 2, 3 => 5, 4 => 15];
+    // Grief phases: config protocols.grief.phase_game_hours (game calendar, reldyn_protocols.php).
 
     // Attachment (MDD 6.1) is two axes now (decisions 2026-09-24 §12): see the ATTACHMENT: TWO
     // AXES section and config 'attachment' (attachmentDefaults). The April temperament ->
@@ -1231,6 +1233,10 @@ class RelationshipDynamics
             // ===== Core's request poll (roadmap prerequest-on-poll) =====
             // What each poll runs: the play heartbeat beat, the save-load reconcile (onPollRequest).
             'poll' => self::pollConfigDefaults(),
+            // ===== Divine Intervention, grief / widow's lock, the Ick, the Parasite (P3) =====
+            // Window and fork thresholds, grief phases and felt text, ick tuning, the transactional
+            // ledger (reldyn_protocols.php, RelDynProtocols::configDefaults()).
+            'protocols' => RelDynProtocols::configDefaults(),
         ];
     }
 
@@ -2311,7 +2317,11 @@ class RelationshipDynamics
     //      - affinity absence decay (calculateDecayTicks, checkpoint _decay_last_game_gamets,
     //        consumed each prerequest; floored at the baseline, never below core 0);
     //      - walkaway boundary test (24-48 h) and hoover sleeper (72-96 h);
-    //      - consumable expiry, plasticity override (30 game days), night/moon.
+    //      - consumable expiry, plasticity override (30 game days), night/moon;
+    //      - Divine Intervention's unstable window (24 h), grief phases (48 h / 1 week /
+    //        4 weeks x the bond weight), the ick's trigger stamp, the parasite half-life (2 h)
+    //        (reldyn_protocols.php; grief is a process in the world, not a negative state
+    //        toward the player).
     //    Rule: negative states never go DOWN on this clock (time does not heal); they
     //    only go down through positive contact. Positive states fade on it.
     // 2. FILTERED PLAY CLOCK: _accumulated_play_gamets, per NPC, advanced by
@@ -2327,7 +2337,8 @@ class RelationshipDynamics
     //    reunion from a wait). A wait or sleep must never be able to trigger or clear these.
     // 3. PLAY SECONDS: _accumulated_time, the play clock's credit in real-second units
     //    (updateAccumulatedTime). For positive cooldowns that must not be farmable (diary
-    //    reflection), grief bond duration, and the resentment-decay debounce fallback
+    //    reflection), grief bond duration (the widow's weight: play hours the bond has been
+    //    in the player's world, RelDynProtocols::bondHours), and the resentment-decay debounce fallback
     //    before the play clock has a value. Values stored by the real-time build carry over.
     //
     // A checkpoint that is unset, or ahead of its clock (a value from another clock or
@@ -3727,7 +3738,15 @@ class RelationshipDynamics
         $cfg = self::getConfig();
         $max = min(floatval($cfg['passion_max'] ?? 100.0), $ceiling);
 
-        self::setPassion($dynamics, min($max, self::getPassion($dynamics) + $amount));
+        // The Ick (MDD 6.3): while it lasts the passion multiplier inverts, gains become losses
+        // (the eval's passion signal is inverted in applyIckEffects; this is every other gain)
+        $amount = floatval($amount);
+        if ($amount > 0 && !empty($dynamics['_ick_tracker']['ick_active']) && !empty($cfg['ick_system_enabled'] ?? true)) {
+            $amount = -$amount;
+            self::log("[ICK] {$source} passion gain inverted: " . round($amount, 3));
+        }
+
+        self::setPassion($dynamics, max(0.0, min($max, self::getPassion($dynamics) + $amount)));
         $dynamics['passion_updated_at'] = self::getPlayGamets($dynamics);
 
         // Track source
@@ -3969,6 +3988,47 @@ class RelationshipDynamics
     {
         $type = is_array($gameRequest) ? strtolower(trim((string) ($gameRequest[0] ?? ''))) : '';
         return in_array($type, self::RADIANT_REQUEST_TYPES, true);
+    }
+
+    /** Core request types that answer a previous speaker (main.php RECHAT_PREVIOUS_SPEAKER). */
+    const PREVIOUS_SPEAKER_REQUEST_TYPES = ['rechat', 'continue', 'continue_group'];
+
+    /**
+     * The NPC a rechat / continue / continue_group answers, when that previous speaker is another
+     * NPC (not the player, the Narrator or "everyone"); null otherwise or when unknown. Core sets
+     * RECHAT_PREVIOUS_SPEAKER after the prerequest hooks (main.php); before that a rechat names
+     * its speaker in its own payload ($gameRequest[3] JSON 'speaker') and a continue is not known
+     * yet. A continue whose previous speaker is $npcName herself answers nobody else.
+     */
+    public static function previousNpcSpeaker($gameRequest, string $playerName, ?string $npcName = null): ?string
+    {
+        if (!is_array($gameRequest)) return null;
+        $type = strtolower(trim((string) ($gameRequest[0] ?? '')));
+        if (!in_array($type, self::PREVIOUS_SPEAKER_REQUEST_TYPES, true)) return null;
+        $prev = trim((string) ($GLOBALS['RECHAT_PREVIOUS_SPEAKER'] ?? ''));
+        if ($prev === '' && $type === 'rechat') {
+            $payload = json_decode(trim((string) ($gameRequest[3] ?? '')), true);
+            $prev = is_array($payload) && is_string($payload['speaker'] ?? null) ? trim($payload['speaker']) : '';
+        }
+        if ($prev === '' || strcasecmp($prev, trim($playerName)) === 0 || strcasecmp($prev, self::PLAYER_RELATIONSHIP_KEY) === 0
+            || in_array(mb_strtolower($prev), ['everyone', 'all', 'the narrator', 'narrator'], true)) {
+            return null;
+        }
+        if ($type !== 'rechat' && $npcName !== null && strcasecmp($prev, trim($npcName)) === 0) {
+            return null;   // she goes on with her own line
+        }
+        return $prev;
+    }
+
+    /**
+     * An NPC-to-NPC exchange: the player is not in it (a radiant round, or a rechat / continue
+     * answering another NPC: previousNpcSpeaker). No RelDyn hook reads or steers the player
+     * relationship for it; the context hook gives only natural exclusivity's NPC-NPC line
+     * (decisions §17). Core's relationship_system handles NPC <-> NPC.
+     */
+    public static function isNpcExchange($gameRequest, string $playerName, ?string $npcName = null): bool
+    {
+        return self::isRadiantRequest($gameRequest) || self::previousNpcSpeaker($gameRequest, $playerName, $npcName) !== null;
     }
 
     // ========== CORE'S REQUEST POLL (roadmap prerequest-on-poll) ==========
@@ -4741,6 +4801,12 @@ class RelationshipDynamics
             $f = self::advanceFulfillment($npcName, $dyn, $now, false);
             $result['fulfillment'] = $f;
             $changed = $changed || $f['changed'];
+        }
+        // Grief phases, an unstable window nobody came to, the parasite's passion half-life:
+        // they run on the game calendar whether or not the player is around (reldyn_protocols.php)
+        if (RelDynProtocols::calendarTick($npcName, $dyn, $now)) {
+            $result['protocols'] = true;
+            $changed = true;
         }
 
         // A walkaway resolves (or a Toxic sleeper hoovers back) while the player is elsewhere.
@@ -7187,15 +7253,20 @@ class RelationshipDynamics
                 ($GLOBALS['RELDYN_ATTACHMENT_CONFLICT_PASSION'] ?? 0) + $conflictPassion;
         }
 
-        // Widow's Lock: cap affinity gains for grieving NPCs
+        // Widow's Lock: cap affinity gains for grieving NPCs. The ceiling and the affinity delta are
+        // core points (-100..100); x is the mirror (0..100), read back in core points here.
         if ($dimensionId === 'affinity' && $rawDelta > 0) {
             $ceiling = floatval($dynamics['_widow_lock_ceiling'] ?? 100);
             if ($ceiling < 100) {
-                $currentAff = floatval($dims['affinity']['x'] ?? 0);
+                $currentAff = floatval($dims['affinity']['x'] ?? 50) * 2.0 - 100.0;
+                $held = $modifiedDelta;
                 if ($currentAff >= $ceiling) {
                     $modifiedDelta = 0;
                 } elseif (($currentAff + $modifiedDelta) > $ceiling) {
                     $modifiedDelta = max(0, $ceiling - $currentAff);
+                }
+                if ($modifiedDelta < $held) {
+                    self::log("[GRIEF] widow's lock: affinity gain " . round($held, 3) . ' -> ' . round($modifiedDelta, 3) . " at core {$currentAff} (ceiling {$ceiling})");
                 }
             }
         }
@@ -7947,15 +8018,8 @@ class RelationshipDynamics
             // affinity_delta moved the mirror; push it to core as a locked delta
             self::commitPlayerAffinity($npcName, $dynamics);
             self::saveDynamics($npcName, $dynamics);
-
-            // ========== BETRAYAL DETECTION (PR 10) ==========
-            // If trust dropped by 50+ in a single eval, fire Divine Intervention
-            $trustDeltaActual = $evalResults['trust'] ?? 0;
-            if ($trustDeltaActual <= -50 && !empty($config['divine_intervention_enabled'])) {
-                self::triggerDivineIntervention($npcName, 'betrayal', 4, $dynamics);
-                self::log("[RelDyn-EVAL] Betrayal detected for {$npcName}: trust_delta={$trustDeltaActual}");
-                self::saveDynamics($npcName, $dynamics);   // the worker has no later save
-            }
+            // Betrayal by a bonded partner (Divine Intervention) is read per applied item
+            // (RelDynProtocols::onEvalItem): the contract's trust signal never reaches -50.
         }
         // Romance promotion (rulings §9): the moments these items carried, checked on core's
         // fresh type and affinity (after the commit above); saves what it consumed.
@@ -8806,6 +8870,9 @@ class RelationshipDynamics
         // interaction against what she had heard of the player (reputation-layer)
         RelDynGoals::onEvalItem((string) $npcName, $dynamics, $n, $itemGamets);
         RelDynReputation::countInteraction($dynamics, floatval($n['significance']));
+        // Betrayal by a bonded partner (Divine Intervention) and the exchange's kind in the
+        // parasite ledger (reldyn_protocols.php)
+        RelDynProtocols::onEvalItem((string) $npcName, $n, $dynamics);
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -9188,18 +9255,22 @@ class RelationshipDynamics
      * One flagged grievance (not jealousy) into the accumulator (MDD 15.5, decisions §5):
      *   raw = grievance_resentment_raw (5) x grievance_severity_mult[severity]
      *         x (1 + power_gap) x post-hoover multiplier (_hoover_resentment_mult, >= 1)
+     *         x $dutyFactor (MDD 9 duty override: quest-scripted friction with a hostile NPC is
+     *           not held against the bond; 1 off duty)
      * through applyDelta (suppressed +50%, inverted rubber band). A people-pleaser
-     * (isPeoplePleaser) takes it as resentment_self instead. Logged in grievance_log (last 10).
+     * (isPeoplePleaser) takes it as resentment_self instead. Logged in grievance_log (last 10;
+     * 'duty' = the factor when it applied).
      *
      * @return array{raw: float, amount: float, target: string, power_gap: float, severity: int}
      */
-    public static function recordGrievance(array &$dynamics, array $grievance, array $powerFacts, string $summary = ''): array
+    public static function recordGrievance(array &$dynamics, array $grievance, array $powerFacts, string $summary = '', float $dutyFactor = 1.0): array
     {
         $severity = max(0, min(3, intval($grievance['severity'] ?? 0)));
         $sevMult = floatval(((array) self::configValue('grievance_severity_mult'))[$severity] ?? 1.0);
         $gap = self::computePowerGap($powerFacts);
         $hoover = max(1.0, floatval($dynamics['_hoover_resentment_mult'] ?? 1.0));
-        $raw = floatval(self::configValue('grievance_resentment_raw')) * $sevMult * (1.0 + $gap['gap']) * $hoover;   // raw resentment points
+        $dutyFactor = max(0.0, min(1.0, $dutyFactor));
+        $raw = floatval(self::configValue('grievance_resentment_raw')) * $sevMult * (1.0 + $gap['gap']) * $hoover * $dutyFactor;   // raw resentment points
 
         $target = self::isPeoplePleaser($dynamics) ? 'resentment_self' : 'resentment';
         $temperament = $dynamics['inferred_temperament'] ?? null;
@@ -9219,7 +9290,7 @@ class RelationshipDynamics
             'amount'    => round($amount, 4),
             'target'    => $target,
             'gamets'    => self::currentGamets(),   // raw game-calendar gamets (0 when unknown)
-        ];
+        ] + ($dutyFactor < 1.0 ? ['duty' => round($dutyFactor, 4)] : []);
         $dynamics['dimensions']['resentment']['grievance_log'] = array_slice($log, -10);
 
         error_log("[RelDyn-RESENTMENT] grievance kind=" . ($kind ?? '-') . " severity={$severity} power_gap={$gap['gap']} ("
@@ -9265,10 +9336,14 @@ class RelationshipDynamics
                 // Jealousy is not a grievance: it feeds resentment through the calendar conversion (§5)
                 $intensity = max($intensity ?? 0, max(0, min(3, intval($grievance['severity'] ?? 0))));
             } elseif (self::configValue('dimension_engine_enabled')) {
-                $out['grievance'] = self::recordGrievance($dynamics, $grievance, self::powerGapFacts($npcName, $dynamics), $summary);
+                // Duty override (MDD 9): quest-scripted friction is not held against the bond, its
+                // grievance lands at the exchange's duty factor like its negative signals
+                $duty = is_numeric($item['duty_factor'] ?? null) ? max(0.0, min(1.0, floatval($item['duty_factor']))) : 1.0;
+                $out['grievance'] = self::recordGrievance($dynamics, $grievance, self::powerGapFacts($npcName, $dynamics), $summary, $duty);
                 // Wronged again inside the probation of a mature NPC's grievance boundary: the
-                // pattern went on (RelDynConcern::onContact carries out the step-back)
-                if (RelDynConcern::onGrievance($npcName, $dynamics,
+                // pattern went on (RelDynConcern::onContact carries out the step-back). Quest
+                // friction on duty is not the pattern going on.
+                if ($duty >= 1.0 && RelDynConcern::onGrievance($npcName, $dynamics,
                         floatval($item['gamets'] ?? 0) > 0 ? floatval($item['gamets']) : self::currentGamets())) {
                     $out['grievance_boundary_failed'] = true;
                 }
@@ -10484,26 +10559,33 @@ class RelationshipDynamics
     }
 
     /**
-     * Calculate anchor status for DI fork decision.
-     * Trust.x is GLOBAL (not per-bond). Uses it once for player bond,
-     * aff*0.5 as trust proxy for NPC-to-NPC bonds.
+     * Anchor status for the DI fork (dimension design "The Fork"). Trust.x is GLOBAL (not
+     * per-bond): the player's bond counts it once; an NPC bond counts its mirror affinity x
+     * divine.npc_trust_per_affinity. Affinity on the mirror scale 0..100 (the design's affinity).
+     * The dead anchor no one: $exclude (the deceased of this event) and every bond the NPC
+     * grieves are left out. Thresholds: config protocols.divine.
      */
-    public static function calculateAnchorStatus($npcName, &$dynamics): array
+    public static function calculateAnchorStatus($npcName, &$dynamics, array $exclude = []): array
     {
         $bonds = self::getAllBondsForNpc($npcName);
         $dims = $dynamics['dimensions'] ?? [];
+        $cfg = RelDynProtocols::config()['divine'];
+        $dead = array_map('strtolower', array_merge(array_map('strval', $exclude), RelDynProtocols::deadNames(is_array($dynamics) ? $dynamics : [])));
 
         $globalTrustX = floatval($dims['trust']['x'] ?? 0);
         $totalTrust = 0.0;
         $maxAffinity = 0.0;
 
         foreach ($bonds as $targetName => $bond) {
-            $bondAff = ($bond['aff'] + 100) / 2.0; // Scale -100..+100 to 0..100
+            if (in_array(strtolower((string) $targetName), $dead, true)) {
+                continue;
+            }
+            $bondAff = ($bond['aff'] + 100) / 2.0; // core -100..+100 -> mirror 0..100
 
             if ($targetName === self::PLAYER_RELATIONSHIP_KEY) {
                 $totalTrust += $globalTrustX;
             } else {
-                $totalTrust += max(0, $bondAff * 0.5);
+                $totalTrust += max(0, $bondAff * floatval($cfg['npc_trust_per_affinity']));
             }
 
             if ($bondAff > $maxAffinity) {
@@ -10512,8 +10594,8 @@ class RelationshipDynamics
         }
 
         return [
-            'has_anchor'   => ($totalTrust > 100 && $maxAffinity > 60),
-            'is_alone'     => ($totalTrust < 50 && $maxAffinity < 40),
+            'has_anchor'   => ($totalTrust > floatval($cfg['anchor_total_trust_above']) && $maxAffinity > floatval($cfg['anchor_max_affinity_above'])),
+            'is_alone'     => ($totalTrust < floatval($cfg['alone_total_trust_below']) && $maxAffinity < floatval($cfg['alone_max_affinity_below'])),
             'total_trust'  => $totalTrust,
             'max_affinity' => $maxAffinity,
         ];
@@ -10522,8 +10604,9 @@ class RelationshipDynamics
     /**
      * Trigger Divine Intervention — catastrophic event processing.
      * The Fork: anchor → redemption, alone → breaking, neither → unstable window.
+     * $exclude: names that cannot anchor this event (the deceased of a companion death).
      */
-    public static function triggerDivineIntervention($npcName, $eventType, $severity, &$dynamics)
+    public static function triggerDivineIntervention($npcName, $eventType, $severity, &$dynamics, array $exclude = [])
     {
         // Config gate
         $config = self::getConfig();
@@ -10540,7 +10623,7 @@ class RelationshipDynamics
         }
 
         // Calculate anchor status
-        $anchor = self::calculateAnchorStatus($npcName, $dynamics);
+        $anchor = self::calculateAnchorStatus($npcName, $dynamics, $exclude);
 
         // The Fork
         if ($anchor['has_anchor']) {
@@ -10549,7 +10632,7 @@ class RelationshipDynamics
             self::applyBreakingArc($npcName, $severity, $dynamics);
         } else {
             // Neither anchored nor alone — open unstable window
-            self::openUnstableWindow($npcName, $eventType, $severity, $dynamics);
+            self::openUnstableWindow($npcName, $eventType, $severity, $dynamics, $exclude);
         }
 
         // Update DI tracking
@@ -10584,8 +10667,8 @@ class RelationshipDynamics
         $comfortBaseline = floatval($dims['comfort']['baseline'] ?? 30);
         $dims['comfort']['baseline'] = min(100, $comfortBaseline + 10);
 
-        // Plasticity override: Growth for 30 game days (raw gamets)
-        $currentRawGamets = floatval($dynamics['_last_gamets'] ?? 0);
+        // Plasticity override: Growth for 30 game days (raw game calendar from the event)
+        $currentRawGamets = RelDynProtocols::calendarNow($dynamics);
         $dynamics['_plasticity_override'] = 'Growth';
         $dynamics['_plasticity_override_start_gamets'] = $currentRawGamets;
         $dynamics['_plasticity_override_expires_gamets'] = $currentRawGamets + self::THIRTY_GAME_DAYS_GAMETS;
@@ -10624,8 +10707,8 @@ class RelationshipDynamics
             $dims['warmth']['x'] = 0;
         }
 
-        // Plasticity override: Brittle for 30 game days (raw gamets)
-        $currentRawGamets = floatval($dynamics['_last_gamets'] ?? 0);
+        // Plasticity override: Brittle for 30 game days (raw game calendar from the event)
+        $currentRawGamets = RelDynProtocols::calendarNow($dynamics);
         $dynamics['_plasticity_override'] = 'Brittle';
         $dynamics['_plasticity_override_start_gamets'] = $currentRawGamets;
         $dynamics['_plasticity_override_expires_gamets'] = $currentRawGamets + self::THIRTY_GAME_DAYS_GAMETS;
@@ -10637,10 +10720,11 @@ class RelationshipDynamics
     }
 
     /**
-     * Open an unstable window when DI finds neither anchor nor isolation.
-     * Full implementation in Segment 3 (Unstable Window).
+     * Open an unstable window when DI finds neither anchor nor isolation: divine.
+     * unstable_window_game_hours of the game calendar (raw gamets) from now. $exclude: who cannot
+     * anchor it (the deceased; the partner who betrayed her).
      */
-    private static function openUnstableWindow($npcName, $eventType, $severity, &$dynamics)
+    private static function openUnstableWindow($npcName, $eventType, $severity, &$dynamics, array $exclude = [])
     {
         // Check if window already open
         $existingWindow = $dynamics['_unstable_window'] ?? null;
@@ -10656,10 +10740,12 @@ class RelationshipDynamics
         }
 
         $dynamics['_unstable_window'] = [
-            'start_gamets'    => floatval($dynamics['_accumulated_play_gamets'] ?? 0),
-            'duration_gamets' => self::UNSTABLE_WINDOW_GAMETS,
+            'start_gamets'    => RelDynProtocols::calendarNow($dynamics),   // raw game calendar
+            'duration_gamets' => floatval(RelDynProtocols::config()['divine']['unstable_window_game_hours']) * self::GAMETS_PER_DAY / 24.0,
+            'clock'           => 'calendar',
             'event_type'      => $eventType,
             'severity'        => $severity,
+            'exclude'         => array_values(array_map('strval', $exclude)),
             'resolved'        => false,
             'resolution'      => null,
         ];
@@ -10668,10 +10754,12 @@ class RelationshipDynamics
     }
 
     /**
-     * Check unstable window state. Called during prerequest for NPCs with active windows.
-     * Returns 'redemption', 'breaking', 'active', or null (no window).
+     * Check unstable window state: an anchor who is here resolves it as redemption; past its end on
+     * the game calendar with nobody, breaking. Anchors: $interactingWith (the player on their own
+     * turn) and $people (who is around: core's CACHE_PEOPLE names; null = that global). The dead
+     * anchor no one. Returns 'redemption', 'breaking', 'active', or null (no window).
      */
-    public static function checkUnstableWindow($npcName, &$dynamics, $interactingWith = null): ?string
+    public static function checkUnstableWindow($npcName, &$dynamics, $interactingWith = null, ?array $people = null): ?string
     {
         $window = $dynamics['_unstable_window'] ?? null;
         if (!$window || !empty($window['resolved'])) {
@@ -10682,23 +10770,36 @@ class RelationshipDynamics
         if (empty($config['divine_intervention_enabled'])) {
             return null;
         }
+        $cfg = RelDynProtocols::config()['divine'];
 
-        $currentGamets = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+        $currentGamets = RelDynProtocols::calendarNow($dynamics);   // raw game calendar
+        if ($currentGamets <= 0) {
+            return 'active';
+        }
+        if (($window['clock'] ?? null) !== 'calendar') {
+            // A window from the play-clock build: it starts over on the calendar (start fresh)
+            $dynamics['_unstable_window']['start_gamets'] = $currentGamets;
+            $dynamics['_unstable_window']['duration_gamets'] = floatval($cfg['unstable_window_game_hours']) * self::GAMETS_PER_DAY / 24.0;
+            $dynamics['_unstable_window']['clock'] = 'calendar';
+            $window = $dynamics['_unstable_window'];
+        }
         $elapsed = $currentGamets - floatval($window['start_gamets']);
         $duration = floatval($window['duration_gamets']);
-        $elapsedFraction = ($duration > 0) ? ($elapsed / $duration) : 0;
 
-        // Check multiple potential anchors: the player AND nearby NPCs
+        // Potential anchors: the player on their turn and whoever is around
         $potentialAnchors = [];
         if ($interactingWith !== null) {
             $potentialAnchors[] = $interactingWith;
         }
-        // Check CACHE_PEOPLE for NPC anchors
-        $cachePeopleRaw = $GLOBALS['CACHE_PEOPLE'] ?? '';
-        $cachePeople = array_values(array_filter(array_map('trim', explode('|', $cachePeopleRaw))));
-        foreach ($cachePeople as $nearbyNpc) {
-            if (!empty($nearbyNpc) && strcasecmp($nearbyNpc, $npcName) !== 0) {
-                $potentialAnchors[] = $nearbyNpc;
+        if ($people === null) {
+            $people = array_values(array_filter(array_map('trim', explode('|', (string) ($GLOBALS['CACHE_PEOPLE'] ?? '')))));
+        }
+        // Nobody anchors from the grave, nor the one the window is about (a betrayer)
+        $dead = array_map('strtolower', array_merge(RelDynProtocols::deadNames($dynamics), (array) ($window['exclude'] ?? [])));
+        foreach ($people as $nearby) {
+            $nearby = trim((string) $nearby);
+            if ($nearby !== '' && strcasecmp($nearby, (string) $npcName) !== 0) {
+                $potentialAnchors[] = $nearby;
             }
         }
         $potentialAnchors = array_unique($potentialAnchors);
@@ -10707,16 +10808,22 @@ class RelationshipDynamics
         foreach ($potentialAnchors as $anchor) {
             // Bonds are keyed "Player" for the player (CHIM 3.4.1); $anchor may be the real name
             $anchorKey = self::relationshipTargetKey($anchor);
-            $bond = $bonds[$anchorKey] ?? null;
+            if (in_array(strtolower((string) $anchor), $dead, true) || in_array(strtolower((string) $anchorKey), $dead, true)) {
+                continue;
+            }
+            $key = RelDynProtocols::bondKey($bonds, (string) $anchorKey);
+            $bond = $key !== null ? $bonds[$key] : null;
             if ($bond) {
-                $bondAff = ($bond['aff'] + 100) / 2.0;
+                $bondAff = ($bond['aff'] + 100) / 2.0;   // mirror 0..100
                 $bondTrust = ($anchorKey === self::PLAYER_RELATIONSHIP_KEY)
                     ? floatval($dynamics['dimensions']['trust']['x'] ?? 0)
-                    : max(0, $bondAff * 0.5);
-                if ($bondAff > 50 && $bondTrust > 40) {
+                    : max(0, $bondAff * floatval($cfg['npc_trust_per_affinity']));
+                if ($bondAff > floatval($cfg['window_anchor_affinity_above']) && $bondTrust > floatval($cfg['window_anchor_trust_above'])) {
                     $dynamics['_unstable_window']['resolved'] = true;
                     $dynamics['_unstable_window']['resolution'] = 'redemption';
+                    $dynamics['_unstable_window']['anchor'] = (string) $anchor;
                     self::applyRedemptionArc($npcName, $window['severity'], $dynamics);
+                    $dynamics[RelDynProtocols::CRISIS_SAY_KEY] = ['kind' => 'redemption', 'by' => (string) $anchor, 'gamets' => $currentGamets];
                     self::log("[DIVINE] Unstable window resolved: REDEMPTION via {$anchor}");
                     return 'redemption';
                 }
@@ -10728,6 +10835,7 @@ class RelationshipDynamics
             $dynamics['_unstable_window']['resolved'] = true;
             $dynamics['_unstable_window']['resolution'] = 'breaking';
             self::applyBreakingArc($npcName, $window['severity'], $dynamics);
+            $dynamics[RelDynProtocols::CRISIS_SAY_KEY] = ['kind' => 'breaking', 'gamets' => $currentGamets];
             self::log("[DIVINE] Unstable window expired: BREAKING for {$npcName}");
             return 'breaking';
         }
@@ -10812,108 +10920,97 @@ class RelationshipDynamics
         return $out;
     }
 
-    // ========== DEATH/GRIEF SYSTEM (PR 10) ==========
+    // ========== DEATH/GRIEF SYSTEM (PR 10; reldyn_protocols.php) ==========
 
     /**
-     * Register an NPC death for a survivor. Creates grief bond, sets widow's lock, triggers Phase 1, fires survivor DI.
+     * Register an NPC death for a survivor (once per deceased): the grief bond (phases on the game
+     * calendar from $at, raw gamets; default the game clock), Phase 1, the widow's lock for a
+     * partner (core affinity ceiling 100 - weight x 20) and the survivor's Divine Intervention,
+     * whose fork never counts the deceased as an anchor. Model: RelDynProtocols.
      */
-    public static function onNpcDeath($deceasedName, $survivorName, &$survivorDynamics)
+    public static function onNpcDeath($deceasedName, $survivorName, &$survivorDynamics, ?float $at = null)
     {
         // Config gate
         $config = self::getConfig();
         if (empty($config['grief_system_enabled'])) {
             return;
         }
-
-        // Bond duration proxy: the deceased's play seconds with the player (_accumulated_time)
-        $deceasedDynamics = self::getDynamics($deceasedName);
-        $bondDurationHours = floatval($deceasedDynamics['_accumulated_time'] ?? 0) / 3600.0;
+        if (isset($survivorDynamics['_grief_bonds'][$deceasedName])) {
+            self::log("[GRIEF] Death of {$deceasedName} already registered for {$survivorName}");
+            return;
+        }
+        $cfg = RelDynProtocols::config();
 
         $bonds = self::getAllBondsForNpc($survivorName);
-        $deceasedBond = $bonds[$deceasedName] ?? null;
-        $bondAffinity = $deceasedBond ? (($deceasedBond['aff'] + 100) / 2.0) : 0;
+        $key = RelDynProtocols::bondKey($bonds, (string) $deceasedName);
+        $deceasedBond = $key !== null ? $bonds[$key] : null;
+        $coreAff = $deceasedBond ? floatval($deceasedBond['aff']) : 0.0;          // core points
+        $bondAffinity = $deceasedBond ? (($coreAff + 100) / 2.0) : 0;             // mirror 0..100
+
+        // Bond duration: the play hours the bond has been in the player's world
+        $bondDurationHours = RelDynProtocols::bondHours($survivorDynamics, (string) $deceasedName);
+        $bondDurationWeight = RelDynProtocols::griefWeight($bondDurationHours, $cfg);
+        $lock = $deceasedBond !== null && RelDynProtocols::widowLockApplies($deceasedBond, $cfg);
 
         $dims = $survivorDynamics['dimensions'] ?? [];
+        $death = ($at !== null && $at > 0) ? $at : RelDynProtocols::calendarNow($survivorDynamics);   // raw game calendar
 
         // Initialize grief bond with per-phase applied flags
         $survivorDynamics['_grief_bonds'][$deceasedName] = [
             'phase'                   => 1,
-            'death_gamets'            => floatval($survivorDynamics['_accumulated_play_gamets'] ?? 0),
-            'bond_duration_hours'     => $bondDurationHours,
+            'clock'                   => 'calendar',
+            'death_gamets'            => $death,
+            'bond_duration_hours'     => round($bondDurationHours, 4),   // play hours
             'original_type'           => $deceasedBond['type'] ?? 'friend',
             'bond_affinity_at_death'  => $bondAffinity,
+            'core_affinity_at_death'  => $coreAff,
+            'widow_lock'              => $lock,
+            'bond_type'               => 'grieving',
             'warmth_at_death'         => floatval($dims['warmth']['x'] ?? 0),
             'trust_at_death'          => floatval($dims['trust']['x'] ?? 0),
-            'phase_transitions'       => [1 => floatval($survivorDynamics['_accumulated_play_gamets'] ?? 0)],
+            'phase_transitions'       => [1 => $death],
             '_phase_1_applied'        => false,
             '_phase_2_applied'        => false,
             '_phase_3_applied'        => false,
             '_phase_4_applied'        => false,
         ];
 
-        // Widow's Lock ceiling
-        $bondDurationWeight = min(2.0, $bondDurationHours / 100.0);
-        $ceiling = 100 - ($bondDurationWeight * 20);
-        $existingCeiling = floatval($survivorDynamics['_widow_lock_ceiling'] ?? 100);
-        $survivorDynamics['_widow_lock_ceiling'] = min($existingCeiling, $ceiling);
+        // Widow's Lock ceiling (core affinity points), for a partner only
+        $ceiling = 100 - ($bondDurationWeight * floatval($cfg['grief']['lock_per_weight']));
+        if ($lock) {
+            $existingCeiling = floatval($survivorDynamics['_widow_lock_ceiling'] ?? 100);
+            $survivorDynamics['_widow_lock_ceiling'] = min($existingCeiling, $ceiling);
+        }
 
-        // Apply Phase 1 immediate effects
-        self::applyGriefPhase($survivorName, $deceasedName, 1, $survivorDynamics);
+        // Phase 1 and its held offsets
+        self::applyGriefPhaseOnce($survivorName, (string) $deceasedName, 1, $survivorDynamics);
+        RelDynProtocols::tickGrief((string) $survivorName, $survivorDynamics, $death);
 
-        // Trigger Survivor's DI
+        // Trigger Survivor's DI (the deceased anchors no one)
         $severity = min(5, max(1, intval($bondDurationWeight * 2.5)));
-        self::triggerDivineIntervention($survivorName, 'companion_death', $severity, $survivorDynamics);
+        self::triggerDivineIntervention($survivorName, 'companion_death', $severity, $survivorDynamics, [(string) $deceasedName]);
 
-        self::log("[GRIEF] Death of {$deceasedName} registered for {$survivorName}: duration={$bondDurationHours}h, ceiling={$ceiling}, severity={$severity}");
+        self::log("[GRIEF] Death of {$deceasedName} registered for {$survivorName}: duration={$bondDurationHours}h weight={$bondDurationWeight}"
+            . ($lock ? " widow_lock ceiling={$ceiling} (core)" : ' no widow lock') . ", severity={$severity}");
     }
 
     /**
-     * Process grief phase transitions. Called during prerequest for NPCs with active grief bonds.
-     * Phase thresholds scale by bond duration weight.
+     * Process grief phase transitions on the game calendar (prerequest for the NPC spoken to,
+     * the calendar step for everyone): RelDynProtocols::tickGrief.
      */
     public static function processGriefPhases($npcName, &$dynamics)
     {
-        $griefBonds = &$dynamics['_grief_bonds'];
-        if (empty($griefBonds)) return;
-
-        // Config gate
+        if (empty($dynamics['_grief_bonds']) && empty($dynamics[RelDynProtocols::GRIEF_HELD_KEY])) return false;
         $config = self::getConfig();
-        if (empty($config['grief_system_enabled'])) return;
-
-        $currentGamets = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
-        $gametsPerHour = self::GAMETS_PER_REAL_HOUR;
-
-        foreach ($griefBonds as $deceasedName => &$grief) {
-            $elapsed = $currentGamets - floatval($grief['death_gamets']);
-            $hoursElapsed = $elapsed / $gametsPerHour;
-
-            $weight = min(2.0, floatval($grief['bond_duration_hours']) / 100.0);
-            $weight = max(0.1, $weight);
-
-            $currentPhase = intval($grief['phase']);
-            $newPhase = $currentPhase;
-
-            // Phase transition thresholds (scaled by bond_duration_weight)
-            if ($hoursElapsed >= 15.0 * $weight && $currentPhase < 4) {
-                $newPhase = 4;
-            } elseif ($hoursElapsed >= 5.0 * $weight && $currentPhase < 3) {
-                $newPhase = 3;
-            } elseif ($hoursElapsed >= 2.0 * $weight && $currentPhase < 2) {
-                $newPhase = 2;
-            }
-
-            if ($newPhase > $currentPhase) {
-                $grief['phase_transitions'][$newPhase] = $currentGamets;
-                $grief['phase'] = $newPhase;
-                self::applyGriefPhase($npcName, $deceasedName, $newPhase, $dynamics);
-            }
-        }
+        if (empty($config['grief_system_enabled'])) return false;
+        return RelDynProtocols::tickGrief((string) $npcName, $dynamics, RelDynProtocols::calendarNow($dynamics));
     }
 
     /**
-     * Apply grief phase effects. One-shot per phase (checked via _phase_X_applied flag).
+     * A grief phase's one-shot effects (checked via the _phase_X_applied flag). Standing effects
+     * (the acute offsets, the valence lock, the memory's warmth) are RelDynProtocols::tickGrief's.
      */
-    private static function applyGriefPhase($npcName, $deceasedName, $phase, &$dynamics)
+    public static function applyGriefPhaseOnce($npcName, $deceasedName, $phase, &$dynamics)
     {
         $dims = &$dynamics['dimensions'];
         $grief = &$dynamics['_grief_bonds'][$deceasedName];
@@ -10924,56 +11021,36 @@ class RelationshipDynamics
             return;
         }
         $grief[$appliedKey] = true;
+        $g = RelDynProtocols::config()['grief'];
 
         switch ($phase) {
-            case 1: // Acute
-                $dims['comfort']['x'] = max(0, floatval($dims['comfort']['x'] ?? 50) - 15);
-                $dims['warmth']['x'] = max(0, floatval($dims['warmth']['x'] ?? 30) - 10);
-                $dims['valence']['x'] = min(-30, floatval($dims['valence']['x'] ?? 0));
-                $dims['arousal']['x'] = max(50, floatval($dims['arousal']['x'] ?? 10));
-                self::log("[GRIEF] Phase 1 (Acute) applied for {$npcName} re: {$deceasedName}");
+            case 1: // Acute: held offsets and the valence lock (tickGrief)
+                self::log("[GRIEF] Phase 1 (Acute) for {$npcName} re: {$deceasedName}");
                 break;
 
-            case 2: // Bargaining
-                $dims['trust']['x'] = max(0, floatval($dims['trust']['x'] ?? 50) - 5);
-                self::log("[GRIEF] Phase 2 (Bargaining) applied for {$npcName} re: {$deceasedName}");
+            case 2: // Bargaining: "the world takes people from me"; the memory idealized (tickGrief)
+                $dims['trust']['x'] = max(0, floatval($dims['trust']['x'] ?? 50) + floatval($g['bargaining_trust']));
+                self::log("[GRIEF] Phase 2 (Bargaining) for {$npcName} re: {$deceasedName}");
                 break;
 
-            case 3: // Integration
-                // Recovery begins — no direct writes; rubber band handles recovery
-                self::log("[GRIEF] Phase 3 (Integration) applied for {$npcName} re: {$deceasedName}");
+            case 3: // Integration: the other bonds recover, the memory settles (tickGrief)
+                self::log("[GRIEF] Phase 3 (Integration) for {$npcName} re: {$deceasedName}");
                 break;
 
-            case 4: // Carrying Forward
-                // Grieving → Memorial transition
-                self::log("[GRIEF] Phase 4 (Carrying Forward) for {$npcName} re: {$deceasedName}: ceiling={$dynamics['_widow_lock_ceiling']}");
+            case 4: // Carrying Forward: Grieving -> Memorial
+                self::log("[GRIEF] Phase 4 (Carrying Forward) for {$npcName} re: {$deceasedName}: ceiling=" . ($dynamics['_widow_lock_ceiling'] ?? 100));
                 break;
         }
     }
 
     /**
-     * Get grief keywords for context injection. High maturity = quiet grief, low maturity = public breakdown.
+     * Grief keywords for one loss (quiet grief at maturity above grief.quiet_maturity, else public).
+     * The felt lines themselves come from RelDynProtocols::griefFeltLines (with coping style).
      */
     public static function getGriefKeywords($npcName, $deceasedName, $phase, $maturity): string
     {
-        $quiet = ($maturity > 60);
-        switch ($phase) {
-            case 1:
-                return $quiet
-                    ? "{$npcName} carries the loss of {$deceasedName} in silence. Still waters, but the undercurrent is devastating. Withdrawn, unreachable, numbly functional."
-                    : "{$npcName} is shattered by the loss of {$deceasedName}. Visibly struggling, breaking down, unable to maintain composure. The grief is raw and public.";
-            case 2:
-                return $quiet
-                    ? "{$npcName} speaks of {$deceasedName} as if they might return. Idealizing the memory, recounting only the good. A quiet bargaining with fate."
-                    : "{$npcName} swings between desperate hope and crushing reality about {$deceasedName}. Talks about them constantly, looking for signs, refusing to let go.";
-            case 3:
-                return $quiet
-                    ? "{$npcName} has begun to make peace with {$deceasedName}'s absence. The sharp edges of grief are smoothing. They speak of them with bittersweet warmth."
-                    : "{$npcName} is slowly finding ground after losing {$deceasedName}. Good moments mixed with sudden waves of loss. Healing, but unevenly.";
-            case 4:
-                return "{$npcName} carries {$deceasedName}'s memory as part of who they are now. The grief has transformed into something quieter -- a memorial, not a wound. They can form new bonds, though the lost one left a permanent mark.";
-        }
-        return '';
+        $quiet = floatval($maturity) >= floatval(RelDynProtocols::config()['grief']['quiet_maturity']);
+        return RelDynProtocols::griefText((string) $npcName, (string) $deceasedName, intval($phase), $quiet ? 'quiet' : 'public', 'plain');
     }
 
     // =========================================================================
@@ -12649,8 +12726,10 @@ class RelationshipDynamics
         $now = self::currentGamets();
         $appraisal = self::itemAppraisal($dynamics, $npcName, (string) $itemName);
         if ($appraisal['appraisal'] !== null && $npcName !== '') {
+            // her own drink is shared with the player pair only on a turn of that pair (rulings §11)
             RelDynFacets::experienceThing($npcName, $dynamics, 'item', (string) $itemName,
-                RelDynFacets::preferences($dynamics, $npcName), $now, $appraisal['appraisal']['facets']);
+                RelDynFacets::preferences($dynamics, $npcName), $now, $appraisal['appraisal']['facets'],
+                self::isPairInteraction($GLOBALS['gameRequest'] ?? null, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')) ? RelDynFulfillment::PLAYER : null);
         }
 
         // --- Apply immediate effects through XYZ engine ---
@@ -12983,25 +13062,37 @@ class RelationshipDynamics
      *   - consume: infoaction "<NPC> consumes <item>." (the Consume action, Commands.cpp), and
      *              itemfound "<NPC> drank / ate / consumed <item>" (her line only: the player
      *              drinking is not her drinking)
-     * Rows after her watermark ($afterRowid, processItemEvents keeps it) each count once; without
-     * one, only the last ITEM_EVENT_WINDOW_GAMETS of the eventlog game clock.
+     * Rows after her watermarks (processItemEvents keeps one per stream: $afterRowid for gifts,
+     * $consumeAfterRowid for her consumables, default $afterRowid) each count once, the oldest
+     * first, at most event_rows per stream per request (the rest the next request); without
+     * one, the newest of the last ITEM_EVENT_WINDOW_GAMETS of the eventlog game clock.
+     * $scanned: the last rowid each stream read (null when it read none).
      *
      * @param array    $gameRequest  The current CHIM game request array (the game clock)
      * @param string   $npcName      NPC being spoken to
      * @param string   $playerName   Player character name
-     * @param int|null $afterRowid   her item-event watermark (eventlog.rowid) or null
+     * @param int|null $afterRowid   her gift watermark (eventlog.rowid) or null
+     * @param int|null $consumeAfterRowid her consumable watermark, or null for $afterRowid
+     * @param array|null $scanned    out: ['gift' => ?int, 'consume' => ?int]
      * @return array  List of detected item events ['action', 'item', ..., 'rowid']
      */
-    public static function detectItemEvents($gameRequest, $npcName, $playerName, ?int $afterRowid = null)
+    public static function detectItemEvents($gameRequest, $npcName, $playerName, ?int $afterRowid = null, ?int $consumeAfterRowid = null, ?array &$scanned = null)
     {
         $events = [];
+        $scanned = ['gift' => null, 'consume' => null];
         $db = $GLOBALS['db'] ?? null;
         $nowGamets = self::currentGamets();
+        $consumeAfterRowid = $consumeAfterRowid ?? $afterRowid;
         if (!$db || ($nowGamets <= 0 && $afterRowid === null)) {
             return [];
         }
-        $since = $afterRowid !== null ? 'rowid > ' . intval($afterRowid)
-            : 'gamets > ' . intval($nowGamets - self::ITEM_EVENT_WINDOW_GAMETS);
+        // Past a watermark: the oldest rows after it first, so a long handover or a busy log is
+        // read over several requests, never skipped; the first look: the newest in the window
+        $window = 'gamets > ' . intval($nowGamets - self::ITEM_EVENT_WINDOW_GAMETS);
+        $since = $afterRowid !== null ? 'rowid > ' . intval($afterRowid) : $window;
+        $consumeSince = $consumeAfterRowid !== null ? 'rowid > ' . intval($consumeAfterRowid) : $window;
+        $order = $afterRowid !== null ? 'ORDER BY rowid ASC' : 'ORDER BY gamets DESC, ts DESC';
+        $consumeOrder = $consumeAfterRowid !== null ? 'ORDER BY rowid ASC' : 'ORDER BY gamets DESC, ts DESC';
         $limit = max(1, intval(self::itemModifierConfig()['event_rows']));
 
         // --- Gifts: the player's handover to this NPC ---
@@ -13012,9 +13103,10 @@ class RelationshipDynamics
                 "SELECT rowid, data FROM eventlog WHERE type='itemfound' "
                 . "AND data LIKE '%gave%to%{$escapedNpc}%' ESCAPE '\\' "
                 . "AND {$since} "
-                . "ORDER BY gamets DESC, ts DESC LIMIT {$limit}"
+                . "{$order} LIMIT {$limit}"
             );
             foreach ((array) $rows as $row) {
+                if (isset($row['rowid'])) $scanned['gift'] = max(intval($scanned['gift'] ?? 0), intval($row['rowid']));
                 if (!preg_match('/^\s*(.+?)\s+gave\s+(?:(\d+)\s+)?(.+?)\s+to\s+(.+?)\s*(?:,\s*\(value\s+(\d+)\s+gold\))?\s*$/i', (string) ($row['data'] ?? ''), $gm)) continue;
                 if (strcasecmp(trim($gm[1]), trim((string) $playerName)) !== 0 || strcasecmp(trim($gm[4]), trim((string) $npcName)) !== 0) continue;
                 $events[] = [
@@ -13034,13 +13126,18 @@ class RelationshipDynamics
         // --- Consumables: what this NPC ate, drank or used ---
         try {
             // Whole words only (PostgreSQL \m \M word boundaries): 'private chest' is not 'ate'.
+            // Her own lines only (the row starts with her name), so other people's meals never
+            // crowd hers out of the rows read.
+            $ownLine = $db->escape(self::escapeLike(trim((string) $npcName)));
             $rows = $db->fetchAll(
                 "SELECT rowid, data FROM eventlog WHERE type IN ('infoaction', 'itemfound') "
+                . "AND ltrim(data) ILIKE '{$ownLine} %' ESCAPE '\\' "
                 . "AND (data ~* '\\m(consumes|consumed|drank|ate)\\M' OR data ~* '\\mused\\M.*potion') "
-                . "AND {$since} "
-                . "ORDER BY gamets DESC, ts DESC LIMIT {$limit}"
+                . "AND {$consumeSince} "
+                . "{$consumeOrder} LIMIT {$limit}"
             );
             foreach ((array) $rows as $row) {
+                if (isset($row['rowid'])) $scanned['consume'] = max(intval($scanned['consume'] ?? 0), intval($row['rowid']));
                 $data = (string) ($row['data'] ?? '');
                 if (!preg_match('/^\s*(.+?)\s+(?:consumes|consumed|drank|ate|used)\s+(?:\d+\s+)?(.+?)\s*\.?\s*(?:,.*)?$/i', $data, $cm)) continue;
                 if (strcasecmp(trim($cm[1]), trim((string) $npcName)) !== 0) continue;
@@ -13115,20 +13212,27 @@ class RelationshipDynamics
             return [];
         }
 
+        // Her eventlog watermarks, one per stream (gifts to her, her own consumables): each moves to
+        // the last row it read, so rows past a full read wait for the next request
         $mark = is_numeric($dynamics['_item_event_rowid'] ?? null) ? intval($dynamics['_item_event_rowid']) : null;
-        $events = self::detectItemEvents($gameRequest, $npcName, $playerName, $mark);
+        $consumeMark = is_numeric($dynamics['_item_consume_rowid'] ?? null) ? intval($dynamics['_item_consume_rowid']) : $mark;
+        $scanned = [];
+        $events = self::detectItemEvents($gameRequest, $npcName, $playerName, $mark, $consumeMark, $scanned);
         $top = $mark ?? 0;
         foreach ($events as $event) {
             if (isset($event['rowid'])) $top = max($top, intval($event['rowid']));
         }
-        if ($top > ($mark ?? 0)) {
-            $dynamics['_item_event_rowid'] = $top;
-        } elseif ($mark === null) {
+        if ($mark !== null) {
+            $dynamics['_item_event_rowid'] = max($mark, intval($scanned['gift'] ?? 0));
+            $dynamics['_item_consume_rowid'] = max(intval($consumeMark), intval($scanned['consume'] ?? 0));
+        } elseif ($top > 0) {
+            $dynamics['_item_event_rowid'] = $dynamics['_item_consume_rowid'] = $top;   // first look: past what it saw
+        } else {
             // First look: from here on, rows after the newest one count
             $db = $GLOBALS['db'] ?? null;
             try {
                 $newest = $db ? $db->fetchOne('SELECT rowid FROM eventlog ORDER BY rowid DESC LIMIT 1') : [];
-                if (isset($newest['rowid'])) $dynamics['_item_event_rowid'] = intval($newest['rowid']);
+                if (isset($newest['rowid'])) $dynamics['_item_event_rowid'] = $dynamics['_item_consume_rowid'] = intval($newest['rowid']);
             } catch (\Throwable $e) {
                 self::logError('processItemEvents watermark', $e);
             }
@@ -14747,28 +14851,32 @@ class RelationshipDynamics
     // Duty override (MDD 9): RelDynQuests::dutyState / onPrerequest (reldyn_quests.php).
 
 
-    // ========== PARASITE DETECTION (PR 12) ==========
+    // ========== PARASITE DETECTION (PR 12; MDD 6.2, reldyn_protocols.php) ==========
 
     /**
-     * Check interaction patterns for parasitic behavior (gift-only engagement).
-     * Returns 'parasite' if detected, null otherwise.
+     * The transactional pattern (MDD 6.2): of the exchanges in the rolling ledger
+     * (RelDynProtocols::recordExchange; counts total_window / gift_count / genuine_count), at
+     * least parasite.min_exchanges, gifts above this NPC's share (parasiteRatioThreshold) with
+     * fewer than parasite.genuine_below genuine ones -> the parasite type. Returns 'parasite' when
+     * detected now, null otherwise.
      */
     public static function checkParasitePattern(string $npcName, array &$dynamics): ?string
     {
         $config = self::getConfig();
         if (empty($config['parasite_detection_enabled'])) return null;
+        $p = RelDynProtocols::config()['parasite'];
 
         $pattern = $dynamics['_interaction_pattern'] ?? [];
         $totalWindow = intval($pattern['total_window'] ?? 0);
 
-        if ($totalWindow < 10) return null; // Not enough data
+        if ($totalWindow < intval($p['min_exchanges'])) return null; // Not enough data
 
         $giftCount = intval($pattern['gift_count'] ?? 0);
         $genuineCount = intval($pattern['genuine_count'] ?? 0);
         $giftRatio = $giftCount / max(1, $totalWindow);
+        $threshold = RelDynProtocols::parasiteRatioThreshold($dynamics);
 
-        // Trigger: >70% gifts AND <3 genuine interactions in the window
-        if ($giftRatio > 0.7 && $genuineCount < 3) {
+        if ($giftRatio > $threshold && $genuineCount < intval($p['genuine_below'])) {
             $currentOverride = $dynamics['_relationship_type_override'] ?? null;
             if ($currentOverride !== 'parasite') {
                 // Record history
@@ -14777,10 +14885,10 @@ class RelationshipDynamics
                     'from_override' => $currentOverride,   // restored on recovery (null = follow core)
                     'to' => 'parasite',
                     'at' => intval($dynamics['interaction_count'] ?? 0),
-                    'reason' => 'gift_ratio=' . round($giftRatio, 2),
+                    'reason' => 'gift_ratio=' . round($giftRatio, 2) . ' threshold=' . round($threshold, 2),
                 ];
                 $dynamics['_relationship_type_override'] = 'parasite';
-                self::log("[TYPE] Parasite detected for {$npcName}: gift_ratio=" . round($giftRatio, 2));
+                self::log("[TYPE] Parasite detected for {$npcName}: gift_ratio=" . round($giftRatio, 2) . ' threshold=' . round($threshold, 2));
                 return 'parasite';
             }
         }
@@ -14789,19 +14897,20 @@ class RelationshipDynamics
     }
 
     /**
-     * Check if a parasite relationship has recovered (genuine engagement resumed).
+     * Genuine engagement resumed: parasite.recover_genuine_at_least genuine exchanges in the
+     * ledger and gifts no more than them. Restores the override that was active before.
      */
     public static function checkParasiteRecovery(string $npcName, array &$dynamics): ?string
     {
         $currentOverride = $dynamics['_relationship_type_override'] ?? null;
         if ($currentOverride !== 'parasite') return null;
+        $p = RelDynProtocols::config()['parasite'];
 
         $pattern = $dynamics['_interaction_pattern'] ?? [];
         $genuineCount = intval($pattern['genuine_count'] ?? 0);
         $giftCount = intval($pattern['gift_count'] ?? 0);
 
-        // Recovery: 3+ genuine interactions AND gifts <= genuine
-        if ($genuineCount >= 3 && $giftCount <= $genuineCount) {
+        if ($genuineCount >= intval($p['recover_genuine_at_least']) && $giftCount <= $genuineCount) {
             $history = $dynamics['_relationship_type_history'] ?? [];
             $lastEntry = !empty($history) ? end($history) : null;
             $previousType = ($lastEntry && isset($lastEntry['from'])) ? $lastEntry['from'] : null;
@@ -14824,38 +14933,19 @@ class RelationshipDynamics
     }
 
     /**
-     * Update interaction pattern tracking.
-     * Called from postrequest after interaction classification.
+     * The postrequest's read of one exchange with the player for the parasite ledger: a gift seen
+     * this request ($gift) or a positive exchange of a love language other than gifts
+     * ($positive, the local classifier; the eval's item may raise it later, same game time).
      */
-    public static function updateInteractionPattern(array &$dynamics, ?string $interactionType, float $affinityDelta): void
+    public static function updateInteractionPattern(array &$dynamics, ?string $interactionType, float $affinityDelta, ?float $gamets = null, bool $gift = false, bool $positive = false): void
     {
-        if (!isset($dynamics['_interaction_pattern']) || !is_array($dynamics['_interaction_pattern'])) {
-            $dynamics['_interaction_pattern'] = [
-                'gift_count' => 0, 'genuine_count' => 0,
-                'total_window' => 0, 'window_start' => 0,
-                'last_interaction_type' => null,
-            ];
+        $g = ($gamets !== null && $gamets > 0) ? $gamets : self::currentGamets();
+        if ($g <= 0) {
+            return;   // no game clock: the exchange cannot be told apart from its eval item
         }
-
-        $pattern = &$dynamics['_interaction_pattern'];
-        $interactionCount = intval($dynamics['interaction_count'] ?? 0);
-
-        // Reset window every 20 interactions
-        if (($interactionCount - intval($pattern['window_start'] ?? 0)) >= 20) {
-            $pattern['gift_count'] = 0;
-            $pattern['genuine_count'] = 0;
-            $pattern['total_window'] = 0;
-            $pattern['window_start'] = $interactionCount;
-        }
-
-        $pattern['total_window']++;
-        $pattern['last_interaction_type'] = $interactionType;
-
-        if ($interactionType === 'gifts') {
-            $pattern['gift_count']++;
-        } elseif ($interactionType !== null && $affinityDelta > 0) {
-            $pattern['genuine_count']++;
-        }
+        $kind = ($gift || $interactionType === self::LL_GIFTS) ? RelDynProtocols::KIND_GIFT
+            : (($positive || $affinityDelta > 0) && $interactionType !== null ? RelDynProtocols::KIND_GENUINE : RelDynProtocols::KIND_OTHER);
+        RelDynProtocols::recordExchange($dynamics, $g, $kind);
     }
 
     // ========== END PARASITE DETECTION (PR 12) ==========
@@ -14894,8 +14984,8 @@ class RelationshipDynamics
      * Points currently held on $dimId's x by the temporary-offset pipeline, each taken back
      * exactly when its state ends: the creature row (RelDynCreatures, _creature.applied), the
      * physical states (_applied_physical_deltas per state), the place and hour
-     * (_env_applied_effects) and, on comfort, the guilt bleed (RelDynResentment, guilt.applied).
-     * Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
+     * (_env_applied_effects), on comfort the guilt bleed (RelDynResentment, guilt.applied), and
+     * acute grief on comfort / warmth (RelDynProtocols, _grief_held). Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
      * per-bond display read the value without them.
      */
     public static function heldTemporaryOffset(array $dynamics, string $dimId): float
@@ -14916,6 +15006,8 @@ class RelationshipDynamics
         foreach ((array) ($dynamics['_active_consumables'] ?? []) as $c) {
             if (is_array($c)) $held += floatval($c['immediate'][$dimId] ?? 0.0);
         }
+        // Acute grief toward every other bond (RelDynProtocols::tickGrief)
+        $held += floatval($dynamics[RelDynProtocols::GRIEF_HELD_KEY][$dimId] ?? 0.0);
         return $held;
     }
 
@@ -15757,14 +15849,15 @@ class RelationshipDynamics
     const ICK_COMFORT_FLOOR = 40;         // Comfort must be below this for ick
     const ICK_PASSION_FLOOR = 20;         // Passion must be below this OR warmth below floor
     const ICK_WARMTH_FLOOR = 30;          // Warmth must be below this OR passion below floor
-    const ICK_RESENTMENT_PER_ATTEMPT = 5; // Resentment added per romantic attempt while ick active
-    const ICK_COMFORT_OVERRIDE = -3.0;    // Forced comfort delta when ick active
+    const ICK_RESENTMENT_PER_ATTEMPT = 5; // Resentment added per continued romantic attempt while ick active
+    const ICK_COMFORT_OVERRIDE = -3.0;    // Comfort per continued romantic attempt while ick active
     const ICK_COOLDOWN_PLAY_GAMETS = 1389000; // Cooldown after ick clears: 10 min of real play (600s * GAMETS_PER_REAL_SECOND)
     const ICK_RECOVERY = [
-        'comfort'    => 50,   // Comfort must exceed this
-        'passion'    => 40,   // Passion must exceed this
+        'comfort'    => 40,   // Comfort must exceed this (dimension design: "recover above 40")
+        'quiet'      => 3,    // ... and passion stable: at its floor, or this many interactions without an attempt
         'resentment' => 20,   // Resentment must be below this (OR confrontation occurred)
     ];
+    // (Tunable in config protocols.ick, whose defaults are these constants.)
 
     // Moods that count as romantic/flirtatious from the NPC's perspective
     const ROMANTIC_MOODS = [
@@ -15836,7 +15929,6 @@ class RelationshipDynamics
                 'total_count'        => 0,
                 'window_start'       => intval($dynamics['interaction_count'] ?? 0),
                 'ick_active'         => false,
-                'ick_triggered_at'   => 0,
                 'ick_cooldown_until_play_gamets' => 0,
             ];
         }
@@ -15860,7 +15952,7 @@ class RelationshipDynamics
             }
         }
         unset($tracker);
-        return self::ickAfterInteraction($dynamics, (bool) $isRomantic, $temperament);
+        return self::ickAfterInteraction($dynamics, (bool) $isRomantic, $temperament, $gamets);
     }
 
     /**
@@ -15892,29 +15984,41 @@ class RelationshipDynamics
         $dynamics['_ick_tracker']['romantic_count'] = intval($tracker['romantic_count']) + 1;
         $dynamics['_ick_tracker']['counted_gamets'] = array_slice(array_merge((array) ($tracker['counted_gamets'] ?? []), [$g]), -self::ICK_COUNTED_KEEP);
         self::log("[ICK] {$npcName}: courting she did not answer in kind (eval, gamets {$g}, reply mood " . ($n['reply_mood'] ?? 'unknown') . ')');
-        return self::ickAfterInteraction($dynamics, true, $dynamics['inferred_temperament'] ?? null);
+        return self::ickAfterInteraction($dynamics, true, $dynamics['inferred_temperament'] ?? null, $g > 0 ? (float) $g : null);
     }
 
-    /** After an interaction is counted: the continued attempt while the ick is active, or its trigger. */
-    private static function ickAfterInteraction(array &$dynamics, bool $isRomantic, $temperament): bool
+    /**
+     * After an interaction is counted: while the ick is active, a continued attempt costs comfort
+     * and builds resentment (config protocols.ick, points through applyDelta) and anything else
+     * is a quiet interaction (the player backing off, read by the recovery); otherwise its trigger,
+     * stamped with the exchange's game time ($gamets, raw; default the game clock) and the play
+     * clock, never the wall clock.
+     */
+    private static function ickAfterInteraction(array &$dynamics, bool $isRomantic, $temperament, ?float $gamets = null): bool
     {
-        $tracker = &$dynamics['_ick_tracker'];
+        $ick = RelDynProtocols::config()['ick'];
+        unset($dynamics['_ick_tracker']['ick_triggered_at']);   // the April wall-clock stamp, never read
 
-        // If ick already active, accumulate resentment on continued romantic attempts
-        if ($tracker['ick_active'] && $isRomantic) {
-            self::applyDelta('resentment', $dynamics, self::ICK_RESENTMENT_PER_ATTEMPT, $temperament);
-            self::log("[ICK] Continued romantic attempt while ick active — resentment +{" . self::ICK_RESENTMENT_PER_ATTEMPT . "}");
+        if (!empty($dynamics['_ick_tracker']['ick_active'])) {
+            if (!$isRomantic) {
+                $dynamics['_ick_tracker']['quiet'] = intval($dynamics['_ick_tracker']['quiet'] ?? 0) + 1;
+                return false;
+            }
+            $dynamics['_ick_tracker']['quiet'] = 0;
+            $r = self::applyDelta('resentment', $dynamics, floatval($ick['resentment_per_attempt']), $temperament);
+            $c = self::applyDelta('comfort', $dynamics, floatval($ick['comfort_per_attempt']), $temperament);
+            self::log(sprintf('[ICK] Continued romantic attempt while ick active: resentment %+.2f, comfort %+.2f', $r, $c));
             return false; // State didn't change
         }
 
         // Check if ick should trigger (only if not already active and not in cooldown)
-        if (!$tracker['ick_active']) {
-            if (self::checkIckTrigger($dynamics, $temperament)) {
-                $tracker['ick_active'] = true;
-                $tracker['ick_triggered_at'] = time();
-                self::log("[ICK] TRIGGERED for NPC — romantic ratio too high while unreceptive");
-                return true; // State changed
-            }
+        if (self::checkIckTrigger($dynamics, $temperament)) {
+            $dynamics['_ick_tracker']['ick_active'] = true;
+            $dynamics['_ick_tracker']['quiet'] = 0;
+            $dynamics['_ick_tracker']['ick_triggered_gamets'] = ($gamets !== null && $gamets > 0) ? $gamets : self::currentGamets();
+            $dynamics['_ick_tracker']['ick_triggered_play_gamets'] = self::getPlayGamets($dynamics);
+            self::log("[ICK] TRIGGERED for NPC — romantic ratio too high while unreceptive");
+            return true; // State changed
         }
 
         return false;
@@ -15962,6 +16066,11 @@ class RelationshipDynamics
             self::log("[ICK] Catalyst style detected + high maturity — threshold reduced 30%");
         }
 
+        // Attachment (dimension design, avoidant: "suffocation threshold (ick) lowered"): the
+        // avoidance axis lowers it, continuously (RelDynProtocols::ickAvoidanceMult)
+        $threshold *= RelDynProtocols::ickAvoidanceMult(is_array($dynamics) ? $dynamics : []);
+        $ick = RelDynProtocols::config()['ick'];
+
         if ($ratio < $threshold) {
             return false; // Not enough romantic pressure
         }
@@ -15981,12 +16090,12 @@ class RelationshipDynamics
         $passion = floatval($dims['passion']['x'] ?? 0);
         $warmth  = floatval($dims['warmth']['x'] ?? 50);
 
-        // NPC must be unreceptive: comfort < 40 AND (passion < 20 OR warmth < 30)
-        if ($comfort >= self::ICK_COMFORT_FLOOR) {
+        // NPC must be unreceptive: comfort < 40 AND (passion < 20 OR warmth < 30) (config protocols.ick)
+        if ($comfort >= floatval($ick['comfort_floor'])) {
             return false; // NPC is comfortable — no ick
         }
 
-        if ($passion >= self::ICK_PASSION_FLOOR && $warmth >= self::ICK_WARMTH_FLOOR) {
+        if ($passion >= floatval($ick['passion_floor']) && $warmth >= floatval($ick['warmth_floor'])) {
             return false; // NPC is receptive — no ick
         }
 
@@ -15994,7 +16103,12 @@ class RelationshipDynamics
     }
 
     /**
-     * Check if ick should clear (recovery conditions met).
+     * Check if ick should clear (dimension design recovery: "Stop flirting. Comfort needs to
+     * recover above 40 AND passion needs to stabilize ... Time + space + the NPC addressing it"):
+     * comfort above ick.recovery_comfort_above, passion stable (at or above the Ick's passion
+     * floor, or no attempt for ick.recovery_quiet_interactions counted interactions: the push has
+     * stopped) and resentment below ick.recovery_resentment_below or a calm confrontation.
+     * (The April passion > 40 could not be met: passion gains are inverted while the ick lasts.)
      *
      * @param array &$dynamics NPC dynamics
      * @return bool True if ick was cleared
@@ -16011,10 +16125,10 @@ class RelationshipDynamics
         $passion    = floatval($dims['passion']['x'] ?? 0);
         $resentment = floatval($dims['resentment']['x'] ?? 0);
 
-        $recovery = self::ICK_RECOVERY;
-        $comfortOk    = ($comfort > $recovery['comfort']);
-        $passionOk    = ($passion > $recovery['passion']);
-        $resentmentOk = ($resentment < $recovery['resentment']);
+        $ick = RelDynProtocols::config()['ick'];
+        $comfortOk    = ($comfort > floatval($ick['recovery_comfort_above']));
+        $passionOk    = ($passion >= floatval($ick['passion_floor']) || intval($tracker['quiet'] ?? 0) >= intval($ick['recovery_quiet_interactions']));
+        $resentmentOk = ($resentment < floatval($ick['recovery_resentment_below']));
 
         // Check if confrontation occurred (resentment was addressed)
         $confrontationOccurred = !empty($dynamics['_ick_confrontation_resolved']);
@@ -16025,6 +16139,7 @@ class RelationshipDynamics
             unset($tracker['ick_cooldown_until']); // legacy wall-clock value
             $tracker['romantic_count'] = 0;
             $tracker['total_count'] = 0;
+            $tracker['quiet'] = 0;
             $dynamics['_ick_confrontation_resolved'] = false;
             self::log("[ICK] CLEARED — recovery conditions met, cooldown set");
             return true;
@@ -16034,8 +16149,10 @@ class RelationshipDynamics
     }
 
     /**
-     * Apply ick effects to an eval delta before XYZ physics.
-     * Called from processEvalDeltas.
+     * Apply ick effects to an eval delta before XYZ physics: passion gains invert (MDD 6.3).
+     * Comfort is not forced down on every exchange: the continued attempt pays it
+     * (ickAfterInteraction), so an exchange without pressure can let her recover.
+     * Called from processEvalDeltas / applyEvalSignal.
      *
      * @param array  $dynamics     NPC dynamics
      * @param string $dimensionId  Dimension being modified
@@ -16056,12 +16173,6 @@ class RelationshipDynamics
             $rawDelta = -abs($rawDelta);
             $modified = true;
             self::log("[ICK] Passion INVERTED: {$rawDelta}");
-        }
-
-        // Comfort override — forced negative
-        if ($dimensionId === 'comfort') {
-            $rawDelta = min($rawDelta, self::ICK_COMFORT_OVERRIDE);
-            $modified = true;
         }
 
         return $modified;
@@ -17645,7 +17756,10 @@ class RelationshipDynamics
             return null;
         }
 
-        $result = self::applyPlayerAffinityDelta($npcName, $whole);
+        // Widow's lock (grief): no gain carries Player.aff past the ceiling (core points), whatever
+        // RelDyn path queued it; a bond already above it is never lowered by the lock
+        $ceiling = floatval($dynamics['_widow_lock_ceiling'] ?? 100);
+        $result = self::applyPlayerAffinityDelta($npcName, $whole, $ceiling < self::CORE_AFFINITY_MAX ? (int) floor($ceiling) : null);
         if ($result === null) {
             return null; // keep the delta queued; logged by applyPlayerAffinityDelta
         }
@@ -17669,11 +17783,13 @@ class RelationshipDynamics
      * relationships.Player.aff is written (the whole relationships object only when the
      * Player entry is missing or a legacy real-name entry must be folded into it).
      * Nothing is written when extended_data.relationships_locked is set (editor lock).
+     * $gainCeiling (core points, the widow's lock): a gain stops there, read under the lock
+     * against the value core holds; a value already above it is kept, never lowered.
      *
      * @return array|null ['old' => int, 'new' => int, 'delta' => int] (plus 'locked' => true
      *                    when skipped for the editor lock) or null on failure
      */
-    public static function applyPlayerAffinityDelta($npcName, $delta)
+    public static function applyPlayerAffinityDelta($npcName, $delta, ?int $gainCeiling = null)
     {
         $delta = (int)$delta;
         $db = $GLOBALS['db'] ?? null;
@@ -17721,6 +17837,10 @@ class RelationshipDynamics
             }
 
             $newAff = max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, $oldAff + $delta));
+            if ($delta > 0 && $gainCeiling !== null && $newAff > $gainCeiling) {
+                $newAff = max($oldAff, $gainCeiling);
+                self::log("[AFF] {$npcName} -> Player " . sprintf('%+d', $delta) . ": the widow's lock holds it at {$newAff}");
+            }
 
             $hasLegacyKey = false;
             foreach (array_keys(is_array($rawRels) ? $rawRels : []) as $target) {
@@ -17941,3 +18061,5 @@ require_once __DIR__ . '/reldyn_reputation.php';
 
 // Self-reflection on core's diary entries (baseline math / trajectory LLM); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_diary.php';
+// Divine Intervention, grief / widow's lock, the Ick's tuning, the Parasite (P3 protocols)
+require_once __DIR__ . '/reldyn_protocols.php';

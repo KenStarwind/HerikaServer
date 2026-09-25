@@ -542,8 +542,11 @@ final class RelDynExclusivityTestBedsPostgresTest extends TestCase
             $after[$npc] = $this->metPull($npc);
             $gain2[$npc] = $this->interestIn($npc, $at + 20) - RelDynExclusivity::interestAt(
                 ['interest' => $gain1[$npc], 'gamets' => $t + 600 * ($k + 1) + 20], (float) ($at + 20));
-            // The same dynamics without the title: the title is the difference
+            // The same dynamics without the title: the title is the difference. (Her rechat runs no
+            // prerequest of hers, so her stored type is still the old one: the exchange reads
+            // core's title as core holds it now.)
             $d = $this->dynamics($npc);
+            RelationshipDynamics::setCoreRelationshipType($d, 'romantic');
             $titled = RelDynExclusivity::pull($d, (float) ($at + 20));
             $d['_core_rel_type'] = 'platonic';
             $plain = RelDynExclusivity::pull($d, (float) ($at + 20));
@@ -559,7 +562,9 @@ final class RelDynExclusivityTestBedsPostgresTest extends TestCase
         $this->editDynamics('Ashe', function (array &$d): void { RelationshipDynamics::setPassion($d, 0.0); });
         $at = self::at(self::N0, 18.0);
         $block = $this->flirt('Ashe', 'Your eyes, Ashe. I could write a song about them.', $at);
-        $this->assertTrue($this->pullOf('Ashe', $at + 20)['titled']);
+        $view = $this->dynamics('Ashe');
+        RelationshipDynamics::setCoreRelationshipType($view, 'romantic');   // core's title, as the exchange reads it
+        $this->assertTrue(RelDynExclusivity::pull($view, (float) ($at + 20))['titled']);
         $this->assertSame(RelDynExclusivity::BAND_OPEN, RelDynExclusivity::bandOf($this->metPull('Ashe')), 'no spark: nothing holds');
         $d = $this->dynamics('Ashe');
         RelationshipDynamics::setPassion($d, 0.0);
@@ -637,11 +642,12 @@ final class RelDynExclusivityTestBedsPostgresTest extends TestCase
     // ------------------------------------------------------------------ the other routes
 
     /**
-     * A radiant round (no rechat) carries the move too, and core's NPC-NPC eval alone is enough:
-     * with Mikael's core entry for Aela romantic ('crush'), her radiant line to him steers her
-     * even without a romantic word in the log.
+     * A radiant round (no rechat) carries the move too. Core's NPC-NPC eval holding him sweet on
+     * her ('crush') keeps her ledger of him, but a type set long ago is no move in this exchange
+     * (§17 "when another NPC makes romantic moves", batch O review): a plain chat does not steer
+     * her; his next real move does.
      */
-    public function testARadiantRoundAndCoresNpcEvalCarryTheMove(): void
+    public function testARadiantRoundCarriesTheMoveAndCoresNpcEvalAloneDoesNot(): void
     {
         $this->meet();
         $t = self::at(self::N0, 14.0);
@@ -663,9 +669,16 @@ final class RelDynExclusivityTestBedsPostgresTest extends TestCase
         $plain = ['radiant', (string) $this->realTs, (string) ($t2 + 20), self::AELA . ': Mikael. (talking to Mikael)'];
         $this->assertNull($this->npcRequest(self::AELA, $plain, $t2 + 20, ['context_pre.php', 'context.php']), 'a plain chat is no move');
         pg_query_params($this->db->link, 'UPDATE core_npc_master SET extended_data = $2::jsonb WHERE npc_name = $1', [self::SUITOR, json_encode($ext)]);
+        $seen = RelDynExclusivity::suitor($this->dynamics(self::AELA), self::SUITOR)['gamets'];
         $block = $this->npcRequest(self::AELA, $plain, $t2 + 40, ['context_pre.php', 'context.php']);
-        $this->assertNotNull($block, "core's NPC-NPC eval: he is sweet on her");
-        $this->assertSame(1, RelDynExclusivity::suitor($this->dynamics(self::AELA), self::SUITOR)['moves'], 'no new line counted');
+        $this->assertNull($block, "core's NPC-NPC eval alone: he is sweet on her, but made no move now");
+        $e = RelDynExclusivity::suitor($this->dynamics(self::AELA), self::SUITOR);
+        $this->assertSame(1, $e['moves'], 'no new line counted');
+        $this->assertGreaterThan($seen, $e['gamets'], 'the ledger still follows him while the type is romantic');
+        $this->event('chat', self::SUITOR . ': Still alone, Aela? Walk with me by the river. (talking to Aela the Huntress)', $t2 + 60, $this->home(), 'emitted');
+        $move = ['radiant', (string) $this->realTs, (string) ($t2 + 80), self::AELA . ': Mikael. (talking to Mikael)'];
+        $this->assertNotNull($this->npcRequest(self::AELA, $move, $t2 + 80, ['context_pre.php', 'context.php']), 'his next move steers her');
+        $this->assertSame(2, RelDynExclusivity::suitor($this->dynamics(self::AELA), self::SUITOR)['moves']);
 
         // Jev gets the numbers
         $jev = RelDynJev::state(self::AELA, $this->dynamics(self::AELA), (float) ($t2 + 40));
@@ -682,8 +695,8 @@ final class RelDynExclusivityTestBedsPostgresTest extends TestCase
     /**
      * Fulfillment per relationship pair through real storage (rulings §11): a blob stored before
      * the pairs is Aela's player pair and is rewritten as the pair container by the next save,
-     * the state unchanged; Mikael's rechat with her is no day with the player; the player's own
-     * word the next day is.
+     * the state unchanged; Mikael's rechat with her is no turn of the player pair (nothing of hers
+     * is touched, batch O review); the player's own word the next day is a day with the player.
      */
     public function testThePrePairBlobMigratesAndPresenceIsThePairsOwn(): void
     {
@@ -694,17 +707,18 @@ final class RelDynExclusivityTestBedsPostgresTest extends TestCase
         $this->assertArrayNotHasKey('pairs', $this->dynamics(self::AELA)['_fulfillment']);
 
         $day = self::N0 + 1;
+        $before = $this->dynamics(self::AELA);
         $this->flirt(self::AELA, 'Good morning, Aela.', self::at($day, 10.0));
+        $this->assertSame($before, $this->dynamics(self::AELA), "Mikael's rechat is no turn of the player pair: nothing of hers moved");
+
+        $this->event('infoloc', self::HOME, self::at($day, 11.0), $this->home());
+        $this->turn(self::AELA, 'Morning, Aela.', self::at($day, 11.0), 'morning');
         $stored = $this->dynamics(self::AELA)['_fulfillment'];
         $this->assertSame(RelDynFulfillment::CONTAINER_VERSION, $stored['v']);
         $this->assertSame(['Player'], array_keys($stored['pairs']), 'migrated: one pair, the player');
         $this->assertEquals($state['w'], $stored['pairs']['Player']['w'], 'the same needs');
         $this->assertEquals($state['since'], $stored['pairs']['Player']['since']);
-        $this->assertNotContains($day, $stored['pairs']['Player']['contact_days'] ?? [], "Mikael's rechat is no day with the player");
-
-        $this->event('infoloc', self::HOME, self::at($day, 11.0), $this->home());
-        $this->turn(self::AELA, 'Morning, Aela.', self::at($day, 11.0), 'morning');
-        $this->assertContains($day, RelDynFulfillment::pairState($this->dynamics(self::AELA))['contact_days'], 'the player speaking to her is');
+        $this->assertContains($day, $stored['pairs']['Player']['contact_days'], 'the player speaking to her is a day with the player');
         $this->assertSame(0, $this->llmCalls);
         $this->assertSame([], $this->db->failures);
     }

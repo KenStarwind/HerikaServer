@@ -92,6 +92,13 @@ RelDynFacetClassifier::maybeLaunchBuild($GLOBALS['db'] ?? null, RelationshipDyna
 if (RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'] ?? null)) {
     return;
 }
+// A rechat / continue answering another NPC is NPC-to-NPC too, unless her reply was addressed to
+// the player: a suitor's flirt is no passion, interaction, contact or fulfillment of the player
+// pair (rulings §11, decisions §17).
+if (RelationshipDynamics::isNpcExchange($GLOBALS['gameRequest'] ?? null, trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')), (string) $npcName)
+    && !RelDynEval::isPlayerAddressed($GLOBALS['SCRIPTLINE_LISTENER_ATOMIC'] ?? null, trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')))) {
+    return;
+}
 
 // ── BYSTANDER FILTER ──
 // Only the active conversation target gets full passion math.
@@ -348,16 +355,8 @@ skip_conflict:
 // affinity can still grow. Passion has no attraction cap (decisions §13 retired the MDD 6.2
 // hard cap of 20): the uphill scales its gains instead (attractionPassionFactor).
 
-// ========== INTERACTION PATTERN TRACKING (PR 12) ==========
-if (!empty($reldynCfg['parasite_detection_enabled'])) {
-    $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
-    $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
-    RelationshipDynamics::updateInteractionPattern($dynamics, $classifiedLL, $affinityDelta);
-
-    // Check for parasite detection/recovery
-    RelationshipDynamics::checkParasitePattern($npcName, $dynamics);
-    RelationshipDynamics::checkParasiteRecovery($npcName, $dynamics);
-}
+// (Interaction pattern tracking for the Parasite protocol runs after the item events, below:
+// a gift seen this request is part of what this exchange was.)
 
 // A5: with the dimension engine off nothing consumes the eval inbox, so
 // pendingEvalForRequest() drops it (engine on: a read-only peek, which nothing here reads:
@@ -487,4 +486,17 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
         unset($GLOBALS['RELDYN_ATTACHMENT_CONFLICT_PASSION']);
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
     }
+}
+
+// ========== INTERACTION PATTERN TRACKING (PR 12; MDD 6.2 Parasite, reldyn_protocols.php) ==========
+// This exchange in the transactional ledger, keyed by its game time: a gift seen this request
+// (core's eventlog "gave X to" row or the request's give action), else a positive exchange the
+// local classifier scored, else nothing yet (its eval item, same game time, may say what it was).
+if (!empty($reldynCfg['parasite_detection_enabled'])) {
+    $giftSeen = !empty($itemResults['gift'] ?? null);
+    RelationshipDynamics::updateInteractionPattern($dynamics, $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null,
+        floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0), floatval($GLOBALS['gameRequest'][2] ?? 0), $giftSeen, $positiveExchange);
+    RelationshipDynamics::checkParasitePattern($npcName, $dynamics);
+    RelationshipDynamics::checkParasiteRecovery($npcName, $dynamics);
+    RelationshipDynamics::saveDynamics($npcName, $dynamics);
 }

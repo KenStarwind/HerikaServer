@@ -3,6 +3,22 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## After reldyn-v0.15 (batch O review, untagged) — Crisis, grief, the ick and the parasite; and a suitor's flirt is not yours
+The protocols arrive. A catastrophe forks her on the game calendar: someone she trusts around her pulls her up, no
+one pulls her down, and in between a window stays open until an anchor comes or the time runs out; the dead anchor
+no one, nor the partner who betrayed her. Grief runs through its phases on the calendar, quiet in a mature woman and
+raw in an immature one; a widow does not let a new bond past a ceiling for a while, and the one she lost is idealised,
+then remembered. Pressing a woman who is cold toward you turns every gain of passion into a loss until you back off
+and she is at ease again. A bond that is only gifts turns transactional, and its passion drains fast unless it is fed.
+A rechat in which another NPC flirts with her is theirs, not yours: her reply is steered only by how she turns him
+aside, and nothing of your bond moves with it (no passion, no contact, no needs met). Everyday words between
+companions are no courtship, a type core set between them long ago is no move now, and she drifts only when you have
+actually let her feel far away. Time in a place, a fight she only watched and her own drink meet her needs with you
+only when you were actually with her. Quest friction on duty is not held against you in her resentment either. Someone
+who already knows you hears no first impression of you on the upgrade, and a rumour held at the edge of her range gives
+back exactly what it took. Her backstory's goals stay hers however long nothing feeds them. Twelve gifts in one handover
+are twelve, and her drink is found behind other people's meals.
+
 ## reldyn-v0.15 — Whom she saves herself for, what she will not do, what she wants, and what she makes of it
 She can be yours before anyone says so. A pull toward you grows out of her feelings (the spark, how deep the bond
 runs, how well you meet her needs) and is shaped by who she is: a monogamous, loyal, grown woman holds steadiest, a

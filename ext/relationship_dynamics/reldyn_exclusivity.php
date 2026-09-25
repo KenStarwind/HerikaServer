@@ -29,16 +29,18 @@
  *
  * Expression (NPC-NPC context steering, feelings never numbers): when another NPC makes a
  * romantic move on her in an NPC-to-NPC exchange (a radiant round, or a rechat whose previous
- * speaker is that NPC), read from what CHIM logs (the suitor's recent eventlog lines to her,
- * config move markers) and from core's relationship_system NPC-NPC eval (the suitor's
- * relationships entry for her in a romantic type), she deflects / cools / mentions someone in
+ * speaker is that NPC), read from what CHIM logs (the suitor's recent eventlog lines to her:
+ * config move markers, compliments addressed to her, or two kinds of cue; everyday speech is no
+ * move), she deflects / cools / mentions someone in
  * her own style (config style rules over her traits, attachment and maturity), naming the
  * player only when there is a title. A weakened pull with a romantic bond behind it reads as
  * drifting instead.
  *
  * Damping (RelDyn side): her romantic interest in each suitor is RelDyn's own ledger
  * ($dynamics['_exclusivity']['suitors'], keyed like fulfillment pairs): each romantic move and
- * each rise of her core affinity toward the suitor while the exchange is romantic adds interest
+ * each rise of her core affinity toward the suitor while a move is recent or core's NPC-NPC eval
+ * holds a romantic type between them (the suitor's relationships entry for her, or hers for
+ * him; that type alone never steers her reply) adds interest
  * x (1 - damping x pull). Core's own NPC-NPC 'aff' number is core's (the fork's owner hook can
  * only take a target whole, not scale a delta): see the lane's open question.
  *
@@ -59,7 +61,7 @@ final class RelDynExclusivity
     const BAND_OPEN = 'open';
 
     /** Core request types whose other party is RECHAT_PREVIOUS_SPEAKER (main.php). */
-    const PREVIOUS_SPEAKER_TYPES = ['rechat', 'continue', 'continue_group'];
+    const PREVIOUS_SPEAKER_TYPES = RelationshipDynamics::PREVIOUS_SPEAKER_REQUEST_TYPES;
 
     // =====================================================================
     // CONFIG
@@ -109,18 +111,41 @@ final class RelDynExclusivity
             // --- bands (pull at or above) ---
             'bands' => [self::BAND_DEVOTED => 0.7, self::BAND_TAKEN => 0.45, self::BAND_LEANING => 0.25],
             // "Drifting" (a weakened pull with a romantic bond behind it): below the taken band, a
-            // title or passion at bond_passion_min, and the pull cut to at most this share of what
-            // it would be unweakened, or her interest in the suitor at interest_notice
+            // title or passion at bond_passion_min, and the pull cut to at most weakened_share of
+            // what it would be unweakened; or, once low fulfillment or neglect has begun to cut it
+            // at all, her interest in the suitor at interest_notice. His interest alone, with the
+            // player there and the bond fulfilled, is no drifting (its text says the player has
+            // felt far away).
             'drifting' => ['weakened_share' => 0.7, 'bond_passion_min' => 20.0, 'interest_notice' => 15.0],
 
             // --- suitors (NPC-NPC romantic moves; her interest in them, damped) ---
-            // Core relationship types (the suitor's core entry for her, or hers for him) that are romantic
-            'romantic_types' => ['romantic', 'crush', 'admirer', 'obsessed', 'infatuated', 'lover'],
-            // Words and phrases (case-insensitive, whole words) that make a line a romantic move
-            'move_markers' => ['beautiful', 'you look lovely', 'gorgeous', 'handsome', 'stunning', 'kiss',
-                'darling', 'sweetheart', 'my love', 'beloved', 'dinner with me', 'a drink with me', 'walk with me',
-                'dance with me', 'court you', 'courting', 'fancy you', 'sweet on', 'your eyes', 'your smile',
-                'marry me', 'be mine', 'take you out', 'spend the night', 'my heart', 'captivating', 'alluring'],
+            // Core relationship types (lib/relationship_manager.php TYPES; the suitor's core entry for
+            // her, or hers for him) that are romantic: they make his rising regard romantic interest
+            // in the ledger, but a type set long ago is no move in this exchange
+            'romantic_types' => ['romantic', 'crush', 'obsessed'],
+            // What makes a line a romantic move (case-insensitive, whole words; ordinary speech
+            // between companions is not courtship):
+            //   move_markers       a phrase that is a move on its own
+            //   compliment_words   praise that is a move when addressed to her: a compliment_forms
+            //                      regex ({WORD} = the word, quoted) matches
+            //   cues               kind => phrases; a praise word, an invitation or a feature of hers
+            //                      alone is everyday speech, cues of two different kinds are a move
+            'move_markers' => ['kiss me', 'kiss you', 'darling', 'sweetheart', 'my love', 'my beloved', 'dinner with me',
+                'dance with me', 'court you', 'courting you', 'fancy you', 'sweet on you', 'marry me', 'be mine',
+                'take you out', 'spend the night with me', 'you look lovely'],
+            'compliment_words' => ['beautiful', 'lovely', 'gorgeous', 'handsome', 'stunning', 'pretty', 'radiant',
+                'captivating', 'alluring', 'enchanting'],
+            'compliment_forms' => [
+                "\\byou(?:'re|\u{2019}re|\\s+are|\\s+look|\\s+looked|\\s+seem|\\s+have)\\s+(?:(?:so|truly|very|quite|really|such|a|an|the|most)\\s+){0,3}{WORD}\\b",
+                "\\byour\\s+(?:eyes|smile|face|hair|voice|lips|laugh)\\s+(?:is|are)\\s+(?:(?:so|truly|very|quite|really)\\s+){0,2}{WORD}\\b",
+            ],
+            'cues' => [
+                'praise'  => ['beautiful', 'lovely', 'gorgeous', 'handsome', 'stunning', 'pretty', 'radiant', 'captivating', 'alluring'],
+                'feature' => ['your eyes', 'your smile', 'your lips', 'your hair', 'your voice', 'beautiful eyes', 'lovely eyes', 'pretty eyes'],
+                'invite'  => ['walk with me', 'a drink with me', 'share a drink', 'come with me tonight', 'just the two of us'],
+                'longing' => ['still alone', 'spoken for', 'anyone special', 'my heart', 'write a song about', 'a song about you',
+                              'thinking about you', 'think of you', 'dream of you', 'miss you'],
+            ],
             'move_window_game_hours' => 6.0,   // a move this recent steers her reply
             'eventlog_scan_rows' => 16,        // recent chat rows read for the suitor's lines
             'interest_per_move' => 6.0,        // interest points a move adds before damping
@@ -363,16 +388,43 @@ final class RelDynExclusivity
     // SUITORS (her romantic interest in others, RelDyn side, damped)
     // =====================================================================
 
-    /** Is $line (a suitor's words) a romantic move by the config markers? Pure. */
+    /** Does $phrase occur in $line as whole words (case-insensitive)? */
+    private static function hasPhrase(string $line, string $phrase): bool
+    {
+        $phrase = trim($phrase);
+        return $phrase !== '' && preg_match('/(?<![\p{L}\p{N}])' . preg_quote($phrase, '/') . '(?![\p{L}\p{N}])/iu', $line) === 1;
+    }
+
+    /**
+     * Is $line (a suitor's words) a romantic move? Pure. A move marker; or a compliment word
+     * addressed to her (a compliment_forms pattern); or cues of at least two different kinds
+     * (praise, a feature of hers, an invitation, longing). A single everyday cue ("beautiful
+     * weather", "walk with me to Jorrvaskr", "by my heart") is not.
+     */
     public static function isRomanticLine(string $line, ?array $cfg = null): bool
     {
         $cfg = $cfg ?? self::config();
-        foreach ((array) $cfg['move_markers'] as $marker) {
-            $marker = trim((string) $marker);
-            if ($marker === '') continue;
-            if (preg_match('/(?<![\p{L}\p{N}])' . preg_quote($marker, '/') . '(?![\p{L}\p{N}])/iu', $line)) return true;
+        foreach ((array) ($cfg['move_markers'] ?? []) as $marker) {
+            if (self::hasPhrase($line, (string) $marker)) return true;
         }
-        return false;
+        foreach ((array) ($cfg['compliment_words'] ?? []) as $word) {
+            $word = trim((string) $word);
+            if ($word === '') continue;
+            foreach ((array) ($cfg['compliment_forms'] ?? []) as $form) {
+                $hit = @preg_match('/' . str_replace('{WORD}', preg_quote($word, '/'), (string) $form) . '/iu', $line);
+                if ($hit === false) {
+                    throw new InvalidArgumentException('RelDynExclusivity: exclusivity.compliment_forms has an invalid pattern: ' . $form);
+                }
+                if ($hit === 1) return true;
+            }
+        }
+        $kinds = 0;
+        foreach ((array) ($cfg['cues'] ?? []) as $phrases) {
+            foreach ((array) $phrases as $phrase) {
+                if (self::hasPhrase($line, (string) $phrase)) { $kinds++; break; }
+            }
+        }
+        return $kinds >= 2;
     }
 
     /** A suitor's ledger entry with its interest decayed to $now (interest points). Pure. */
@@ -463,10 +515,13 @@ final class RelDynExclusivity
             && (!empty($pull['titled']) || floatval($pull['passion'] ?? 0) >= floatval($d['bond_passion_min'] ?? 20.0));
         $weakened = floatval($pull['unweakened'] ?? 0) > 0
             && floatval($pull['pull']) <= floatval($d['weakened_share'] ?? 0.7) * floatval($pull['unweakened']);
+        // Low fulfillment or neglect has begun to cut the pull at all: the player has felt far
+        // away, and his interest can make her drift before the weakening alone would
+        $cutting = floatval($pull['low_cut'] ?? 1.0) < 1.0 || floatval($pull['neglect'] ?? 1.0) < 1.0;
         $kind = null;
         if (in_array($band, [self::BAND_DEVOTED, self::BAND_TAKEN], true)) {
             $kind = $band;
-        } elseif ($bonded && ($weakened || $interest >= floatval($d['interest_notice'] ?? 15.0))) {
+        } elseif ($bonded && ($weakened || ($cutting && $interest >= floatval($d['interest_notice'] ?? 15.0)))) {
             $kind = 'drifting';
         } elseif ($band === self::BAND_LEANING) {
             $kind = $band;
@@ -600,15 +655,27 @@ final class RelDynExclusivity
         if (is_array($entry) && isset($entry['last_move_gamets'])) $prior = floatval($entry['last_move_gamets']);
         $recentMove = $lines !== [] || ($prior !== null && $now - $prior <= floatval($cfg['move_window_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0);
         if (!$coreRomantic && !$recentMove) return null;
+        // A standing romantic core type between them keeps the ledger (his rising regard is romantic
+        // interest), but only a move in this exchange (§17: "when another NPC makes romantic moves")
+        // steers her reply
 
-        $p = self::pull($dynamics, $now, $cfg);
+        // Her bond with the player as core holds it now (title, affinity): an NPC-to-NPC exchange
+        // runs no prerequest of hers, so the stored snapshot may lag core's eval. Read, not stored.
+        $view = $dynamics;
+        $toPlayer = self::coreBond($npcName, RelationshipDynamics::PLAYER_RELATIONSHIP_KEY);
+        if (is_array($toPlayer)) {
+            RelationshipDynamics::setCoreRelationshipType($view, $toPlayer['type'] ?? 'neutral');
+            RelationshipDynamics::refreshAffinityMirror($view, floatval($toPlayer['aff'] ?? 0));
+        }
+        $p = self::pull($view, $now, $cfg);
         $added = self::recordExchange($dynamics, $suitor, $lines, is_numeric($hers['aff'] ?? null) ? floatval($hers['aff']) : null,
             true, $p['pull'], $now, $cfg);
         RelationshipDynamics::saveDynamics($npcName, $dynamics);
         $interest = self::interestAt((array) self::suitor($dynamics, $suitor), $now, $cfg);
         RelationshipDynamics::log("[EXCL] {$npcName} <- {$suitor}: pull " . $p['pull'] . " ({$p['band']}), " . count($lines)
             . " new move(s), interest +{$added} -> " . round($interest, 2) . ($coreRomantic ? ', core romantic' : ''));
-        $line = self::feltLine($dynamics, $p, $npcName, $suitor, $playerName, $interest, $cfg);
+        if (!$recentMove) return null;
+        $line = self::feltLine($view, $p, $npcName, $suitor, $playerName, $interest, $cfg);
         return $line === null ? null : self::render($npcName, $suitor, $line['text'], $cfg);
     }
 

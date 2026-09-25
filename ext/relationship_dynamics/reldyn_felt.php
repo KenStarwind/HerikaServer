@@ -493,7 +493,7 @@ final class RelDynFelt
 
         // --- Place appraisal (decisions §6): runs here, after core set CACHE_LOCATION ---
         if (!empty($rd['ambient_enabled'])) {
-            $placeTurn = RelDynFacets::contextTurn($npc, $dynamics, $now);
+            $placeTurn = RelDynFacets::contextTurn($npc, $dynamics, $now, (bool) ($env['pair'] ?? !empty($env['player_addressed'])));
             if ($placeTurn['changed']) $changed = true;
             // the present route of protective concern (design §1.2): she is here, and sees the danger
             if (is_array($placeTurn['ctx'] ?? null)
@@ -639,24 +639,19 @@ final class RelDynFelt
                 self::fill((string) $t['mask']['slip'], $vars));
         }
 
-        // --- Crisis window (PR 10) ---
-        $window = $dynamics['_unstable_window'] ?? null;
-        if (is_array($window) && empty($window['resolved']) && !empty($rd['divine_intervention_enabled'])) {
-            $elapsed = floatval($dynamics['_accumulated_play_gamets'] ?? 0) - floatval($window['start_gamets'] ?? 0);
-            $duration = floatval($window['duration_gamets'] ?? 0);
-            $window['_elapsed_fraction'] = $duration > 0 ? $elapsed / $duration : 0;
-            $text = RelationshipDynamics::generateCrisisNarration($npc, $window);
-            if ($text !== '') $lines[] = self::line('crisis', self::SCOPE_SELF, self::LANE_CORE, floatval($sal['crisis']), $text);
+        // --- Crisis window (PR 10): who is around may anchor her (core's CACHE_PEOPLE is set by
+        // now); the window's narration, how it ended (said once to the player), the arc after it ---
+        $crisis = RelDynProtocols::crisisTurn($npc, $dynamics, (array) ($env['people'] ?? []), !empty($env['player_addressed']));
+        if ($crisis['changed']) $changed = true;
+        foreach ($crisis['lines'] as $l) {
+            $lines[] = self::line($l['key'], self::SCOPE_SELF, $l['turn'] ? self::LANE_TURN : self::LANE_CORE,
+                $l['turn'] ? 1.0 : floatval($sal['crisis']), (string) $l['text'], ['must' => (bool) $l['turn']]);
         }
 
-        // --- Grief: the two strongest bonds lost ---
-        $grief = is_array($dynamics['_grief_bonds'] ?? null) ? $dynamics['_grief_bonds'] : [];
-        if ($grief !== [] && !empty($rd['grief_system_enabled'])) {
-            uasort($grief, fn($a, $b) => ($b['bond_affinity_at_death'] ?? 0) <=> ($a['bond_affinity_at_death'] ?? 0));
-            $maturity = floatval($dims['maturity']['x'] ?? 50);
-            foreach (array_slice($grief, 0, 2, true) as $deceased => $g) {
-                $text = RelationshipDynamics::getGriefKeywords($npc, (string) $deceased, intval($g['phase'] ?? 1), $maturity);
-                if ($text !== '') $lines[] = self::line("grief_{$deceased}", self::SCOPE_SELF, self::LANE_CORE, floatval($sal['grief']), $text);
+        // --- Grief: the two strongest bonds lost, as she grieves (maturity, attachment) ---
+        if (!empty($rd['grief_system_enabled'])) {
+            foreach (RelDynProtocols::griefFeltLines($npc, $dynamics) as $l) {
+                if ($l['text'] !== '') $lines[] = self::line($l['key'], self::SCOPE_SELF, self::LANE_CORE, floatval($sal['grief']), $l['text']);
             }
         }
 
@@ -1288,16 +1283,27 @@ final class RelDynFelt
         $cfg = RelationshipDynamics::getConfig();
         return [
             'player_addressed' => RelationshipDynamics::isPlayerInputRequest($GLOBALS['gameRequest'] ?? null),
+            // an interaction of the player pair (the player's word, or intimacy with the player):
+            // the place time since the pair's last one is its fulfillment (rulings §11)
+            'pair' => RelationshipDynamics::isPairInteraction($GLOBALS['gameRequest'] ?? null, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')),
             'last_ll' => $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null,
             'duty_factor' => floatval($GLOBALS['RELDYN_DUTY_FACTOR'] ?? 1.0),
             'duty_quest' => is_array($GLOBALS['RELDYN_DUTY'] ?? null) ? (string) ($GLOBALS['RELDYN_DUTY']['quest'] ?? '') : '',
             'ick' => !empty($GLOBALS['RELDYN_ICK_ACTIVE']),
+            // who is around (core's CACHE_PEOPLE "|A|B|"): anchors for a crisis window
+            'people' => array_values(array_filter(array_map('trim', explode('|', (string) ($GLOBALS['CACHE_PEOPLE'] ?? ''))))),
             'goal' => !empty($cfg['director_goals_enabled'])
                 ? ($GLOBALS['RELDYN_DIRECTOR_GOAL'] ?? RelationshipDynamics::getActiveDirectorGoal($dynamics)) : null,
         ];
     }
 
     /** Compose and select for the current request's NPC; saves the dynamics once if changed. */
+    /** Forget the lines rendered for an earlier request (an NPC-to-NPC exchange renders none). */
+    public static function clearRendered(): void
+    {
+        self::$lastRendered = [];
+    }
+
     private static function build(string $npc, string $player): ?array
     {
         self::$lastRendered = [];

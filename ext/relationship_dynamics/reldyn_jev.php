@@ -73,6 +73,10 @@
  *   creature         null | ['type' => vampire|werewolf, 'state' => ?string (vampire_night|vampire_day|
  *                    werewolf_moon|werewolf_night|werewolf_day), 'moon' => ?string (Skyrim's phase),
  *                    'offsets' => [dim => points held now]] (RelDynCreatures::jev)
+ *   protocols        ['grief' => [deceased => ['phase' 1..4, 'memory_warmth', 'widow_lock' => bool]],
+ *                    'widow_ceiling' => ?core points, 'crisis' => null | ['event', 'fraction' 0..1],
+ *                    'arc' => ?redemption|breaking, 'ick' => bool, 'parasite' => bool,
+ *                    'gift_share' => 0..1] (RelDynProtocols::jev)
  *   goal             null | ['text' => string, 'priority' => 0..1]
  *   intrinsic_goals  list of ['type' => bond_seeking|purpose|mastery|safety|independence|revenge|
  *                    self_worth_recovery, 'priority' => 0..1, 'progress' => 0..1, 'source' => string,
@@ -111,6 +115,10 @@ final class RelDynJev
         'resentment_arc.self_baseline_offsets' => 'baseline points', 'resentment_arc.guilt_bleed' => 'comfort points',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
         'creature.offsets' => 'dimension points held by the creature row',
+        'protocols.grief.memory_warmth' => 'warmth points 0..100 toward the deceased (idealized, then memorial)',
+        'protocols.widow_ceiling' => 'core affinity points (the widow lock on new bonds)',
+        'protocols.crisis.fraction' => '0..1 of the unstable window (game calendar)',
+        'protocols.gift_share' => '0..1 of the exchanges in the parasite ledger',
         'intrinsic_goals.priority' => '0..1', 'intrinsic_goals.progress' => '0..1',
         'reputation.fame' => '0..1', 'reputation.infamy' => '0..1', 'reputation.weight' => '0..1',
         'reputation.offsets' => 'dimension points held now', 'duty.factor' => 'multiplier on negative eval signals',
@@ -212,6 +220,7 @@ final class RelDynJev
             'attraction' => $attraction,
             'place' => $place,
             'creature' => RelDynCreatures::jev($dynamics),
+            'protocols' => RelDynProtocols::jev($dynamics),
             'goal' => $goal,
             'intrinsic_goals' => RelDynGoals::jev($dynamics),
             'reputation' => RelDynReputation::jev($dynamics),
@@ -304,6 +313,18 @@ final class RelDynJev
         if (($s['creature'] ?? null) !== null) {
             $parts[] = 'creature=' . $s['creature']['type'] . ($s['creature']['state'] !== null ? "({$s['creature']['state']})" : '')
                 . ($s['creature']['moon'] !== null ? " moon={$s['creature']['moon']}" : '');
+        }
+        $pr = $s['protocols'] ?? null;
+        if (is_array($pr)) {
+            foreach ($pr['grief'] as $name => $g) {
+                $parts[] = "grief={$name}(phase {$g['phase']}" . ($g['memory_warmth'] !== null ? ' memory ' . $f($g['memory_warmth']) : '')
+                    . ($g['widow_lock'] ? ' widow_lock' : '') . ')';
+            }
+            if ($pr['widow_ceiling'] !== null) $parts[] = 'widow_ceiling=' . $f($pr['widow_ceiling']);
+            if ($pr['crisis'] !== null) $parts[] = "crisis={$pr['crisis']['event']}(" . number_format($pr['crisis']['fraction'], 2, '.', '') . ')';
+            if ($pr['arc'] !== null) $parts[] = "arc={$pr['arc']}";
+            if ($pr['ick']) $parts[] = 'ick';
+            if ($pr['parasite']) $parts[] = 'parasite(gift_share ' . number_format($pr['gift_share'], 2, '.', '') . ')';
         }
         if ($s['goal'] !== null) {
             $parts[] = 'goal="' . str_replace('"', "'", $s['goal']['text']) . '"(' . number_format($s['goal']['priority'], 1, '.', '') . ')';

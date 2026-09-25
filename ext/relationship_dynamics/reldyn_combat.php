@@ -26,7 +26,8 @@
  *           only when THIS NPC fought (fought()): its own combat
  *           bark, a kill of its own, its fall, the plugin's activity status in combat, or being
  *           the named participant. A bystander at a combat event is no longer "confirmed".
- *   grief   a death: RelDyn NPCs nearby with a bond to the deceased (onNpcDeath).
+ *   grief   a death: RelDyn NPCs around (people + party) with a bond to the deceased
+ *           (RelDynProtocols::onDeath -> RelationshipDynamics::onNpcDeath).
  * Defeat ("party defeated", -1.5 to -3) has no core signal (no defeat event in 3.4.1): unknown.
  *
  * Live HP (npcHealth / playerHealth): the AIAgent 3.4.1 plugin posts each nearby agent's
@@ -282,9 +283,11 @@ final class RelDynCombat
                     $npc, $fall['fight'] === null ? 'n/a' : round($fall['fight'], 3), $fall['fear'] === null ? 'n/a' : round($fall['fear'], 3),
                     $gain, $fall['applied']['valence'], $fall['applied']['arousal']));
             } else {
-                // Fighting together is an activity the NPC appraises (decisions §6)
+                // Fighting together is an activity the NPC appraises (decisions §6); a fight she was
+                // in beside the player is shared with the player pair, one she only saw is hers alone
                 $prefs = RelDynFacets::preferences($dynamics, $npc);
-                $appraisal = RelDynFacets::experienceThing($npc, $dynamics, 'activity', 'combat', $prefs, $at > 0 ? $at : RelationshipDynamics::currentGamets());
+                $appraisal = RelDynFacets::experienceThing($npc, $dynamics, 'activity', 'combat', $prefs, $at > 0 ? $at : RelationshipDynamics::currentGamets(),
+                    null, $isWitness ? null : RelDynFulfillment::PLAYER);
                 $gain = RelationshipDynamics::calculatePassionGain($dynamics, RelationshipDynamics::LL_SERVICE, $appraisal);
                 RelationshipDynamics::log(sprintf('Combat appraisal: %s valence=%+.3f dominant=%s',
                     $npc, floatval($appraisal['valence'] ?? 0), (string) ($appraisal['dominant'] ?? 'none')));
@@ -339,23 +342,11 @@ final class RelDynCombat
         }
 
         if ($type === 'death' && $victim !== null && !empty(RelationshipDynamics::configValue('grief_system_enabled') ?? true)) {
-            self::grief($victim, $nearby);
+            // Grief (PR 10, reldyn_protocols.php): the RelDyn NPCs around (people and party) with
+            // a bond to the deceased, at the death's game time
+            RelDynProtocols::onDeath($victim, array_merge($nearby, self::partyNames($party)), $at, $player);
         }
         return $out;
-    }
-
-    /** Grief (PR 10): a RelDyn NPC nearby with a bond (> 30 on the 0..100 scale) to the deceased. */
-    private static function grief(string $deceased, array $nearby): void
-    {
-        foreach ($nearby as $witness) {
-            if (strcasecmp($witness, $deceased) === 0) continue;
-            $bonds = RelationshipDynamics::getAllBondsForNpc($witness);
-            if (!isset($bonds[$deceased])) continue;
-            if ((($bonds[$deceased]['aff'] + 100) / 2.0) <= 30) continue;
-            $wd = RelationshipDynamics::getDynamics($witness);
-            RelationshipDynamics::onNpcDeath($deceased, $witness, $wd);
-            RelationshipDynamics::saveDynamics($witness, $wd);
-        }
     }
 
     // =====================================================================

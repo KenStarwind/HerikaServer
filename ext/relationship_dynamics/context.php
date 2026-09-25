@@ -26,10 +26,13 @@ if (empty($npcName) || $npcName === 'The Narrator') {
 
 require_once __DIR__ . '/relationship_dynamics.php';
 
-// NPC-to-NPC radiant dialogue: nothing player-directed (see context_pre.php).
-$reldynRadiant = RelationshipDynamics::isRadiantRequest($GLOBALS['gameRequest'] ?? null);
-if ($reldynRadiant) {
+// NPC-to-NPC exchange (radiant, or a rechat / continue answering another NPC): nothing
+// player-directed (see context_pre.php); what was rendered for an earlier request is not hers now.
+$reldynNpcExchange = RelationshipDynamics::isNpcExchange($GLOBALS['gameRequest'] ?? null,
+    (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'), (string) $npcName);
+if ($reldynNpcExchange) {
     unset($GLOBALS[RelDynFelt::HANDOFF_GLOBAL]);
+    RelDynFelt::clearRendered();
 }
 
 // Each hook is its own request scope: config/bond caches never outlive it (A3).
@@ -41,7 +44,7 @@ if (!RelationshipDynamics::isEnabled()) {
 }
 
 $reldynPlayer = (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player');
-if (!$reldynRadiant) {
+if (!$reldynNpcExchange) {
     RelDynFelt::contextPost($npcName, $reldynPlayer);
 }
 

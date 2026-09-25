@@ -22,7 +22,11 @@
  *   status_pull = clamp(mean(pref wealth, pref luxury) / pull_full, 0, 1): "from status-oriented NPCs"
  * then capped (RelationshipDynamics::REPUTATION_CAPS). Computed once, on the first contact the
  * profile knows anything (pre-contact: what she heard before meeting), and kept; the held offset
- * follows the weight on every contact (prerequest).
+ * follows the weight on every contact (prerequest). A stranger's first impression only: an NPC
+ * who already knows the player (metBefore: an interaction history, core's bond with a title or
+ * an affinity outside the stranger band, a context tier reached) heard nothing new (offset 0).
+ * The held offset is what was actually applied: at the edge of a dimension's range less is
+ * taken, and exactly that much is given back as it fades (held offsets are neutral).
  * Weight = 0.5 ^ (meaningful interactions / fade_half_interactions): 1.5 puts it under 10% after
  * five meaningful interactions and near zero after fifteen (the draft). A meaningful interaction
  * is an applied eval item of at least meaningful_significance, or an exchange the legacy
@@ -133,10 +137,28 @@ final class RelDynReputation
     }
 
     /**
-     * On contact (prerequest): fix the raw offsets at the first contact the profile knows
-     * anything, and move the held offset to raw x weight (the change since the last contact).
+     * Does this NPC already know the player (so no first impression is taken)? An interaction
+     * history (interaction_count / total_positive_interactions, the April decay factor's
+     * measure), core's Player type other than neutral, core affinity ($coreAff, core points;
+     * default the mirror) outside the stranger tier, or a context tier high-water mark reached.
      */
-    public static function apply(array &$dynamics, string $npcName): void
+    public static function metBefore(array $dynamics, ?float $coreAff = null): bool
+    {
+        if (max(intval($dynamics['interaction_count'] ?? 0), intval($dynamics['total_positive_interactions'] ?? 0)) > 0) return true;
+        $type = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
+        if ($type !== '' && $type !== 'neutral') return true;
+        $aff = $coreAff ?? (is_numeric($dynamics['_aff_mirror_x'] ?? null) ? RelationshipDynamics::getCoreAffinity($dynamics) : null);
+        if ($aff !== null && RelationshipDynamics::getCurrentTier($aff) !== 'stranger') return true;
+        return intval($dynamics['context_tier_hwm'] ?? 0) >= 1;
+    }
+
+    /**
+     * On contact (prerequest, after core's Player entry was read: $coreAff core points): fix the
+     * raw offsets at the first contact the profile knows anything (nothing for someone she
+     * already knows: metBefore), and move the held offset toward raw x weight (the change since
+     * the last contact). What is held is what the range let it take.
+     */
+    public static function apply(array &$dynamics, string $npcName, ?float $coreAff = null): void
     {
         $cfg = self::config();
         $state = is_array($dynamics[self::KEY] ?? null) ? $dynamics[self::KEY] : [];
@@ -150,7 +172,7 @@ final class RelDynReputation
             return;
         }
         if (!is_array($state['raw'] ?? null)) {
-            if (intval($state['meaningful'] ?? 0) > 0) {
+            if (intval($state['meaningful'] ?? 0) > 0 || self::metBefore($dynamics, $coreAff)) {
                 $state['raw'] = array_fill_keys(self::DIMS, 0.0);   // met before anything was known
             } else {
                 $scores = self::scores();
@@ -167,13 +189,17 @@ final class RelDynReputation
         foreach (self::DIMS as $dim) {
             if (!isset($dynamics['dimensions'][$dim])) continue;
             $target = round(floatval($state['raw'][$dim] ?? 0) * $w, 4);
-            $delta = $target - floatval($applied[$dim] ?? 0);
+            $held = floatval($applied[$dim] ?? 0);
+            $delta = $target - $held;
             $def = RelationshipDynamics::getDimensionDefinition($dim);
             if (abs($delta) > 1e-6 && $def) {
-                $x = floatval($dynamics['dimensions'][$dim]['x'] ?? 0) + $delta;
-                $dynamics['dimensions'][$dim]['x'] = max((float) $def['range_min'], min((float) $def['range_max'], $x));
+                // Only what the range lets it take is held (and later given back)
+                $before = floatval($dynamics['dimensions'][$dim]['x'] ?? 0);
+                $after = max((float) $def['range_min'], min((float) $def['range_max'], $before + $delta));
+                $dynamics['dimensions'][$dim]['x'] = $after;
+                $held += $after - $before;
             }
-            if (abs($target) > 1e-6) $effective[$dim] = $target;
+            if (abs($held) > 1e-6) $effective[$dim] = round($held, 4);
         }
         $state['effective'] = $effective;
         $state['weight'] = round($w, 4);

@@ -1022,15 +1022,20 @@ class RelDynFacets
      *   - comfort and mood nudged by valence x hours (dimension engine);
      *   - discomfort built up on the game calendar while the place is hated, relieved elsewhere;
      *   - internal weather pressure fed by valence x hours, loved facets marked as fed (deprivation);
-     *   - the Point-of-Interest passion floor while the place is loved (ambient presence).
+     *   - the Point-of-Interest passion floor while the place is loved (ambient presence);
+     *   - time in the place together to the player pair's fulfillment, on a turn of that pair only
+     *     ($pairTurn: the player speaking to her, or intimacy with the player; rulings §11 "a
+     *     follower you never talk to is not fulfilling"): the game hours since the pair's previous
+     *     turn in this same place (_place_pair; a turn of hers elsewhere in between breaks it).
      *
-     * @param array $facets place facet vector (placeFacets)
-     * @param array $prefs  the NPC's preferences (preferences())
-     * @param float $now    raw game timestamp (currentGamets()); <= 0 = clock unknown
+     * @param array $facets   place facet vector (placeFacets)
+     * @param array $prefs    the NPC's preferences (preferences())
+     * @param float $now      raw game timestamp (currentGamets()); <= 0 = clock unknown
+     * @param bool  $pairTurn this turn is an interaction of the player pair (isPairInteraction)
      * @return array ['appraisal' => appraise() result, 'comfort' => change, 'mood' => change,
      *                'discomfort' => points, 'pressure' => weather pressure, 'poi_floor' => ?float]
      */
-    public static function placeTurn(string $npcName, array &$dynamics, string $placeName, array $facets, array $prefs, float $now): array
+    public static function placeTurn(string $npcName, array &$dynamics, string $placeName, array $facets, array $prefs, float $now, bool $pairTurn = true): array
     {
         $cfg = self::getAppraisalConfig();
         $appraisal = self::appraise($prefs, $facets);
@@ -1062,10 +1067,17 @@ class RelDynFacets
             self::markFed($dynamics, $facets, $prefs, $now, $cfg);
             $out['pressure'] = self::feedWeather($dynamics, $v * floatval($cfg['weather_feed_per_game_hour']) * $hours, $now, $cfg);
         }
-        // Time in a place together covers the NPC's facet needs (rulings §9 fulfillment).
-        if ($hours > 0) {
-            RelDynFulfillment::recordFacets($dynamics, $facets,
-                floatval(RelDynFulfillment::config()['place_units_per_game_hour']) * $hours, $now);
+        // Time in a place together covers the NPC's facet needs (rulings §9 fulfillment), for the
+        // player pair only between turns of that pair (rulings §11)
+        if ($pairTurn) {
+            $pairHours = self::exposureHours($dynamics['_place_pair'] ?? null, $placeName, $now, $cfg);
+            if ($pairHours > 0) {
+                RelDynFulfillment::recordFacets($dynamics, $facets,
+                    floatval(RelDynFulfillment::config()['place_units_per_game_hour']) * $pairHours, $now);
+            }
+            if ($now > 0) $dynamics['_place_pair'] = ['place' => $placeName, 'gamets' => $now];
+        } elseif (($dynamics['_place_pair']['place'] ?? null) !== $placeName) {
+            unset($dynamics['_place_pair']);   // she was elsewhere without the player's word
         }
 
         if (RelationshipDynamics::configValue('ambient_enabled') && RelationshipDynamics::configValue('passion_enabled')) {
@@ -1168,8 +1180,12 @@ class RelDynFacets
      * appraised, its loved facets marked fed and the weather fed by its valence x
      * weather_feed_per_experience. $facets defaults to
      * thingFacets($kind, $name), then config event_facets for activities RelDyn sees itself.
+     * $pairTarget: the relationship pair the experience was shared in (its fulfillment,
+     * experience_units), null when it was hers alone (rulings §11: only an interaction within a
+     * pair fulfills it).
      */
-    public static function experienceThing(string $npcName, array &$dynamics, string $kind, string $name, array $prefs, float $now, ?array $facets = null): array
+    public static function experienceThing(string $npcName, array &$dynamics, string $kind, string $name, array $prefs, float $now, ?array $facets = null,
+                                           ?string $pairTarget = RelDynFulfillment::PLAYER): array
     {
         $cfg = self::getAppraisalConfig();
         $facets = $facets ?? self::thingFacets($kind, $name);
@@ -1181,9 +1197,10 @@ class RelDynFacets
             self::markFed($dynamics, $facets, $prefs, $now, $cfg);
             self::feedWeather($dynamics, $appraisal['valence'] * floatval($cfg['weather_feed_per_experience']), $now, $cfg);
         }
-        // An experience shared covers the NPC's facet needs (rulings §9 fulfillment).
-        if ($facets) {
-            RelDynFulfillment::recordFacets($dynamics, $facets, floatval(RelDynFulfillment::config()['experience_units']), $now);
+        // An experience shared covers the NPC's facet needs (rulings §9 fulfillment), in the pair it
+        // was shared in
+        if ($facets && $pairTarget !== null) {
+            RelDynFulfillment::recordFacets($dynamics, $facets, floatval(RelDynFulfillment::config()['experience_units']), $now, $pairTarget);
         }
         return $appraisal;
     }
@@ -1386,9 +1403,12 @@ class RelDynFacets
      * wherever it was). When core gives no place at all, the last read stays in force until
      * it goes stale (place_appraisal_max_age_game_hours).
      *
+     * $pairTurn: this turn is an interaction of the player pair (the place time between such
+     * turns is that pair's fulfillment: placeTurn).
+     *
      * @return array ['text' => ?string felt read, 'changed' => bool (save $dynamics), 'place' => ?string]
      */
-    public static function contextTurn(string $npcName, array &$dynamics, float $now): array
+    public static function contextTurn(string $npcName, array &$dynamics, float $now, bool $pairTurn = false): array
     {
         $changed = self::ensurePreferences($npcName, $dynamics);
         $ctx = static::currentPlaceContext($npcName);
@@ -1398,7 +1418,7 @@ class RelDynFacets
         if ($ctx && ($ctx['known'] ?? true) !== false) {
             $place = trim((string) ($ctx['name'] ?? ''));
             $facets = static::placeFacets($ctx);
-            $r = self::placeTurn($npcName, $dynamics, $place, $facets, self::preferences($dynamics, $npcName), $now);
+            $r = self::placeTurn($npcName, $dynamics, $place, $facets, self::preferences($dynamics, $npcName), $now, $pairTurn);
             $changed = true;
             // A place that touches one of her intrinsic goals moves it (MDD 14.2), once a game day
             RelDynGoals::onExperience($npcName, $dynamics, 'place', $place !== '' ? $place : 'wilderness', $facets, $now);

@@ -161,8 +161,8 @@ final class RelDynIntrinsicGoalsTest extends TestCase
     public function testGoalsWithoutProgressFadeAndProgressOneIsAchieved(): void
     {
         $d = self::npc([]);
-        RelDynGoals::form($d, 'safety', 0.3, 'backstory', self::T0, ['facets' => ['domestic' => 1.0]]);
-        // 0.3 - 0.02 x 11 days = 0.08 < 0.1: faded
+        RelDynGoals::form($d, 'mastery', 0.3, 'interest', self::T0, ['facets' => ['alchemy' => 1.0]]);
+        // 0.3 - 0.02 x 11 days = 0.08 < 0.1: faded (an interest's goal; a backstory one does not fade)
         RelDynGoals::onContact('Muiri', $d, self::T0 + 11 * self::DAY);
         $this->assertSame([], self::types($d));
         $this->assertSame('faded', $d[RelDynGoals::HISTORY_KEY][0]['outcome']);
@@ -182,5 +182,37 @@ final class RelDynIntrinsicGoalsTest extends TestCase
         $this->assertArrayHasKey('intrinsic_goal', $lines);
         $this->assertDoesNotMatchRegularExpression('/\d/', $lines['intrinsic_goal']);
         $this->assertTrue(RelationshipDynamics::defaultConfig()['intrinsic_goals']['enabled']);
+    }
+
+    /**
+     * batch O review: a backstory goal is character-defining (MDD 14.2 "persistent across
+     * sessions"). Sixty idle game days lower Aela's Silver Hand revenge to the floor, never away;
+     * four newer, stronger goals crowd out one of themselves, not her revenge; achieved, it is done.
+     */
+    public function testABackstoryGoalIsNotWornAwayByTimeNorCrowdedOut(): void
+    {
+        $d = self::npc([]);
+        RelDynGoals::form($d, 'revenge', 0.8, 'backstory', self::T0, ['keywords' => ['Silver Hand']]);
+        RelDynGoals::onContact('Aela the Huntress', $d, self::T0 + 60 * self::DAY);
+        $g = array_column(RelDynGoals::active($d), null, 'type')['revenge'] ?? null;
+        $this->assertNotNull($g, 'sixty idle game days: still hers');
+        $this->assertEqualsWithDelta(RelDynGoals::configDefaults()['backstory_priority_floor'], $g['priority'], 1e-9, 'quieter, at the floor');
+        $this->assertSame([], (array) ($d[RelDynGoals::HISTORY_KEY] ?? []));
+        $this->assertGreaterThanOrEqual(RelDynGoals::configDefaults()['felt_min_priority'], $g['priority'], 'still felt at its quietest');
+
+        $t = self::T0 + 61 * self::DAY;
+        foreach (['bond_seeking' => 'trajectory', 'independence' => 'trajectory', 'mastery' => 'interest', 'self_worth_recovery' => 'self_worth'] as $type => $src) {
+            RelDynGoals::form($d, $type, 0.9, $src, $t);
+        }
+        $types = self::types($d);
+        $this->assertContains('revenge', $types, 'newer goals do not crowd out who she is');
+        $this->assertCount(RelDynGoals::configDefaults()['max_active'], $types);
+        $this->assertSame('crowded_out', $d[RelDynGoals::HISTORY_KEY][0]['outcome']);
+        $this->assertNotSame('revenge', $d[RelDynGoals::HISTORY_KEY][0]['type']);
+
+        // Achieved: done for good (the backstory does not form it again)
+        for ($i = 0; $i < 4; $i++) RelDynGoals::onQuestEvent('Aela the Huntress', $d, ['name' => 'The Silver Hand', 'objective' => 'Hunt the Silver Hand'], $t + $i);
+        $this->assertNotContains('revenge', self::types($d));
+        $this->assertArrayHasKey('revenge', $d[RelDynGoals::META_KEY]['backstory_done'] ?? []);
     }
 }

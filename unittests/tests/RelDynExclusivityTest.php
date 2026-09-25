@@ -4,6 +4,7 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
+require_once __DIR__ . '/../../lib/relationship_manager.php';
 
 /** Just enough of `sql` for a stored RelDyn config row; every other read finds nothing. */
 final class RelDynExclusivityConfigDb
@@ -236,12 +237,84 @@ final class RelDynExclusivityTest extends TestCase
     public function testRomanticMovesAreMarkedWholeWordsAndConfigurable(): void
     {
         $this->assertTrue(RelDynExclusivity::isRomanticLine('You look lovely today. Share a drink with me?'));
-        $this->assertTrue(RelDynExclusivity::isRomanticLine('Such BEAUTIFUL eyes.'));
+        $this->assertTrue(RelDynExclusivity::isRomanticLine('You have such BEAUTIFUL eyes.'));
+        $this->assertTrue(RelDynExclusivity::isRomanticLine('Such beautiful eyes.'), 'praise and a feature of hers: two kinds of cue');
         $this->assertFalse(RelDynExclusivity::isRomanticLine('Lovely weather for a hunt.'));
         $this->assertFalse(RelDynExclusivity::isRomanticLine('The kissing bandit? Never heard of him.'), 'whole words: kissing is not kiss');
         $this->assertFalse(RelDynExclusivity::isRomanticLine('Good hunting today?'));
         $this->config(['move_markers' => ['good hunting']]);
         $this->assertTrue(RelDynExclusivity::isRomanticLine('Good hunting today?'));
+    }
+
+    /**
+     * Ordinary speech is no courtship (batch O review): a praise word, an invitation or a feature
+     * alone is not a move; an unambiguous phrase, a compliment addressed to her, or two different
+     * kinds of cue are.
+     */
+    public function testEverydayWordsBetweenCompanionsAreNoRomanticMove(): void
+    {
+        foreach (['Walk with me to Jorrvaskr, the Circle is waiting.', 'Beautiful weather for a hunt, sister.',
+                  'That was a stunning blow against the Silver Hand.', 'The mead here is gorgeous, try it.',
+                  'Keep your eyes on the treeline; your smile will not scare the wolves.',
+                  'By my heart, I swear the Companions will avenge Skjor.', 'How was the hunt?',
+                  'You should try it, the mead here is gorgeous.', 'Our beloved Jarl will hear of this.'] as $line) {
+            $this->assertFalse(RelDynExclusivity::isRomanticLine($line), $line);
+        }
+        foreach (['You look lovely today. Share a drink with me?', 'Come now, one dance with me. You are stunning.',
+                  'Your eyes, Ashe. I could write a song about them.', 'Still alone? Walk with me by the river.',
+                  "You're so beautiful tonight.", 'Kiss me.', 'Dance with me.', 'Your smile is lovely.',
+                  'Marry me, Aela.', 'Have dinner with me tonight.'] as $line) {
+            $this->assertTrue(RelDynExclusivity::isRomanticLine($line), $line);
+        }
+    }
+
+    /**
+     * Core's romantic-leaning types (lib/relationship_manager.php): 'admirer' is "looks up to
+     * target" and 'infatuated' / 'lover' are no persisted core type (an alias at most).
+     */
+    public function testRomanticCoreTypesAreCoresRomanticOnes(): void
+    {
+        $types = RelDynExclusivity::configDefaults()['romantic_types'];
+        $this->assertNotContains('admirer', $types);
+        $this->assertNotContains('infatuated', $types);
+        $this->assertNotContains('lover', $types);
+        foreach ($types as $t) $this->assertContains($t, RelationshipManager::TYPES, "{$t}: a core type");
+        $this->assertContains('romantic', $types);
+        $this->assertContains('crush', $types);
+    }
+
+    /**
+     * "Drifting" says the player has felt far away: only when the pull is actually weakened (low
+     * fulfillment or neglect). His interest alone, with the player right there and the bond
+     * fulfilled, reads as her band.
+     */
+    public function testDriftingNeedsAPullThePlayerLetWeaken(): void
+    {
+        $at = self::T0 + 2 * self::HOUR;
+        $d = $this->npc(25.0, 30.0, 'platonic');
+        $p = RelDynExclusivity::pull($d, $at);
+        $this->assertSame(1.0, $p['neglect'], 'contact an hour ago');
+        $this->assertSame(1.0, $p['low_cut'], 'fulfilled');
+        $this->assertSame(RelDynExclusivity::BAND_LEANING, $p['band']);
+        foreach ([0.0, 16.0, 60.0] as $interest) {
+            $l = RelDynExclusivity::feltLine($d, $p, 'Aela the Huntress', 'Mikael', 'Kaida', $interest);
+            $this->assertSame(RelDynExclusivity::BAND_LEANING, $l['kind'], "interest {$interest}: nothing weakened, no drifting");
+            $this->assertStringNotContainsString('far away', $l['text']);
+            $this->assertStringNotContainsString('distant', $l['text']);
+        }
+        // The same bond a little neglected (past the grace, not yet halved away): his interest
+        // makes her drift sooner than the weakening alone would
+        $late = null;
+        for ($h = 24; $h <= 60 * 24 && $late === null; $h += 6) {
+            $q = RelDynExclusivity::pull($d, self::T0 + $h * self::HOUR);
+            if ($q['neglect'] < 1.0 || $q['low_cut'] < 1.0) $late = $q;   // the first cut, still slight
+        }
+        $this->assertNotNull($late, 'the bond has an absence grace');
+        $this->assertTrue($late['neglect'] < 1.0 || $late['low_cut'] < 1.0);
+        $this->assertGreaterThan(floatval(RelDynExclusivity::configDefaults()['drifting']['weakened_share']) * $late['unweakened'], $late['pull'],
+            'not weakened enough to drift on its own');
+        $this->assertNotSame('drifting', RelDynExclusivity::feltLine($d, $late, 'Aela the Huntress', 'Mikael', 'Kaida', 0.0)['kind'] ?? null);
+        $this->assertSame('drifting', RelDynExclusivity::feltLine($d, $late, 'Aela the Huntress', 'Mikael', 'Kaida', 16.0)['kind']);
     }
 
     public function testTheSuitorLedgerIsDampedByThePullAndCountsEachLineOnce(): void

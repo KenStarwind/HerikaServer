@@ -24,6 +24,10 @@
  * hook). A goal without progress loses priority per game day; below drop_below_priority it is
  * dropped. Reaching progress 1 achieves it. Finished goals go to history; the same goal does
  * not form again for regenerate_after_game_days.
+ * Backstory goals are character-defining (MDD 14.2, "persistent across sessions"): time without
+ * progress lowers their priority only to backstory_priority_floor, newer goals never crowd them
+ * out, and her backstory as last read (meta 'backstory') forms them again whenever one is not
+ * active, unless it was achieved (meta 'backstory_done'; a changed bio template is a new story).
  *
  * The LLM gets the top goal as a feeling (felt line 'intrinsic_goal', no numbers); Jev gets the
  * numbers. Clocks: the game calendar (raw gamets / GAMETS_PER_DAY).
@@ -94,6 +98,9 @@ final class RelDynGoals
             ],
             'priority_decay_per_game_day' => 0.02,
             'drop_below_priority' => 0.1,
+            // a backstory goal (character-defining) decays no lower than this priority (felt_min_priority:
+            // still felt at its quietest), never fades
+            'backstory_priority_floor' => 0.4,
             // the felt line: from this priority; {NAME} {PLAYER} {PURSUIT} {SUBJECT}
             'felt_min_priority' => 0.4,
             'pursuit' => ['combat' => 'fighting', 'crafting' => 'the craft', 'alchemy' => 'alchemy', 'enchanting' => 'enchanting',
@@ -177,14 +184,32 @@ final class RelDynGoals
             'last_tick_day' => $today, 'facets' => [], 'keywords' => [],
         ], $extra);
         usort($goals, fn($a, $b) => floatval($b['priority'] ?? 0) <=> floatval($a['priority'] ?? 0));
+        // Over max_active the lowest crowd out, backstory goals never (character-defining)
         $max = max(1, intval($cfg['max_active']));
-        foreach (array_slice($goals, $max) as $dropped) self::retire($dynamics, $dropped, 'crowded_out', $today);
-        $dynamics[self::KEY] = array_slice($goals, 0, $max);
+        $story = array_values(array_filter($goals, fn($g) => self::isBackstory($g)));
+        $others = array_values(array_filter($goals, fn($g) => !self::isBackstory($g)));
+        $room = max(0, $max - count($story));
+        foreach (array_slice($others, $room) as $dropped) self::retire($dynamics, $dropped, 'crowded_out', $today);
+        $kept = array_merge($story, array_slice($others, 0, $room));
+        usort($kept, fn($a, $b) => floatval($b['priority'] ?? 0) <=> floatval($a['priority'] ?? 0));
+        $dynamics[self::KEY] = $kept;
         return self::find($dynamics, $id) !== null ? $id : null;
+    }
+
+    /** A goal her backstory formed (character-defining). */
+    private static function isBackstory(array $goal): bool
+    {
+        return ($goal['source'] ?? null) === 'backstory';
     }
 
     private static function retire(array &$dynamics, array $goal, string $outcome, int $today): void
     {
+        if ($outcome === 'achieved' && self::isBackstory($goal)) {
+            // done for good: her backstory does not form it again (until a new bio)
+            $meta = is_array($dynamics[self::META_KEY] ?? null) ? $dynamics[self::META_KEY] : [];
+            $meta['backstory_done'][(string) ($goal['type'] ?? '')] = $today;
+            $dynamics[self::META_KEY] = $meta;
+        }
         $goal['active'] = false;
         $goal['outcome'] = $outcome;
         $goal['ended_day'] = $today;
@@ -232,8 +257,12 @@ final class RelDynGoals
         $formed = [];
         $meta = is_array($dynamics[self::META_KEY] ?? null) ? $dynamics[self::META_KEY] : [];
 
+        // Her backstory (as last read): each goal it holds that is not active forms again, unless achieved
         foreach (self::backstoryGoals($npcName, $meta, $cfg) as $type => $g) {
+            if (isset($meta['backstory_done'][$type]) || self::find($dynamics, $type) !== null) continue;
+            $dynamics[self::META_KEY] = $meta;
             if (($id = self::form($dynamics, $type, $g['priority'], 'backstory', $now, ['keywords' => $g['keywords'], 'facets' => $g['facets']])) !== null) $formed[] = $id;
+            $meta = $dynamics[self::META_KEY];
         }
 
         $slope = self::affinitySlope($dynamics, intval($cfg['trajectory_days']));
@@ -313,7 +342,9 @@ final class RelDynGoals
 
     /**
      * Backstory goals from her bio template: type => ['priority', 'keywords', 'facets'], scanned
-     * once per template text (meta bio_hash); [] for an NPC the trait reader screens (Ashe).
+     * once per template text (meta bio_hash) and kept as her backstory (meta 'backstory'; a new
+     * text clears backstory_done); the kept read when the text is the same; [] for an NPC the
+     * trait reader screens (Ashe).
      */
     private static function backstoryGoals(string $npcName, array &$meta, array $cfg): array
     {
@@ -332,7 +363,8 @@ final class RelDynGoals
             $text .= ' ' . trim((string) ($tpl['fields'][$f] ?? ''));
         }
         $hash = sha1(json_encode([$text, $cfg['backstory']]));
-        if (($meta['bio_hash'] ?? null) === $hash) return [];
+        if (($meta['bio_hash'] ?? null) === $hash && is_array($meta['backstory'] ?? null)) return $meta['backstory'];
+        if (($meta['bio_hash'] ?? null) !== $hash) unset($meta['backstory_done']);   // a new story
         $meta['bio_hash'] = $hash;
         $sentences = preg_split('/(?<=[.!?;])\s+/u', trim($text)) ?: [];
         $out = [];
@@ -350,6 +382,7 @@ final class RelDynGoals
                 break;
             }
         }
+        $meta['backstory'] = $out;
         return $out;
     }
 
@@ -376,7 +409,8 @@ final class RelDynGoals
     /**
      * The daily tick (once per game-calendar day on contact): a goal without progress that day
      * loses priority_decay_per_game_day per day missed and is dropped below drop_below_priority;
-     * the self-worth goal is held or lapses.
+     * a backstory goal only down to backstory_priority_floor (or its own lower priority), never
+     * dropped; the self-worth goal is held or lapses.
      */
     private static function tick(string $npcName, array &$dynamics, float $now, array $cfg): void
     {
@@ -393,12 +427,13 @@ final class RelDynGoals
                 continue;
             }
             $idle = max(0, $today - max($last, intval($g['last_progress_day'] ?? $last)));
+            $floor = self::isBackstory($g) ? min(floatval($cfg['backstory_priority_floor']), floatval($g['priority'])) : 0.0;
             $p = floatval($g['priority']) - floatval($cfg['priority_decay_per_game_day']) * min($days, $idle);
-            $dynamics[self::KEY][$i]['priority'] = round(max(0.0, $p), 4);
+            $dynamics[self::KEY][$i]['priority'] = round(max($floor, $p), 4);
         }
         foreach (array_reverse(array_keys((array) ($dynamics[self::KEY] ?? []))) as $i) {
             $g = $dynamics[self::KEY][$i];
-            if (is_array($g) && !empty($g['active']) && ($g['type'] ?? '') !== 'self_worth_recovery'
+            if (is_array($g) && !empty($g['active']) && ($g['type'] ?? '') !== 'self_worth_recovery' && !self::isBackstory($g)
                 && floatval($g['priority']) < floatval($cfg['drop_below_priority'])) {
                 self::end($dynamics, $i, 'faded', $today);
             }

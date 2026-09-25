@@ -230,6 +230,43 @@ final class RelDynQuestDutyPostgresTest extends TestCase
         $this->assertArrayNotHasKey(RelDynQuests::DUTY_KEY, $friendly);
     }
 
+    /**
+     * batch O review: the duty override's "quest friction is not held against the bond" covers the
+     * grievance path too. A duty exchange's grievance builds resentment at the duty factor (logged
+     * with it), and it does not count as the pattern going on during a mature NPC's grievance
+     * probation; the same grievance off duty lands in full and fails the probation.
+     */
+    public function testAGrievanceOnDutyIsDampenedAndBreaksNoProbation(): void
+    {
+        require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
+        $raw = json_encode(['signals' => ['affinity' => -4, 'trust' => -6, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0],
+            'tags' => ['insult'], 'grievance' => ['flag' => true, 'kind' => 'insult', 'severity' => 2],
+            'jealousy' => ['flag' => false], 'significance' => 0.6, 'summary' => 'Cold words over the quest.']);
+        $ctx = ['npc' => 'Aela the Huntress', 'npc_id' => 1, 'player_name' => 'Kaida', 'gamets' => self::NOW];
+        $item = RelDynEval::parseResponse($raw, $ctx + ['duty_factor' => 0.1]);
+        $plain = RelDynEval::parseResponse($raw, $ctx);
+        $probation = [RelDynConcern::STATE_KEY => ['boundary' => ['state' => 'probation', 'channel' => RelDynConcern::GRIEVANCE,
+            'started_gamets' => self::NOW - 1000]]];
+        $onDuty = self::npc(['trust' => 50.0, 'comfort' => 50.0, 'resentment' => 10.0], $probation);
+        $off = $onDuty;
+        $fd = $fp = null;
+        RelationshipDynamics::processEvalContractItem('Aela the Huntress', $item, $onDuty, $fd);
+        RelationshipDynamics::processEvalContractItem('Aela the Huntress', $plain, $off, $fp);
+        $this->assertGreaterThan(0.0, $fp['grievance']['amount'] ?? 0.0, json_encode($fp));
+        $this->assertEqualsWithDelta($fp['grievance']['raw'] * 0.1, $fd['grievance']['raw'], 1e-9, 'the grievance lands at the duty factor');
+        $gainOn = $onDuty['dimensions']['resentment']['x'] - 10.0;
+        $gainOff = $off['dimensions']['resentment']['x'] - 10.0;
+        $this->assertLessThan($gainOff * 0.2, $gainOn, "resentment: {$gainOn} on duty vs {$gainOff}");
+        $log = $onDuty['dimensions']['resentment']['grievance_log'];
+        $this->assertSame(0.1, end($log)['duty'] ?? null, 'logged with the duty factor');
+        $offLog = $off['dimensions']['resentment']['grievance_log'];
+        $this->assertArrayNotHasKey('duty', end($offLog));
+        $this->assertSame('probation', $onDuty[RelDynConcern::STATE_KEY]['boundary']['state'], 'quest friction is not the pattern going on');
+        $this->assertArrayNotHasKey('grievance_boundary_failed', $fd);
+        $this->assertSame('failed', $off[RelDynConcern::STATE_KEY]['boundary']['state'], 'off duty, wronged again in the probation');
+        $this->assertSame([], $this->db->failures);
+    }
+
     public function testQuestStagesReachTheNpcsTheJournalNamesOnceEach(): void
     {
         $this->config(['quests' => ['life_changing' => [['quest' => 'C06', 'stage_min' => 10, 'npcs' => ['Aela the Huntress'], 'severity' => 4]]]]);
@@ -249,6 +286,13 @@ final class RelDynQuestDutyPostgresTest extends TestCase
         $this->assertSame(['C06', 'Glory of the Dead', 10], [$events[0]['id'], $events[0]['name'], $events[0]['stage']]);
         $this->assertTrue($events[0]['divine'] ?? false, 'a life-changing stage for her');
         $this->assertSame(1, intval($aela['_divine_intervention_count'] ?? 0));
+        // The protocols lane's Divine Intervention (reldyn_protocols.php): the fork runs on the game
+        // calendar, never the play clock (a window carries its clock; an arc its game-time stamp)
+        if (isset($aela['_unstable_window'])) {
+            $this->assertSame('calendar', $aela['_unstable_window']['clock'] ?? null, json_encode($aela['_unstable_window']));
+        } else {
+            $this->assertGreaterThan(0.0, floatval($aela['_plasticity_override_start_gamets'] ?? 0), 'the arc is stamped with game time');
+        }
         $this->assertArrayNotHasKey(RelDynQuests::EVENTS_KEY, RelationshipDynamics::getDynamics('Muiri'));
 
         // The same stage again (a reload replays the journal) reaches her once
