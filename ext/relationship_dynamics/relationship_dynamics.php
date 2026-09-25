@@ -1231,6 +1231,10 @@ class RelationshipDynamics
             // Witness / shared / danger multipliers, kill streak, core's death / bleedout rows
             // read from the eventlog (reldyn_combat.php, RelDynCombat::configDefaults()).
             'combat' => RelDynCombat::configDefaults(),
+            // ===== Natural exclusivity (decisions 2026-09-24 §17) =====
+            // The pull toward the player (drive, disposition, title, weakening), bands, suitor
+            // markers and damping, style rules, NPC-NPC felt text (reldyn_exclusivity.php).
+            'exclusivity' => RelDynExclusivity::configDefaults(),
             // ===== Romance promotion + Sharmat handoff (rulings 2026-09-24 §9) =====
             // Ladder, moment thresholds, momentum per NPC (reldyn_romance.php).
             'romance_promotion' => RelDynRomance::configDefaults(),
@@ -18269,3 +18273,5 @@ require_once __DIR__ . '/reldyn_resentment.php';
 require_once __DIR__ . '/reldyn_creatures.php';
 // Combat passion routing (core combat requests + core's death / bleedout eventlog rows)
 require_once __DIR__ . '/reldyn_combat.php';
+// Natural exclusivity: the pull toward the player, NPC-NPC deflection, damped interest in suitors (decisions §17)
+require_once __DIR__ . '/reldyn_exclusivity.php';

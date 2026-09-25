@@ -44,6 +44,10 @@
  *                     'self_crisis' => bool, 'guilt_bleed' => comfort points taken (<= 0),
  *                     'reject_recruitment' => bool] (reldyn_resentment.php)
  *   fulfillment      ['band' => -1..1, 'trend' => band per game day, 'low' => bool, 'known' => bool]
+ *   exclusivity      null | ['pull' => 0..1 (decisions §17: toward the player), 'band' => devoted|taken|
+ *                     leaning|open, 'titled' => bool, 'unweakened' => 0..1 (before low fulfillment /
+ *                     neglect), 'low_cut' / 'neglect' => multipliers 0..1, 'suitor_interest' => name =>
+ *                     interest points 0..100 (her damped romantic interest, top 3)] (RelDynExclusivity::jev)
  *   attraction       ['enabled' => bool, 'outcome' => ?string, 'score' => 0..1,
  *                     decisions §13, attraction is an uphill, not a wall:
  *                     'curve' => the passion curve (unitless; < 1 below the NPC's floors, 1 at them,
@@ -81,6 +85,7 @@ final class RelDynJev
         'passion' => 'points 0..100', 'jealousy' => 'points 0..100',
         'fulfillment.band' => '-1..1 (below fulfillment low_band = neglected)',
         'fulfillment.trend' => 'band change per game day',
+        'exclusivity.pull' => '0..1 (pull toward the player)', 'exclusivity.suitor_interest' => 'interest points 0..100',
         'attraction.curve' => 'passion curve, multiplier (1 at the floors)', 'attraction.spark' => 'passion points',
         'attraction.spark_mult' => 'passion-gain multiplier below the spark',
         'attraction.passion_mult' => 'passion-gain multiplier from the spark', 'attraction.respect_mult' => 'respect-gain multiplier',
@@ -189,6 +194,7 @@ final class RelDynJev
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'resentment_arc' => RelDynResentment::jev($dynamics),
             'fulfillment' => $fulfillment,
+            'exclusivity' => RelDynExclusivity::jev($dynamics, $now),
             'attraction' => $attraction,
             'place' => $place,
             'creature' => RelDynCreatures::jev($dynamics),
@@ -242,6 +248,13 @@ final class RelDynJev
             . ($r['guilt_bleed'] != 0.0 ? ' guilt=' . $f($r['guilt_bleed']) : '')
             . ($r['reject_recruitment'] ? ' reject_recruitment' : '');
         $parts[] = 'fulfillment=' . number_format($s['fulfillment']['band'], 2, '.', '') . ($s['fulfillment']['low'] ? '(low)' : '');
+        if (($s['exclusivity'] ?? null) !== null) {
+            $x = $s['exclusivity'];
+            $suitors = [];
+            foreach ($x['suitor_interest'] as $name => $v) $suitors[] = "{$name} " . $f($v);
+            $parts[] = 'exclusivity=' . number_format($x['pull'], 2, '.', '') . "({$x['band']}" . ($x['titled'] ? ', titled' : '') . ')'
+                . ($suitors ? ' suitors=' . implode(',', $suitors) : '');
+        }
         $a = $s['attraction'];
         if ($a['enabled']) {
             $unitText = [];
