@@ -16540,8 +16540,12 @@ class RelationshipDynamics
         // People-pleaser override: low confidence + low maturity = forced compliance
         $isPeoplePleaser = self::isPeoplePleaser($dynamics);
 
+        // swallowed: the override turned a refusal into compliance (what the people-pleaser
+        // internalizes, RelDynResentment::peoplePleaserBuildup)
+        $swallowed = false;
         if ($isPeoplePleaser && ($state === 'refusing' || $state === 'walkaway')) {
             $state = 'compliant';
+            $swallowed = true;
         }
 
         // Ick + low comfort OR high resentment → force walkaway regardless
@@ -16583,6 +16587,7 @@ class RelationshipDynamics
             'refusal_type'    => $refusalType,
             'deny_actions'    => $deniedActions,
             'people_pleaser'  => $isPeoplePleaser,
+            'swallowed'       => $swallowed,
             'resentment_self_buildup' => $isPeoplePleaser ? round($score * self::PEOPLE_PLEASER_RESENTMENT_SELF_RATE, 2) : 0,
         ];
     }

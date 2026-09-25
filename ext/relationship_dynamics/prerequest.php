@@ -334,7 +334,7 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
     $GLOBALS['RELDYN_AUTONOMY_STATE'] = $autonomyEval['state'];
     $GLOBALS['RELDYN_AUTONOMY_EVAL'] = $autonomyEval;
 
-    // People-pleaser internalization: build resentment_self while uncomfortable, on the play clock
+    // People-pleaser internalization: a swallowed refusal builds resentment_self, on the play clock
     RelDynResentment::peoplePleaserBuildup($npcName, $dynamics, $autonomyEval);
 
     // Action list filtering for refusing/walkaway states

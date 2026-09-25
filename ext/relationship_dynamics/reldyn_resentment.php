@@ -15,12 +15,16 @@
  * the MDD 15.5 addressed decay (confrontation.addressed_relief resentment points).
  *   - People-pleasers (low self-confidence and maturity) never confront: they internalize
  *     (resentment_self, RelationshipDynamics::recordGrievance).
- *   - One boundary at a time per bond (rulings §9, decisions §14): no confrontation while the
- *     fulfillment boundary or the concern lane's values boundary runs; their statement is the
- *     one conversation. A mature NPC who already said it and is wronged again treats the
+ *   - One boundary at a time per bond (rulings §9, decisions §14): no confrontation while a
+ *     boundary's own conversation is due (either lane's statement pending or step-back due)
+ *     or while the grievance boundary watches its probation. A confrontation is not a
+ *     boundary: during another boundary's probation (unmet needs, a values kind) a first one
+ *     is still said. A mature NPC who already said it and is wronged again treats the
  *     repetition as a values mismatch that feeds the boundary flow: it opens the values
  *     boundary (RelDynConcern::openGrievanceBoundary, channel 'grievance': statement,
- *     probation, a step-back when another grievance lands inside it). No second boundary.
+ *     probation, a step-back when another grievance lands inside it), unless a boundary
+ *     already runs: then that one carries it (no second boundary, no second conversation).
+ *     After the grievance boundary ends, only a grievance since feeds the next one.
  *   - An immature NPC festers and blows up again, each time something new was added, at most
  *     once per confrontation.cooldown_play_minutes of played time (the play clock).
  *   - A repeat needs a grievance logged since the last confrontation (it happened again);
@@ -39,9 +43,9 @@
  *   - confession: the NPC opens up and it is met with care (eval tag, self.recovery_tags);
  *   - processResentmentSelfDecay: -0.5 x (1 + maturity/100) per positive interaction while
  *     comfort is above 20, at most once per self.decay_cooldown_play_minutes of played time.
- * The people-pleaser buildup (prerequest) only runs while the NPC is uncomfortable (autonomy
- * score at or above the compliant threshold) and at most once per
- * self.buildup_cooldown_play_minutes of played time.
+ * The people-pleaser buildup (prerequest) only runs when the people-pleaser override swallowed a
+ * refusal (self.buildup_when) and at most once per self.buildup_cooldown_play_minutes of played
+ * time, so the recovery above is not outrun once the mistreatment stops.
  *
  * GUILT BLEED (dimension design "Cross-bond dimensional bleed"): resentment_self above
  * guilt_bleed.above bleeds into comfort toward the player in proportion to the bond:
@@ -113,9 +117,15 @@ final class RelDynResentment
                 // party -15 has no eval tag yet (open question), so it maps nothing by default.
                 // Eval tag => resentment_self points taken off (the exchange must be positive).
                 'recovery_tags' => ['confiding' => 10.0],
-                // People-pleaser buildup (prerequest): only while the autonomy score is at or above
-                // this (the compliant threshold: "uncomfortable but says nothing"), at most once per
-                // buildup_cooldown_play_minutes of played time (Serene: the decay's cadence).
+                // People-pleaser buildup (prerequest), at most once per buildup_cooldown_play_minutes
+                // of played time (Serene: the decay's cadence). When (a list pick):
+                //   'swallowed'     the people-pleaser override turned a refusal into compliance
+                //                   (evaluateAutonomyState 'swallowed'; autonomy design: "they comply
+                //                   ... but the damage is internal");
+                //   'uncomfortable' the autonomy score at or above buildup_uncomfortable_at (the
+                //                   compliant threshold). It outruns the recovery path while kindness
+                //                   has not yet lifted trust and respect back (e2e: Lynly trapped).
+                'buildup_when' => 'swallowed',
                 'buildup_uncomfortable_at' => 30.0,
                 'buildup_cooldown_play_minutes' => 15.0,
             ],
@@ -230,10 +240,54 @@ final class RelDynResentment
         return is_numeric($addressed) && floatval($g['gamets'] ?? 0) > floatval($addressed);
     }
 
-    /** Open grievances toward the player (isOpenGrievance). */
-    private static function openGrievances(array $dynamics): int
+    /** Open grievances toward the player (isOpenGrievance), logged after game time $since when given. */
+    private static function openGrievances(array $dynamics, ?float $since = null): int
     {
-        return count(array_filter((array) ($dynamics['dimensions']['resentment']['grievance_log'] ?? []), [self::class, 'isOpenGrievance']));
+        return count(array_filter((array) ($dynamics['dimensions']['resentment']['grievance_log'] ?? []),
+            fn($g) => self::isOpenGrievance($g) && ($since === null || floatval($g['gamets'] ?? 0) > $since)));
+    }
+
+    /**
+     * A boundary's own conversation is due this turn, so the confrontation waits (one
+     * conversation at a time): either lane's boundary pending its statement or failed (its
+     * step-back due), or the concern lane's grievance boundary watching its probation (it is
+     * this lane's repetition; its failure is the next step, not a confrontation). Another
+     * boundary's probation does not silence a first confrontation: the grievances are a
+     * different conversation, and a confrontation is not a boundary.
+     */
+    private static function boundarySaying(array $dynamics): bool
+    {
+        $f = (string) ($dynamics[RelDynFulfillment::STATE_KEY]['boundary']['state'] ?? 'none');
+        $cb = (array) ($dynamics[RelDynConcern::STATE_KEY]['boundary'] ?? []);
+        $c = (string) ($cb['state'] ?? 'none');
+        return in_array($f, ['pending', 'failed'], true) || in_array($c, ['pending', 'failed'], true)
+            || ($c === 'probation' && ($cb['channel'] ?? null) === RelDynConcern::GRIEVANCE);
+    }
+
+    /**
+     * Mark every open grievance toward the player addressed at game time $at (the grievance
+     * boundary's statement carries them, as a confrontation does). Returns how many.
+     */
+    private static function markAddressed(array &$dynamics, float $at): int
+    {
+        $n = 0;
+        foreach ((array) ($dynamics['dimensions']['resentment']['grievance_log'] ?? []) as $i => $g) {
+            if (!self::isOpenGrievance($g)) continue;
+            $dynamics['dimensions']['resentment']['grievance_log'][$i]['addressed'] = $at;
+            $n++;
+        }
+        return $n;
+    }
+
+    /** Game time the concern lane's grievance boundary last ended (stepped back, blocked, resolved), or null. */
+    private static function grievanceBoundaryEnded(array $dynamics): ?float
+    {
+        $b = (array) ($dynamics[RelDynConcern::STATE_KEY]['boundary'] ?? []);
+        if (($b['state'] ?? 'none') !== 'none' || ($b['kind'] ?? null) !== RelDynConcern::GRIEVANCE_KIND) return null;
+        foreach (['stepped_back_gamets', 'blocked_gamets', 'resolved_gamets'] as $k) {
+            if (is_numeric($b[$k] ?? null)) return floatval($b[$k]);
+        }
+        return null;
     }
 
     /**
@@ -265,26 +319,34 @@ final class RelDynResentment
             unset($cf, $state);
             return ['internalized'];   // the silent quadrant: suffers inward, never confronts
         }
-        if (($dynamics['_walkaway_state'] ?? 'normal') !== 'normal'
-            || RelDynFulfillment::boundaryActive($dynamics) || RelDynConcern::boundaryActive($dynamics)) {
+        if (($dynamics['_walkaway_state'] ?? 'normal') !== 'normal' || self::boundarySaying($dynamics)) {
             unset($cf, $state);
-            return $events;   // the walkaway or the boundary's own conversation carries it
+            return $events;   // the walkaway, or a boundary's own conversation this turn, carries it
         }
         $play = RelationshipDynamics::getPlayGamets($dynamics);
         if ($cf['last_play'] !== null && $play - floatval($cf['last_play']) < self::playGamets(floatval($c['cooldown_play_minutes']))) {
             unset($cf, $state);
             return $events;
         }
-        // A repeat needs something new since the last one (it happened again)
-        if (intval($cf['count']) > 0 && self::openGrievances($dynamics) === 0) {
+        // A repeat needs something new since the last one (it happened again), and since the
+        // grievance boundary's end: the grievance that failed its probation was answered by it
+        if (intval($cf['count']) > 0 && self::openGrievances($dynamics, self::grievanceBoundaryEnded($dynamics)) === 0) {
             unset($cf, $state);
             return $events;
         }
 
         $expr = RelDynConcern::expression($dynamics, RelDynConcern::traitsOf($dynamics));
+        if ($expr['path'] === 'mature' && intval($cf['count']) > 0
+            && (RelDynFulfillment::boundaryActive($dynamics) || RelDynConcern::boundaryActive($dynamics))) {
+            // Already said, and another lane's boundary watches its probation: no second boundary
+            // beside it and no second conversation; the running boundary carries it (§9 / §14)
+            unset($cf, $state);
+            return $events;
+        }
         if ($expr['path'] === 'mature' && intval($cf['count']) > 0) {
             unset($cf, $state);
             if (RelDynConcern::openGrievanceBoundary($npcName, $dynamics, $now)) {
+                self::markAddressed($dynamics, $now);   // the boundary's statement carries them
                 $cf = &$dynamics[self::STATE_KEY]['confront'];
                 $cf['last_gamets'] = $now;
                 $cf['last_play'] = $play;
@@ -461,16 +523,25 @@ final class RelDynResentment
 
     /**
      * The people-pleaser's internalization at the prerequest ($eval: evaluateAutonomyState()):
-     * resentment_self_buildup raw points through applyDelta, only while uncomfortable (autonomy
-     * score >= buildup_uncomfortable_at) and at most once per buildup_cooldown_play_minutes of
-     * play. Returns the resentment_self points applied.
+     * resentment_self_buildup raw points through applyDelta, only when self.buildup_when holds
+     * ('swallowed': the override swallowed a refusal; 'uncomfortable': autonomy score >=
+     * buildup_uncomfortable_at) and at most once per buildup_cooldown_play_minutes of play.
+     * Returns the resentment_self points applied.
      */
     public static function peoplePleaserBuildup(string $npcName, array &$dynamics, array $eval): float
     {
         if (empty($eval['people_pleaser']) || floatval($eval['resentment_self_buildup'] ?? 0) <= 0) return 0.0;
         $cfg = self::config();
         $s = (array) $cfg['self'];
-        if (floatval($eval['autonomy_score'] ?? 0) < floatval($s['buildup_uncomfortable_at'])) return 0.0;
+        $when = (string) ($s['buildup_when'] ?? 'swallowed');
+        if ($when === 'uncomfortable') {
+            if (floatval($eval['autonomy_score'] ?? 0) < floatval($s['buildup_uncomfortable_at'])) return 0.0;
+        } elseif ($when === 'swallowed') {
+            if (empty($eval['swallowed'])) return 0.0;
+        } else {
+            error_log("[RelDyn-RESENT-SELF] {$npcName}: unknown resentment_arc.self.buildup_when '{$when}' (swallowed | uncomfortable): no buildup");
+            return 0.0;
+        }
         $state = &self::state($dynamics);
         $play = RelationshipDynamics::getPlayGamets($dynamics);
         $last = $state['self']['last_buildup_play'];

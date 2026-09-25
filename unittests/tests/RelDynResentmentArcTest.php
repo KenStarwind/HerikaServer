@@ -16,7 +16,7 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.p
  *     values boundary (RelDynConcern channel 'grievance'), never a second one;
  *   - resentment_self: the dimension design's thresholds (baselines, reflection, crisis), the
  *     roadmap's recovery (processResentmentSelfDecay, a confession) and the people-pleaser
- *     buildup only while uncomfortable, on the play clock;
+ *     buildup only when a refusal was swallowed, on the play clock;
  *   - guilt bleed: min(15, resentment_self x bond / 100) on comfort toward the player, standing
  *     and lifted exactly;
  *   - walkaway: MDD 6.5 affinity at -20 in a bond that existed, the shame walkaway, a permanent
@@ -260,18 +260,95 @@ final class RelDynResentmentArcTest extends TestCase
         $this->assertNull($d['_resentment_arc']['confront']['pending']);
     }
 
-    /** One conversation at a time: not while walking away, not while either boundary runs. */
-    public function testNoConfrontationWhileWalkingAwayOrWhileABoundaryRuns(): void
+    /**
+     * One conversation at a time: not while walking away, not while a boundary's own statement
+     * or step-back is due (pending / failed), not while the grievance boundary watches.
+     */
+    public function testNoConfrontationWhileWalkingAwayOrWhileABoundaryIsSaid(): void
     {
         $d = $this->npc(['resentment' => 60.0], ['_walkaway_state' => 'active']);
         $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0));
-        $d = $this->npc(['resentment' => 60.0]);
-        $d[RelDynFulfillment::STATE_KEY] = ['boundary' => ['state' => 'probation']];
-        $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0));
+        foreach (['pending', 'failed'] as $state) {
+            $d = $this->npc(['resentment' => 60.0]);
+            $d[RelDynFulfillment::STATE_KEY] = ['boundary' => ['state' => $state]];
+            $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0), "fulfillment {$state}");
+            $d = $this->npc(['resentment' => 60.0]);
+            $d[RelDynConcern::STATE_KEY] = ['v' => RelDynConcern::VERSION, 'level' => 0.0, 'incidents' => [], 'say' => [],
+                'boundary' => ['state' => $state, 'channel' => RelDynConcern::PROTECTIVE, 'kind' => 'place']];
+            $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0), "concern {$state}");
+        }
         $d = $this->npc(['resentment' => 60.0]);
         $d[RelDynConcern::STATE_KEY] = ['v' => RelDynConcern::VERSION, 'level' => 0.0, 'incidents' => [], 'say' => [],
-            'boundary' => ['state' => 'pending', 'channel' => RelDynConcern::PROTECTIVE, 'kind' => 'place']];
+            'boundary' => ['state' => 'probation', 'channel' => RelDynConcern::GRIEVANCE, 'kind' => RelDynConcern::GRIEVANCE_KIND]];
+        $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0), 'the grievance boundary carries it');
+    }
+
+    /**
+     * MDD 15.5 at 50 while another lane's boundary is in its probation (the fulfillment
+     * boundary: unmet needs, said already): the grievances are a different conversation and
+     * are said, once. Wronged again, the mature NPC does not open a second boundary beside the
+     * running one, and does not say it again: the running boundary carries it (§9 / §14).
+     */
+    public function testDuringAnotherBoundarysProbationItIsSaidOnceAndNoSecondBoundary(): void
+    {
+        $d = $this->npc(['resentment' => 72.0]);
+        $d[RelDynFulfillment::STATE_KEY] = ['boundary' => ['state' => 'probation', 'started_gamets' => self::T0 - self::DAY]];
+        $this->grievance($d, 'The player called her useless in front of the household.', self::T0 - 100);
+        $this->assertSame(['confrontation_due'], RelDynResentment::tickConfrontation('Lydia', $d, self::T0));
+        $this->assertStringContainsString('calmly and directly', $this->felt($d)['confront']['text']);
+
+        $this->grievance($d, 'The player called her useless again.', self::T0 + 100);
+        $d['dimensions']['resentment']['x'] = 75.0;
+        $d['_accumulated_play_gamets'] += 61 * self::PLAY_MIN;
+        $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0 + 200));
+        $this->assertSame('none', $d['_concern']['boundary']['state'] ?? 'none', 'never a second boundary');
+        $this->assertNull($d['_resentment_arc']['confront']['pending'], 'and not said again');
+    }
+
+    /**
+     * The grievances that fed the boundary are carried by its statement (addressed): when its
+     * probation passes (nothing happened again), they do not open the next one.
+     */
+    public function testAKeptGrievanceBoundaryDoesNotReopenOnTheOldGrievances(): void
+    {
+        $d = $this->npc(['resentment' => 60.0]);
+        $d['_resentment_arc'] = ['v' => 1, 'confront' => ['count' => 1, 'last_gamets' => self::T0 - 3 * self::DAY,
+            'last_play' => self::PLAY - 200 * self::PLAY_MIN, 'pending' => null],
+            'self' => ['baselines' => [], 'reflect_armed' => true, 'reflect_pending' => false, 'last_decay_play' => null, 'last_buildup_play' => null],
+            'guilt' => ['applied' => 0.0]];
+        $this->grievance($d, 'Called useless after she spoke up.', self::T0 - self::DAY);
+        $this->assertSame(['boundary_due'], RelDynResentment::tickConfrontation('Lydia', $d, self::T0));
+        $this->assertSame([], RelDynResentment::fuel($d, 'Lydia', 'Kaida')['entries'], 'carried by the statement');
+
+        // The probation passes (the concern lane's resolved record keeps no kind)
+        $d['_concern']['boundary'] = ['state' => 'none', 'resolved_gamets' => self::T0 + 3 * self::DAY];
+        $d['_accumulated_play_gamets'] += 200 * self::PLAY_MIN;
+        $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0 + 3 * self::DAY + 100));
+        $this->assertSame('none', $d['_concern']['boundary']['state']);
+    }
+
+    /**
+     * After the grievance boundary's step-back, the grievance that failed its probation was
+     * answered by the step-back: no new boundary on its strength (the step-back is said this
+     * turn). Wronged again after it: the boundary flow goes on (friendship -> acquaintance).
+     */
+    public function testAfterTheStepBackOnlyAGrievanceSinceItFeedsTheNextBoundary(): void
+    {
+        $d = $this->npc(['resentment' => 70.0], ['_core_rel_type' => 'platonic']);
+        $d['_resentment_arc'] = ['v' => 1, 'confront' => ['count' => 1, 'last_gamets' => self::T0 - 3 * self::DAY,
+            'last_play' => self::PLAY - 200 * self::PLAY_MIN, 'pending' => null],
+            'self' => ['baselines' => [], 'reflect_armed' => true, 'reflect_pending' => false, 'last_decay_play' => null, 'last_buildup_play' => null],
+            'guilt' => ['applied' => 0.0]];
+        $d[RelDynConcern::STATE_KEY] = ['v' => RelDynConcern::VERSION, 'level' => 0.0, 'incidents' => [], 'say' => [],
+            'boundary' => ['state' => 'none', 'stepped_back_gamets' => self::T0, 'from' => 'romantic', 'to' => 'platonic',
+                           'kind' => RelDynConcern::GRIEVANCE_KIND]];
+        $this->grievance($d, 'The slight that failed the probation.', self::T0 - self::DAY);
         $this->assertSame([], RelDynResentment::tickConfrontation('Lydia', $d, self::T0));
+        $this->assertSame('none', $d['_concern']['boundary']['state']);
+
+        $this->grievance($d, 'Called useless again, after all that.', self::T0 + self::DAY);
+        $this->assertSame(['boundary_due'], RelDynResentment::tickConfrontation('Lydia', $d, self::T0 + self::DAY + 100));
+        $this->assertSame('pending', $d['_concern']['boundary']['state']);
     }
 
     /** Worked through (below 30): the episode is over; the next one is a first confrontation again. */
@@ -405,13 +482,19 @@ final class RelDynResentmentArcTest extends TestCase
             RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confiding']]), $none));
     }
 
-    /** The people-pleaser's buildup: only while uncomfortable, at most once per 15 play minutes. */
-    public function testThePeoplePleaserBuildupOnlyWhileUncomfortableOnThePlayClock(): void
+    /**
+     * The people-pleaser's buildup (autonomy design: "they comply ... but the damage is
+     * internal"): only when the people-pleaser override swallowed a refusal (evaluateAutonomyState
+     * 'swallowed'), at most once per 15 play minutes. Merely uneasy (resistant) builds nothing,
+     * so kindness afterwards can bring it down (the recovery path is not outrun).
+     */
+    public function testThePeoplePleaserBuildupOnlyWhenARefusalWasSwallowedOnThePlayClock(): void
     {
         $d = $this->npc(['self_confidence' => 20.0, 'maturity' => 30.0]);
-        $eval = ['people_pleaser' => true, 'autonomy_score' => 20.0, 'resentment_self_buildup' => 2.0];
-        $this->assertSame(0.0, RelDynResentment::peoplePleaserBuildup('Lydia', $d, $eval), 'at ease: nothing');
-        $eval['autonomy_score'] = 40.0;
+        $eval = ['people_pleaser' => true, 'autonomy_score' => 40.0, 'swallowed' => false, 'resentment_self_buildup' => 2.0];
+        $this->assertSame(0.0, RelDynResentment::peoplePleaserBuildup('Lydia', $d, $eval), 'uneasy, nothing swallowed: nothing');
+        $eval['autonomy_score'] = 60.0;
+        $eval['swallowed'] = true;
         $expected = $d;
         RelationshipDynamics::applyDelta('resentment_self', $expected, 2.0, 'Stoic');
         $this->assertGreaterThan(0.0, RelDynResentment::peoplePleaserBuildup('Lydia', $d, $eval));
@@ -439,6 +522,19 @@ final class RelDynResentmentArcTest extends TestCase
         $this->assertNull(RelationshipDynamics::checkBoundaryTest($d), 'resentment toward the player is 0, but the shame is not over');
         $d['dimensions']['resentment_self']['x'] = 45.0;
         $this->assertSame('recovery', RelationshipDynamics::checkBoundaryTest($d));
+    }
+
+    /** The autonomy evaluation says when the people-pleaser override swallowed a refusal. */
+    public function testTheAutonomyEvaluationReportsASwallowedRefusal(): void
+    {
+        $pleaser = ['self_confidence' => 20.0, 'maturity' => 30.0];
+        $uneasy = RelationshipDynamics::evaluateAutonomyState($this->npc($pleaser + ['trust' => 20.0, 'respect' => 20.0]), 'Stoic');
+        $this->assertSame(['resistant', false], [$uneasy['state'], $uneasy['swallowed']], json_encode($uneasy));
+        $crushed = RelationshipDynamics::evaluateAutonomyState($this->npc($pleaser + ['trust' => 0.0, 'respect' => 0.0, 'resentment' => 60.0]), 'Stoic');
+        $this->assertSame(['compliant', true], [$crushed['state'], $crushed['swallowed']], json_encode($crushed));
+        $this->assertGreaterThan(0.0, $crushed['resentment_self_buildup']);
+        $own = RelationshipDynamics::evaluateAutonomyState($this->npc(['trust' => 0.0, 'respect' => 0.0, 'resentment' => 60.0]), 'Stoic');
+        $this->assertFalse($own['swallowed'], 'not a people-pleaser: it refuses, nothing swallowed');
     }
 
     // ------------------------------------------------------------ walkaway (MDD 6.5)
