@@ -15473,8 +15473,9 @@ class RelationshipDynamics
     public static function diaryBoundarySignatures(array $dynamics): array
     {
         $out = [];
-        foreach (['fulfillment' => RelDynFulfillment::STATE_KEY, 'concern' => RelDynConcern::STATE_KEY] as $lane => $key) {
-            $b = $dynamics[$key]['boundary'] ?? null;
+        // Fulfillment is stored per relationship pair (rulings §11): the player pair's boundary
+        foreach (['fulfillment' => RelDynFulfillment::pairState($dynamics)['boundary'] ?? null,
+                  'concern' => $dynamics[RelDynConcern::STATE_KEY]['boundary'] ?? null] as $lane => $b) {
             $state = is_array($b) && is_string($b['state'] ?? null) ? $b['state'] : 'none';
             $out[$lane] = $state . (is_array($b) && is_numeric($b['stepped_back_gamets'] ?? null) ? '@' . $b['stepped_back_gamets'] : '');
         }

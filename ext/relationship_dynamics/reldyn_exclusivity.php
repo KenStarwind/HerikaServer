@@ -19,11 +19,13 @@
  *               corners: secure commits steadiest, avoidant keeps a door open)
  *   title   = core relationships.Player.type (romantic / crush) MULTIPLIES the drive: a title
  *             strengthens the pull, it never creates it (no drive, no pull)
+ *   release = a deliberate step-back out of the romance (rulings §9, either boundary lane) multiplies
+ *             it by stepped_back_mult (0: "that closeness is over"); a new romance ends it
  *   weaken  = low fulfillment (the band below fulfillment.low_band) and long neglect (game days
  *             past the bond's absence grace since the last actual interaction of the player pair
  *             halve it every neglect_half_life_game_days): how a neglected partner starts
  *             listening to someone else
- *   pull    = clamp(drive x disposition x title x weaken, 0, 1); band devoted / taken / leaning / open
+ *   pull    = clamp(drive x disposition x title x release x weaken, 0, 1); band devoted / taken / leaning / open
  *
  * Expression (NPC-NPC context steering, feelings never numbers): when another NPC makes a
  * romantic move on her in an NPC-to-NPC exchange (a radiant round, or a rechat whose previous
@@ -95,6 +97,10 @@ final class RelDynExclusivity
 
             // --- the title: core relationships.Player.type => multiplier on the drive ---
             'title_mult' => ['romantic' => 1.35, 'crush' => 1.1],
+            // A deliberate step-back out of the romance (rulings §9, either boundary lane:
+            // RelDynFulfillment::romanceSteppedBack) multiplies the pull by this (0..1): "kind, but
+            // that closeness is over", so 0 releases it; while it stands she never drifts either
+            'stepped_back_mult' => 0.0,
 
             // --- what weakens it ---
             'low_fulfillment_cut' => 0.6,          // x (1 - cut x depth); depth 0 at fulfillment.low_band, 1 at band -1
@@ -257,12 +263,17 @@ final class RelDynExclusivity
             $neglect = $half > 0 ? pow(0.5, $overdue / $half) : 1.0;
         }
 
-        $unweakened = self::clamp01($drive * $disposition * $title);
+        // She stepped back from the romance on purpose (rulings §9): that closeness is over
+        $steppedBack = RelDynFulfillment::romanceSteppedBack($dynamics) !== null;
+        $release = $steppedBack ? self::clamp01(floatval($cfg['stepped_back_mult'] ?? 0.0)) : 1.0;
+
+        $unweakened = self::clamp01($drive * $disposition * $title * $release);
         $pull = self::clamp01($unweakened * $lowCut * $neglect);
         return [
             'pull' => round($pull, 4), 'band' => self::bandOf($pull, $cfg), 'unweakened' => round($unweakened, 4),
             'gate' => round($gate, 4), 'drive' => round($drive, 4), 'disposition' => round($disposition, 4),
-            'title' => round($title, 4), 'titled' => $titled, 'low_cut' => round($lowCut, 4), 'neglect' => round($neglect, 4),
+            'title' => round($title, 4), 'titled' => $titled, 'stepped_back' => $steppedBack,
+            'low_cut' => round($lowCut, 4), 'neglect' => round($neglect, 4),
             'passion' => round($passion, 2), 'bond' => round($bond, 4), 'fulfillment' => round($fulfill, 4),
             'overdue_game_days' => round($overdue, 3),
         ];
@@ -447,7 +458,9 @@ final class RelDynExclusivity
         $cfg = $cfg ?? self::config();
         $band = (string) $pull['band'];
         $d = (array) $cfg['drifting'];
-        $bonded = !empty($pull['titled']) || floatval($pull['passion'] ?? 0) >= floatval($d['bond_passion_min'] ?? 20.0);
+        // A romance she stepped back from is no bond to drift from (rulings §9)
+        $bonded = empty($pull['stepped_back'])
+            && (!empty($pull['titled']) || floatval($pull['passion'] ?? 0) >= floatval($d['bond_passion_min'] ?? 20.0));
         $weakened = floatval($pull['unweakened'] ?? 0) > 0
             && floatval($pull['pull']) <= floatval($d['weakened_share'] ?? 0.7) * floatval($pull['unweakened']);
         $kind = null;
@@ -615,7 +628,7 @@ final class RelDynExclusivity
             $suitors[(string) ($e['name'] ?? '')] = round(self::interestAt($e, $now, $cfg), 2);
         }
         arsort($suitors);
-        return ['pull' => $p['pull'], 'band' => $p['band'], 'titled' => $p['titled'], 'unweakened' => $p['unweakened'],
+        return ['pull' => $p['pull'], 'band' => $p['band'], 'titled' => $p['titled'], 'stepped_back' => $p['stepped_back'], 'unweakened' => $p['unweakened'],
                 'low_cut' => $p['low_cut'], 'neglect' => $p['neglect'], 'suitor_interest' => array_slice($suitors, 0, 3, true)];
     }
 }

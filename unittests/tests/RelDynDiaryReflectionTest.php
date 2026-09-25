@@ -144,6 +144,21 @@ final class RelDynDiaryReflectionTest extends TestCase
         $this->assertContains('conflict_opened', RelationshipDynamics::detectDiaryContentTriggers($d));
     }
 
+    public function testTheFulfillmentBoundaryIsReadFromThePlayerPair(): void
+    {
+        // Stored fulfillment is per relationship pair (rulings §11): {v, pairs: {Player: state}}.
+        // The player pair's boundary is a moment, as the pre-pair blob's was.
+        $d = $this->npc();
+        $this->due($d);
+        RelationshipDynamics::checkDiaryTrigger('Tester', $d);
+        $calm = RelationshipDynamics::detectDiaryContentTriggers($d);
+        RelDynFulfillment::setPairState($d, RelDynFulfillment::PLAYER, ['boundary' => ['state' => 'probation']]);
+        $this->assertArrayHasKey('pairs', $d[RelDynFulfillment::STATE_KEY]);
+        $this->assertSame(['boundary:fulfillment'],
+            array_values(array_diff(RelationshipDynamics::detectDiaryContentTriggers($d), $calm)));
+        $this->assertSame('probation', RelationshipDynamics::diaryBoundarySignatures($d)['fulfillment']);
+    }
+
     public function testASignificanceSeenInTheSameRequestStillCounts(): void
     {
         $d = $this->npc();

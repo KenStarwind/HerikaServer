@@ -45,7 +45,7 @@
  *                     'reject_recruitment' => bool] (reldyn_resentment.php)
  *   fulfillment      ['band' => -1..1, 'trend' => band per game day, 'low' => bool, 'known' => bool]
  *   exclusivity      null | ['pull' => 0..1 (decisions §17: toward the player), 'band' => devoted|taken|
- *                     leaning|open, 'titled' => bool, 'unweakened' => 0..1 (before low fulfillment /
+ *                     leaning|open, 'titled' => bool, 'stepped_back' => bool (rulings §9: released), 'unweakened' => 0..1 (before low fulfillment /
  *                     neglect), 'low_cut' / 'neglect' => multipliers 0..1, 'suitor_interest' => name =>
  *                     interest points 0..100 (her damped romantic interest, top 3)] (RelDynExclusivity::jev)
  *   attraction       ['enabled' => bool, 'outcome' => ?string, 'score' => 0..1,

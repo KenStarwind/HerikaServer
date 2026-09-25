@@ -110,6 +110,58 @@ final class RelDynExclusivityTest extends TestCase
         $this->assertEqualsWithDelta(0.4 * 0.75 + 0.35 * (40 / 60) + 0.25 * 0.75, $base['drive'], 0.01, 'two game hours of decay aside');
     }
 
+    /**
+     * A deliberate step-back out of the romance (rulings §9: "kind, but that closeness is over",
+     * either lane's boundary) releases the pull: whatever fondness is left reads as affection, so
+     * she holds herself for no one and does not drift from a romance she ended. A new romance
+     * (core back in a romance type) ends the step-back and the pull comes back.
+     */
+    public function testADeliberateStepBackReleasesThePull(): void
+    {
+        $at = self::T0 + 2 * self::HOUR;
+        $before = RelDynExclusivity::pull($this->npc(60.0, 60.0, 'romantic'), $at);
+        $this->assertSame(RelDynExclusivity::BAND_DEVOTED, $before['band']);
+        $this->assertFalse($before['stepped_back']);
+
+        foreach (['fulfillment', 'concern'] as $lane) {
+            $d = $this->npc(60.0, 60.0, 'platonic');
+            $b = ['state' => 'none', 'stepped_back_gamets' => (float) (self::T0 + self::HOUR), 'from' => 'romantic', 'to' => 'platonic'];
+            if ($lane === 'fulfillment') {
+                $s = RelDynFulfillment::pairState($d);
+                $s['boundary'] = $b;
+                RelDynFulfillment::setPairState($d, RelDynFulfillment::PLAYER, $s);
+            } else {
+                $d[RelDynConcern::STATE_KEY]['boundary'] = $b;
+            }
+            $p = RelDynExclusivity::pull($d, $at);
+            $this->assertTrue($p['stepped_back'], $lane);
+            $this->assertSame(0.0, $p['pull'], "{$lane}: released");
+            $this->assertSame(RelDynExclusivity::BAND_OPEN, $p['band']);
+            $this->assertNull(RelDynExclusivity::feltLine($d, $p, 'Tester', 'Mikael', 'Kaida', 30.0),
+                "{$lane}: nothing to hold, nothing to drift from");
+            // the same fondness without the step-back record: an untitled pull that holds
+            $free = $d;
+            unset($free[RelDynConcern::STATE_KEY]);
+            $s = RelDynFulfillment::pairState($free);
+            unset($s['boundary']);
+            RelDynFulfillment::setPairState($free, RelDynFulfillment::PLAYER, $s);
+            $this->assertGreaterThan(0.45, RelDynExclusivity::pull($free, $at)['pull'], "{$lane}: the fondness alone would hold");
+            // a new romance ends the step-back
+            $again = $d;
+            $again['_core_rel_type'] = 'romantic';
+            $this->assertSame($before['pull'], RelDynExclusivity::pull($again, $at)['pull'], "{$lane}: a romance again");
+        }
+        // Tunable: a partial release keeps a share, and still never drifts
+        $this->config(['stepped_back_mult' => 0.5]);
+        $d = $this->npc(60.0, 60.0, 'platonic');
+        $d[RelDynConcern::STATE_KEY]['boundary'] = ['state' => 'none', 'stepped_back_gamets' => (float) (self::T0 + self::HOUR),
+            'from' => 'romantic', 'to' => 'platonic'];
+        $half = RelDynExclusivity::pull($d, $at);
+        $unset = $d;
+        unset($unset[RelDynConcern::STATE_KEY]);
+        $this->assertEqualsWithDelta(0.5 * RelDynExclusivity::pull($unset, $at)['pull'], $half['pull'], 1e-3);
+    }
+
     public function testATitleMultipliesTheDriveItDoesNotAddToIt(): void
     {
         $at = self::T0 + 2 * self::HOUR;
