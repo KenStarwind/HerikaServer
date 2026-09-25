@@ -390,14 +390,7 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
      */
     public function testIntimacyThePluginReportsKeepsHerCoveredWithoutTheEval(): void
     {
-        $this->talkTo(self::AELA, self::T0);
-        // A partner at ease with the player (the protocols lane, MDD 6.3: touching a partner who is
-        // cold toward the player, comfort low and passion gone, is the Ick, not intimacy)
-        $d = RelationshipDynamics::getDynamics(self::AELA);
-        foreach (['comfort' => 55.0, 'warmth' => 55.0] as $dim => $x) $d['dimensions'][$dim]['x'] = $d['dimensions'][$dim]['baseline'] = $x;
-        RelationshipDynamics::setPassion($d, 35.0);
-        RelationshipDynamics::saveDynamics(self::AELA, $d);
-        RelationshipDynamics::endRequest();
+        $this->talkTo(self::AELA, self::T0);   // a fresh start: nothing warmed by hand (the game's touches are the romance's, never the Ick)
         for ($k = 0; $k < 7; $k++) {
             $day = self::T0 + $k * self::DAY;
             $this->talkTo(self::AELA, $day + self::HOUR);
@@ -421,6 +414,33 @@ final class RelDynIntimacyNeedPostgresTest extends TestCase
         $night = self::T0 + 9 * self::DAY + 22 * self::HOUR;
         $axes = RelDynIntimacy::axesAt($this->dynamics(self::AELA), $night);
         $this->assertEqualsWithDelta(1.0, $axes[RelDynIntimacy::PHYSICAL]['coverage'], 1e-3, json_encode($axes));
+        $this->assertSame([], $this->db->failures, 'the schema holds every table the production path touches');
+    }
+
+    /**
+     * The protocols review (MDD 6.3): the Ick is unreciprocated pressure measured from her side.
+     * A partner in a romance core already knows (Player.type romantic), on a fresh start whose
+     * RelDyn state is only its uninitialised seed, touched in VR every few hours for days: that is
+     * intimacy the game reports inside the romance, not a player pushing at someone cold. No Ick,
+     * no walkaway, the romance still a romance.
+     */
+    public function testAColdFreshPartnerTouchedInVrIsNotTheIck(): void
+    {
+        $this->talkTo(self::AELA, self::T0);   // fresh start: nothing warmed by hand
+        $fresh = $this->dynamics(self::AELA);
+        for ($k = 0; $k < 4; $k++) {
+            $day = self::T0 + $k * self::DAY;
+            foreach ([2, 3, 5, 8, 11, 14] as $h) {
+                $this->intimateRequest(self::AELA, $day + $h * self::HOUR, 'ext_nsfw_physics', self::AELA . '^breast^grab^0^^left^');
+            }
+            $this->talkTo(self::AELA, $day + 16 * self::HOUR);
+            $aela = $this->dynamics(self::AELA);
+            $this->assertEmpty($aela['_ick_tracker']['ick_active'] ?? false, "day {$k}: " . json_encode([
+                'tracker' => $aela['_ick_tracker'] ?? null, 'fresh' => array_map(fn($x) => $x['x'] ?? null, $fresh['dimensions'] ?? [])]));
+            $this->assertSame('normal', $aela['_walkaway_state'] ?? 'normal', "day {$k}");
+        }
+        $row = pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT extended_data FROM core_npc_master WHERE id = $1', [$this->ids[self::AELA]]));
+        $this->assertSame('romantic', json_decode($row['extended_data'], true)['relationships']['Player']['type'], 'still her partner');
         $this->assertSame([], $this->db->failures, 'the schema holds every table the production path touches');
     }
 

@@ -364,12 +364,14 @@ skip_conflict:
 RelationshipDynamics::pendingEvalForRequest($npcName, $dynamics);
 
 // ========== ICK TRACKER + CHARISMA DETECTION (PR 15) ==========
-// This interaction, and touch she did not answer in kind. The eval's romantic_intent reaches
-// the Ick once per applied item, with that exchange's reply mood (applyEvalExtraFields ->
+// This interaction, and touch she did not answer in kind (never intimacy the game reports inside
+// the romance: RelDynProtocols::ickAttemptOfRequest). The eval's romantic_intent reaches the Ick
+// once per applied item, with that exchange's reply mood (applyEvalExtraFields ->
 // recordIckEvalAttempt), not by peeking at the inbox the worker has usually emptied.
 if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $classifiedLL = $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null;
-    $isRomantic = RelationshipDynamics::isRomanticAttempt($classifiedLL, $lastMood, []);
+    $isRomantic = RelDynProtocols::ickAttemptOfRequest($dynamics, $classifiedLL, is_string($lastMood) ? $lastMood : null,
+        (array) ($GLOBALS['gameRequest'] ?? []), (string) ($GLOBALS['PLAYER_NAME'] ?? ''));
     $temperament = $dynamics['inferred_temperament'] ?? null;
     $ickChanged = RelationshipDynamics::updateIckTracker($dynamics, $isRomantic, $temperament,
         floatval($GLOBALS['gameRequest'][2] ?? 0));   // raw gamets of this exchange (its eval item's)

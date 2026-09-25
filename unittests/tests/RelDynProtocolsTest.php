@@ -175,10 +175,10 @@ final class RelDynProtocolsTest extends TestCase
         $clinger = RelDynProtocols::griefFeltLines('Muiri', $mk(40.0, ['anxiety' => 0.7, 'avoidance' => 0.2]))[0]['text'];
         $plain = RelDynProtocols::griefFeltLines('Lynly', $mk(40.0, ['anxiety' => 0.15, 'avoidance' => 0.15]))[0]['text'];
         $this->assertStringContainsString('in silence', $hunter);
-        $this->assertStringContainsString('throws herself into the hunt', $hunter, 'avoidance copes through action');
+        $this->assertStringContainsString('throws themselves into the hunt', $hunter, 'avoidance copes through action');
         $this->assertStringContainsString('shattered', $clinger);
         $this->assertStringContainsString('holds on harder to the people still here', $clinger);
-        $this->assertStringNotContainsString('; she', $plain, 'no coping colour for a secure NPC');
+        $this->assertStringNotContainsString('; Lynly', $plain, 'no coping colour for a secure NPC');
         foreach ([$hunter, $clinger, $plain] as $t) $this->assertDoesNotMatchRegularExpression('/\d/', $t);
     }
 
@@ -344,6 +344,168 @@ final class RelDynProtocolsTest extends TestCase
         $d['_ick_confrontation_resolved'] = true;
         $this->assertTrue(RelationshipDynamics::checkIckRecovery($d), 'said calmly');
         $this->assertSame(0, $d['_ick_tracker']['quiet']);
+    }
+
+    // ------------------------------------------------------------------ the Ick: real asymmetry (protocols review)
+
+    /** A partner: core's Player.type is a romance (RelDynIntimacy::inPlay). */
+    private static function partner(array $d): array
+    {
+        $d['_core_rel_type'] = 'romantic';
+        return $d;
+    }
+
+    /**
+     * She answered in kind in core 3.4.1's own mood vocabulary (lib/emote_moods.php): 'sexy' and
+     * 'lovely' are reciprocation, as 'seductive', 'playful' and 'teasing' were. The list is config.
+     */
+    public function testReciprocalMoodsSpeakCoresVocabulary(): void
+    {
+        require_once __DIR__ . '/../../lib/emote_moods.php';
+        $mine = (array) RelDynProtocols::config()['ick']['reciprocal_moods'];
+        $core = array_values(array_intersect(getDefaultEmoteMoods(), $mine));
+        sort($core);
+        $this->assertSame(['lovely', 'playful', 'seductive', 'sexy', 'teasing'], $core);
+        foreach (['sexy', 'Lovely', 'seductive', 'playful', 'teasing'] as $m) {
+            $this->assertFalse(RelationshipDynamics::isRomanticAttempt(RelationshipDynamics::LL_TOUCH, $m), $m);
+        }
+        foreach (['neutral', 'irritated', 'angry', 'scared', null] as $m) {
+            $this->assertTrue(RelationshipDynamics::isRomanticAttempt(RelationshipDynamics::LL_TOUCH, $m), (string) $m);
+        }
+    }
+
+    /**
+     * Intimacy the game or Sharmat reports (a VR touch, a scene with the player) inside a romance is
+     * the romance, never pressure: neither the postrequest's read of that request nor the eval's
+     * item of the same exchange counts it. Outside a romance the touch is still hers to judge.
+     */
+    public function testIntimacyTheGameReportsInARomanceIsNeverPressure(): void
+    {
+        $touch = ['ext_nsfw_physics', '0', (string) self::T0, 'Aela the Huntress^breast^grab^0^^left^'];
+        $scene = ['ext_nsfw_sexcene', '0', (string) self::T0, 'OStimScene/vaginal/Stage1_A1/Kaida^dom/Aela the Huntress^sub'];
+        $cold = self::cold(['anxiety' => 0.15, 'avoidance' => 0.85]);
+        $this->assertFalse(RelDynProtocols::ickAttemptOfRequest(self::partner($cold), RelationshipDynamics::LL_TOUCH, 'neutral', $touch, 'Kaida'), 'a partner, touched');
+        $this->assertFalse(RelDynProtocols::ickAttemptOfRequest(self::partner($cold), RelationshipDynamics::LL_TOUCH, null, $scene, 'Kaida'), 'a partner, a scene');
+        $this->assertTrue(RelDynProtocols::ickAttemptOfRequest($cold, RelationshipDynamics::LL_TOUCH, 'neutral', $touch, 'Kaida'), 'no romance: hers to judge');
+        $fz = self::partner($cold);
+        $fz['_attraction'] = ['friendzoned' => true];
+        $this->assertTrue(RelDynProtocols::ickAttemptOfRequest($fz, RelationshipDynamics::LL_TOUCH, 'neutral', $touch, 'Kaida'), 'friendzoned: not in play');
+        $hug = ['inputtext', '0', (string) self::T0, 'Kaida: ExtCmdHug'];
+        $this->assertTrue(RelDynProtocols::ickAttemptOfRequest(self::partner($cold), RelationshipDynamics::LL_TOUCH, 'neutral', $hug, 'Kaida'),
+            'a touch the game does not report stays the reply mood\'s business');
+
+        // The eval's item of that exchange carries what the game reported (code-written)
+        $this->assertSame(['reported_intimacy' => 'intimate_touch'], RelationshipDynamics::normalizeEvalExtraFields(['reported_intimacy' => 'intimate_touch']));
+        $this->assertSame([], RelationshipDynamics::normalizeEvalExtraFields(['reported_intimacy' => 'grope']), 'an unknown kind is left out');
+        $item = ['gamets' => (int) self::T0, 'romantic_intent' => 3, 'reply_mood' => 'neutral', 'reported_intimacy' => 'intimate_touch',
+            'grievance' => ['flag' => false]];
+        foreach ([[self::partner($cold), 0], [$cold, 1]] as [$d, $counted]) {
+            RelationshipDynamics::updateIckTracker($d, false, 'Guarded', self::T0);
+            RelationshipDynamics::recordIckEvalAttempt('Aela', $item, $d);
+            $this->assertSame($counted, $d['_ick_tracker']['romantic_count'], json_encode($d['_ick_tracker']));
+        }
+    }
+
+    /**
+     * A partner on a fresh start: her comfort sits at its own resting level (below the floor for a
+     * guarded NPC) and passion was never built. That is not her being cold to the player. Inside a
+     * romance the Ick needs her comfort pushed below where she rests (not by a held state such as
+     * grief); outside one the MDD floors read as they are.
+     */
+    public function testAPartnersUninitialisedStateIsNotHerColdness(): void
+    {
+        $mk = function (bool $partner, float $x, float $base, float $held = 0.0): array {
+            $d = self::cold(['anxiety' => 0.15, 'avoidance' => 0.85]);
+            if ($partner) $d = self::partner($d);
+            $d['dimensions']['comfort']['x'] = $x;
+            $d['dimensions']['comfort']['baseline'] = $base;
+            RelationshipDynamics::setPassion($d, 0.0);
+            if ($held !== 0.0) $d['_grief_held'] = ['comfort' => $held];
+            $d['_ick_tracker'] = ['total_count' => 5, 'romantic_count' => 5];
+            return $d;
+        };
+        $this->assertTrue(RelationshipDynamics::checkIckTrigger($mk(false, 37.0, 37.0), 'Guarded'), 'a stranger at rest: the floors (MDD 6.3)');
+        $this->assertFalse(RelationshipDynamics::checkIckTrigger($mk(true, 37.0, 37.0), 'Guarded'), 'a partner at rest: uninitialised, not cold');
+        $this->assertFalse(RelationshipDynamics::checkIckTrigger($mk(true, 34.0, 37.0), 'Guarded'), 'a little off her rest');
+        $this->assertTrue(RelationshipDynamics::checkIckTrigger($mk(true, 25.0, 37.0), 'Guarded'), 'pushed below where she rests');
+        $this->assertFalse(RelationshipDynamics::checkIckTrigger($mk(true, 22.0, 37.0, -15.0), 'Guarded'), 'held down by grief, not by the player');
+    }
+
+    /**
+     * While the Ick lasts a continued attempt costs comfort and builds resentment (roadmap); when
+     * the eval item of that exchange carries its own grievance, that grievance is the exchange's
+     * resentment (the resentment flow), not counted twice.
+     */
+    public function testAGrievanceIsThatExchangesResentmentNotTheIcksToo(): void
+    {
+        $mk = function (): array {
+            $d = self::cold(['anxiety' => 0.15, 'avoidance' => 0.85]);
+            $d['_ick_tracker'] = ['total_count' => 6, 'romantic_count' => 4, 'ick_active' => true, 'quiet' => 0, 'counted_gamets' => []];
+            return $d;
+        };
+        $item = fn(bool $grievance, int $g) => ['gamets' => $g, 'romantic_intent' => 3, 'reply_mood' => 'irritated',
+            'grievance' => ['flag' => $grievance, 'kind' => $grievance ? 'disrespect' : null, 'severity' => $grievance ? 2 : 0]];
+        $plain = $mk();
+        RelationshipDynamics::recordIckEvalAttempt('Aela', $item(false, (int) self::T0), $plain);
+        $this->assertGreaterThan(0.0, self::xOf($plain, 'resentment'), 'the Ick builds it');
+        $this->assertLessThan(25.0, self::xOf($plain, 'comfort'));
+        $said = $mk();
+        RelationshipDynamics::recordIckEvalAttempt('Aela', $item(true, (int) self::T0), $said);
+        $this->assertSame(0.0, self::xOf($said, 'resentment'), 'the grievance carries it');
+        $this->assertLessThan(25.0, self::xOf($said, 'comfort'), 'comfort still pays');
+    }
+
+    private static function xOf(array $d, string $dim): float
+    {
+        return floatval($d['dimensions'][$dim]['x'] ?? 0);
+    }
+
+    /** One voice: with the resentment arc confronting at her own threshold, the Ick line does not say it too. */
+    public function testTheIckLeavesTheConfrontationToTheResentmentArc(): void
+    {
+        $d = self::cold(['anxiety' => 0.15, 'avoidance' => 0.85]);
+        $d['_ick_tracker'] = ['ick_active' => true];
+        $d['dimensions']['resentment']['x'] = 60.0;
+        $ref = new ReflectionProperty('RelationshipDynamics', 'config');
+        $ref->setAccessible(true);
+        foreach ([true => false, false => true] as $arc => $says) {
+            $cfg = RelationshipDynamics::defaultConfig();
+            $cfg['resentment_arc'] = ['enabled' => (bool) $arc];
+            RelationshipDynamics::beginRequest();
+            $ref->setValue(null, $cfg);
+            try {
+                $text = (string) RelationshipDynamics::getIckContext($d, 'Aela', 'Guarded');
+                $this->assertStringContainsString('steps back', $text);
+                $this->assertSame($says, str_contains($text, 'snapping'), ($arc ? 'arc on' : 'arc off') . ": {$text}");
+            } finally {
+                RelationshipDynamics::endRequest();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ one voice, anyone's
+
+    /** The protocols' felt lines speak of anyone: a man grieves too (the house style is 'they'). */
+    public function testTheProtocolsFeltTextIsNotOnlyForHer(): void
+    {
+        $texts = [];
+        foreach ([1, 2, 3, 4] as $phase) {
+            foreach (['quiet', 'public'] as $voice) {
+                foreach (['action', 'cling', 'plain'] as $coping) $texts[] = RelDynProtocols::griefText('Farkas', 'Vilkas', $phase, $voice, $coping);
+            }
+        }
+        $texts[] = RelDynProtocols::resolutionText('Farkas', ['kind' => 'redemption', 'by' => 'Aela the Huntress']);
+        $texts[] = RelDynProtocols::resolutionText('Farkas', ['kind' => 'redemption']);
+        $texts[] = RelDynProtocols::resolutionText('Farkas', ['kind' => 'breaking']);
+        foreach (['redemption', 'breaking'] as $type) {
+            $texts[] = RelDynProtocols::arcText('Farkas', ['_plasticity_override' => 'Growth', '_divine_intervention_last_type' => $type,
+                '_plasticity_override_expires_gamets' => self::T0 + self::HOUR]);
+        }
+        foreach ($texts as $t) {
+            $this->assertNotSame('', $t);
+            $this->assertDoesNotMatchRegularExpression('/\b(she|her|hers|herself)\b/i', $t);
+            $this->assertDoesNotMatchRegularExpression('/\d/', $t);
+        }
     }
 
     // ------------------------------------------------------------------ the Parasite

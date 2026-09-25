@@ -50,7 +50,13 @@
  * the floor), passion has stopped being pushed (at or above its floor, or the player stopped
  * pressing for ick.recovery_quiet_interactions interactions) and resentment is low or was said
  * calmly. The trigger is stamped with the exchange's game time and the play clock, never the wall
- * clock.
+ * clock. Asymmetry is measured from her side (protocols review): an exchange she answered in
+ * kind (ick.reciprocal_moods, core's mood vocabulary) is not pressure; intimacy the game or
+ * Sharmat reports inside a romance (ickReportedIntimacy) is the romance, never pressure; and
+ * inside a romance the floors alone are not coldness (a fresh start's seed reads below them):
+ * her comfort must have been pushed below where she rests (ickColdIsHers). While it lasts, an
+ * attempt whose eval item carries its own grievance leaves the resentment to that grievance, and
+ * with the resentment arc on the confrontation is its voice, not the Ick line's.
  *
  * PARASITE (MDD 6.2 "Transactional. Accelerated Passion decay (2-hour half-life). Must bleed
  * resources constantly."; dimension design: "gifts without genuine interaction"). A rolling
@@ -156,7 +162,7 @@ final class RelDynProtocols
                 'felt' => [
                     1 => [
                         'quiet'  => '{NAME} carries the loss of {DECEASED} in silence: still water over something devastating, withdrawn, numbly going through the motions',
-                        'public' => '{NAME} is shattered by the loss of {DECEASED}: raw, visibly breaking down, unable to hold her composure, flinching when the name is spoken',
+                        'public' => '{NAME} is shattered by the loss of {DECEASED}: raw, visibly breaking down, composure gone, flinching when the name is spoken',
                     ],
                     2 => [
                         'quiet'  => '{NAME} speaks of {DECEASED} as if they might walk back in, remembering only the good, a quiet bargaining with fate',
@@ -164,15 +170,15 @@ final class RelDynProtocols
                     ],
                     3 => [
                         'quiet'  => '{NAME} is making peace with the absence of {DECEASED}; past tense more often, a bittersweet warmth when the name comes up',
-                        'public' => '{NAME} is slowly finding her footing after losing {DECEASED}; good moments broken by sudden waves of loss',
+                        'public' => '{NAME} is slowly finding firm ground again after losing {DECEASED}; good moments broken by sudden waves of loss',
                     ],
                     4 => [
-                        'quiet'  => '{NAME} carries the memory of {DECEASED} as part of who she is now: a memorial, not a wound, a quiet smile instead of tears',
-                        'public' => '{NAME} carries the memory of {DECEASED} as part of who she is now: a memorial, not a wound, a quiet smile instead of tears',
+                        'quiet'  => '{NAME} carries the memory of {DECEASED} as part of who {NAME} is now: a memorial, not a wound, a quiet smile instead of tears',
+                        'public' => '{NAME} carries the memory of {DECEASED} as part of who {NAME} is now: a memorial, not a wound, a quiet smile instead of tears',
                     ],
                     'coping' => [
-                        'action' => 'she copes by doing, not talking: throws herself into the hunt and the work and turns aside any question about it',
-                        'cling'  => 'she holds on harder to the people still here, afraid of losing one more',
+                        'action' => '{NAME} copes by doing, not talking: throws themselves into the hunt and the work and turns aside any question about it',
+                        'cling'  => '{NAME} holds on harder to the people still here, afraid of losing one more',
                     ],
                 ],
             ],
@@ -194,6 +200,15 @@ final class RelDynProtocols
                 'recovery_comfort_above' => (float) RelationshipDynamics::ICK_RECOVERY['comfort'],
                 'recovery_quiet_interactions' => (int) RelationshipDynamics::ICK_RECOVERY['quiet'],
                 'recovery_resentment_below' => (float) RelationshipDynamics::ICK_RECOVERY['resentment'],
+                // After it clears, no new trigger for this much play time (play gamets: 10 real minutes)
+                'cooldown_play_gamets' => (float) RelationshipDynamics::ICK_COOLDOWN_PLAY_GAMETS,
+                // Moods in which she answers courting in kind (never pressure): core 3.4.1's own
+                // (lib/emote_moods.php), then older and custom mood names
+                'reciprocal_moods' => RelationshipDynamics::ROMANTIC_MOODS,
+                // Inside a romance (RelDynIntimacy::inPlay) the floors alone are not her coldness:
+                // her comfort (points, without held states such as grief) must also be at least
+                // this far below her resting baseline (Serene's number)
+                'romance_comfort_below_rest' => 5.0,
             ],
             'parasite' => [
                 // Rolling ledger of the last `window` exchanges; judged from min_exchanges on
@@ -535,11 +550,11 @@ final class RelDynProtocols
         $by = trim((string) ($say['by'] ?? ''));
         if (($say['kind'] ?? null) === 'redemption') {
             return $by !== ''
-                ? "{$npc} looked up when {$by} came; the first sign of life in her since, holding on to that presence like a lifeline"
-                : "{$npc} found something to hold on to; the first sign of life in her since";
+                ? "{$npc} looked up when {$by} came; the first sign of life since, holding on to that presence like a lifeline"
+                : "{$npc} found something to hold on to; the first sign of life since";
         }
         if (($say['kind'] ?? null) === 'breaking') {
-            return "Something closed behind {$npc}'s expression while nobody came; she has decided she is on her own, and the warmth is gone";
+            return "Something closed behind {$npc}'s expression while nobody came; {$npc} has decided to face things alone now, and the warmth is gone";
         }
         return '';
     }
@@ -554,7 +569,7 @@ final class RelDynProtocols
         $now = self::calendarNow($dynamics);
         if ($now > 0 && $now >= $expires) return '';
         if ($type === 'redemption') {
-            return "Something fundamental shifted in {$npc}: she speaks with a quiet clarity, her priorities rearranged, haunted but purposeful, and treats small moments with a weight they did not have before";
+            return "Something fundamental shifted in {$npc}: a quiet clarity in every word, priorities rearranged, haunted but purposeful, small moments carrying a weight they did not have before";
         }
         if ($type === 'breaking') {
             return "Something broke behind {$npc}'s eyes: a thousand-yard stare, going through the motions, flinching at kindness; the lights are on but dimmer";
@@ -624,6 +639,48 @@ final class RelDynProtocols
         $hi = floatval($acfg['prototype']['high'] ?? 0.85);
         $share = self::clamp((floatval(RelationshipDynamics::getAttachmentAxes($dynamics)['avoidance']) - $lo) / max(1e-9, $hi - $lo), 0.0, 1.0);
         return 1.0 - $drop * $share;
+    }
+
+    /**
+     * Intimacy the game or Sharmat reports ($kind: RelDynIntimacy::requestKind of the exchange's
+     * request, null = none) while intimacy is in play with the player (RelDynIntimacy::inPlay: a
+     * romance core knows, or an attraction she latched into; never friendzoned or stepped back):
+     * the romance itself, never unreciprocated pressure.
+     */
+    public static function ickReportedIntimacy(array $dynamics, ?string $kind): bool
+    {
+        return $kind !== null && $kind !== '' && RelDynIntimacy::inPlay($dynamics);
+    }
+
+    /**
+     * The postrequest's read of one request for the Ick: romantic pressure she did not answer in
+     * kind (RelationshipDynamics::isRomanticAttempt: touch, with her reply mood), unless it is
+     * intimacy the game reported inside the romance (ickReportedIntimacy).
+     */
+    public static function ickAttemptOfRequest(array $dynamics, ?string $interactionLL, ?string $mood, array $gameRequest, string $playerName): bool
+    {
+        if (!RelationshipDynamics::isRomanticAttempt($interactionLL, $mood, [])) return false;
+        return !self::ickReportedIntimacy($dynamics, RelDynIntimacy::requestKind($gameRequest, $playerName));
+    }
+
+    /**
+     * Is her reading below the Ick's floors coldness toward the player (MDD 6.3: pressure "while
+     * the NPC is cold", measured from her side)? Outside a romance the floors read as they are:
+     * a stranger's reserve is real. Inside one (RelDynIntimacy::inPlay) the floors alone are a
+     * fresh start's seed as much as a feeling: her comfort, without the states held on it
+     * (heldTemporaryOffset: grief, a creature row, the place), must be at least
+     * ick.romance_comfort_below_rest points under her resting baseline, pushed there by what
+     * happens between them.
+     */
+    public static function ickColdIsHers(array $dynamics, ?array $cfg = null): bool
+    {
+        if (!RelDynIntimacy::inPlay($dynamics)) return true;
+        $ick = ($cfg ?? self::config())['ick'];
+        $x = $dynamics['dimensions']['comfort']['x'] ?? null;
+        $rest = $dynamics['dimensions']['comfort']['baseline'] ?? null;
+        if (!is_numeric($x) || !is_numeric($rest)) return false;
+        $own = floatval($x) - RelationshipDynamics::heldTemporaryOffset($dynamics, 'comfort');
+        return $own <= floatval($rest) - floatval($ick['romance_comfort_below_rest']);
     }
 
     // =====================================================================

@@ -365,7 +365,8 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
     }
 
     /**
-     * The eval LLM at the connector boundary: "kiss me" is open romantic pursuit (romantic_intent 3);
+     * The eval LLM at the connector boundary: "kiss me" is open romantic pursuit (romantic_intent 3),
+     * and so is the player's hands on her (her reply to a VR touch, tagged touch);
      * "your day" is quality time; "a gift for you" is a gift and nothing more; "sold your secret" is
      * the player's betrayal; anything else small talk.
      */
@@ -378,16 +379,17 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
             $day = str_contains($exchange, 'your day');
             $gift = str_contains($exchange, 'a gift for you');
             $betrayal = str_contains($exchange, 'sold your secret');
+            $touch = str_contains($exchange, 'hands on her');
             return json_encode([
                 'signals' => ['affinity' => $day ? 2 : ($gift ? 1 : ($betrayal ? -20 : 0)), 'trust' => $betrayal ? -25 : ($day ? 2 : 0),
-                              'comfort' => $day ? 3 : ($betrayal ? -10 : 0), 'respect' => 0, 'passion' => $kiss ? 3 : 0, 'maturity' => 0],
-                'tags' => $day ? ['quality_time'] : ($gift ? ['gift'] : ($betrayal ? ['betrayal'] : [])),
+                              'comfort' => $day ? 3 : ($betrayal ? -10 : 0), 'respect' => 0, 'passion' => ($kiss || $touch) ? 3 : 0, 'maturity' => 0],
+                'tags' => $touch ? ['touch'] : ($day ? ['quality_time'] : ($gift ? ['gift'] : ($betrayal ? ['betrayal'] : []))),
                 'grievance' => $betrayal ? ['flag' => true, 'kind' => 'betrayal', 'severity' => 3] : ['flag' => false, 'kind' => null, 'severity' => 0],
                 'jealousy' => ['flag' => false, 'rival' => null, 'intensity' => 0],
                 'significance' => $betrayal ? 0.9 : ($day ? 0.4 : 0.2),
-                'romantic_intent' => $kiss ? 3 : 0,
-                'summary' => $kiss ? 'The player pressed for a kiss.' : ($day ? 'They talked about her day.'
-                    : ($gift ? 'The player handed her a gift.' : ($betrayal ? 'The player sold her secret to her enemies.' : 'Small talk.'))),
+                'romantic_intent' => ($kiss || $touch) ? 3 : 0,
+                'summary' => $touch ? 'The player touched her.' : ($kiss ? 'The player pressed for a kiss.' : ($day ? 'They talked about her day.'
+                    : ($gift ? 'The player handed her a gift.' : ($betrayal ? 'The player sold her secret to her enemies.' : 'Small talk.')))),
             ]);
         };
     }
@@ -489,7 +491,7 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
         $this->turn('Muiri', 'Muiri. I came as soon as I heard.', $death + (int) round(26 * self::HOUR), 'found');
         $this->turn('Muiri', 'Talk to me.', $death + (int) round(26.2 * self::HOUR), 'found2');
         $fm = $this->felt['Muiri']['found'];
-        $this->assertStringContainsString('she has decided she is on her own', (string) ($fm['crisis_resolved'] ?? ''), json_encode($fm));
+        $this->assertStringContainsString('has decided to face things alone', (string) ($fm['crisis_resolved'] ?? ''), json_encode($fm));
         $this->assertStringContainsString('Something broke behind', (string) ($fm['arc'] ?? ''));
         $this->assertArrayNotHasKey('crisis_resolved', $this->felt['Muiri']['found2'], 'said once');
         $this->assertStringContainsString('shattered by the loss of Vilkas', (string) ($fm['grief_Vilkas'] ?? ''), 'Muiri grieves in public');
@@ -578,7 +580,8 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
     // ------------------------------------------------------------------ the Ick
 
     /**
-     * Four partners who are not receptive tonight (comfort 25, passion 5: the editor's values) and a
+     * Four partners who are not receptive tonight (the editor's values: comfort 25, or lower for one
+     * who rests below that, a partner's coldness being ease lost below her own rest; passion 5) and a
      * player who presses each for a kiss three times after the hello (3 in 4 exchanges: romantic
      * pressure the eval scores, none of them answering in kind). The threshold is hers: maturity
      * and the avoidance axis ("suffocation threshold lowered"). Aela and Ashe, the avoidant-leaning,
@@ -595,7 +598,7 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
         $all = array_keys(self::BEDS);
         foreach ($all as $npc) {
             $this->editDynamics($npc, function (array &$dd): void {
-                $dd['dimensions']['comfort']['x'] = 25.0;
+                $dd['dimensions']['comfort']['x'] = min(25.0, floatval($dd['dimensions']['comfort']['baseline']) - 8.0);
                 $dd['dimensions']['passion']['x'] = 5.0;
             });
         }
@@ -617,7 +620,7 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
             $this->assertSame([4, 3], [intval($tr['total_count'] ?? 0), intval($tr['romantic_count'] ?? 0)], "{$npc}: " . json_encode($tr));
             $threshold[$npc] = 0.5 * (1 + self::x($d, 'maturity') / 100.0) * RelDynProtocols::ickAvoidanceMult($d);
             $active[$npc] = !empty($tr['ick_active']);
-            $this->assertSame(0.75 >= $threshold[$npc], $active[$npc], "{$npc}: threshold {$threshold[$npc]}");
+            $this->assertSame(0.75 >= $threshold[$npc], $active[$npc], "{$npc}: threshold {$threshold[$npc]}, comfort rests at " . ($d['dimensions']['comfort']['baseline'] ?? '?'));
             if ($active[$npc]) {
                 $this->assertContains(floatval($tr['ick_triggered_gamets']), array_map('floatval', $kiss[$npc]), "{$npc}: stamped with the exchange's game time");
                 $this->assertGreaterThan(0.0, floatval($tr['ick_triggered_play_gamets']));
@@ -650,6 +653,103 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
             . ' comfort ' . self::x($this->dynamics(self::AELA), 'comfort'));
         $this->assertGreaterThanOrEqual(3, $cleared, 'not before the push has stopped for a while');
         $this->assertGreaterThan(40.0, self::x($this->dynamics(self::AELA), 'comfort'));
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * A request the plugin sends while the player is with $npc (a Sharmat VR touch, a scene stage),
+     * through the real hooks as core runs them, her reply logged in the mood she said it in and
+     * addressed to the player (so the eval scores it).
+     */
+    private function intimate(string $npc, string $type, string $data, int $gamets, string $label): void
+    {
+        $request = [$type, (string) $this->realTs, (string) $gamets, $data];
+        $around = $this->home();
+        $this->event($type, $data, $gamets, $around);
+        foreach (['prerequest.php', 'context.php', 'postrequest.php'] as $hook) {
+            if ($hook === 'postrequest.php') {
+                $this->event('chat', "{$npc}: *feels the player's hands on her* (talking to " . self::PLAYER . ')', $gamets, $around, 'emitted');
+                pg_query_params($this->db->link, 'INSERT INTO moods_issued (sess, speaker, mood, listener, localts, gamets, ts) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                    ['pending', $npc, $this->moods[$npc] ?? 'default', self::PLAYER, $this->realTs, $gamets, $gamets]);
+            }
+            $GLOBALS['gameRequest'] = $request;
+            $GLOBALS['HERIKA_NAME'] = $npc;
+            $GLOBALS['RELDYN_NPC_NAME'] = $npc;
+            $GLOBALS['CACHE_PEOPLE'] = $around;
+            $GLOBALS['CACHE_PARTY'] = '';
+            $GLOBALS['SCRIPTLINE_LISTENER_ATOMIC'] = self::PLAYER;
+            $GLOBALS['OGHMA_PARITY_RESULT'] = ['topics' => []];
+            $GLOBALS['contextDataFull'] = [];
+            (static function () use ($hook): void { require __DIR__ . "/../../ext/relationship_dynamics/{$hook}"; })();
+            if ($hook === 'context.php') {
+                $this->felt[$npc][$label] = RelDynFelt::lastRendered();
+            }
+            RelationshipDynamics::endRequest();
+            $this->clearReldynGlobals();
+        }
+        $this->realTs += 60;
+    }
+
+    /**
+     * The protocols review (MDD 6.3: the Ick is unreciprocated pressure measured from her side).
+     * Four fresh partners, nothing warmed by hand: each one's RelDyn state is its uninitialised
+     * seed, and for a guarded NPC that reads below the Ick's floors (comfort under 40, passion
+     * never built). Three evenings of the game reporting the player's hands on her (Sharmat VR
+     * touches, scored by the eval as open romantic pursuit) and a scene together, then the player
+     * pressing each for a kiss. Muiri answers in kind ('sexy', core's own mood); the others answer
+     * plainly. Where the design has them agree, they agree: intimacy the game reports inside the
+     * romance is never pressure (neither the request nor its eval item counts), and a partner's
+     * seed is not her coldness, so no one gets the Ick, no one walks away, the romance stays a
+     * romance. Where it has them differ, they differ: the plain answers count as unanswered
+     * courting, Muiri's never does.
+     */
+    public function testTheGamesIntimacyWithAFreshPartnerIsNeverTheIck(): void
+    {
+        $this->hello();
+        $all = array_keys(self::BEDS);
+        $this->moods = ['Aela the Huntress' => 'neutral', 'Ashe' => 'neutral', 'Muiri' => 'sexy', 'Lynly Star-Sung' => 'shy'];
+        foreach ([self::AELA, 'Ashe'] as $npc) {
+            $seed = $this->dynamics($npc);
+            $this->assertLessThan(40.0, self::x($seed, 'comfort'), "{$npc}: the guarded seed reads below the comfort floor");
+            $this->assertLessThan(20.0, RelationshipDynamics::getPassion($seed), "{$npc}: passion never built");
+        }
+        $t = $this->play(self::at(self::N0 + 1, 18.0), 20.0);
+        for ($day = 0; $day < 3; $day++) {
+            foreach ($all as $i => $npc) {
+                foreach ([0, 1, 2, 3] as $j) {
+                    $this->intimate($npc, 'ext_nsfw_physics', "{$npc}^breast^grab^0^^left^", $t + $day * self::DAY + 200 * (4 * $j + $i), "d{$day}t{$j}");
+                }
+            }
+            $stats = RelDynEval::runWorker($this->evalLlm());
+            $this->assertSame(0, $stats['failed'] ?? 0, json_encode($stats));
+        }
+        $night = $t + 3 * self::DAY;
+        foreach ($all as $i => $npc) {
+            $this->intimate($npc, 'ext_nsfw_sexcene', 'OStimScene/vaginal,romantic/Stage1_A1/' . self::PLAYER . "^dom,vaginal/{$npc}^sub,vaginal",
+                $night + 300 * $i, 'scene');
+        }
+        RelDynEval::runWorker($this->evalLlm());
+        for ($k = 0; $k < 3; $k++) {
+            foreach ($all as $i => $npc) $this->turn($npc, 'Come here and kiss me.', $night + 2000 + 100 * (4 * $k + $i), "k{$k}");
+            RelDynEval::runWorker($this->evalLlm());
+        }
+        $log = (string) file_get_contents($this->errorLog);
+        $counted = [];
+        foreach ($all as $npc) {
+            $d = $this->dynamics($npc);
+            $tr = $d['_ick_tracker'] ?? [];
+            $this->assertEmpty($tr['ick_active'] ?? false, "{$npc}: " . json_encode($tr) . ' comfort ' . self::x($d, 'comfort'));
+            $this->assertSame('normal', $d['_walkaway_state'] ?? 'normal', $npc);
+            $this->assertSame('romantic', $d['_core_rel_type'] ?? null, "{$npc}: still a partner");
+            if ($npc !== 'Muiri') {   // (Muiri's answer in kind settles it before that)
+                $this->assertStringContainsString("[ICK] {$npc}: intimacy the game reported at gamets", $log, "{$npc}: the eval's item of a touch was seen and not counted");
+            }
+            $counted[$npc] = intval($tr['romantic_count'] ?? 0);
+        }
+        $this->assertSame(0, $counted['Muiri'], 'she answered in kind');
+        foreach (['Aela the Huntress', 'Ashe', 'Lynly Star-Sung'] as $npc) $this->assertGreaterThan(0, $counted[$npc], "{$npc}: unanswered courting counts");
         $this->assertFeelingsNotNumbers();
         $this->assertSame(0, $this->llmCalls);
         $this->assertSame([], $this->db->failures);
