@@ -246,8 +246,8 @@ final class RelDynEvalConsumerPostgresTest extends TestCase
         $this->assertEqualsWithDelta(3.15 / 2.0, $results['affinity'], 1e-4, 'result in mirror units (4 places)');
         // trust: +10 x R Proud 0.6 x Rigid up 0.3 = +1.8 (no M: tags only shape affinity)
         $this->assertEqualsWithDelta(31.8, (float) $stored['dynamics']['dimensions']['trust']['x'], 1e-6);
-        // maturity: -4 x R Proud 0.7 x Rigid down 0.3 = -0.84
-        $this->assertEqualsWithDelta(34.16, (float) $stored['dynamics']['dimensions']['maturity']['x'], 1e-6);
+        // maturity: -4 x Rigid down 0.3 = -1.2 (R maturity retired: MDD 15.4 edit, decisions §16 #6)
+        $this->assertEqualsWithDelta(33.8, (float) $stored['dynamics']['dimensions']['maturity']['x'], 1e-6);
         $this->assertArrayNotHasKey('eval_inbox', $stored, 'inbox consumed');
 
         $log = (string) file_get_contents($this->errorLog);

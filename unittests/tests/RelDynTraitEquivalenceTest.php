@@ -16,11 +16,35 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/tools/trait_equivalence
  *   git archive 33392df6 ext/relationship_dynamics lib | tar -x -C /tmp/rd_base
  *   php ext/relationship_dynamics/tools/trait_equivalence_capture.php /tmp/rd_base
  * The test runs the same capture (tools/trait_equivalence_capture.php) against this tree.
+ *
+ * Phase 3 (design §6.1 item 3) changes behaviour on purpose, one fix per commit. Each fix lists
+ * the capture paths it changes in DELIBERATE (fnmatch patterns over "label/consumer/..."); those
+ * paths are asserted by the fix's own test (RelDynTraitPhase3Test), everything else must still be
+ * today's value, and every pattern must match at least one path that really changed.
  */
 final class RelDynTraitEquivalenceTest extends TestCase
 {
     private const PRESETS = ['Romantic', 'Anxious', 'Bold', 'Playful', 'Humble', 'Nurturing', 'Gentle',
         'Jealous', 'Proud', 'Defiant', 'Guarded', 'Independent', 'Stoic'];
+
+    /** Phase-3 deliberate changes: fix => capture-path patterns it changes (see the class doc). */
+    private const DELIBERATE = [
+        // MDD 15.4 edits (decisions §16 #6): R maturity retired, the Volatile row deleted
+        'mdd_15_4_edits' => ['*/resistance/maturity', 'Volatile/resistance/*'],
+    ];
+
+    /** Paths that differ from the base fixture, filled by the consumer comparison. */
+    private array $changed = [];
+
+    private static function deliberate(string $path): ?string
+    {
+        foreach (self::DELIBERATE as $fix => $patterns) {
+            foreach ($patterns as $pat) {
+                if (fnmatch($pat, $path, FNM_NOESCAPE)) return $fix;
+            }
+        }
+        return null;
+    }
 
     private $savedDb;
     private $savedRequest;
@@ -68,6 +92,10 @@ final class RelDynTraitEquivalenceTest extends TestCase
     /** Recursive compare: numbers within 1e-9 and of the same type, everything else identical. */
     private function assertSameShape($expected, $actual, string $path): void
     {
+        if (self::deliberate($path) !== null) {
+            if (json_encode($expected, JSON_PRESERVE_ZERO_FRACTION) !== json_encode($actual, JSON_PRESERVE_ZERO_FRACTION)) $this->changed[] = $path;
+            return;
+        }
         if (is_array($expected)) {
             $this->assertIsArray($actual, $path);
             $this->assertSame(array_keys($expected), array_keys($actual), "{$path}: keys");
@@ -105,6 +133,13 @@ final class RelDynTraitEquivalenceTest extends TestCase
                 $this->assertSameShape($value, $now[$label][$consumer], "{$label}/{$consumer}");
             }
         }
+        // every deliberate change is real: each pattern matches at least one changed path
+        foreach (self::DELIBERATE as $fix => $patterns) {
+            foreach ($patterns as $pat) {
+                $hit = array_filter($this->changed, fn($p) => fnmatch($pat, $p, FNM_NOESCAPE));
+                $this->assertNotEmpty($hit, "{$fix}: pattern {$pat} changes nothing (stale allow-list entry)");
+            }
+        }
     }
 
     /** Each registered column at each preset POINT (not the label) is the old table value. */
@@ -127,7 +162,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
                 $expect["y_{$dim}_up"] = $b['plasticity'][$dim]['Y_up'];
                 $expect["y_{$dim}_down"] = $b['plasticity'][$dim]['Y_down'];
             }
-            foreach (['affinity', 'trust', 'comfort', 'respect', 'maturity'] as $sig) {
+            foreach (['affinity', 'trust', 'comfort', 'respect'] as $sig) {   // maturity: retired (phase 3)
                 $expect["resist_{$sig}"] = $b['resistance'][$sig];
             }
             foreach (['half_life', 'decay_rate', 'lambda', 'passion_decay'] as $k) {
@@ -137,6 +172,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
             $expect['healer_gate'] = isset($b['physical']['injured']['injured']['trust']) ? 1.0 : 0.0;
             $expect['warrior_gate'] = isset($b['physical']['bloody']['bloody']['respect']) ? 1.0 : 0.0;
             foreach ($expect as $col => $v) {
+                if (self::deliberate("{$p}/column/{$col}") !== null) continue;   // a phase-3 fix: its own test
                 // (types are the consumers' business: the consumer-level test checks them)
                 $this->assertEqualsWithDelta($v, RelDynTraits::value($x, $col), 1e-9, "{$p} {$col}");
             }

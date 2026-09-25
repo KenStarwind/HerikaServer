@@ -415,4 +415,30 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         $this->assertEqualsWithDelta(2.5, $m['mult'], 1e-9, 'capped');
         $this->assertSame([], $this->db->failures);
     }
+
+    /**
+     * Phase 3, MDD 15.4 edits (decisions §16 #6): an eval maturity signal is moved by each bed's
+     * own maturity type alone (R maturity retired), so the four diverge by who they are: Ashe
+     * Resilient (a loss x0.5), Lynly Volatile from her Bard class (x1.5), Aela resisting collapse,
+     * Muiri swinging both ways (her read).
+     */
+    public function testPhaseThreeMaturityMovesByTheMaturityTypeAloneOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $loss = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertSame(1.0, RelationshipDynamics::getSignalResistance($d['inferred_temperament'] ?? null, 'maturity', $d), $npc);
+            $d['dimensions']['maturity']['x'] = $d['dimensions']['maturity']['baseline'];
+            $d['dimensions']['comfort']['x'] = 50;
+            $r = RelationshipDynamics::applyEvalSignal($npc, $d, 'maturity', -4.0, [], 1.0);
+            $this->assertEqualsWithDelta(-4.0 * RelationshipDynamics::effectiveMaturityY($d)['Y_down'], $r['actual'], 1e-3, "{$npc}: raw x P only (applyDelta rounds to 4 places)");
+            $loss[$npc] = -$r['actual'];
+        }
+        $this->assertEqualsWithDelta(2.0, $loss['Ashe'], 1e-3, 'Ashe: Resilient, x0.5');
+        $this->assertEqualsWithDelta(6.0, $loss['Lynly Star-Sung'], 1e-3, 'Lynly: Volatile (Bard), x1.5');
+        $this->assertLessThan(4.0, $loss['Aela the Huntress'], 'Aela resists collapse');
+        $this->assertGreaterThan(4.0, $loss['Muiri'], 'Muiri swings');
+        $this->assertSame([], $this->db->failures);
+    }
 }

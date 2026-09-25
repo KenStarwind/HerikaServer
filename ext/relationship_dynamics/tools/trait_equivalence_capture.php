@@ -23,7 +23,8 @@ if (PHP_SAPI !== 'cli') {
 
 /** Labels captured: the 13 presets, then null (no temperament), '' (the jealousy consumer's key),
  *  'stoic' (lower case: exact-key tables miss it, validTemperament consumers read Stoic) and
- *  'Volatile' (the MDD 15.4 resistance row that is not a temperament). */
+ *  'Volatile' (the MDD 15.4 resistance row that is not a temperament; deleted in traits phase 3,
+ *  decisions §16 #6, so it now resists nothing). */
 const RELDYN_TRAIT_CAPTURE_LABELS = ['Romantic', 'Anxious', 'Bold', 'Playful', 'Humble', 'Nurturing', 'Gentle',
     'Jealous', 'Proud', 'Defiant', 'Guarded', 'Independent', 'Stoic', null, '', 'stoic', 'Volatile'];
 

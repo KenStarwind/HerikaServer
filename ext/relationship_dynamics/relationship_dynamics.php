@@ -7765,28 +7765,32 @@ class RelationshipDynamics
     const EVAL_APPLIED_KEEP = 32;
 
     /**
-     * MDD 15.4 stage 1: temperament resistance per signal (unitless multipliers). The MDD lists
-     * a 'Volatile' row (not one of MDD 1.3's 13 temperaments) and no 'Humble' row; a temperament
-     * without a row resists nothing (1.0). Passion has no column there: getSignalResistance()
-     * uses MDD 1.3's passion multiplier (TEMPERAMENT_PASSION_MULT).
+     * MDD 15.4 stage 1: temperament resistance per signal (unitless multipliers). Passion has
+     * no column there: getSignalResistance() uses MDD 1.3's passion multiplier
+     * (TEMPERAMENT_PASSION_MULT). MDD 15.4 edits approved by Ken (decisions §16 #6, traits
+     * phase 3):
+     *   - the maturity column is retired: it double-counted with the MDD 15.6 maturity type,
+     *     which applyEvalSignal already applies as P (R maturity is 1.0 for everyone);
+     *   - the unreachable 'Volatile' row is deleted (no temperament has that name; Volatile is
+     *     a maturity type, MATURITY_PLASTICITY_VALUES);
+     *   - Humble stays without a row: 1.0 on every signal ("modest, steady, low drama").
      */
     const TEMPERAMENT_SIGNAL_RESISTANCE = [
-        'Stoic'       => ['affinity' => 0.5, 'trust' => 0.7, 'comfort' => 0.4, 'respect' => 0.8, 'maturity' => 0.5],
-        'Romantic'    => ['affinity' => 1.3, 'trust' => 1.0, 'comfort' => 1.2, 'respect' => 0.8, 'maturity' => 1.0],
-        'Anxious'     => ['affinity' => 1.5, 'trust' => 0.6, 'comfort' => 0.5, 'respect' => 0.7, 'maturity' => 1.3],
-        'Guarded'     => ['affinity' => 0.6, 'trust' => 0.4, 'comfort' => 0.3, 'respect' => 0.7, 'maturity' => 0.8],
-        'Playful'     => ['affinity' => 1.2, 'trust' => 0.9, 'comfort' => 1.4, 'respect' => 0.6, 'maturity' => 0.7],
-        'Bold'        => ['affinity' => 0.9, 'trust' => 1.0, 'comfort' => 1.1, 'respect' => 1.3, 'maturity' => 0.9],
-        'Volatile'    => ['affinity' => 1.5, 'trust' => 0.5, 'comfort' => 0.5, 'respect' => 0.6, 'maturity' => 1.5],
-        'Independent' => ['affinity' => 0.7, 'trust' => 0.8, 'comfort' => 0.5, 'respect' => 1.0, 'maturity' => 0.6],
-        'Nurturing'   => ['affinity' => 1.1, 'trust' => 1.1, 'comfort' => 1.3, 'respect' => 0.7, 'maturity' => 0.8],
-        'Gentle'      => ['affinity' => 1.0, 'trust' => 0.9, 'comfort' => 1.2, 'respect' => 0.5, 'maturity' => 0.9],
-        'Jealous'     => ['affinity' => 1.3, 'trust' => 0.4, 'comfort' => 0.4, 'respect' => 0.9, 'maturity' => 1.2],
-        'Proud'       => ['affinity' => 0.7, 'trust' => 0.6, 'comfort' => 0.3, 'respect' => 1.5, 'maturity' => 0.7],
-        'Defiant'     => ['affinity' => 1.1, 'trust' => 0.7, 'comfort' => 0.8, 'respect' => 1.2, 'maturity' => 1.0],
+        'Stoic'       => ['affinity' => 0.5, 'trust' => 0.7, 'comfort' => 0.4, 'respect' => 0.8],
+        'Romantic'    => ['affinity' => 1.3, 'trust' => 1.0, 'comfort' => 1.2, 'respect' => 0.8],
+        'Anxious'     => ['affinity' => 1.5, 'trust' => 0.6, 'comfort' => 0.5, 'respect' => 0.7],
+        'Guarded'     => ['affinity' => 0.6, 'trust' => 0.4, 'comfort' => 0.3, 'respect' => 0.7],
+        'Playful'     => ['affinity' => 1.2, 'trust' => 0.9, 'comfort' => 1.4, 'respect' => 0.6],
+        'Bold'        => ['affinity' => 0.9, 'trust' => 1.0, 'comfort' => 1.1, 'respect' => 1.3],
+        'Independent' => ['affinity' => 0.7, 'trust' => 0.8, 'comfort' => 0.5, 'respect' => 1.0],
+        'Nurturing'   => ['affinity' => 1.1, 'trust' => 1.1, 'comfort' => 1.3, 'respect' => 0.7],
+        'Gentle'      => ['affinity' => 1.0, 'trust' => 0.9, 'comfort' => 1.2, 'respect' => 0.5],
+        'Jealous'     => ['affinity' => 1.3, 'trust' => 0.4, 'comfort' => 0.4, 'respect' => 0.9],
+        'Proud'       => ['affinity' => 0.7, 'trust' => 0.6, 'comfort' => 0.3, 'respect' => 1.5],
+        'Defiant'     => ['affinity' => 1.1, 'trust' => 0.7, 'comfort' => 0.8, 'respect' => 1.2],
     ];
 
-    /** R_temperament[signal] (MDD 15.4; passion: MDD 1.3). Unitless. */
+    /** R_temperament[signal] (MDD 15.4; passion: MDD 1.3; maturity: retired, 1.0). Unitless. */
     public static function getSignalResistance($temperament, string $signal, ?array $dynamics = null): float
     {
         // A1 / A16 through the trait engine (a non-preset label keeps today's row lookup)

@@ -569,14 +569,15 @@ final class RelDynTraits
             }
         }
 
-        // A16: MDD 15.4 signal resistance (unitless). Humble has no row: 1.0 (decided, Q6).
-        // A label that is not a preset keeps today's lookup (the unreachable 'Volatile' row).
+        // A16: MDD 15.4 signal resistance (unitless). Humble has no row: 1.0 (decided, Q6;
+        // decisions §16 #6 keeps it). Phase 3 retired the maturity column (the MDD 15.6 maturity
+        // type is the only maturity Y) and the unreachable 'Volatile' row; a label that is not a
+        // preset keeps today's lookup (none left: every other label resists nothing, 1.0).
         $resist = [
             'affinity' => [['E', 'L', 'G'], [0.29, 'E' => 0.99, 'L' => 0.42, 'G' => -0.10]],
             'trust'    => [['G', 'Po'], [1.28, 'G' => -0.79, 'Po' => -0.36]],
             'comfort'  => [['G', 'C'], [1.51, 'G' => -1.78, 'C' => 0.29]],
             'respect'  => [['Pd', 'C'], [0.34, 'Pd' => 0.88, 'C' => 0.41]],
-            'maturity' => [['L', 'Rs'], [0.34, 'L' => 0.71, 'Rs' => 0.32]],
         ];
         foreach ($resist as $signal => [$owners, $model]) {
             $add("resist_{$signal}", 'A16', 'R', $owners, $model, 'mult',
