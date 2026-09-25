@@ -246,7 +246,12 @@ final class RelDynAttractionMatrixTest extends TestCase
         }
         $b = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA), self::player('bard'));
         $unit = $b['passion']['units']['flexible:visceral'];
-        $this->assertSame(68.0, $unit['floor'], 'her martial floor');
+        // her martial floor is her standards floor (decisions §15): on this label path the
+        // Independent preset with her named 'medium' openness (her read's 67.6 is the read path's)
+        $std = RelDynAttraction::definition(self::AELA, $this->npc(self::AELA))['standards'];
+        $this->assertIsArray($std);
+        $this->assertEqualsWithDelta($std['floor'], $unit['floor'], 0.01, 'her martial floor');
+        $this->assertGreaterThan(45.0, $unit['floor'], 'above the generic floor: a confident, mature Independent');
         $this->assertLessThan(0.15, $unit['m']);
         $this->assertGreaterThanOrEqual(RelDynAttraction::curveConfig()['m_min'], $unit['m'], 'never below m_min for a flexible pillar');
         $this->assertGreaterThan(0.0, $b['passion_mult']);
@@ -351,11 +356,17 @@ final class RelDynAttractionMatrixTest extends TestCase
 
         // Passion (strength RIGID here): low openness = the near miss fails its bar, the
         // non-negotiable hard zero; medium / high tolerate it (the gate passes) with MDD 1.4's
-        // passion ceiling cut (medium 50%, high 20%). The floor is the NPC's, not the band's.
+        // passion ceiling cut (medium 50%, high 20%). The floor is the NPC's standards floor, and
+        // her openness is part of her standards (decisions §15): the more open, the lower.
         $this->assertSame('rigid:strength', $low['hard_zero'], $low['reason']);
         $this->assertSame(0.0, $low['passion_mult']);
+        $floorAt = function (string $band) use ($d): float {
+            $d['attraction_overrides']['openness'] = $band;
+            return RelDynAttraction::definition('Uthgerd the Unbroken', $d)['floors']['strength'];
+        };
+        $this->assertGreaterThan($floorAt('high'), $floorAt('medium'), 'the more open, the lower her floor');
         foreach (['medium' => [$medium, 50.0], 'high' => [$high, 80.0]] as $band => [$r, $ceiling]) {
-            $this->assertEquals(45.0, $r['passion']['units']['strength']['floor'], $band);
+            $this->assertEquals($floorAt($band), $r['passion']['units']['strength']['floor'], $band);
             $this->assertNull($r['hard_zero'], "{$band}: {$r['reason']}");
             $this->assertTrue($r['passion']['units']['strength']['met'], $band);
             $this->assertGreaterThan(0.0, $r['passion_mult'], $band);
@@ -409,9 +420,18 @@ final class RelDynAttractionMatrixTest extends TestCase
         $ace = $pref('asexual');
         $this->assertTrue($ace['passes'], 'asexual: romance possible');
         $this->assertFalse($ace['intimacy_allowed'], 'asexual: no handoff to Sharmat');
-        $this->assertSame('preference:asexual', $ace['hard_zero'], 'asexual: no passion (decisions §13)');
-        $this->assertSame(0.0, $ace['passion_mult']);
-        $this->assertSame(0.0, $ace['spark_mult']);
+        // decisions §15: asexual passion is emotional, not zero; only the emotional channels move it
+        $this->assertNull($ace['hard_zero'], 'asexual: no longer a hard zero');
+        $this->assertSame('emotional', $ace['passion_channel']);
+        $this->assertSame(['quality_time', 'praise', 'reassurance', 'confiding', 'touch'], $ace['passion_channels']);
+        $this->assertGreaterThan(0.0, $ace['spark_mult']);
+        $this->assertTrue($ace['visceral_met'], 'ruling §16 #9: beauty / strength count as met');
+        $this->assertSame(0.0, RelDynAttraction::gainFactor($ace, 10.0, 5.0, ['intimacy']), 'intimacy: closed');
+        $this->assertSame(0.0, RelDynAttraction::gainFactor($ace, 10.0, 5.0, ['rescue']), 'no emotional channel: closed');
+        $this->assertSame(0.0, RelDynAttraction::gainFactor($ace, 10.0, 5.0, null), 'an untagged gain: closed');
+        $this->assertSame(0.0, RelDynAttraction::gainFactor($ace, 10.0, 5.0, ['touch', 'intimacy']), 'touch that is sexual: closed');
+        $this->assertEqualsWithDelta($ace['spark_mult'], RelDynAttraction::gainFactor($ace, 10.0, 5.0, ['quality_time']), 1e-9, 'quality time: open');
+        $this->assertEqualsWithDelta($ace['spark_mult'], RelDynAttraction::gainFactor($ace, 10.0, 5.0, ['touch']), 1e-9, 'non-sexual touch: open');
         $this->assertNull($pref('monogamous')['hard_zero']);
 
         $unc = $pref('uncommitted');

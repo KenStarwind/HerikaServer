@@ -258,8 +258,11 @@ final class RelDynAttractionFidelityTest extends TestCase
         $this->assertSame(20.0, floatval($cc['spark']));
         $this->assertSame(0.1, floatval($cc['m_min']));
         $this->assertSame(0.01, floatval($cc['surplus_per_point']));
-        $this->assertSame(45.0, floatval($cc['floor']), "Ken's generic floor ('at 45 you get 1x')");
-        $this->assertSame(68.0, floatval(RelDynAttraction::defaults()['npc_overrides']['aela the huntress']['floors']['strength']), 'Aela: high 60s in martial');
+        $this->assertSame(45.0, floatval($cc['floor']), "Ken's generic floor ('at 45 you get 1x'): the standards floor's centre");
+        // Aela's "high 60s" falls out of her traits now (decisions §15; standards floor, her read
+        // 66-70 in RelDynStandardsTestBedsPostgresTest): no hand-set floor is left
+        $this->assertArrayNotHasKey('floors', RelDynAttraction::defaults()['npc_overrides']['aela the huntress'], 'Aela: no hand-set floor');
+        $this->assertSame(45.0, RelDynAttraction::standardsFloor(['o' => 0.6, 'M' => 50.0, 'C' => 0.5, 'Pd' => 0.5])['floor'], 'a middling NPC: 45');
         $this->assertArrayNotHasKey('floor_by_openness', $cc, 'no source for 75 / 55');
         $this->assertArrayNotHasKey('friendzone_below', $cc, 'the label is the MDD bar');
         $pc = RelDynAttraction::config()['passion'];

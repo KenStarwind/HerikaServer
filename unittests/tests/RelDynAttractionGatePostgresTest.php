@@ -344,6 +344,11 @@ final class RelDynAttractionGatePostgresTest extends TestCase
     {
         $this->warriorAtStep(0);
         $this->turn('I heard the Companions take on sellswords.');   // Aela auto-generates from her core row
+        // Her martial floor in the high 60s, as her bio read gives it (decisions §15: the standards
+        // floor, 67.6 from her read; RelDynStandardsTestBedsPostgresTest). This fixture has no
+        // read, only her priors, whose standards floor is lower (the Companion would reach the
+        // surplus cap by step 3); the editor's per-pillar floor holds her hill where the read puts it.
+        $this->editDynamics(function (array &$d): void { $d['attraction_overrides'] = ['floors' => ['strength' => 68.0]]; });
         $d = $this->dynamics();
 
         $steps = [];

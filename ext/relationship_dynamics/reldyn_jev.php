@@ -47,6 +47,8 @@
  *                     'won_over' => bool (below her bars, passion climbed past won_over_passion),
  *                     'passion_ceiling' => ?float passion points (MDD 1.4: a passion pillar below
  *                                its bar at medium / high openness; gains stop there),
+ *                     'channel' => ?string ('emotional': asexual, only the emotional channels
+ *                                move passion, decisions §15),
  *                     'charm' => 0..1 (speech; closes up to charm_hill_max of the gap to her floor),
  *                     'relief' => 0..1 (a balanced NPC's bond easing the visceral hill),
  *                     'units' => [unit => ['score' => pillar points 0..100, 'floor' => pillar points,
@@ -112,6 +114,8 @@ final class RelDynJev
             'attracted' => empty($a['enabled']) ? true : !empty($a['attracted']),
             'won_over' => !empty($a['won_over']),
             'passion_ceiling' => is_numeric($a['passion_ceiling'] ?? null) ? round(floatval($a['passion_ceiling']), 2) : null,
+            // decisions §15: 'emotional' = only the emotional channels move passion (asexual)
+            'channel' => isset($a['passion_channel']) ? (string) $a['passion_channel'] : null,
             'charm' => round(floatval($a['passion']['charm'] ?? 0.0), 4),
             'relief' => round(floatval($a['passion']['relief'] ?? 0.0), 4),
             'units' => $units,
@@ -214,6 +218,7 @@ final class RelDynJev
                 . ' passion_mult=' . number_format($a['passion_mult'], 2, '.', '')
                 . ($a['hard_zero'] !== null ? " hard_zero={$a['hard_zero']}" : '')
                 . ($a['won_over'] ? ' won_over' : '')
+                . ($a['channel'] !== null ? " channel={$a['channel']}" : '')
                 . ($a['passion_ceiling'] !== null ? ' passion_ceiling=' . $f($a['passion_ceiling']) : '');
         }
         if ($s['place'] !== null) {

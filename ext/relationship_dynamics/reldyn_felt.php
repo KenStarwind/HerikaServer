@@ -213,6 +213,16 @@ final class RelDynFelt
             'stirring' => "a small, easy smile when they come near",
             'faint'    => "an odd, unexamined glance their way now and then",
         ],
+        // Decisions §15: an asexual NPC's passion (attraction passion_channel 'emotional') is
+        // romantic longing without desire: closeness, being known, time together, nothing
+        // physical beyond an affectionate touch.
+        'passion_emotional' => [
+            'burning'  => "can't stop seeking them out, hangs on every word, wants all of their time; a whole-hearted, tender devotion with nothing of the body in it",
+            'intense'  => "drifts closer than needed, holds their gaze a beat too long, wants to know everything about them; tender, not physical",
+            'warm'     => "brightens when they speak, finds reasons to stay near",
+            'stirring' => "a small smile when they come near, quickly hidden",
+            'faint'    => "an odd, unexamined glance their way now and then",
+        ],
         // The urge that rides on passion (from warm up), by primary love language.
         'urge' => [
             'words_of_affirmation' => "the words for what they mean to {NAME} are right there, wanting out",
@@ -387,11 +397,16 @@ final class RelDynFelt
         $att = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
         $coreRomance = in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) $cfg['romantic_types'], true);
         $platonic = !empty($att['enabled']) && (!empty($att['hard_zero']) || (($att['attracted'] ?? true) === false && !$coreRomance));
-        $pTable = $platonic && isset($t['passion_platonic']) ? 'passion_platonic' : 'passion';
+        // An asexual NPC's passion is emotional (decisions §15): longing without desire, and no
+        // physical urge
+        $emotional = !$platonic && ($att['passion_channel'] ?? null) === 'emotional';
+        $pTable = $platonic && isset($t['passion_platonic']) ? 'passion_platonic'
+            : ($emotional && isset($t['passion_emotional']) ? 'passion_emotional' : 'passion');
         if (isset($t[$pTable][$pBand])) {
             $text = self::fill((string) $t[$pTable][$pBand], $vars);
             $primary = $dynamics['love_language_primary'] ?? null;
-            if (!$platonic && $passion >= 40 && is_string($primary) && isset($t['urge'][$primary])) {
+            if (!$platonic && $passion >= 40 && is_string($primary) && isset($t['urge'][$primary])
+                && !($emotional && $primary === RelationshipDynamics::LL_TOUCH)) {
                 $text .= ', ' . self::fill((string) $t['urge'][$primary], $vars);
             }
             $lines[] = self::line('passion', self::SCOPE_BOND, self::LANE_CORE,
