@@ -433,7 +433,9 @@ final class RelDynBaselinesTestBedsPostgresTest extends TestCase
                 $felt = $this->felt[$npc][$label]['trust'] ?? null;
                 // the context speaks the per-bond value, not the raw one
                 $this->assertNotSame($rawKeywords, $felt, "{$npc} {$label}: the felt trust reads the bond");
-                if ($label === 'partner') {
+                // A partner's trust saturates toward the top (rulings 2026-09-25 §18 #8) on the value and
+                // its baseline alike: when the two read within the dead zone there is no line to say
+                if ($label === 'partner' && $felt !== null) {
                     $this->assertSame(RelationshipDynamics::getDimensionBand('trust', $shown[$label][$npc])['keywords'], $felt, "{$npc}: a partner's trust");
                 }
             }

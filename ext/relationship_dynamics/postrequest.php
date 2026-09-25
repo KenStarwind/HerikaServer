@@ -379,8 +379,8 @@ if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $GLOBALS['RELDYN_ICK_ACTIVE'] = !empty($dynamics['_ick_tracker']['ick_active']);
 }
 
-// Charisma (MDD 5.1) is fed by each applied eval item's romantic_intent and raw affinity
-// (RelationshipDynamics::applyEvalExtraFields), not here: an exchange nobody scored says
+// Charisma (MDD 5.1) is fed by each applied eval item's charisma grade (rulings §18 #11,
+// RelationshipDynamics::applyEvalExtraFields), not here: an exchange nobody graded says
 // nothing about the player's style.
 
 // -------------------------------------------------------------------------

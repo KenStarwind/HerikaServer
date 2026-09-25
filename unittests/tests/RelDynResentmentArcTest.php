@@ -471,9 +471,10 @@ final class RelDynResentmentArcTest extends TestCase
     }
 
     /**
-     * A confession (after the self-reflection was said to the player, she opens up and it is met
-     * with care): -10 points, beside the decay (RelDynReviewFixesV014Test: once, and not before
-     * the reflection).
+     * A confession (after the self-reflection was said to the player, she admits what she is
+     * ashamed of and it is met with care: the eval tag 'confessing', rulings 2026-09-25 §18 #10):
+     * -10 points, beside the decay (RelDynReviewFixesV014Test: once, and not before the
+     * reflection). Opening up in general ('confiding') is no confession.
      */
     public function testAConfessionTakesTenPoints(): void
     {
@@ -481,11 +482,15 @@ final class RelDynResentmentArcTest extends TestCase
         RelDynResentment::tickSelf('Lydia', $d);
         $this->assertArrayHasKey('reflection', $this->felt($d), 'the reflection, said to the player');
         $f = RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confiding']]), $d);
-        $this->assertEqualsWithDelta(60.0 - 0.75 - 10.0, self::x($d, 'resentment_self'), 1e-9);
+        $this->assertEqualsWithDelta(60.0 - 0.75, self::x($d, 'resentment_self'), 1e-9, 'confiding: only the decay');
+        $this->assertTrue($d['_resentment_arc']['self']['confess_open'], 'the confession is still to come');
+        $d['_accumulated_play_gamets'] += 15 * self::PLAY_MIN;
+        $f = RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confessing']]), $d);
+        $this->assertEqualsWithDelta(60.0 - 0.75 - 0.75 - 10.0, self::x($d, 'resentment_self'), 1e-9);
         $this->assertEqualsWithDelta(10.75, $f['resentment_self_relief'], 1e-9);
         $none = $this->npc();
         $this->assertArrayNotHasKey('resentment_self_relief',
-            RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confiding']]), $none));
+            RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confessing']]), $none));
     }
 
     /**

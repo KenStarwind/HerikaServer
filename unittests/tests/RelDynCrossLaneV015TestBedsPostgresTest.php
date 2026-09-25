@@ -561,9 +561,18 @@ final class RelDynCrossLaneV015TestBedsPostgresTest extends TestCase
                 RelDynExclusivity::pull($d, (float) self::at(self::N0 + 5, 15.0))['pull'], "{$npc}: jealousy is no input to her pull");
             $this->assertNotNull($r['block'], "{$npc}: still turns him aside");
             $this->assertStringContainsString(self::PLAYER, $r['block'], "{$npc}: in the probation she is still his partner");
+            if ($npc === 'Muiri') {
+                // Rulings 2026-09-25 §18 #9: Muiri attaches fearful (her preset), a wavering pull
+                // (exclusivity attachment_mult toxic): with the player away at night she leans
+                $this->assertSame(RelDynExclusivity::BAND_LEANING, RelDynExclusivity::bandOf($r['pull']), "{$npc}: leans " . json_encode($r));
+                continue;
+            }
             $this->assertContains(RelDynExclusivity::bandOf($r['pull']), [RelDynExclusivity::BAND_DEVOTED, RelDynExclusivity::BAND_TAKEN],
                 "{$npc}: holds " . json_encode($r));
         }
+        $pulls = array_map(fn($r) => $r['pull'], $jealous);
+        asort($pulls);
+        $this->assertSame('Muiri', array_key_first($pulls), 'Muiri: the weakest pull of the four ' . json_encode($pulls));
         $j = array_map(fn($r) => $r['jealousy'][1], $jealous);
         arsort($j);
         $this->assertSame('Muiri', array_key_first($j), 'Muiri: the most jealous ' . json_encode($j));

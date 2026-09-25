@@ -136,6 +136,7 @@ final class RelDynEvalProducerTest extends TestCase
             'positive_interaction' => true,
             'summary' => 'Grateful for the pelt; likes being noticed.',
             'romantic_intent' => 0,   // decisions §8: always asked; absent = none
+            'charisma' => 'none',     // rulings §18 #11: always asked; absent = none
         ], $item);
     }
 
@@ -245,8 +246,10 @@ final class RelDynEvalProducerTest extends TestCase
     public function testEveryContractTagIsDefinedForTheModel(): void
     {
         $decided = ['gift', 'praise', 'help', 'rescue', 'quality_time', 'touch', 'intimacy', 'insult', 'criticism', 'neglect',
-            'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology', 'confession', 'confiding'];
+            'jealousy_trigger', 'command', 'betrayal', 'lie', 'competence', 'reassurance', 'apology', 'confession', 'confiding',
+            'confessing', 'forgiveness'];   // rulings 2026-09-25 §18 #10
         $this->assertSame($decided, array_keys(RelDynEval::TAG_DEFINITIONS));
+        $this->assertSame($decided, RelationshipDynamics::EVAL_CONTRACT_TAGS, 'the consumer takes every tag the model is shown');
         foreach (RelDynEval::NEGATIVE_TAGS as $t) {
             $this->assertArrayHasKey($t, RelDynEval::TAG_DEFINITIONS);
         }

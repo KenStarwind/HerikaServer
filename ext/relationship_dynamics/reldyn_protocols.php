@@ -207,7 +207,7 @@ final class RelDynProtocols
                 'passion_half_life_game_hours' => 2.0,
                 // Eval tags that make an exchange genuine (a gift given in a real moment is not a purchase)
                 'genuine_tags' => ['quality_time', 'praise', 'help', 'rescue', 'confiding', 'confession',
-                                   'reassurance', 'apology', 'touch', 'intimacy', 'competence'],
+                                   'reassurance', 'apology', 'touch', 'intimacy', 'competence', 'confessing', 'forgiveness'],
                 // Personality (Serene's): ratio + warmth_slope x (W - 0.5) - egocentric_slope x
                 // egocentric(Pd), clamped ratio_min..ratio_max; no trait vector = the plain ratio
                 'warmth_slope' => 0.2,

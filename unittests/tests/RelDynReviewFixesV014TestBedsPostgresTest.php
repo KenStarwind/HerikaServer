@@ -383,11 +383,12 @@ final class RelDynReviewFixesV014TestBedsPostgresTest extends TestCase
     /**
      * Four ashamed partners (resentment_self 80, the editor's value) and a player who tells each
      * of them about his father eight times in one sitting (tagged confiding, met with care). The
-     * self-reflection surfaces on the first turn (past 50, the player speaking); her first opening
-     * up after it is the confession (-10), once. What the player confides is not hers to confess:
-     * no one is wiped clean in a sitting (before: 80 to 0 in under a game minute). Beside the one
-     * confession only the decay moves it (-0.5 x (1 + maturity/100), while she is at ease enough:
-     * comfort above 20, once per 15 play minutes): the four end apart.
+     * self-reflection surfaces on the first turn (past 50, the player speaking). What the player
+     * confides is not hers to confess (rulings 2026-09-25 §18 #10: her confession is its own tag,
+     * 'confessing', RelDynP3pRulingsTest): no one is wiped clean in a sitting (before: 80 to 0 in
+     * under a game minute), and no confession at all. Only the decay moves it (-0.5 x (1 +
+     * maturity/100), while she is at ease enough: comfort above 20, once per 15 play minutes):
+     * the four end apart.
      */
     public function testThePlayersGriefIsNotTheirConfession(): void
     {
@@ -413,11 +414,12 @@ final class RelDynReviewFixesV014TestBedsPostgresTest extends TestCase
             $final[$npc] = round(self::x($d, 'resentment_self'), 3);
             $this->assertArrayHasKey('resentment_reflection', $this->felt[$npc]['c0'], "{$npc}: the reflection surfaced " . $why);
             $decay = 0.5 * (1.0 + self::x($d, 'maturity') / 100.0);
-            $this->assertGreaterThan(80.0 - 10.0 - $decay - 0.05, $final[$npc], "{$npc}: one confession and one decay at most " . $why);
-            $this->assertLessThanOrEqual(80.0 - 10.0, $final[$npc], "{$npc}: she did open up once " . $why);
+            $this->assertGreaterThan(80.0 - $decay - 0.05, $final[$npc], "{$npc}: one decay at most " . $why);
+            $this->assertLessThanOrEqual(80.0, $final[$npc], "{$npc}: the decay at most (only while she is at ease enough) " . $why);
             $drops = array_values(array_filter(array_map(fn($a, $b) => $a - $b,
                 array_merge([80.0], array_slice($trace[$npc], 0, -1)), $trace[$npc]), fn($x) => $x > 5.0));
-            $this->assertCount(1, $drops, "{$npc}: one confession " . $why);
+            $this->assertCount(0, $drops, "{$npc}: his grief is not her confession " . $why);
+            $this->assertTrue($d['_resentment_arc']['self']['confess_open'], "{$npc}: her own confession is still to come " . $why);
             $this->assertSame('normal', $d['_walkaway_state'] ?? 'normal', $npc);
         }
         $this->assertGreaterThanOrEqual(3, count(array_unique($final)), 'the decay beside it: they end apart ' . $why);
@@ -461,9 +463,12 @@ final class RelDynReviewFixesV014TestBedsPostgresTest extends TestCase
                 'felt' => $this->felt[$npc]['g1']['comfort'] ?? null]);
             $this->assertEqualsWithDelta(-15.0, $guilt, 1e-6, "{$npc}: the partner's guilt, bounded " . $why);
             $this->assertGreaterThan(1.9, $mult, "{$npc}: a partner " . $why);
-            $this->assertEqualsWithDelta(max(0.0, min(100.0, min(100.0, $own * $mult) + $held)), $shown, 1e-6,
+            // (rulings 2026-09-25 §18 #8: a partner's comfort saturates, 100 x (1 - (1 - x/100)^mult))
+            $scaled = RelationshipDynamics::perBondScaled('comfort', $own, $mult);
+            $this->assertEqualsWithDelta(100.0 * (1.0 - pow(1.0 - $own / 100.0, $mult)), $scaled, 1e-9, $npc);
+            $this->assertEqualsWithDelta(max(0.0, min(100.0, $scaled + $held)), $shown, 1e-6,
                 "{$npc}: the multiplier on her comfort without the held offsets, the offsets as they are " . $why);
-            $this->assertLessThan(min(100.0, $own * $mult) - 10.0, $shown, "{$npc}: the guilt shows " . $why);
+            $this->assertLessThan($scaled - 10.0, $shown, "{$npc}: the guilt shows " . $why);
             if (isset($this->felt[$npc]['g1']['comfort'])) {
                 $words = implode(' ', array_slice(explode(' ', RelationshipDynamics::getDimensionBand('comfort', $shown)['keywords']), 0, 3));
                 $this->assertStringContainsString(strtolower($words), strtolower((string) $this->felt[$npc]['g1']['comfort']), "{$npc}: the felt line is that band " . $why);
@@ -471,8 +476,10 @@ final class RelDynReviewFixesV014TestBedsPostgresTest extends TestCase
             $samples = (array) ($d['_baseline_drift_samples']['comfort'] ?? []);
             $this->assertNotEmpty($samples, $npc);
             $last = end($samples);
-            // recorded at the prerequest, before this turn's own small moves
-            $this->assertEqualsWithDelta($own, floatval($last['v']), 1.0, "{$npc}: the sample is her comfort without the guilt " . $why);
+            // recorded at the prerequest, before this turn's own small moves (Muiri, fearful since her
+            // preset, rulings §18 #9, loses a little more comfort over the absence: the anxious part
+            // of her blend); far from the 15 points of guilt either way
+            $this->assertEqualsWithDelta($own, floatval($last['v']), 2.0, "{$npc}: the sample is her comfort without the guilt " . $why);
             $this->assertGreaterThan(self::x($d, 'comfort') + 13.0, floatval($last['v']), $npc);
         }
         $this->assertSame([], $this->db->failures);

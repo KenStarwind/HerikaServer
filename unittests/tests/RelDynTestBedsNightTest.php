@@ -577,9 +577,11 @@ final class RelDynTestBedsNightTest extends TestCase
             // Ashe: her rigid competence bar holds against both (no passion, whatever the words)
             $this->assertSame('rigid:competence', $s['Ashe']['hard_zero'], "{$build}: " . $why);
             $this->assertEqualsWithDelta(0.0, $s['Ashe']['passion1'], 1e-9, "{$build} Ashe");
-            // Muiri: bond-gated, a slow burn before the bond, for either
-            $this->assertSame('prebond', $s['Muiri']['outcome'], "{$build}: " . $why);
-            $this->assertLessThan(0.3, $s['Muiri']['curve'], "{$build}: " . $why);
+            // Muiri: bond-gated; fearful since her preset (rulings 2026-09-25 §18 #9) she attaches
+            // fast (attraction attachment_pace), so over these days the bond is there: drawn, but
+            // on a flatter curve than the open bard
+            $this->assertSame('drawn', $s['Muiri']['outcome'], "{$build}: " . $why);
+            $this->assertLessThan(0.8 * $s['Lynly Star-Sung']['curve'], $s['Muiri']['curve'], "{$build}: " . $why);
             // Lynly: open, her low floor met: the most passion of the four
             $this->assertSame('drawn', $s['Lynly Star-Sung']['outcome'], "{$build}: " . $why);
             $this->assertGreaterThanOrEqual(1.0, $s['Lynly Star-Sung']['curve'], $why);

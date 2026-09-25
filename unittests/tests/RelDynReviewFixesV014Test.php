@@ -43,7 +43,7 @@ final class RelDynReviewFixesV014ConfDb
  *     offsets neither re-anchor the drift origin nor move it;
  *   - walkaway-boundary: no "leaving" text or walkaway action filter while no walkaway can start
  *     (walkaway_enabled off, the return grace); the grace is the recovery the LLM hears;
- *   - charisma: an exchange window with no romantic intent grades no style, a null reading clears
+ *   - charisma: an exchange window with no particular approach grades no style, a null reading clears
  *     the old one, and the Rock is effective against an Overcast NPC (MDD 5.1);
  *   - social-sensitivity: the cascade reads the target's bond on the mirror scale again;
  *   - eval-extra-fields: the Ick is fed once per applied eval item, with the NPC's reply mood of
@@ -128,16 +128,17 @@ final class RelDynReviewFixesV014Test extends TestCase
         ], $over);
     }
 
-    private function confiding(array &$d): array
+    /** She admits what she is ashamed of, met with care (eval tag 'confessing', rulings §18 #10). */
+    private function confessing(array &$d): array
     {
-        return RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confiding']]), $d);
+        return RelationshipDynamics::applyEvalFeelings('Lydia', $this->item(['positive_interaction' => true, 'tags' => ['confessing']]), $d);
     }
 
     // ------------------------------------------------------------ resentment-self
 
     /**
-     * Lynly at resentment_self 80, the player telling her about his father again and again
-     * (tagged confiding): before the self-reflection has come up nothing she confessed (only the
+     * Lynly at resentment_self 80, opening up again and again about what she is ashamed of
+     * (tagged confessing): before the self-reflection has come up nothing she confessed (only the
      * rate-limited decay); once it has come up (said to the player), her first opening up is the
      * confession (-10), and it is said once: the next ones are the decay again, on the play clock.
      */
@@ -146,26 +147,26 @@ final class RelDynReviewFixesV014Test extends TestCase
         $d = $this->npc(['resentment_self' => 80.0, 'maturity' => 50.0, 'comfort' => 40.0]);
         $trace = [];
         for ($i = 0; $i < 8; $i++) {
-            $this->confiding($d);
+            $this->confessing($d);
             $trace[] = self::x($d, 'resentment_self');
         }
         $this->assertEqualsWithDelta(80.0 - 0.75, self::x($d, 'resentment_self'), 1e-9,
-            'no reflection yet: the player confiding is not her confession; one decay, rate-limited ' . json_encode($trace));
+            'no reflection yet: not yet her confession; one decay, rate-limited ' . json_encode($trace));
 
         $this->assertContains('reflection', RelDynResentment::tickSelf('Lydia', $d));
-        $this->confiding($d);
+        $this->confessing($d);
         $this->assertEqualsWithDelta(80.0 - 0.75, self::x($d, 'resentment_self'), 1e-9, 'queued, not yet said to the player');
         $out = RelDynResentment::takeFeltLines($d, 'Lydia', 'Kaida', self::T0);
         $this->assertSame(['reflection'], array_column($out['lines'], 'key'));
 
         $before = self::x($d, 'resentment_self');
-        $f = $this->confiding($d);
+        $f = $this->confessing($d);
         $this->assertEqualsWithDelta($before - 10.0, self::x($d, 'resentment_self'), 1e-9, 'she tells: the confession, -10');
         $this->assertEqualsWithDelta(10.0, $f['resentment_self_relief'], 1e-9);
-        for ($i = 0; $i < 6; $i++) $this->confiding($d);
+        for ($i = 0; $i < 6; $i++) $this->confessing($d);
         $this->assertEqualsWithDelta($before - 10.0, self::x($d, 'resentment_self'), 1e-9, 'said once: no second -10, the decay waits for the play clock');
         $d['_accumulated_play_gamets'] += 15 * self::PLAY_MIN;
-        $this->confiding($d);
+        $this->confessing($d);
         $this->assertEqualsWithDelta($before - 10.0 - 0.75, self::x($d, 'resentment_self'), 1e-9, 'then only the decay');
 
         // Worked through (30 or below): the next episode's reflection opens the next confession
@@ -175,7 +176,7 @@ final class RelDynReviewFixesV014Test extends TestCase
         RelDynResentment::tickSelf('Lydia', $d);
         RelDynResentment::takeFeltLines($d, 'Lydia', 'Kaida', self::T0);
         $d['_accumulated_play_gamets'] += 15 * self::PLAY_MIN;
-        $this->confiding($d);
+        $this->confessing($d);
         $this->assertEqualsWithDelta(60.0 - 0.75 - 10.0, self::x($d, 'resentment_self'), 1e-9);
     }
 
@@ -236,12 +237,15 @@ final class RelDynReviewFixesV014Test extends TestCase
         $none = $this->npc(['comfort' => 68.0]);
         $mult = RelationshipDynamics::perBondMultiplier($none, 'comfort');
         $this->assertGreaterThan(1.9, $mult, 'a partner');
-        $this->assertSame(100.0, RelationshipDynamics::getEffectiveDimensionValue($none, 'comfort'));
-        $this->assertEqualsWithDelta(85.0, RelationshipDynamics::getEffectiveDimensionValue($guilt, 'comfort'), 1e-9, 'the guilt, felt');
-        $this->assertNotSame(RelationshipDynamics::getDimensionBand('comfort', 100.0)['label'],
+        // rulings 2026-09-25 §18 #8: comfort saturates (100 x (1 - (1 - x/100)^mult)) instead of clamping
+        $sat = fn(float $x) => 100.0 * (1.0 - pow(1.0 - $x / 100.0, $mult));
+        $this->assertEqualsWithDelta($sat(68.0), RelationshipDynamics::getEffectiveDimensionValue($none, 'comfort'), 1e-9);
+        $this->assertLessThan(100.0, RelationshipDynamics::getEffectiveDimensionValue($none, 'comfort'), 'no longer clamped to the top');
+        $this->assertEqualsWithDelta($sat(68.0) - 15.0, RelationshipDynamics::getEffectiveDimensionValue($guilt, 'comfort'), 1e-9, 'the guilt, felt');
+        $this->assertNotSame(RelationshipDynamics::getDimensionBand('comfort', RelationshipDynamics::getEffectiveDimensionValue($none, 'comfort'))['label'],
             RelationshipDynamics::getDimensionBand('comfort', RelationshipDynamics::getEffectiveDimensionValue($guilt, 'comfort'))['label']);
         // A value passed in (a baseline) is read as it is
-        $this->assertEqualsWithDelta(min(100.0, 30.0 * $mult), RelationshipDynamics::getEffectiveDimensionValue($guilt, 'comfort', 30.0), 1e-9);
+        $this->assertEqualsWithDelta($sat(30.0), RelationshipDynamics::getEffectiveDimensionValue($guilt, 'comfort', 30.0), 1e-9);
     }
 
     /** The eval reads trust and comfort as the actor plays them (the per-bond display value). */
@@ -392,24 +396,24 @@ final class RelDynReviewFixesV014Test extends TestCase
     // ------------------------------------------------------------ charisma
 
     /**
-     * MDD 5.1 "no press X to flirt": the style is the flavour of the player's approach. Five
-     * exchanges with no romantic intent at all grade no style (the steady non-flirting player was
-     * read as the Rock and every affinity signal of a Bold NPC cut to 0.7); a window that no
-     * longer reads as any style clears the old label.
+     * MDD 5.1 "no press X to flirt": the style is the flavour of the player's approach, graded by
+     * the eval (charisma, rulings 2026-09-25 §18 #11). Five exchanges of no particular approach
+     * grade no style (the steady non-flirting player was read as the Rock and every affinity
+     * signal of a Bold NPC cut to 0.7); a window that no longer reads as any style clears the
+     * old label.
      */
-    public function testNoRomanticIntentGradesNoStyleAndANullReadingClearsIt(): void
+    public function testNoApproachGradesNoStyleAndANullReadingClearsIt(): void
     {
-        $this->assertNull(RelationshipDynamics::detectCharismaStyle([0, 0, 0, 0, 0], [1, 2, 0, 1, 1]));
-        $this->assertNull(RelationshipDynamics::detectCharismaStyle([0, 0, 0, 0, 0], [-1, 0, -2, 0, -1]));
-        $this->assertSame('rock', RelationshipDynamics::detectCharismaStyle([1, 0, 0, 1, 0], [1, 1, 0, 1, 1])['style'] ?? null, 'low, steady intent: the Rock');
+        $this->assertNull(RelationshipDynamics::detectCharismaStyle(array_fill(0, 5, 'none')));
+        $this->assertSame('rock', RelationshipDynamics::detectCharismaStyle(['rock', 'none', 'rock', 'rock', 'none'])['style'] ?? null, 'graded calm and steady: the Rock');
 
         $d = $this->npc();
-        foreach ([[1, 1], [0, 1], [0, 0], [1, 1], [0, 1]] as [$intent, $aff]) {
-            RelationshipDynamics::updateCharismaTracker($d, $intent, $aff, self::T0);
+        foreach (['rock', 'none', 'rock', 'rock', 'none'] as $grade) {
+            RelationshipDynamics::updateCharismaTracker($d, $grade, self::T0);
         }
         $this->assertSame('rock', RelationshipDynamics::charismaStyle($d));
-        foreach (array_fill(0, RelationshipDynamics::CHARISMA_WINDOW, [0, 1]) as [$intent, $aff]) {
-            RelationshipDynamics::updateCharismaTracker($d, $intent, $aff, self::T0 + 100);
+        foreach (array_fill(0, RelationshipDynamics::CHARISMA_DEFAULTS['window'], 'none') as $grade) {
+            RelationshipDynamics::updateCharismaTracker($d, $grade, self::T0 + 100);
         }
         $this->assertNull(RelationshipDynamics::charismaStyle($d), 'the window reads as no style now: the old label goes');
         $this->assertSame(1.0, RelationshipDynamics::getCharismaEffectiveness(RelationshipDynamics::charismaStyle($d), 'Bold', 50.0, 'affinity', $d));

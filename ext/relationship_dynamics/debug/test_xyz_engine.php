@@ -5640,33 +5640,24 @@ echo "\n";
 echo "\n--- Suite AN: Charisma Archetypes (PR 15) ---\n";
 // ────────────────────────────────────────────────────────────────
 
-// AN1: Consistent positive + high intent → Charmer
+// AN1-AN4: the style is the eval's charisma grade of each exchange (rulings 2026-09-25 §18 #11)
 try {
-    $intents = [2, 2, 1, 2, 2, 1, 2];
-    $deltas  = [2.0, 1.5, 1.0, 2.0, 1.5, 1.0, 2.0];
-    $result = RelationshipDynamics::detectCharismaStyle($intents, $deltas);
-    check('AN1: Consistent positive + high intent = Charmer', $result['style'] ?? null, 'charmer');
+    $result = RelationshipDynamics::detectCharismaStyle(['charmer', 'charmer', 'none', 'charmer', 'charmer', 'none', 'charmer']);
+    check('AN1: mostly graded charmer = Charmer', $result['style'] ?? null, 'charmer');
 } catch (Throwable $e) { skip('AN1', $e->getMessage()); }
 
-// AN2: High variance → Catalyst
 try {
-    $intents = [1, 0, 2, 0, 3, 0, 2];
-    $deltas  = [5.0, -3.0, 4.0, -4.0, 6.0, -2.0, 5.0];
-    $result = RelationshipDynamics::detectCharismaStyle($intents, $deltas);
-    check('AN2: High variance push-pull = Catalyst', $result['style'] ?? null, 'catalyst');
+    $result = RelationshipDynamics::detectCharismaStyle(['catalyst', 'none', 'catalyst', 'catalyst', 'rock', 'catalyst', 'none']);
+    check('AN2: mostly graded catalyst = Catalyst', $result['style'] ?? null, 'catalyst');
 } catch (Throwable $e) { skip('AN2', $e->getMessage()); }
 
-// AN3: Low variation + low intent → Rock
 try {
-    $intents = [0, 0, 0, 1, 0, 0, 0];
-    $deltas  = [0.5, 0.0, -0.5, 1.0, 0.0, 0.5, 0.0];
-    $result = RelationshipDynamics::detectCharismaStyle($intents, $deltas);
-    check('AN3: Low variation + low intent = Rock', $result['style'] ?? null, 'rock');
+    $result = RelationshipDynamics::detectCharismaStyle(['none', 'none', 'none', 'rock', 'none', 'none', 'none']);
+    check('AN3: ordinary talk = no style', $result, null);
 } catch (Throwable $e) { skip('AN3', $e->getMessage()); }
 
-// AN4: Less than 5 samples → no detection
 try {
-    $result = RelationshipDynamics::detectCharismaStyle([1, 1, 1], [1.0, 1.0, 1.0]);
+    $result = RelationshipDynamics::detectCharismaStyle(['rock', 'rock', 'rock']);
     check('AN4: < 5 samples = null (insufficient data)', $result, null);
 } catch (Throwable $e) { skip('AN4', $e->getMessage()); }
 
@@ -5679,7 +5670,7 @@ try {
         'maturity' => ['x' => 70, 'baseline' => 70],
         'resentment' => ['x' => 0, 'baseline' => 0],
     ]);
-    $an5Dyn['_charisma_tracker'] = ['source' => 'eval', 'detected_style' => 'catalyst', 'style_confidence' => 0.8];
+    $an5Dyn['_charisma_tracker'] = ['source' => 'eval_charisma', 'detected_style' => 'catalyst', 'style_confidence' => 0.8];
     $an5Dyn['interaction_count'] = 0;
     // maturity 70 → normal threshold = 0.5 * 1.7 = 0.85
     // catalyst penalty: 0.85 * 0.7 = 0.595
@@ -5710,12 +5701,12 @@ try {
 // AN8: Charisma context only for maturity >= 55
 try {
     $an8Low = makeMultiDynamics(['maturity' => ['x' => 40, 'baseline' => 40]]);
-    $an8Low['_charisma_tracker'] = ['source' => 'eval', 'detected_style' => 'catalyst', 'style_confidence' => 0.9];
+    $an8Low['_charisma_tracker'] = ['source' => 'eval_charisma', 'detected_style' => 'catalyst', 'style_confidence' => 0.9];
     $ctxLow = RelationshipDynamics::getCharismaContext($an8Low, 'TestNpc');
     check('AN8a: Maturity 40 → no charisma awareness context', $ctxLow, null);
 
     $an8High = makeMultiDynamics(['maturity' => ['x' => 70, 'baseline' => 70]]);
-    $an8High['_charisma_tracker'] = ['source' => 'eval', 'detected_style' => 'catalyst', 'style_confidence' => 0.9];
+    $an8High['_charisma_tracker'] = ['source' => 'eval_charisma', 'detected_style' => 'catalyst', 'style_confidence' => 0.9];
     $ctxHigh = RelationshipDynamics::getCharismaContext($an8High, 'TestNpc');
     $hasContext = ($ctxHigh !== null && strpos($ctxHigh, 'recognized') !== false);
     check('AN8b: Maturity 70 → charisma awareness with "recognized"', $hasContext, true);

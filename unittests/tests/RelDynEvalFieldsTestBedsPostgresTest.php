@@ -66,9 +66,10 @@ final class RelDynEvalFieldsBedsPgDb
  * postrequest), the real eval producer and worker (the LLM stubbed at the connector boundary:
  * it answers the questions the real prompt asks), and the eval inbox. No LLM call.
  *
- *   charisma (MDD 5.1)   an evening of the same flirting with each: romantic_intent 2 and a
- *                        steady +3 affinity grade the player a Charmer with all four (before,
- *                        with no eval, nobody had a style: the old always-Rock is gone); how
+ *   charisma (MDD 5.1)   an evening of the same flirting with each, graded charmer by the eval
+ *                        (its charisma field, rulings 2026-09-25 §18 #11), makes the player a
+ *                        Charmer with all four (before, with no eval, nobody had a style: the
+ *                        old always-Rock is gone); how
  *                        well the Charmer works diverges by who she is (warmth up, pride down):
  *                        the shy bard is charmed, the proud huntress is not;
  *   director goals       each NPC's CHIM goals (HERIKA_GOALS) bridge into her director goal and
@@ -324,7 +325,7 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
 
     /**
      * The eval LLM at the connector boundary. It answers what the real prompt asks, by the
-     * exchange's player line: a flirt (romantic_intent 2, +3), the Silver Hand offer (serves
+     * exchange's player line: a flirt (romantic_intent 2, +3, graded charmer), the Silver Hand offer (serves
      * Aela's purpose when it is shown), an insult, and small talk; masking only when asked,
      * and only Muiri keeps a front (it slips). The summaries carry numbers and named feelings.
      */
@@ -340,13 +341,14 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
                 'signals' => ['affinity' => 0, 'trust' => 0, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0],
                 'tags' => [], 'grievance' => ['flag' => false, 'kind' => null, 'severity' => 0],
                 'jealousy' => ['flag' => false, 'rival' => null, 'intensity' => 0],
-                'significance' => 0.2, 'summary' => 'Small talk (0 change).', 'romantic_intent' => 0,
+                'significance' => 0.2, 'summary' => 'Small talk (0 change).', 'romantic_intent' => 0, 'charisma' => 'none',
             ];
             if (str_contains($exchange, 'moonlight')) {
                 $out['signals']['affinity'] = 3;
                 $out['signals']['passion'] = 2;
                 $out['tags'] = ['praise'];
                 $out['romantic_intent'] = 2;
+                $out['charisma'] = 'charmer';
                 $out['summary'] = 'Kaida flirted with her about the moonlight; she liked it (+3)';
             } elseif (str_contains($exchange, 'Silver Hand')) {
                 $out['signals']['affinity'] = 4;
@@ -404,7 +406,7 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
             $d = $this->dynamics($npc);
             $this->assertSame('read', $d['_trait_vector_src']['assignment'] ?? null, "{$npc}: her own vector");
             $this->assertNull(RelationshipDynamics::charismaStyle($d), "{$npc}: one scored exchange is no style (the old code read everyone as the Rock)");
-            $this->assertSame([0], $d['_charisma_tracker']['recent_intents'], "{$npc}: fed by the eval item, once");
+            $this->assertSame(['none'], $d['_charisma_tracker']['recent_grades'], "{$npc}: fed by the eval item, once");
         }
         for ($k = 0; $k < 5; $k++) {
             foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'You look lovely in the moonlight.', "flirt{$k}");
@@ -414,10 +416,11 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
         foreach (array_keys(self::BEDS) as $npc) {
             $d = $this->dynamics($npc);
             $this->assertSame('charmer', RelationshipDynamics::charismaStyle($d), "{$npc}: " . json_encode($d['_charisma_tracker'] ?? null));
-            $this->assertSame([0, 2, 2, 2, 2, 2], $d['_charisma_tracker']['recent_intents'], "{$npc}: every exchange once");
+            $this->assertSame(['none', 'charmer', 'charmer', 'charmer', 'charmer', 'charmer'], $d['_charisma_tracker']['recent_grades'], "{$npc}: every exchange once");
             $mult[$npc] = RelationshipDynamics::getCharismaEffectiveness('charmer', $d['inferred_temperament'] ?? null,
                 floatval($d['dimensions']['maturity']['x'] ?? 50), 'passion', $d);
             foreach ($this->prompts[$npc] as $p) $this->assertStringContainsString('ROMANTIC_INTENT: 0..3', $p);
+            foreach ($this->prompts[$npc] as $p) $this->assertStringContainsString('CHARISMA: the flavour of how', $p);
         }
         // Who she is decides how the Charmer lands (A24: warmth up, pride down)
         $why = json_encode($mult);
@@ -474,9 +477,9 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
         $this->hello();
         $why = fn() => json_encode(array_map(fn($n) => [RelationshipDynamics::getAttachmentStyle($this->dynamics($n)),
             RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $this->dynamics($n))['Pd'] ?? null], ['Aela the Huntress', 'Muiri', 'Lynly Star-Sung']));
-        // Her read gives Muiri a secure attachment (her toxicity is scheming, not how she
-        // attaches: an open question for Ken); the editor sets the toxic attachment her story
-        // shows, and the same for Lynly, so the two differ only in whether status matters
+        // Muiri's preset nudges her into the fearful region (rulings 2026-09-25 §18 #9); the editor
+        // sets the same toxic attachment on her (and on Lynly), so the two differ only in whether
+        // status matters
         foreach (['Muiri', 'Lynly Star-Sung'] as $npc) {
             $this->editDynamics($npc, function (array &$d): void { $d['profile_overrides']['attachment_style'] = 'toxic'; });
         }
@@ -487,7 +490,9 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
         $this->assertFalse($wears['Lynly Star-Sung'], 'Lynly: toxic too, but status does not matter to her ' . $why());
         $this->assertFalse($wears['Aela the Huntress'], 'Aela: proud, secure-leaning: no Mask ' . $why());
 
-        // Among strangers at the Mare
+        // Among strangers at the Mare (fearful from her preset, §18 #9, Muiri may already have kept a
+        // front at the hello, in front of the other three: the count is from here)
+        $maskBefore = intval($this->dynamics('Muiri')['_mask_interactions_count'] ?? 0);
         $this->event('infoloc', self::MARE, $this->clock, $this->mare());
         foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'Busy in here tonight.', 'mare', $this->mare());
         foreach (array_keys(self::BEDS) as $npc) {
@@ -505,7 +510,7 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
         $this->assertStringContainsString('MASKING (others were present: Aela the Huntress, Ashe, Lynly Star-Sung, Hulda, Mikael)', end($this->prompts['Muiri']),
             'the strangers named, from the exchange\'s eventlog rows');
         $this->assertLessThan($before, floatval($this->dynamics('Muiri')['dimensions']['maturity']['x']), 'Muiri: the front costs her');
-        $this->assertSame(1, $this->dynamics('Muiri')['_mask_interactions_count']);
+        $this->assertSame($maskBefore + 1, $this->dynamics('Muiri')['_mask_interactions_count']);
         $this->assertSame(0, intval($this->dynamics('Aela the Huntress')['_mask_interactions_count'] ?? 0));
 
         // Kaida insults her in front of them; the front slips (the eval says so)

@@ -37,8 +37,14 @@
  *               (traits design §1.2 route A; RelDynConcern reads it)},
  *    romantic_intent: additive to v1 (decisions §8), int 0..3, always written by this producer:
  *               how romantically the PLAYER approached the NPC in the exchange (0 none .. 3 open
- *               pursuit); the charisma tracker (MDD 5.1) and the Ick (MDD 6.3) read it, once per
- *               applied item. An item without it (older producer) feeds neither.
+ *               pursuit); the Ick (MDD 6.3) reads it, once per applied item. An item without it
+ *               (older producer) feeds nothing.
+ *    charisma: additive to v1 (rulings 2026-09-25 §18 #11), one of CHARISMA_GRADES, always
+ *               written by this producer: the flavour of the PLAYER's approach in the exchange
+ *               (MDD 5.1: rock = calm, steady authority; catalyst = teasing push-pull; charmer =
+ *               accommodating, smooth; none = no particular approach). The charisma tracker reads
+ *               it, once per applied item (it replaced the affinity-variance heuristic). An item
+ *               without it (older producer) feeds no charisma.
  *    reply_mood: additive to v1, written by code (never the LLM) when the job had one: the mood
  *               the NPC answered this exchange in (core moods_issued at the postrequest that
  *               queued it, lowercased); the Ick reads it to tell courting she answered in kind
@@ -103,7 +109,18 @@ final class RelDynEval
     /** romantic_intent upper bound (0 none, 1 light warmth / flirt, 2 clear courting, 3 open pursuit). */
     const ROMANTIC_INTENT_MAX = 3;
 
-    /** Source tags (decisions 2026-09-23 §1 plus reassurance, apology and confession: rulings §9 romance) with the definitions the LLM sees. */
+    /**
+     * charisma grades (rulings 2026-09-25 §18 #11, MDD 5.1): the player's approach in one exchange.
+     * 'none' = no particular approach (ordinary talk). The contract's list
+     * (RelationshipDynamics::EVAL_CHARISMA_GRADES) is this one.
+     */
+    const CHARISMA_GRADES = RelationshipDynamics::EVAL_CHARISMA_GRADES;
+
+    /**
+     * Source tags (decisions 2026-09-23 §1 plus reassurance, apology and confession: rulings §9
+     * romance; confessing and forgiveness: rulings 2026-09-25 §18 #10, the resentment_self
+     * recovery of the dimension design) with the definitions the LLM sees.
+     */
     const TAG_DEFINITIONS = [
         'gift'             => 'the player gave them something of value',
         'praise'           => 'the player complimented, thanked or admired them',
@@ -123,7 +140,9 @@ final class RelDynEval
         'reassurance'      => 'the player calmed a fear or doubt they had',
         'apology'          => 'the player apologised or made amends',
         'confession'       => 'the player openly declared romantic feelings for them or asked to be more than friends',
-        'confiding'        => 'they opened up about something personal (or the player did) and it was met with care',
+        'confiding'        => 'they opened up about something personal (or the player did) and it was met with care; not something they are ashamed of having done (that is confessing)',
+        'confessing'       => 'they admitted something they did and are ashamed of, and it was met with care',
+        'forgiveness'      => 'the player forgave them for something they did',
     ];
 
     /** Tags that mark an exchange as not positive, whatever the signals say. */
@@ -1135,7 +1154,10 @@ final class RelDynEval
         $max = self::ROMANTIC_INTENT_MAX;
         $extraSpec = "ROMANTIC_INTENT: 0..{$max}, how romantically {$player} approached {$npc} in this exchange, whatever {$npc} made of it: "
             . "0 none, 1 light warmth or a playful flirt, 2 clear flirting or courting, 3 open romantic pursuit (a confession, a proposition).";
-        $extraShape = ', "romantic_intent": 0';
+        $extraSpec .= "\nCHARISMA: the flavour of how {$player} approached {$npc} in this exchange, one word: "
+            . "rock (calm, steady, unshakeable: stability and quiet authority), catalyst (teasing, provoking, push-pull, hot then cold), "
+            . "charmer (accommodating, smooth, flattering, eager to please), none (no particular approach: ordinary talk or business).";
+        $extraShape = ', "romantic_intent": 0, "charisma": "none"';
         if ($goal !== '') {
             $extraSpec .= "\n{$npc}'S CURRENT PURPOSE: {$goal}\n"
                 . "GOAL_ADDRESSED: true only when this exchange clearly served that purpose or settled it ({$player} helped with it, agreed to it, or it got done); talk around it is false.";
@@ -1285,7 +1307,8 @@ PROMPT;
 
         // Additive v1 (decisions §8): a malformed one is logged and left out, never the item
         $romanticIntent = self::parseRomanticIntent($data, $npc);
-        $goal = self::parseGoalAddressed($data, $job, $npc);
+        $charisma = self::parseCharisma($data, $npc);
+        $goal =self::parseGoalAddressed($data, $job, $npc);
         $masking = self::parseMasking($data, $job, $npc);
 
         foreach ((array) ($job['event_tags'] ?? []) as $t) {
@@ -1309,6 +1332,7 @@ PROMPT;
             'positive_interaction' => $classified['positive_interaction'],
             'summary'              => $summary,
         ] + ($romanticIntent !== null ? ['romantic_intent' => $romanticIntent] : [])
+          + ($charisma !== null ? ['charisma' => $charisma] : [])
           + (is_string($job['reply_mood'] ?? null) && trim($job['reply_mood']) !== '' ? ['reply_mood' => strtolower(trim($job['reply_mood']))] : [])
           + (is_numeric($job['duty_factor'] ?? null) ? ['duty_factor' => max(0.0, min(1.0, floatval($job['duty_factor'])))] : [])
           + $goal
@@ -1325,6 +1349,22 @@ PROMPT;
             return null;
         }
         return (int) max(0, min(self::ROMANTIC_INTENT_MAX, round($v)));
+    }
+
+    /**
+     * charisma, one of CHARISMA_GRADES (lowercased; absent or null: 'none', the producer always
+     * asks); null when it is not one of them (logged, left out: the item still applies).
+     */
+    private static function parseCharisma(array $data, string $npc): ?string
+    {
+        $v = $data['charisma'] ?? 'none';
+        $grade = is_string($v) ? strtolower(trim($v)) : null;
+        if ($grade === null || !in_array($grade, self::CHARISMA_GRADES, true)) {
+            error_log("[RelDyn-EVAL] eval output for {$npc}: charisma " . json_encode($v) . ' is not one of '
+                . implode('|', self::CHARISMA_GRADES) . ', left out');
+            return null;
+        }
+        return $grade;
     }
 
     /**
