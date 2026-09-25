@@ -99,7 +99,8 @@ final class RelDynFelt
                 'hoover' => 0.8, 'ick' => 0.8, 'conflict' => 0.75, 'll_reaction' => 0.7, 'parasite' => 0.7,
                 'emergent' => 0.65, 'place' => 0.6, 'gift' => 0.6, 'intimacy' => 0.6, 'unmet' => 0.6,
                 'creature' => 0.6, 'mask_drop' => 0.6, 'topic' => 0.55, 'attraction' => 0.5,
-                'post_combat' => 0.5, 'duty' => 0.5, 'charisma' => 0.45, 'memory' => 0.45, 'weather' => 0.4,
+                'post_combat' => 0.5, 'duty' => 0.9, 'charisma' => 0.45, 'memory' => 0.45, 'weather' => 0.4,
+                'intrinsic_goal' => 1.0, 'reputation' => 0.9,   // x the goal's priority (as the director goal) / x the first impression's weight
             ],
             'passion_salience_offset' => 0.1,    // passion line salience = passion / 100 + this
             'jealousy_salience_offset' => 0.2,   // jealousy line salience = jealousy / 100 + this
@@ -275,7 +276,9 @@ final class RelDynFelt
             'stormy'   => "restless and short-fused, snaps at small things, can't settle",
         ],
         'parasite' => "the gifts keep coming and {NAME} has stopped being moved by them; thanks sound rehearsed, with a transactional edge",
-        'duty'     => "this exchange is duty, not choice, for {PLAYER}; {NAME} knows it and does not take it personally",
+        // MDD 9 duty override: a hostile NPC the quest makes {PLAYER} deal with ({QUEST}: the
+        // journal's quest name, or 'the task at hand')
+        'duty'     => "{NAME} deals with {PLAYER} only because {QUEST} requires it: cold, correct and strictly business; {NAME} does what the task needs and gives nothing more",
         'combat' => [
             'bleeding_out' => "{NAME} is down and barely conscious; every breath is a fight to stay awake",
             'badly_hurt'   => "{NAME} is badly hurt and still fighting at {PLAYER}'s side, senses razor sharp",
@@ -550,10 +553,14 @@ final class RelDynFelt
                 $attraction, ['tier0' => true]);
         }
 
-        // --- Duty / parasite ---
-        if (floatval($env['duty_factor'] ?? 1.0) < 1.0) {
-            $lines[] = self::line('duty', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['duty']), self::fill((string) $t['duty'], $vars));
+        // --- Duty (MDD 9): the quest's business, coldly; it stands in for her refusal below ---
+        $onDuty = floatval($env['duty_factor'] ?? 1.0) < 1.0;
+        if ($onDuty) {
+            $quest = trim((string) ($env['duty_quest'] ?? ''));
+            $lines[] = self::line('duty', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['duty']),
+                self::fill((string) $t['duty'], $vars + ['{QUEST}' => $quest !== '' ? $quest : 'the task at hand']), ['must' => true]);
         }
+        // --- Parasite ---
         if (($dynamics['_relationship_type_override'] ?? null) === 'parasite') {
             $lines[] = self::line('parasite', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['parasite']), self::fill((string) $t['parasite'], $vars));
         }
@@ -663,8 +670,9 @@ final class RelDynFelt
         $charisma = RelationshipDynamics::getCharismaContext($dynamics, $npc);
         if ($charisma) $lines[] = self::line('charisma', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['charisma']), $charisma);
 
-        // --- Autonomy: refusing / walkaway speak; a resistant disposition shows in the bands ---
-        if (!empty($rd['autonomy_enabled'])) {
+        // --- Autonomy: refusing / walkaway speak; a resistant disposition shows in the bands.
+        // On duty she complies coldly instead (MDD 9): the duty line speaks, not the refusal. ---
+        if (!empty($rd['autonomy_enabled']) && !$onDuty) {
             $temperament = (string) ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic');
             $eval = RelationshipDynamics::evaluateAutonomyState($dynamics, $temperament);
             $order = ['compliant' => 0, 'resistant' => 1, 'refusing' => 2, 'walkaway' => 3];
@@ -704,6 +712,22 @@ final class RelDynFelt
             }
             $memory = RelationshipDynamics::buildMemoryContext($dynamics, $npc, $bond, intval($cfg['memory_items']), $held);
             if ($memory !== null) $lines[] = self::line('memory', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['memory']), $memory);
+        }
+
+        // --- Intrinsic goal (MDD 13.2 / 14.2: what she wants from life, her own) ---
+        $intrinsic = RelDynGoals::feltText($npc, $player, $dynamics);
+        if ($intrinsic !== null) {
+            $top = RelDynGoals::active($dynamics)[0] ?? [];
+            $lines[] = self::line('intrinsic_goal', self::SCOPE_SELF, self::LANE_CORE,
+                floatval($sal['intrinsic_goal']) * floatval($top['priority'] ?? 0.5), $intrinsic);
+        }
+
+        // --- Reputation: what she had heard of the player, while it still colours the meeting ---
+        $heard = RelDynReputation::feltText($npc, $player, $dynamics);
+        if ($heard !== null) {
+            // the first impression speaks loudest at the first meeting and fades with it
+            $lines[] = self::line('reputation', self::SCOPE_BOND, self::LANE_CORE,
+                floatval($sal['reputation']) * RelDynReputation::weight((array) $dynamics[RelDynReputation::KEY]), $heard, ['tier0' => true]);
         }
 
         // --- Director goal (what the NPC is set on) ---
@@ -1266,6 +1290,7 @@ final class RelDynFelt
             'player_addressed' => RelationshipDynamics::isPlayerInputRequest($GLOBALS['gameRequest'] ?? null),
             'last_ll' => $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null,
             'duty_factor' => floatval($GLOBALS['RELDYN_DUTY_FACTOR'] ?? 1.0),
+            'duty_quest' => is_array($GLOBALS['RELDYN_DUTY'] ?? null) ? (string) ($GLOBALS['RELDYN_DUTY']['quest'] ?? '') : '',
             'ick' => !empty($GLOBALS['RELDYN_ICK_ACTIVE']),
             'goal' => !empty($cfg['director_goals_enabled'])
                 ? ($GLOBALS['RELDYN_DIRECTOR_GOAL'] ?? RelationshipDynamics::getActiveDirectorGoal($dynamics)) : null,

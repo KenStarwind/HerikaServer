@@ -163,6 +163,8 @@ if ($reldynCfg['topic_bonus_enabled'] ?? true) {
     $topicFelt = $topicTurn['felt'];
     if ($topicTurn['appraisal'] !== null) {
         $ta = $topicTurn['appraisal'];
+        // A topic that touches one of her intrinsic goals moves it (MDD 14.2)
+        RelDynGoals::onExperience($npcName, $dynamics, 'topic', (string) $ta['name'], (array) ($ta['facets'] ?? []), RelationshipDynamics::currentGamets());
         RelationshipDynamics::log("TopicBonus: {$npcName} topic='{$ta['name']}' valence=" . round((float) $ta['valence'], 3)
             . " dominant=" . ($ta['dominant'] ?? 'none') . " bonus=" . round($topicBonus, 3) . "x match=" . ($topicMatch ? 'yes' : 'no'));
     }
@@ -259,6 +261,11 @@ unset($dynamics['_last_gift_felt']);
 // 3. Diminishing returns — record interaction
 // -------------------------------------------------------------------------
 RelationshipDynamics::recordInteraction($dynamics);
+// An exchange the legacy classifier scored is a meaningful interaction for the reputation
+// layer's fade (the eval counts its own items, at their significance)
+if (!$evalOwnsExchange && $interactionLL !== null) {
+    RelDynReputation::countInteraction($dynamics, 1.0);
+}
 
 // -------------------------------------------------------------------------
 // 4. RPM → Speed: Apply passion-weighted affinity change
@@ -409,13 +416,8 @@ if (!empty($GLOBALS['RELDYN_DIARY_TRIGGERED'])) {
 // -------------------------------------------------------------------------
 RelationshipDynamics::saveDynamics($npcName, $dynamics);
 
-// ========== DUTY OVERRIDE DAMPENING (PR 12) ==========
-$dutyFactor = floatval($GLOBALS['RELDYN_DUTY_FACTOR'] ?? 1.0);
-if ($dutyFactor < 1.0) {
-    // Only dampen negative deltas — positive quest moments still count
-    // This is handled inside the eval processing — we set a global flag
-    $GLOBALS['RELDYN_DUTY_DAMPEN_NEGATIVE'] = $dutyFactor;
-}
+// Duty override (MDD 9): the eval job of this exchange carries RELDYN_DUTY_FACTOR
+// (RelDynEval::onPostrequest); the consumer dampens its negative signals.
 
 // ========== XYZ EVAL DELTA PROCESSING (PR 3) ==========
 $rdConfig = RelationshipDynamics::getConfig();

@@ -509,41 +509,9 @@ class RelationshipDynamics
 
     // ========== REPUTATION LAYER (PR 9) ==========
     //
-    // Pre-contact baseline modifier from fame, infamy, faction rank, and rumors.
-    // Shifts where the Stranger baseline STARTS. First impressions from gossip.
-    //
-    // Formula: effective_stranger_baseline = global_baseline * stranger_type_modifier * reputation_modifier
-    //
-    // Reputation fades with direct experience:
-    //   decay_factor = max(0, 1 - (interaction_count / 15))
-    //   At 0 interactions: 1.0 (full reputation effect)
-    //   At 5 interactions: 0.67 (reputation < 70%)
-    //   At 15+ interactions: 0.0 (reputation irrelevant, personal experience dominates)
+    // Pre-contact baseline modifier (reldyn_reputation.php, RelDynReputation): fame / infamy /
+    // status from the player profile, fading with meaningful interactions.
     // =============================================================
-
-    /**
-     * Reputation source definitions: what data maps to what dimension modifiers.
-     *
-     * Per-source modifiers are PER UNIT (per kill, per quest, per crime, etc.)
-     * and are capped by REPUTATION_CAPS to prevent runaway values.
-     *
-     * 'dragon_kills':       Each dragon killed earns respect + slight trust. Dragonborn fame.
-     * 'quests_completed':   General competence/helpfulness signal. Mild per-quest.
-     * 'crimes_committed':   Each crime erodes trust and comfort. Infamy.
-     * 'murders':            Each murder is a heavy trust/comfort penalty but earns fear-respect.
-     * 'thane':              Per-hold title: comfort + respect (only in that hold).
-     * 'faction_rank':       Selective per-NPC -- NPC must share or respect the faction.
-     * 'player_level':       Raw power signal -- slight respect from level alone.
-     */
-    const REPUTATION_SOURCES = [
-        'dragon_kills'      => ['respect' => 2.0, 'trust' => 1.0],
-        'quests_completed'  => ['respect' => 0.5, 'trust' => 0.2],
-        'crimes_committed'  => ['trust' => -1.0, 'comfort' => -0.5],
-        'murders'           => ['trust' => -5.0, 'comfort' => -3.0, 'respect' => 2.0],
-        'thane'             => ['respect' => 5.0, 'comfort' => 5.0],
-        'faction_rank'      => ['respect' => 8.0],
-        'player_level'      => ['respect' => 0.3],
-    ];
 
     /**
      * Per-dimension caps for reputation modifiers.
@@ -555,11 +523,8 @@ class RelationshipDynamics
         'comfort' => ['min' => -15, 'max' => 10],
     ];
 
-    /**
-     * Number of meaningful interactions at which reputation becomes negligible.
-     * Used for decay curve: decay_factor = max(0, 1 - (interactions / REPUTATION_DECAY_INTERACTIONS))
-     */
-    const REPUTATION_DECAY_INTERACTIONS = 15;
+    /** Respect points a shared / respected faction is worth (calculateFactionReputation). */
+    const FACTION_RANK_RESPECT = 8.0;
 
     /**
      * Faction affinity mapping: NPC faction -> player factions they respect.
@@ -929,6 +894,15 @@ class RelationshipDynamics
             'cascade_threshold' => 15,               // core affinity points (|delta| that ripples)
             'cascade_decay' => 0.3,                  // fraction
             'duty_override_enabled' => true,
+            // Quests (reldyn_quests.php): the duty override's dampening and hostility tests, the
+            // questlog consumer of the quest event hook, life-changing stages
+            'quests' => RelDynQuests::configDefaults(),
+            // Intrinsic goals, tier 1 (reldyn_goals.php, MDD 14.2)
+            'intrinsic_goals' => RelDynGoals::configDefaults(),
+            // Reputation: the pre-contact offset from fame / infamy / status (reldyn_reputation.php)
+            'reputation' => RelDynReputation::configDefaults(),
+            // Item modifiers (PR 8, item-modifiers): appraised dimensions, eventlog rows per request
+            'item_modifiers' => self::ITEM_MODIFIER_DEFAULTS,
             'parasite_detection_enabled' => true,
             // PR 13: Environmental Quirks
             'baseline_drift_enabled' => true,
@@ -989,6 +963,15 @@ class RelationshipDynamics
             'charisma_detection_enabled' => true,
             // PR 16: Autonomy Override + Walkaway + Hoover
             'autonomy_enabled' => true,
+            // Autonomy override (MDD 6.4, PR16 plan, autonomy design memory): the autonomy score
+            // (0..100) = (100 - trust) x distrust + (100 - respect) x disrespect + resentment x
+            // resentment + self_confidence x self_confidence + maturity_mod (-0.5 below maturity
+            // 30, +0.5 above 60) x 100 x maturity_mod (dimension points); the state thresholds
+            // (score: below compliant = compliant, below resistant = resistant, below refusing =
+            // refusing, else walkaway); per state, the core action codes (functions/functions.php
+            // ENABLED_FUNCTIONS) taken off the LLM's list for that NPC (ext functions.php hook). A
+            // stored 'weights' / 'thresholds' / 'denied_actions' replaces that table whole.
+            'autonomy' => self::AUTONOMY_DEFAULTS,
             'walkaway_enabled' => true,              // off: no walkaway starts (evaluateAutonomyState stops at refusing; one under way carries on)
             'hoover_enabled' => true,
             // PR 39: Director-Assigned Goals (the hooks ran them unless switched off)
@@ -1443,11 +1426,6 @@ class RelationshipDynamics
                 $merged = $base;
                 // Resolved into the copy (not the base) so the next save persists it.
                 self::ensureTemperamentProfile($npcName, $merged);
-                // ========== REPUTATION LAYER (PR 9) ==========
-                if (isset($GLOBALS['PLAYER_NAME']) && !empty($GLOBALS['PLAYER_NAME'])) {
-                    $temperament = $merged['inferred_temperament'] ?? $merged['temperament'] ?? 'Stoic';
-                    self::applyReputationModifiers($merged, $GLOBALS['PLAYER_NAME'], $npcName, $temperament);
-                }
                 // saveDynamics() merges this copy's changes onto whatever is stored by then
                 $merged[self::LOAD_TOKEN_KEY] = self::rememberLoadedBase($base, RelDynTimeline::loadGeneration());
                 return $merged;
@@ -1468,11 +1446,6 @@ class RelationshipDynamics
             if (is_array($rd) && !empty($rd)) {
                 $merged = array_merge(self::defaultDynamics(), $rd);
                 $merged = self::migrateDimensions($merged);
-                // ========== REPUTATION LAYER (PR 9) ==========
-                if (isset($GLOBALS['PLAYER_NAME']) && !empty($GLOBALS['PLAYER_NAME'])) {
-                    $temperament = $merged['inferred_temperament'] ?? $merged['temperament'] ?? 'Stoic';
-                    self::applyReputationModifiers($merged, $GLOBALS['PLAYER_NAME'], $npcName, $temperament);
-                }
                 return $merged;
             }
         }
@@ -8667,6 +8640,14 @@ class RelationshipDynamics
                 error_log("[RelDyn-EVAL] eval item for {$npc}: masking is not {flag, slipped} booleans, ignored");
             }
         }
+        if (array_key_exists('duty_factor', $item)) {
+            // a duty exchange (code-written from RelDynQuests, MDD 9): 0..1 on its negative signals
+            if (is_numeric($item['duty_factor']) && floatval($item['duty_factor']) >= 0.0 && floatval($item['duty_factor']) <= 1.0) {
+                $out['duty_factor'] = floatval($item['duty_factor']);
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: duty_factor is not a number 0..1, ignored");
+            }
+        }
         return $out;
     }
 
@@ -8759,6 +8740,12 @@ class RelationshipDynamics
             if (abs($raw) < 0.0001) {
                 continue;
             }
+            // Duty override (MDD 9): quest-scripted friction with a hostile NPC is not held
+            // against the bond; her negative signals of that exchange land dampened
+            if ($raw < 0 && isset($n['duty_factor'])) {
+                $raw *= floatval($n['duty_factor']);
+                if (abs($raw) < 0.0001) continue;
+            }
             $r = self::applyEvalSignal($npcName, $dynamics, $signal, $raw, $n['tags'], $n['significance'], $bondLevel);
             $totals[$signal] = $r['actual'];
             // What the legacy path fed downstream: the reason per moved dimension (context
@@ -8809,6 +8796,10 @@ class RelationshipDynamics
         // Decisions §8 fields, each read once per applied item (here, not by a request peeking
         // at the inbox, which the eval worker has usually emptied by then)
         self::applyEvalExtraFields((string) $npcName, $n, $dynamics, $itemGamets);
+        // Her intrinsic goals the exchange served (MDD 14.2), and one more meaningful
+        // interaction against what she had heard of the player (reputation-layer)
+        RelDynGoals::onEvalItem((string) $npcName, $dynamics, $n, $itemGamets);
+        RelDynReputation::countInteraction($dynamics, floatval($n['significance']));
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -10778,13 +10769,41 @@ class RelationshipDynamics
     }
 
     /**
-     * Placeholder for future SNQE quest event integration.
-     * External systems can call this to trigger DI from quest events.
+     * quest-event-hook: a stage change of a journal quest that names this NPC (RelDynQuests
+     * routes core's questlog rows here, once each). Recorded on the NPC (RelDynQuests::EVENTS_KEY:
+     * id, name, stage, game time; the last events_keep), advances her intrinsic goals the quest
+     * matches (RelDynGoals::onQuestEvent), and a stage config quests.life_changing lists for her
+     * is a divine intervention ('quest_event', its severity) once per quest stage.
+     * $ctx: 'name' (the journal's quest name), 'objective' (the stage's objective text), 'gamets'.
+     *
+     * @return array ['recorded' => bool, 'goals' => goal ids advanced, 'divine' => bool]
      */
-    public static function onQuestEvent($npcName, $questId, $stageId)
+    public static function onQuestEvent(string $npcName, string $questId, int $stageId, array &$dynamics, array $ctx = []): array
     {
-        // Placeholder — not wired in PR 10
-        self::log("[DIVINE] Quest event placeholder: npc={$npcName}, quest={$questId}, stage={$stageId}");
+        $out = ['recorded' => false, 'goals' => [], 'divine' => false];
+        $questId = trim($questId);
+        if ($questId === '') return $out;
+        $events = is_array($dynamics[RelDynQuests::EVENTS_KEY] ?? null) ? array_values($dynamics[RelDynQuests::EVENTS_KEY]) : [];
+        foreach ($events as $e) {
+            if (is_array($e) && ($e['id'] ?? null) === $questId && intval($e['stage'] ?? -1) === $stageId) {
+                return $out;   // this stage already reached her (a save reload replays the journal)
+            }
+        }
+        $gamets = floatval($ctx['gamets'] ?? 0) > 0 ? floatval($ctx['gamets']) : self::currentGamets();
+        $event = ['id' => $questId, 'name' => trim((string) ($ctx['name'] ?? '')), 'stage' => $stageId, 'gamets' => $gamets];
+        $out['goals'] = RelDynGoals::onQuestEvent($npcName, $dynamics, $event + ['objective' => (string) ($ctx['objective'] ?? '')], $gamets);
+        $life = RelDynQuests::lifeChanging($npcName, $questId, $stageId);
+        if ($life !== null) {
+            self::triggerDivineIntervention($npcName, 'quest_event', $life['severity'], $dynamics);
+            $event['divine'] = true;
+            $out['divine'] = true;
+        }
+        $events[] = $event;
+        $dynamics[RelDynQuests::EVENTS_KEY] = array_slice($events, -max(1, intval(RelDynQuests::config()['events_keep'])));
+        $out['recorded'] = true;
+        self::log("[RelDyn-QUEST] {$npcName}: {$questId} stage {$stageId}" . ($event['name'] !== '' ? " ({$event['name']})" : '')
+            . ($out['goals'] ? ' goals ' . implode(',', $out['goals']) : '') . ($out['divine'] ? ' divine intervention' : ''));
+        return $out;
     }
 
     // ========== DEATH/GRIEF SYSTEM (PR 10) ==========
@@ -12547,22 +12566,66 @@ class RelationshipDynamics
         return null;
     }
 
+    /** Config 'item_modifiers' over its defaults (defaultConfig documents the keys). */
+    public static function itemModifierConfig(): array
+    {
+        $stored = self::configValue('item_modifiers');
+        return array_replace(self::ITEM_MODIFIER_DEFAULTS, is_array($stored) ? $stored : []);
+    }
+
+    const ITEM_MODIFIER_DEFAULTS = [
+        // Dimensions of a consumable's spike and a worn item's baseline scaled by how the NPC
+        // appraises the item (its facets x her signed preferences, decisions §6): the pleasure
+        // of a drink she likes, the weight of a symbol she holds dear. A gain scales by m, a loss
+        // by 1 / m, m = RelDynFacets::interestMultiplier(valence) (MDD 1.2 range 0.5..2.0); an
+        // item without facets stays as the table has it.
+        'appraised_dims' => ['comfort', 'warmth', 'passion', 'respect', 'trust'],
+        // eventlog rows read per NPC per request (gifts and consumes since her watermark)
+        'event_rows' => 10,
+    ];
+
+    /**
+     * The NPC's appraisal of an item as a multiplier m (0.5..2.0; 1.0 without facets) and the
+     * appraisal itself (null without facets).
+     */
+    public static function itemAppraisal(array $dynamics, string $npcName, string $itemName): array
+    {
+        $a = RelDynFacetClassifier::thingAppraisal(RelDynFacets::preferences($dynamics, $npcName), 'item', $itemName);
+        return ['m' => $a === null ? 1.0 : RelDynFacets::interestMultiplier((float) $a['valence']), 'appraisal' => $a];
+    }
+
+    /** A table's effects through an appraisal multiplier (appraised_dims: gains x m, losses / m). */
+    public static function appraisedEffects(array $effects, float $m): array
+    {
+        $dims = (array) self::itemModifierConfig()['appraised_dims'];
+        $m = max(1e-6, $m);
+        $out = [];
+        foreach ($effects as $dim => $v) {
+            $v = floatval($v);
+            $out[$dim] = in_array($dim, $dims, true) ? ($v >= 0 ? $v * $m : $v / $m) : $v;
+        }
+        return $out;
+    }
+
     /**
      * Process a consumable item being consumed by the NPC.
      *
-     * 1. Classify the item
-     * 2. Apply immediate effects through applyDelta (temporary — tracked for expiry)
-     * 3. Store in _active_consumables with gamets-based expiry timestamp
-     * 4. Apply permanent costs directly to dimension baselines (never reversed)
+     * 1. Classify the item (CONSUMABLE_EFFECTS)
+     * 2. Her appraisal of it (facets x preferences) scales the spike (appraisedEffects); the
+     *    experience feeds her weather and needs like any other thing (RelDynFacets::experienceThing)
+     * 3. The spike is a held temporary offset until it wears off (game-calendar hours on the
+     *    eventlog clock): tickConsumableExpiry takes back exactly what was applied
+     * 4. Permanent costs go to the dimension baselines (never reversed)
      *
      * Gated behind dimension_engine_enabled config toggle.
      *
      * @param array       &$dynamics    NPC dynamics blob (modified in place)
      * @param string      $itemName     Consumed item display name
      * @param string|null $temperament  NPC temperament name
+     * @param string      $npcName      the NPC (her preferences; '' = neutral)
      * @return array  Map of dimension => actual_delta applied, empty if unrecognised
      */
-    public static function processConsumable(&$dynamics, $itemName, $temperament = null)
+    public static function processConsumable(&$dynamics, $itemName, $temperament = null, string $npcName = '')
     {
         $config = self::getConfig();
         if (empty($config['dimension_engine_enabled'])) {
@@ -12577,10 +12640,16 @@ class RelationshipDynamics
         $key   = $classified['key'];
         $entry = $classified['entry'];
         $results = [];
+        $now = self::currentGamets();
+        $appraisal = self::itemAppraisal($dynamics, $npcName, (string) $itemName);
+        if ($appraisal['appraisal'] !== null && $npcName !== '') {
+            RelDynFacets::experienceThing($npcName, $dynamics, 'item', (string) $itemName,
+                RelDynFacets::preferences($dynamics, $npcName), $now, $appraisal['appraisal']['facets']);
+        }
 
         // --- Apply immediate effects through XYZ engine ---
         $appliedImmediate = [];
-        foreach (($entry['immediate'] ?? []) as $dimId => $delta) {
+        foreach (self::appraisedEffects((array) ($entry['immediate'] ?? []), $appraisal['m']) as $dimId => $delta) {
             $actual = self::applyDelta($dimId, $dynamics, floatval($delta), $temperament);
             if (abs($actual) > 0.001) {
                 $appliedImmediate[$dimId] = $actual;
@@ -12588,13 +12657,8 @@ class RelationshipDynamics
             }
         }
 
-        // --- Track for expiry (game-time based) ---
-        $currentGameTs = 0;
-        if (function_exists('DataLastKnownGameTS')) {
-            $currentGameTs = intval(DataLastKnownGameTS());
-        }
+        // --- Track for expiry (game-calendar hours on the eventlog clock) ---
         $durationGamets = intval(($entry['duration_game_hours'] ?? 0.5) * self::GAMETS_PER_HOUR);
-        $expiresAt = $currentGameTs + $durationGamets;
 
         if (!isset($dynamics['_active_consumables']) || !is_array($dynamics['_active_consumables'])) {
             $dynamics['_active_consumables'] = [];
@@ -12604,8 +12668,8 @@ class RelationshipDynamics
             'key'       => $key,
             'item_name' => $itemName,
             'immediate' => $appliedImmediate,
-            'expires_gamets' => $expiresAt,
-            'applied_at' => time(),
+            'expires_gamets' => $now > 0 ? $now + $durationGamets : 0,
+            'applied_gamets' => $now,
         ];
 
         // --- Apply permanent costs directly to baselines (never reversed) ---
@@ -12635,7 +12699,7 @@ class RelationshipDynamics
             $sign = $val >= 0 ? '+' : '';
             $permStr[] = "{$dim}_baseline {$sign}{$val}";
         }
-        error_log("[RelDyn-ITEM] Consumed {$key} ({$itemName}): " . implode(', ', $effectStr)
+        error_log("[RelDyn-ITEM] Consumed {$key} ({$itemName}) x" . round($appraisal['m'], 2) . ": " . implode(', ', $effectStr)
             . (!empty($permStr) ? " | permanent: " . implode(', ', $permStr) : '')
             . " | expires in " . round($entry['duration_game_hours'] ?? 0.5, 1) . "h game time");
 
@@ -12643,10 +12707,12 @@ class RelationshipDynamics
     }
 
     /**
-     * Process an equip or unequip event.
+     * Process an equip or unequip event of the NPC's own gear (core_npc_master.metadata.equipment).
      *
-     * On equip:   apply while_equipped baseline modifiers, track in _equipped_modifiers.
-     * On unequip: reverse baseline modifiers, apply on_removal spike effects.
+     * On equip:   the while_equipped baseline modifiers (through her appraisal of the item,
+     *             appraisedEffects), tracked in _equipped_modifiers: a held offset on the
+     *             baseline (heldBaselineOffset; baseline drift runs without it).
+     * On unequip: those modifiers taken back exactly; the on_removal spike unless $initial.
      *
      * Gated behind dimension_engine_enabled config toggle.
      *
@@ -12654,9 +12720,10 @@ class RelationshipDynamics
      * @param string      $itemName     Equipped/unequipped item name
      * @param bool        $equipped     true = equip event, false = unequip event
      * @param string|null $temperament  NPC temperament name
+     * @param string      $npcName      the NPC (her preferences; '' = neutral)
      * @return array  Map of dimension => actual_delta applied
      */
-    public static function processEquipChange(&$dynamics, $itemName, $equipped, $temperament = null)
+    public static function processEquipChange(&$dynamics, $itemName, $equipped, $temperament = null, string $npcName = '')
     {
         $config = self::getConfig();
         if (empty($config['dimension_engine_enabled'])) {
@@ -12677,42 +12744,47 @@ class RelationshipDynamics
         }
 
         if ($equipped) {
-            // --- EQUIP: apply baseline modifiers ---
+            if (isset($dynamics['_equipped_modifiers'][$key])) {
+                return [];   // already held (a second ring of the same kind adds nothing)
+            }
+            // --- EQUIP: apply baseline modifiers, as she values the item ---
+            $m = self::itemAppraisal($dynamics, $npcName, (string) $itemName)['m'];
             $applied = [];
-            foreach (($entry['while_equipped'] ?? []) as $dimId => $delta) {
+            foreach (self::appraisedEffects((array) ($entry['while_equipped'] ?? []), $m) as $dimId => $delta) {
                 if (!isset($dynamics['dimensions'][$dimId])) {
                     $dynamics['dimensions'][$dimId] = [];
                 }
                 $currentBaseline = floatval($dynamics['dimensions'][$dimId]['baseline'] ?? 50.0);
                 $dynamics['dimensions'][$dimId]['baseline'] = $currentBaseline + floatval($delta);
-                $applied[$dimId] = floatval($delta);
+                $applied[$dimId] = round(floatval($delta), 4);
 
                 $sign = $delta >= 0 ? '+' : '';
-                $results[$dimId] = floatval($delta);
-                error_log("[RelDyn-ITEM] Equip {$key}: {$dimId}_baseline {$sign}{$delta}");
+                $results[$dimId] = round(floatval($delta), 4);
+                error_log("[RelDyn-ITEM] Equip {$key} ({$itemName}) x" . round($m, 2) . ": {$dimId}_baseline {$sign}" . round($delta, 2));
             }
 
             $dynamics['_equipped_modifiers'][$key] = [
                 'item_name' => $itemName,
                 'applied'   => $applied,
-                'equipped_at' => time(),
+                'equipped_gamets' => self::currentGamets(),
             ];
         } else {
             // --- UNEQUIP: reverse baseline modifiers ---
             $tracked = $dynamics['_equipped_modifiers'][$key] ?? null;
-            if ($tracked) {
-                foreach (($tracked['applied'] ?? []) as $dimId => $appliedDelta) {
-                    if (!isset($dynamics['dimensions'][$dimId])) {
-                        $dynamics['dimensions'][$dimId] = [];
-                    }
-                    $currentBaseline = floatval($dynamics['dimensions'][$dimId]['baseline'] ?? 50.0);
-                    $dynamics['dimensions'][$dimId]['baseline'] = $currentBaseline - floatval($appliedDelta);
-
-                    $sign = -$appliedDelta >= 0 ? '+' : '';
-                    error_log("[RelDyn-ITEM] Unequip {$key}: {$dimId}_baseline {$sign}" . (-$appliedDelta));
-                }
-                unset($dynamics['_equipped_modifiers'][$key]);
+            if (!$tracked) {
+                return [];   // never held: nothing to take back, no removal to feel
             }
+            foreach (($tracked['applied'] ?? []) as $dimId => $appliedDelta) {
+                if (!isset($dynamics['dimensions'][$dimId])) {
+                    $dynamics['dimensions'][$dimId] = [];
+                }
+                $currentBaseline = floatval($dynamics['dimensions'][$dimId]['baseline'] ?? 50.0);
+                $dynamics['dimensions'][$dimId]['baseline'] = $currentBaseline - floatval($appliedDelta);
+
+                $sign = -$appliedDelta >= 0 ? '+' : '';
+                error_log("[RelDyn-ITEM] Unequip {$key}: {$dimId}_baseline {$sign}" . (-$appliedDelta));
+            }
+            unset($dynamics['_equipped_modifiers'][$key]);
 
             // --- Apply on_removal spike effects ---
             foreach (($entry['on_removal'] ?? []) as $dimId => $delta) {
@@ -12727,6 +12799,26 @@ class RelationshipDynamics
         }
 
         return $results;
+    }
+
+    /** The worn gear's standing offset on $dim's baseline (points; processEquipChange). */
+    public static function equippedBaselineOffset(array $dynamics, string $dim): float
+    {
+        $held = 0.0;
+        foreach ((array) ($dynamics['_equipped_modifiers'] ?? []) as $e) {
+            if (is_array($e)) $held += floatval($e['applied'][$dim] ?? 0.0);
+        }
+        return $held;
+    }
+
+    /**
+     * Standing offsets held on $dim's stored baseline that are states, not who she is:
+     * resentment_self's (RelDynResentment::baselineOffset) and her worn gear's. Baseline drift
+     * runs on the baseline without them.
+     */
+    public static function heldBaselineOffset(array $dynamics, string $dim): float
+    {
+        return RelDynResentment::baselineOffset($dynamics, $dim) + self::equippedBaselineOffset($dynamics, $dim);
     }
 
     /**
@@ -12774,6 +12866,10 @@ class RelationshipDynamics
         $interestMult = $gift['mult'];
         $itemInterest = $gift['appraisal']['dominant'] ?? null;
         $dynamics['_last_gift_felt'] = $gift['felt'];
+        // A gift that touches one of her intrinsic goals moves it (MDD 14.2)
+        if (is_array($gift['appraisal'])) {
+            RelDynGoals::onExperience((string) ($npcName ?? ''), $dynamics, 'item', (string) $itemName, (array) ($gift['appraisal']['facets'] ?? []), self::currentGamets());
+        }
 
         // --- Context multiplier ---
         $contextMult = 1.0;
@@ -12824,10 +12920,10 @@ class RelationshipDynamics
     }
 
     /**
-     * Tick consumable expiry: reverse immediate effects of expired consumables.
+     * Tick consumable expiry: take back exactly the spike of every consumable that wore off
+     * (held temporary offsets, reverseAppliedDeltas), on the eventlog game clock.
      *
-     * Called from prerequest.php every interaction. Checks _active_consumables
-     * against current game timestamp and reverses any that have expired.
+     * Called from prerequest.php every interaction.
      *
      * @param array &$dynamics  NPC dynamics blob (modified in place)
      * @return int  Number of consumables expired this tick
@@ -12844,35 +12940,27 @@ class RelationshipDynamics
             return 0;
         }
 
-        $currentGameTs = 0;
-        if (function_exists('DataLastKnownGameTS')) {
-            $currentGameTs = intval(DataLastKnownGameTS());
-        }
-
         // Can't check expiry without game time
+        $currentGameTs = self::currentGamets();
         if ($currentGameTs <= 0) {
             return 0;
         }
 
-        $temperament = $dynamics['inferred_temperament'] ?? null;
         $remaining = [];
         $expiredCount = 0;
 
         foreach ($activeConsumables as $consumable) {
-            $expiresAt = intval($consumable['expires_gamets'] ?? 0);
+            $expiresAt = floatval($consumable['expires_gamets'] ?? 0);
 
-            if ($currentGameTs >= $expiresAt) {
-                // --- EXPIRED: reverse immediate effects ---
-                foreach (($consumable['immediate'] ?? []) as $dimId => $appliedDelta) {
-                    $reverseDelta = -1.0 * floatval($appliedDelta);
-                    $actual = self::applyDelta($dimId, $dynamics, $reverseDelta, $temperament);
-                    if (abs($actual) > 0.001) {
-                        $sign = $actual >= 0 ? '+' : '';
-                        error_log("[RelDyn-ITEM] Expired {$consumable['key']}: {$dimId} {$sign}" . round($actual, 2));
-                    }
-                }
+            if ($expiresAt > 0 && $currentGameTs >= $expiresAt) {
+                // --- EXPIRED: the spike is taken back exactly ---
+                self::reverseAppliedDeltas($dynamics, (array) ($consumable['immediate'] ?? []), 'RelDyn-ITEM', "{$consumable['key']} wore off");
                 $expiredCount++;
                 error_log("[RelDyn-ITEM] Consumable expired: {$consumable['key']} ({$consumable['item_name']})");
+            } elseif ($expiresAt <= 0) {
+                // consumed with no game clock: it wears off from the first known time
+                $consumable['expires_gamets'] = $currentGameTs + intval((self::CONSUMABLE_EFFECTS[$consumable['key'] ?? '']['duration_game_hours'] ?? 0.5) * self::GAMETS_PER_HOUR);
+                $remaining[] = $consumable;
             } else {
                 $remaining[] = $consumable;
             }
@@ -12883,106 +12971,120 @@ class RelationshipDynamics
     }
 
     /**
-     * Detect item events from the current interaction context.
+     * Detect item events for this NPC from core's eventlog (the plugin's own lines):
+     *   - gift:    itemfound "<player> gave <n> <item> to <NPC>,(value <v> gold)"
+     *              (Plugin.cpp TESContainerChangedEvent, player -> AI agent)
+     *   - consume: infoaction "<NPC> consumes <item>." (the Consume action, Commands.cpp), and
+     *              itemfound "<NPC> drank / ate / consumed <item>" (her line only: the player
+     *              drinking is not her drinking)
+     * Rows after her watermark ($afterRowid, processItemEvents keeps it) each count once; without
+     * one, only the last ITEM_EVENT_WINDOW_GAMETS of the eventlog game clock.
      *
-     * Parses gameRequest action data and eventlog for:
-     *   - Consume: eventlog itemfound with consume keywords
-     *   - Gift:    ExtCmdGiveItem action pattern, or "gave X to NPC" eventlog
-     *
-     * Returns an array of detected events, each:
-     *   ['action' => 'consume'|'gift', 'item' => name, ...]
-     *
-     * @param array  $gameRequest  The current CHIM game request array
-     * @param string $npcName      NPC being spoken to
-     * @param string $playerName   Player character name
-     * @return array  List of detected item events
+     * @param array    $gameRequest  The current CHIM game request array (the game clock)
+     * @param string   $npcName      NPC being spoken to
+     * @param string   $playerName   Player character name
+     * @param int|null $afterRowid   her item-event watermark (eventlog.rowid) or null
+     * @return array  List of detected item events ['action', 'item', ..., 'rowid']
      */
-    public static function detectItemEvents($gameRequest, $npcName, $playerName)
+    public static function detectItemEvents($gameRequest, $npcName, $playerName, ?int $afterRowid = null)
     {
         $events = [];
-        $action = $gameRequest[3] ?? '';
-
-        // --- Gift detection: ExtCmdGiveItem pattern ---
-        if (preg_match('/ExtCmd(?:Give|Trade)Item@([^:\r\n]+)/i', $action, $m)) {
-            $events[] = [
-                'action' => 'gift',
-                'item'   => trim($m[1]),
-                'giver'  => $playerName,
-            ];
-        }
-
-        // --- Gift detection: eventlog "gave X to NPC" ---
-        // "Recent" = last 30 s of play on the eventlog game clock (gamets), not the wall clock.
         $db = $GLOBALS['db'] ?? null;
         $nowGamets = self::currentGamets();
-        $sinceGamets = intval($nowGamets - self::ITEM_EVENT_WINDOW_GAMETS);
-        if ($db && $nowGamets > 0) {
-            try {
-                // NPC name matched literally: its % and _ are escaped, not LIKE wildcards
-                $escapedNpc = $db->escape(self::escapeLike($npcName));
-                $rows = $db->fetchAll(
-                    "SELECT data FROM eventlog WHERE type='itemfound' "
-                    . "AND data LIKE '%gave%to%{$escapedNpc}%' ESCAPE '\\' "
-                    . "AND gamets > {$sinceGamets} "
-                    . "ORDER BY gamets DESC, ts DESC LIMIT 3"
-                );
-                if (is_array($rows)) {
-                    foreach ($rows as $row) {
-                        if (preg_match('/\bgave\s+(?:\d+\s+)?(.+?)\s+to\s+/i', $row['data'] ?? '', $gm)) {
-                            $giftItem = trim($gm[1]);
-                            // Avoid duplicating if already detected from ExtCmdGiveItem
-                            $alreadyDetected = false;
-                            foreach ($events as $ev) {
-                                if ($ev['action'] === 'gift' && stripos($giftItem, $ev['item']) !== false) {
-                                    $alreadyDetected = true;
-                                    break;
-                                }
-                            }
-                            if (!$alreadyDetected) {
-                                $events[] = [
-                                    'action' => 'gift',
-                                    'item'   => $giftItem,
-                                    'giver'  => $playerName,
-                                ];
-                            }
-                        }
-                    }
-                }
-            } catch (\Throwable $e) {
-                self::logError('detectItemEvents gift lookup', $e);
+        if (!$db || ($nowGamets <= 0 && $afterRowid === null)) {
+            return [];
+        }
+        $since = $afterRowid !== null ? 'rowid > ' . intval($afterRowid)
+            : 'gamets > ' . intval($nowGamets - self::ITEM_EVENT_WINDOW_GAMETS);
+        $limit = max(1, intval(self::itemModifierConfig()['event_rows']));
+
+        // --- Gifts: the player's handover to this NPC ---
+        try {
+            // NPC name matched literally: its % and _ are escaped, not LIKE wildcards
+            $escapedNpc = $db->escape(self::escapeLike($npcName));
+            $rows = $db->fetchAll(
+                "SELECT rowid, data FROM eventlog WHERE type='itemfound' "
+                . "AND data LIKE '%gave%to%{$escapedNpc}%' ESCAPE '\\' "
+                . "AND {$since} "
+                . "ORDER BY gamets DESC, ts DESC LIMIT {$limit}"
+            );
+            foreach ((array) $rows as $row) {
+                if (!preg_match('/^\s*(.+?)\s+gave\s+(?:(\d+)\s+)?(.+?)\s+to\s+(.+?)\s*(?:,\s*\(value\s+(\d+)\s+gold\))?\s*$/i', (string) ($row['data'] ?? ''), $gm)) continue;
+                if (strcasecmp(trim($gm[1]), trim((string) $playerName)) !== 0 || strcasecmp(trim($gm[4]), trim((string) $npcName)) !== 0) continue;
+                $events[] = [
+                    'action' => 'gift',
+                    'item'   => trim($gm[3]),
+                    'giver'  => $playerName,
+                    'value'  => isset($gm[5]) && $gm[5] !== '' ? intval($gm[5]) : null,
+                    'rowid'  => isset($row['rowid']) ? intval($row['rowid']) : null,
+                ];
             }
+        } catch (\Throwable $e) {
+            self::logError('detectItemEvents gift lookup', $e);
         }
 
-        // (Drunk / on-skooma states were MinAI flags; CHIM 3.4.1 core has none, so only
-        // the eventlog consume lines below count.)
+        // (Drunk / on-skooma states were MinAI flags; CHIM 3.4.1 core has none.)
 
-        // --- Consumable detection: eventlog consume patterns ---
-        if ($db && $nowGamets > 0) {
-            try {
-                // Whole words only (PostgreSQL \m \M word boundaries): 'private chest' is not 'ate'.
-                $rows = $db->fetchAll(
-                    "SELECT data FROM eventlog WHERE type='itemfound' "
-                    . "AND (data ~* '\\m(consumed|drank|ate)\\M' OR data ~* '\\mused\\M.*potion') "
-                    . "AND gamets > {$sinceGamets} "
-                    . "ORDER BY gamets DESC, ts DESC LIMIT 3"
-                );
-                if (is_array($rows)) {
-                    foreach ($rows as $row) {
-                        $data = $row['data'] ?? '';
-                        if (preg_match('/\b(?:consumed|drank|ate|used)\s+(?:\d+\s+)?(.+?)(?:\s*$|\s*,)/i', $data, $cm)) {
-                            $events[] = [
-                                'action' => 'consume',
-                                'item'   => trim($cm[1]),
-                                'source' => 'eventlog',
-                            ];
-                        }
-                    }
-                }
-            } catch (\Throwable $e) {
-                self::logError('detectItemEvents consume lookup', $e);
+        // --- Consumables: what this NPC ate, drank or used ---
+        try {
+            // Whole words only (PostgreSQL \m \M word boundaries): 'private chest' is not 'ate'.
+            $rows = $db->fetchAll(
+                "SELECT rowid, data FROM eventlog WHERE type IN ('infoaction', 'itemfound') "
+                . "AND (data ~* '\\m(consumes|consumed|drank|ate)\\M' OR data ~* '\\mused\\M.*potion') "
+                . "AND {$since} "
+                . "ORDER BY gamets DESC, ts DESC LIMIT {$limit}"
+            );
+            foreach ((array) $rows as $row) {
+                $data = (string) ($row['data'] ?? '');
+                if (!preg_match('/^\s*(.+?)\s+(?:consumes|consumed|drank|ate|used)\s+(?:\d+\s+)?(.+?)\s*\.?\s*(?:,.*)?$/i', $data, $cm)) continue;
+                if (strcasecmp(trim($cm[1]), trim((string) $npcName)) !== 0) continue;
+                $events[] = [
+                    'action' => 'consume',
+                    'item'   => trim($cm[2], " .\t"),
+                    'source' => 'eventlog',
+                    'rowid'  => isset($row['rowid']) ? intval($row['rowid']) : null,
+                ];
             }
+        } catch (\Throwable $e) {
+            self::logError('detectItemEvents consume lookup', $e);
         }
 
+        return $events;
+    }
+
+    /**
+     * Equip / unequip events of the NPC's own gear: core's metadata.equipment (gamedata.php
+     * 'equipment', slot => item name) against what RelDyn saw last (_equipment_seen). The first
+     * look is 'initial' (what she already wears: its baseline, no removal to feel).
+     */
+    public static function detectEquipChanges(string $npcName, array &$dynamics): array
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || trim($npcName) === '') return [];
+        try {
+            $row = $db->fetchOne('SELECT metadata FROM core_npc_master WHERE lower(npc_name) = lower($1) ORDER BY id LIMIT 1', [$npcName]);
+        } catch (\Throwable $e) {
+            self::logError('detectEquipChanges equipment read', $e);
+            return [];
+        }
+        $meta = is_array($row) && isset($row['metadata']) ? json_decode((string) $row['metadata'], true) : null;
+        $equipment = is_array($meta['equipment'] ?? null) ? $meta['equipment'] : null;
+        if ($equipment === null) return [];   // core has not reported her gear
+        $worn = [];
+        foreach ($equipment as $slot => $name) {
+            if (!is_string($name) || trim($name) === '' || preg_match('/_(baseid|keywords)$/', (string) $slot)) continue;
+            $worn[strtolower(trim($name))] = trim($name);
+        }
+        $initial = !is_array($dynamics['_equipment_seen'] ?? null);
+        $seen = $initial ? [] : $dynamics['_equipment_seen'];
+        $events = [];
+        foreach ($worn as $k => $name) {
+            if (!isset($seen[$k])) $events[] = ['action' => 'equip', 'item' => $name, 'initial' => $initial];
+        }
+        foreach ($seen as $k => $name) {
+            if (!isset($worn[$k])) $events[] = ['action' => 'unequip', 'item' => (string) $name];
+        }
+        $dynamics['_equipment_seen'] = $worn;
         return $events;
     }
 
@@ -12990,7 +13092,8 @@ class RelationshipDynamics
      * Process all detected item events for this interaction.
      *
      * Orchestrator that calls processConsumable, processEquipChange, and
-     * processGift based on detected events.
+     * processGift based on detected events; keeps her eventlog watermark (_item_event_rowid)
+     * so a row counts once.
      *
      * @param array       &$dynamics    NPC dynamics blob
      * @param array       $gameRequest  Current game request
@@ -13006,7 +13109,25 @@ class RelationshipDynamics
             return [];
         }
 
-        $events = self::detectItemEvents($gameRequest, $npcName, $playerName);
+        $mark = is_numeric($dynamics['_item_event_rowid'] ?? null) ? intval($dynamics['_item_event_rowid']) : null;
+        $events = self::detectItemEvents($gameRequest, $npcName, $playerName, $mark);
+        $top = $mark ?? 0;
+        foreach ($events as $event) {
+            if (isset($event['rowid'])) $top = max($top, intval($event['rowid']));
+        }
+        if ($top > ($mark ?? 0)) {
+            $dynamics['_item_event_rowid'] = $top;
+        } elseif ($mark === null) {
+            // First look: from here on, rows after the newest one count
+            $db = $GLOBALS['db'] ?? null;
+            try {
+                $newest = $db ? $db->fetchOne('SELECT rowid FROM eventlog ORDER BY rowid DESC LIMIT 1') : [];
+                if (isset($newest['rowid'])) $dynamics['_item_event_rowid'] = intval($newest['rowid']);
+            } catch (\Throwable $e) {
+                self::logError('processItemEvents watermark', $e);
+            }
+        }
+        $events = array_merge($events, self::detectEquipChanges((string) $npcName, $dynamics));
         if (empty($events)) {
             return [];
         }
@@ -13016,7 +13137,7 @@ class RelationshipDynamics
         foreach ($events as $event) {
             switch ($event['action']) {
                 case 'consume':
-                    $results = self::processConsumable($dynamics, $event['item'], $temperament);
+                    $results = self::processConsumable($dynamics, $event['item'], $temperament, (string) $npcName);
                     if (!empty($results)) {
                         $allResults['consumable'][] = ['item' => $event['item'], 'deltas' => $results];
                     }
@@ -13036,14 +13157,14 @@ class RelationshipDynamics
                     break;
 
                 case 'equip':
-                    $results = self::processEquipChange($dynamics, $event['item'], true, $temperament);
+                    $results = self::processEquipChange($dynamics, $event['item'], true, $temperament, (string) $npcName);
                     if (!empty($results)) {
                         $allResults['equip'][] = ['item' => $event['item'], 'action' => 'equip', 'deltas' => $results];
                     }
                     break;
 
                 case 'unequip':
-                    $results = self::processEquipChange($dynamics, $event['item'], false, $temperament);
+                    $results = self::processEquipChange($dynamics, $event['item'], false, $temperament, (string) $npcName);
                     if (!empty($results)) {
                         $allResults['equip'][] = ['item' => $event['item'], 'action' => 'unequip', 'deltas' => $results];
                     }
@@ -13302,199 +13423,6 @@ class RelationshipDynamics
     // ========== REPUTATION LAYER METHODS (PR 9) ==========
 
     /**
-     * Calculate reputation modifiers for a player-NPC pair from player stats.
-     *
-     * $stats (all optional; a missing key is unknown and adds nothing):
-     *   dragon_kills int, quests_completed int, bounty_gold int (all holds), murders int,
-     *   thane_holds string[] (hold names as NPC_HOLD_KEYWORDS values), level int,
-     *   player_factions string[] and npc_factions string[] (FACTION_REPUTATION_MAP names),
-     *   dragonborn bool.
-     * April read these from MinAI actor values; CHIM 3.4.1 core has no such source wired yet
-     * (playerReputationStats()), so nothing is invented here.
-     *
-     * @return array  Per-dimension modifiers, e.g. ['trust' => 5, 'respect' => 12, 'comfort' => 3]
-     */
-    public static function calculateReputation($playerName, $npcName, $temperament, array $stats = [])
-    {
-        $modifiers = ['trust' => 0.0, 'respect' => 0.0, 'comfort' => 0.0];
-
-        if (empty($playerName)) {
-            return $modifiers;
-        }
-        $add = function (string $source, float $units) use (&$modifiers) {
-            foreach (self::REPUTATION_SOURCES[$source] as $dim => $perUnit) {
-                $modifiers[$dim] += $units * $perUnit;
-            }
-        };
-
-        // 1. Dragon kills: fame from slaying dragons (capped at 10 kills)
-        $dragonKills = intval($stats['dragon_kills'] ?? 0);
-        if ($dragonKills > 0) $add('dragon_kills', min($dragonKills, 10));
-
-        // 2. Quests completed: general fame from helpfulness (capped at 40)
-        $quests = intval($stats['quests_completed'] ?? 0);
-        if ($quests > 0) $add('quests_completed', min($quests, 40));
-
-        // 3. Crimes: 1 unit per 100 bounty gold across holds (capped at 20 units)
-        $crimeUnits = min(intdiv(abs(intval($stats['bounty_gold'] ?? 0)), 100), 20);
-        if ($crimeUnits > 0) $add('crimes_committed', $crimeUnits);
-
-        // 4. Murders: heavy infamy with fear-respect component (capped at 5)
-        $murders = intval($stats['murders'] ?? 0);
-        if ($murders > 0) $add('murders', min($murders, 5));
-
-        // 5. Thane status: only counts in the NPC's hold
-        $thaneHolds = (array) ($stats['thane_holds'] ?? []);
-        if (!empty($thaneHolds)) {
-            $npcHold = self::detectNpcHold($npcName);
-            if ($npcHold !== null) {
-                foreach ($thaneHolds as $hold) {
-                    if (strcasecmp(trim((string) $hold), $npcHold) === 0) {
-                        $add('thane', 1);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 6. Faction rank: selective respect based on shared/rival factions
-        $modifiers['respect'] += self::calculateFactionReputation(
-            (array) ($stats['npc_factions'] ?? []), (array) ($stats['player_factions'] ?? []));
-
-        // 7. Player level: only levels above 10 contribute, capped at level 50
-        $level = intval($stats['level'] ?? 0);
-        if ($level > 10) $add('player_level', min($level - 10, 40));
-
-        // 8. Dragonborn recognition
-        if (!empty($stats['dragonborn'])) {
-            $modifiers['respect'] += 10.0;
-            $modifiers['trust']   += 3.0;
-        }
-
-        // Apply caps
-        foreach (self::REPUTATION_CAPS as $dim => $caps) {
-            if (isset($modifiers[$dim])) {
-                $modifiers[$dim] = max($caps['min'], min($caps['max'], $modifiers[$dim]));
-            }
-        }
-
-        self::log("Reputation calculated for {$playerName} -> {$npcName}: " . json_encode($modifiers));
-
-        return $modifiers;
-    }
-
-    /**
-     * Player stats calculateReputation() reads. CHIM 3.4.1 core keeps Skyrim stats in
-     * core_player, but no reader is wired yet (roadmap player-stats-pipeline), and April's
-     * source was MinAI: unknown, so [] and reputation applies nothing.
-     */
-    public static function playerReputationStats($playerName): array
-    {
-        return [];
-    }
-
-    /**
-     * Get the reputation decay factor based on interaction count.
-     *
-     * Returns a multiplier from 1.0 (no interactions, full reputation effect)
-     * to 0.0 (15+ interactions, reputation irrelevant).
-     *
-     * @param array $dynamics  The NPC dynamics blob
-     * @return float  Decay factor in [0.0, 1.0]
-     */
-    public static function getReputationDecayFactor($dynamics)
-    {
-        $interactions = intval($dynamics['interaction_count'] ?? 0);
-        // Also count total_positive_interactions as a secondary signal
-        $totalPositive = intval($dynamics['total_positive_interactions'] ?? 0);
-        // Use whichever is higher (more representative of actual contact)
-        $effectiveCount = max($interactions, $totalPositive);
-
-        return max(0.0, 1.0 - ($effectiveCount / self::REPUTATION_DECAY_INTERACTIONS));
-    }
-
-    /**
-     * Apply reputation modifiers to an NPC's dimension baselines.
-     *
-     * This method:
-     * - Calculates raw reputation values
-     * - Applies the interaction-based decay factor
-     * - Adjusts dimension X values (trust, respect, comfort) accordingly
-     * - Marks the dynamics blob to prevent re-application
-     *
-     * Only runs once per NPC (first contact or when reputation hasn't been
-     * calculated yet). Subsequent calls with existing _reputation_applied
-     * will recalculate the effective contribution using the decay factor,
-     * so the reputation effect diminishes as personal experience accumulates.
-     *
-     * @param array       &$dynamics    The NPC dynamics blob (modified in place)
-     * @param string      $playerName   Player character name
-     * @param string      $npcName      NPC name
-     * @param string|null $temperament  NPC temperament
-     * @return void
-     */
-    public static function applyReputationModifiers(&$dynamics, $playerName, $npcName, $temperament)
-    {
-        // No player stats known (no core source wired yet): nothing to apply
-        $stats = self::playerReputationStats($playerName);
-        if (empty($stats)) {
-            return;
-        }
-
-        $decayFactor = self::getReputationDecayFactor($dynamics);
-
-        // If reputation is fully decayed, nothing to do (and remove any residual)
-        if ($decayFactor <= 0.0) {
-            // Mark as applied with zero contribution
-            $dynamics['_reputation_applied'] = true;
-            $dynamics['_reputation_raw'] = $dynamics['_reputation_raw'] ?? [];
-            $dynamics['_reputation_effective'] = ['trust' => 0, 'respect' => 0, 'comfort' => 0];
-            return;
-        }
-
-        // Calculate raw reputation (only once -- cache the raw values)
-        if (!isset($dynamics['_reputation_raw']) || empty($dynamics['_reputation_raw'])) {
-            $rawReputation = self::calculateReputation($playerName, $npcName, $temperament, $stats);
-            $dynamics['_reputation_raw'] = $rawReputation;
-        } else {
-            $rawReputation = $dynamics['_reputation_raw'];
-        }
-
-        // Calculate current effective reputation (raw * decay)
-        $effective = [];
-        foreach ($rawReputation as $dim => $rawVal) {
-            $effective[$dim] = round($rawVal * $decayFactor, 2);
-        }
-
-        // Determine what was previously applied (to compute delta)
-        $previousEffective = $dynamics['_reputation_effective'] ?? ['trust' => 0, 'respect' => 0, 'comfort' => 0];
-
-        // Apply the delta (difference between new effective and old effective)
-        $dims = ['trust', 'respect', 'comfort'];
-        foreach ($dims as $dim) {
-            if (!isset($dynamics['dimensions'][$dim])) continue;
-
-            $newEff = $effective[$dim] ?? 0;
-            $oldEff = $previousEffective[$dim] ?? 0;
-            $delta = $newEff - $oldEff;
-
-            if (abs($delta) > 0.01) {
-                $current = floatval($dynamics['dimensions'][$dim]['x'] ?? 0);
-                $def = self::getDimensionDefinition($dim);
-                $rangeMin = $def ? (float) $def['range_min'] : 0;
-                $rangeMax = $def ? (float) $def['range_max'] : 100;
-
-                $dynamics['dimensions'][$dim]['x'] = max($rangeMin, min($rangeMax, $current + $delta));
-            }
-        }
-
-        // Store state
-        $dynamics['_reputation_applied'] = true;
-        $dynamics['_reputation_effective'] = $effective;
-        $dynamics['_reputation_decay_factor'] = $decayFactor;
-    }
-
-    /**
      * The hold the NPC is in: the hold of its current core place (the player's scene;
      * RelDynFacets::currentPlaceContext), or of the place name, matched against
      * NPC_HOLD_KEYWORDS. null when core has no location or no keyword matches.
@@ -13551,7 +13479,7 @@ class RelationshipDynamics
             $matchFound = false;
             foreach ($rules['respects'] as $playerFaction) {
                 if ($in($playerFaction, $playerFactions)) {
-                    $netBonus += self::REPUTATION_SOURCES['faction_rank']['respect'];
+                    $netBonus += self::FACTION_RANK_RESPECT;
                     $matchFound = true;
                     break; // One match per faction group is enough
                 }
@@ -13559,7 +13487,7 @@ class RelationshipDynamics
 
             foreach ($rules['disdains'] as $playerFaction) {
                 if ($in($playerFaction, $playerFactions)) {
-                    $netBonus -= self::REPUTATION_SOURCES['faction_rank']['respect'] * 0.5;
+                    $netBonus -= self::FACTION_RANK_RESPECT * 0.5;
                     break;
                 }
             }
@@ -13568,32 +13496,6 @@ class RelationshipDynamics
         }
 
         return $netBonus;
-    }
-
-    /**
-     * Get a summary of the player's reputation for logging/debugging.
-     *
-     * @param array $dynamics  The NPC dynamics blob (must have _reputation_raw set)
-     * @return string  Human-readable summary
-     */
-    public static function getReputationSummary($dynamics)
-    {
-        if (empty($dynamics['_reputation_raw'])) {
-            return 'No reputation data calculated.';
-        }
-
-        $raw = $dynamics['_reputation_raw'];
-        $eff = $dynamics['_reputation_effective'] ?? $raw;
-        $decay = $dynamics['_reputation_decay_factor'] ?? 1.0;
-
-        $parts = [];
-        foreach ($raw as $dim => $val) {
-            $effVal = $eff[$dim] ?? 0;
-            $sign = $effVal >= 0 ? '+' : '';
-            $parts[] = "{$dim}: {$sign}{$effVal} (raw: {$val})";
-        }
-
-        return sprintf("Decay: %.0f%% | %s", $decay * 100, implode(', ', $parts));
     }
 
     // ========== END REPUTATION LAYER METHODS (PR 9) ==========
@@ -14037,76 +13939,7 @@ class RelationshipDynamics
 
         return min(3.0, $score);
     }
-    /**
-     * Check whether dimensional pain should generate an intrinsic goal.
-     *
-     * When self_worth_deficit exceeds threshold AND maturity is above minimum:
-     *   self_worth_deficit = (50 - avg_respect) + (50 - maturity) + (resentment_self / 2)
-     *
-     * If deficit > 60: flag for motivation system. Stores goal in
-     * $dynamics['_intrinsic_goals'][] with priority derived from pain level.
-     *
-     * @param array  &$dynamics  The NPC's dynamics array (modified in place)
-     * @param string $npcName    The NPC's display name
-     * @return array|null  Goal info if generated, null otherwise
-     */
-    public static function checkIntrinsicGoalGeneration(&$dynamics, $npcName)
-    {
-        $dims = $dynamics['dimensions'] ?? [];
-        $maturity       = floatval($dims['maturity']['x'] ?? 50);
-        $resentmentSelf = floatval($dims['resentment_self']['x'] ?? 0);
-        $respect        = floatval($dims['respect']['x'] ?? 50);
-
-        // Must have minimum maturity for self-awareness
-        if ($maturity <= self::DIARY_MIN_MATURITY) {
-            return null;
-        }
-
-        // self_worth_deficit = (50 - avg_respect) + (50 - maturity) + (resentment_self / 2)
-        // Using per-bond respect directly (avg across bonds would require bond iteration;
-        // for now use the current bond's respect as a proxy)
-        $selfWorthDeficit = (50 - $respect) + (50 - $maturity) + ($resentmentSelf / 2);
-
-        if ($selfWorthDeficit <= 60) {
-            return null;
-        }
-
-        // Ensure goals array exists
-        if (!isset($dynamics['_intrinsic_goals']) || !is_array($dynamics['_intrinsic_goals'])) {
-            $dynamics['_intrinsic_goals'] = [];
-        }
-
-        // Don't duplicate if an active goal of the same type already exists
-        foreach ($dynamics['_intrinsic_goals'] as $existing) {
-            if (($existing['type'] ?? '') === 'self_worth_recovery' && ($existing['active'] ?? false)) {
-                return null; // Already has this goal
-            }
-        }
-
-        $goal = [
-            'type'                => 'self_worth_recovery',
-            'label'               => 'I need to change.',
-            'priority'            => min(1.0, $selfWorthDeficit / 100),
-            'created_at'          => time(),
-            'active'              => true,
-            'deficit_at_creation' => round($selfWorthDeficit, 2),
-            'sustain_requirement' => 'maturity must stay above baseline for sustained ticks',
-            'failure_mode'        => 'slip below baseline: goal deactivates, resentment_self +5',
-            'success_mode'        => 'baseline drifts upward, goal evolves to maintain',
-        ];
-
-        $dynamics['_intrinsic_goals'][] = $goal;
-
-        // Cap stored goals to 5
-        if (count($dynamics['_intrinsic_goals']) > 5) {
-            $dynamics['_intrinsic_goals'] = array_slice($dynamics['_intrinsic_goals'], -5);
-        }
-
-        error_log("[RelDyn-DIARY] Intrinsic goal generated for {$npcName}: self_worth_recovery " .
-            "(deficit={$selfWorthDeficit}, priority={$goal['priority']})");
-
-        return $goal;
-    }
+    // Intrinsic goals, incl. self-worth 'I need to change': RelDynGoals (reldyn_goals.php).
 
     // ========== END DIARY SELF-EVAL (PR 9) ==========
 
@@ -15167,47 +15000,8 @@ class RelationshipDynamics
 
     // ========== END CASCADING AFFINITY NETWORK (PR 12) ==========
 
-    // ========== DUTY OVERRIDE (PR 12) ==========
+    // Duty override (MDD 9): RelDynQuests::dutyState / onPrerequest (reldyn_quests.php).
 
-    /**
-     * Check if current interaction is quest-protected.
-     * Returns dampening factor: 1.0 = normal, 0.0 = fully protected, 0.1 = quest-dampened.
-     */
-    public static function getDutyOverrideFactor(): float
-    {
-        $config = self::getConfig();
-        if (empty($config['duty_override_enabled'])) return 1.0;
-
-        // Check explicit flag from game-side
-        try {
-            $db = $GLOBALS['db'] ?? null;
-            if ($db) {
-                $row = $db->fetchOne("SELECT value FROM conf_opts WHERE id = '_duty_override_active' LIMIT 1");
-                if ($row && !empty($row['value'])) {
-                    $override = json_decode($row['value'], true);
-                    if (is_array($override) && !empty($override['active'])) {
-                        return floatval($override['dampening'] ?? 0.1);
-                    }
-                }
-            }
-        } catch (\Throwable $e) { self::logError('getDutyOverrideFactor', $e); }
-
-        // Check request type for quest indicators
-        $gameRequest = $GLOBALS['gameRequest'] ?? [];
-        $reqType = is_array($gameRequest) ? ($gameRequest[0] ?? '') : '';
-        $reqData = is_array($gameRequest) ? ($gameRequest[3] ?? '') : '';
-
-        $questIndicators = ['quest_dialogue', 'quest_event', 'snqe_', 'forced_dialogue', 'scene_dialogue'];
-        foreach ($questIndicators as $indicator) {
-            if (stripos($reqType, $indicator) !== false || stripos($reqData, $indicator) !== false) {
-                return 0.1;
-            }
-        }
-
-        return 1.0;
-    }
-
-    // ========== END DUTY OVERRIDE (PR 12) ==========
 
     // ========== PARASITE DETECTION (PR 12) ==========
 
@@ -15372,6 +15166,12 @@ class RelationshipDynamics
         if ($dimId === 'comfort') {
             $held += floatval($dynamics[RelDynResentment::STATE_KEY]['guilt']['applied'] ?? 0.0);
         }
+        // What she heard of the player before meeting them (reputation-layer), fading
+        $held += RelDynReputation::heldOffset($dynamics, $dimId);
+        // A consumable's spike until it wears off (item-modifiers)
+        foreach ((array) ($dynamics['_active_consumables'] ?? []) as $c) {
+            if (is_array($c)) $held += floatval($c['immediate'][$dimId] ?? 0.0);
+        }
         return $held;
     }
 
@@ -15431,8 +15231,9 @@ class RelationshipDynamics
      * started (_baseline_drift_origin: the seed, or the value an editor or a divine-intervention
      * arc last set; a baseline that no longer equals the value drift left is re-anchored there).
      * The baseline read is the NPC's own: resentment_self's standing offset on it
-     * (RelDynResentment::baselineOffset, lifted exactly when the shame falls back) is a state, not
-     * a new origin, so drift runs without it and writes it back on top.
+     * (RelDynResentment::baselineOffset, lifted exactly when the shame falls back) and her worn
+     * gear's (equippedBaselineOffset) are states, not a new origin (heldBaselineOffset), so drift
+     * runs without them and writes them back on top.
      * Gated by the game calendar: a day's evidence moves a baseline once, so a second diary eval
      * before a newer contact day has been sampled leaves it where the first one put it.
      * Returns dimension => ['old_baseline', 'new_baseline', 'drift'] (sample units).
@@ -15455,7 +15256,7 @@ class RelationshipDynamics
             if (count($list) < $minSamples) continue;
             $latestDay = intval($list[count($list) - 1]['day']);
             $recent = array_map(fn($s) => floatval($s['v']), array_slice($list, -$minSamples));
-            $selfOffset = RelDynResentment::baselineOffset($dynamics, $dimId);   // held on the stored baseline
+            $selfOffset = self::heldBaselineOffset($dynamics, $dimId);   // held on the stored baseline (resentment_self, worn gear)
             $baseline = self::driftBaseline($dynamics, $dimId) - $selfOffset;   // her own
 
             $above = min($recent) > $baseline + $tolerance;
@@ -16875,6 +16676,59 @@ class RelationshipDynamics
         ],
     ];
 
+    /** Config 'autonomy' defaults (defaultConfig documents the units). */
+    const AUTONOMY_DEFAULTS = [
+        'weights' => self::AUTONOMY_WEIGHTS,
+        'thresholds' => self::AUTONOMY_THRESHOLDS,
+        'denied_actions' => self::AUTONOMY_DENIED_ACTIONS,
+    ];
+
+    /** Config 'autonomy' over its defaults (a stored table replaces that table). */
+    public static function autonomyConfig(): array
+    {
+        $stored = self::configValue('autonomy');
+        return array_replace(self::AUTONOMY_DEFAULTS, is_array($stored) ? $stored : []);
+    }
+
+    /**
+     * The action filter of autonomy-command-denial (ext/relationship_dynamics/functions.php):
+     * core's functions/functions.php requires every ext functions.php after it loaded the
+     * enabled action codes and before it drops the definitions of the codes that are not
+     * enabled, so removing a code from ENABLED_FUNCTIONS here takes the action off this
+     * request's list. The prerequest's evaluation (RELDYN_AUTONOMY_EVAL) is for the NPC it ran
+     * for (RELDYN_AUTONOMY_NPC); a request that speaks as someone else by now keeps its list.
+     * Returns the codes removed.
+     */
+    public static function applyAutonomyActionFilter(): array
+    {
+        $eval = $GLOBALS['RELDYN_AUTONOMY_EVAL'] ?? null;
+        $npc = $GLOBALS['RELDYN_AUTONOMY_NPC'] ?? null;
+        $enabled = $GLOBALS['ENABLED_FUNCTIONS'] ?? null;
+        if (!is_array($eval) || !is_string($npc) || !is_array($enabled)) return [];
+        $deny = array_values(array_filter((array) ($eval['deny_actions'] ?? []), 'is_string'));
+        if ($deny === []) return [];
+        $speaker = trim((string) ($GLOBALS['HERIKA_NAME'] ?? ''));
+        if (strcasecmp($speaker, trim($npc)) !== 0) {
+            self::log("[RelDyn-AUTONOMY] action filter for {$npc} not applied: this request speaks as '{$speaker}'");
+            return [];
+        }
+        $denySet = array_change_key_case(array_flip($deny), CASE_LOWER);
+        $kept = [];
+        $removed = [];
+        foreach ($enabled as $code) {
+            if (is_string($code) && isset($denySet[strtolower($code)])) {
+                $removed[] = $code;
+            } else {
+                $kept[] = $code;
+            }
+        }
+        if ($removed !== []) {
+            $GLOBALS['ENABLED_FUNCTIONS'] = $kept;
+            self::log("[RelDyn-AUTONOMY] {$npc} ({$eval['state']}, " . ($eval['refusal_type'] ?? 'none') . '): actions taken off: ' . implode(', ', $removed));
+        }
+        return $removed;
+    }
+
     // Walkaway constants. No passive resentment decay while the NPC is away (decisions
     // 2026-09-23 §2: time does not heal); leaving them alone resolves the boundary test.
     const WALKAWAY_FOLLOW_RESENTMENT_MULT = 2.0;      // Resentment multiplier when player follows
@@ -16931,7 +16785,8 @@ class RelationshipDynamics
         }
 
         // Calculate autonomy score
-        $w = self::AUTONOMY_WEIGHTS;
+        $acfg = self::autonomyConfig();
+        $w = array_replace(self::AUTONOMY_WEIGHTS, (array) $acfg['weights']);
         $score = (100 - $trust) * $w['distrust']
                + (100 - $respect) * $w['disrespect']
                + $resentment * $w['resentment']
@@ -16943,7 +16798,7 @@ class RelationshipDynamics
 
         // Check for hoover reduction (post-hoover NPCs trigger walkaway sooner)
         $hooverCount = intval($dynamics['_hoover_count'] ?? 0);
-        $effectiveThresholds = self::AUTONOMY_THRESHOLDS;
+        $effectiveThresholds = array_replace(self::AUTONOMY_THRESHOLDS, (array) $acfg['thresholds']);
         if ($hooverCount > 0) {
             $reduction = self::HOOVER_WALKAWAY_THRESHOLD_REDUCTION * $hooverCount;
             // Lower the refusing/walkaway thresholds
@@ -17084,7 +16939,8 @@ class RelationshipDynamics
      */
     public static function getDeniedActions($state)
     {
-        return self::AUTONOMY_DENIED_ACTIONS[$state] ?? [];
+        $lists = (array) self::autonomyConfig()['denied_actions'];
+        return array_values(array_filter((array) ($lists[$state] ?? []), 'is_string'));
     }
 
     /**
@@ -18275,3 +18131,12 @@ require_once __DIR__ . '/reldyn_creatures.php';
 require_once __DIR__ . '/reldyn_combat.php';
 // Natural exclusivity: the pull toward the player, NPC-NPC deflection, damped interest in suitors (decisions §17)
 require_once __DIR__ . '/reldyn_exclusivity.php';
+
+// Quests: the duty override and the quest event hook (duty-override, quest-event-hook)
+require_once __DIR__ . '/reldyn_quests.php';
+
+// Intrinsic goals, tier 1 (MDD 14.2; intrinsic-goals)
+require_once __DIR__ . '/reldyn_goals.php';
+
+// Reputation: the pre-contact baseline (reputation-layer)
+require_once __DIR__ . '/reldyn_reputation.php';

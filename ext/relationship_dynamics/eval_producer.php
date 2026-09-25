@@ -361,6 +361,11 @@ final class RelDynEval
                 // the mood the NPC answered this exchange in (the Ick reads it from the item)
                 'reply_mood'   => self::currentMood($npcName),
             ];
+            // A duty exchange (MDD 9, RelDynQuests): its negative signals land dampened
+            $duty = $GLOBALS['RELDYN_DUTY_FACTOR'] ?? null;
+            if (is_numeric($duty) && floatval($duty) < 1.0) {
+                $job['duty_factor'] = max(0.0, floatval($duty));
+            }
             $jobId = self::enqueue($npcId, $npcName, $job);
             RelDynStorage::setKey($npcId, self::KEY_PRODUCER, [
                 'last_enqueued_gamets' => $gamets,
@@ -1305,6 +1310,7 @@ PROMPT;
             'summary'              => $summary,
         ] + ($romanticIntent !== null ? ['romantic_intent' => $romanticIntent] : [])
           + (is_string($job['reply_mood'] ?? null) && trim($job['reply_mood']) !== '' ? ['reply_mood' => strtolower(trim($job['reply_mood']))] : [])
+          + (is_numeric($job['duty_factor'] ?? null) ? ['duty_factor' => max(0.0, min(1.0, floatval($job['duty_factor'])))] : [])
           + $goal
           + ($masking !== null ? ['masking' => $masking] : [])
           + ($exposure !== null ? ['exposure' => $exposure] : []);

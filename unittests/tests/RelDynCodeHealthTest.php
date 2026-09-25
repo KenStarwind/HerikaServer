@@ -245,8 +245,9 @@ final class RelDynCodeHealthTest extends TestCase
     {
         $this->usePostgres();
         $this->event('itemfound', 'Lydia drank Honningbrew Mead');
-        $this->event('itemfound', 'Kaida used Potion of Healing');
-        $this->event('itemfound', 'Kaida used the lever');
+        $this->event('itemfound', 'Lydia used Potion of Healing');
+        $this->event('itemfound', 'Kaida used Potion of Stamina');   // the player's drink is not hers (item-modifiers)
+        $this->event('itemfound', 'Lydia used the lever');
 
         $items = array_column(array_filter(
             RelationshipDynamics::detectItemEvents($GLOBALS['gameRequest'], 'Lydia', 'Kaida'),

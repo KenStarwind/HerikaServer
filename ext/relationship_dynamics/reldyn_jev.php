@@ -74,6 +74,16 @@
  *                    werewolf_moon|werewolf_night|werewolf_day), 'moon' => ?string (Skyrim's phase),
  *                    'offsets' => [dim => points held now]] (RelDynCreatures::jev)
  *   goal             null | ['text' => string, 'priority' => 0..1]
+ *   intrinsic_goals  list of ['type' => bond_seeking|purpose|mastery|safety|independence|revenge|
+ *                    self_worth_recovery, 'priority' => 0..1, 'progress' => 0..1, 'source' => string,
+ *                    'phase' => ?string (self-worth: change|maintain), 'keywords' => string[]]
+ *                    (RelDynGoals, MDD 14.2), highest priority first
+ *   reputation       null | ['fame' => 0..1, 'infamy' => 0..1, 'weight' => 0..1 (fades with meaningful
+ *                    interactions), 'meaningful' => int, 'offsets' => dimension => points held now]
+ *   duty             null | ['quest' => ?string, 'factor' => 0..1 on negative eval signals, 'hostile' => ?string]
+ *   autonomy         ['state' => compliant|resistant|refusing|walkaway, 'score' => 0..100,
+ *                    'refusal' => ?silent|boundary|dramatic|direct|manipulative, 'people_pleaser' => bool,
+ *                    'denied_actions' => core action codes taken off the list]
  *   units            field => unit description
  *   text             compact one-line rendering ("key=value ...") for a prompt
  */
@@ -101,6 +111,10 @@ final class RelDynJev
         'resentment_arc.self_baseline_offsets' => 'baseline points', 'resentment_arc.guilt_bleed' => 'comfort points',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
         'creature.offsets' => 'dimension points held by the creature row',
+        'intrinsic_goals.priority' => '0..1', 'intrinsic_goals.progress' => '0..1',
+        'reputation.fame' => '0..1', 'reputation.infamy' => '0..1', 'reputation.weight' => '0..1',
+        'reputation.offsets' => 'dimension points held now', 'duty.factor' => 'multiplier on negative eval signals',
+        'autonomy.score' => '0..100',
     ];
 
     public static function state(string $npcName, array $dynamics, float $now): array
@@ -199,10 +213,24 @@ final class RelDynJev
             'place' => $place,
             'creature' => RelDynCreatures::jev($dynamics),
             'goal' => $goal,
+            'intrinsic_goals' => RelDynGoals::jev($dynamics),
+            'reputation' => RelDynReputation::jev($dynamics),
+            'duty' => RelDynQuests::jev($dynamics),
+            'autonomy' => self::autonomy($dynamics),
             'units' => self::UNITS,
         ];
         $out['text'] = self::render($out);
         return $out;
+    }
+
+    /** The autonomy evaluation (MDD 6.4) as Jev needs it. */
+    private static function autonomy(array $dynamics): array
+    {
+        $temperament = (string) ($dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic');
+        $e = RelationshipDynamics::evaluateAutonomyState($dynamics, $temperament);
+        return ['state' => (string) $e['state'], 'score' => round(floatval($e['autonomy_score']), 2),
+            'refusal' => $e['refusal_type'] !== null ? (string) $e['refusal_type'] : null,
+            'people_pleaser' => !empty($e['people_pleaser']), 'denied_actions' => array_values((array) $e['deny_actions'])];
     }
 
     /** Compact one-line rendering for a prompt: "key=value" pairs, numbers as they are. */
@@ -279,6 +307,23 @@ final class RelDynJev
         }
         if ($s['goal'] !== null) {
             $parts[] = 'goal="' . str_replace('"', "'", $s['goal']['text']) . '"(' . number_format($s['goal']['priority'], 1, '.', '') . ')';
+        }
+        $au = $s['autonomy'] ?? null;
+        if (is_array($au)) {
+            $parts[] = "autonomy={$au['state']}(" . $f($au['score']) . ')' . ($au['refusal'] !== null ? " refusal={$au['refusal']}" : '')
+                . ($au['people_pleaser'] ? ' people_pleaser' : '');
+        }
+        foreach ((array) ($s['intrinsic_goals'] ?? []) as $g) {
+            $parts[] = "intrinsic={$g['type']}(" . number_format($g['priority'], 2, '.', '') . ' progress ' . number_format($g['progress'], 2, '.', '') . ')';
+        }
+        if (($s['reputation'] ?? null) !== null) {
+            $r = $s['reputation'];
+            $parts[] = 'reputation=fame ' . number_format($r['fame'], 2, '.', '') . ' infamy ' . number_format($r['infamy'], 2, '.', '')
+                . ' weight ' . number_format($r['weight'], 2, '.', '');
+        }
+        if (($s['duty'] ?? null) !== null) {
+            $parts[] = 'duty=' . ($s['duty']['quest'] !== null ? '"' . str_replace('"', "'", $s['duty']['quest']) . '"' : 'flag')
+                . ' x' . number_format($s['duty']['factor'], 2, '.', '');
         }
         return implode(' ', $parts);
     }

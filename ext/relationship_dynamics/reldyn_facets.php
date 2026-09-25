@@ -1400,6 +1400,8 @@ class RelDynFacets
             $facets = static::placeFacets($ctx);
             $r = self::placeTurn($npcName, $dynamics, $place, $facets, self::preferences($dynamics, $npcName), $now);
             $changed = true;
+            // A place that touches one of her intrinsic goals moves it (MDD 14.2), once a game day
+            RelDynGoals::onExperience($npcName, $dynamics, 'place', $place !== '' ? $place : 'wilderness', $facets, $now);
             $a = $r['appraisal'];
             RelationshipDynamics::log(sprintf('[PLACE] %s @ %s: valence %+.2f intensity %.2f dominant %s%s, comfort %+.2f mood %+.2f, discomfort %.1f, pressure %+.2f%s',
                 $npcName, $place, $a['valence'], $a['intensity'], $a['dominant'] ?? '-', $a['dominant'] ? ($a['dominant_sign'] < 0 ? '-' : '+') : '',

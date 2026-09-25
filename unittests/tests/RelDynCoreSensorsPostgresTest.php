@@ -319,25 +319,23 @@ final class RelDynCoreSensorsPostgresTest extends TestCase
 
     public function testReputationHasNoMinaiSource(): void
     {
-        $dyn = ['interaction_count' => 0, 'dimensions' => ['respect' => ['x' => 50], 'trust' => ['x' => 50], 'comfort' => ['x' => 50]]];
-        RelationshipDynamics::applyReputationModifiers($dyn, 'Kaida', 'Lydia', 'Stoic');
-        $this->assertSame(50, $dyn['dimensions']['respect']['x'], 'no core player-stats source yet: unknown, nothing applied');
+        // reputation-layer: fame / infamy come from core's player data (RelDynPlayer's profile);
+        // nothing known here, so nothing is applied, and MinAI's actor values are never read
+        $dyn = ['interaction_count' => 0, 'dimensions' => ['respect' => ['x' => 50.0], 'trust' => ['x' => 50.0], 'comfort' => ['x' => 50.0]]];
+        RelDynReputation::apply($dyn, 'Lydia');
+        $this->assertSame(50.0, $dyn['dimensions']['respect']['x'], 'no core player evidence: unknown, nothing applied');
+        $this->assertArrayNotHasKey('raw', $dyn[RelDynReputation::KEY] ?? [], 'asked again on the next contact');
         $this->assertNull(RelationshipDynamics::detectNpcHold('Lydia'), 'no location context: unknown');
         $this->assertSame(0.0, RelationshipDynamics::calculateFactionReputation([], []), 'memberships unknown');
         $this->assertSame(8.0, RelationshipDynamics::calculateFactionReputation(['The Companions'], ['The Circle']));
         $this->assertSame(-4.0, RelationshipDynamics::calculateFactionReputation(['Stormcloaks'], ['Imperial Legion']));
-        $this->assertSame(['trust' => 0.0, 'respect' => 0.0, 'comfort' => 0.0],
-            RelationshipDynamics::calculateReputation('Kaida', 'Lydia', 'Stoic', []));
         $this->assertNoMinaiRead();
     }
 
-    public function testReputationStatsMathAndThaneHoldFromCorePlace(): void
+    public function testNpcHoldComesFromCorePlace(): void
     {
         $this->event('request', self::NOW - 1000, '(Context location: Riverwood outdoors ,Hold: Whiterun, current date ..., current weather: Pleasant)');
         $this->assertSame('Whiterun', RelationshipDynamics::detectNpcHold('Lydia'));
-        $mods = RelationshipDynamics::calculateReputation('Kaida', 'Lydia', 'Stoic',
-            ['dragon_kills' => 2, 'thane_holds' => ['Whiterun'], 'bounty_gold' => 250]);
-        // dragons 2 x (respect 2, trust 1); thane respect 5 comfort 5; crimes 2 x (trust -1, comfort -0.5)
-        $this->assertEqualsWithDelta(['trust' => 0.0, 'respect' => 9.0, 'comfort' => 4.0], $mods, 1e-9);
+        $this->assertNoMinaiRead();
     }
 }
