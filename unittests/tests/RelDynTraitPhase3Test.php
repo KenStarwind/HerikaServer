@@ -188,14 +188,15 @@ final class RelDynTraitPhase3Test extends TestCase
             $prev = $v;
         }
 
-        // End to end through the eval (Guarded, Brittle, at baseline): a gain is unchanged
-        // (10 x 0.4 x 0.7 = 2.8); a loss is x1.5 x 1.3 = -19.5 (was 0.4 x 1.3 = -5.2)
+        // End to end through the eval (Guarded, Brittle, at baseline; a partner's words, bond
+        // level 100: social sensitivity 1): a gain is unchanged (10 x 0.4 x 0.7 = 2.8); a loss
+        // is x1.5 x 1.3 = -19.5 (was 0.4 x 1.3 = -5.2)
         foreach ([[10.0, 2.8], [-10.0, -19.5]] as [$raw, $want]) {
             $d = self::preset('Guarded');
             $d['dimensions']['maturity']['plasticity_type'] = 'Brittle';
             $d['dimensions']['maturity']['x'] = 45;
             $d['dimensions']['trust']['x'] = $d['dimensions']['trust']['baseline'];
-            $r = RelationshipDynamics::applyEvalSignal('Npc', $d, 'trust', $raw, [], 1.0);
+            $r = RelationshipDynamics::applyEvalSignal('Npc', $d, 'trust', $raw, [], 1.0, 100.0);
             $this->assertEqualsWithDelta($want, $r['actual'], 1e-3, "Guarded trust {$raw}");
         }
     }

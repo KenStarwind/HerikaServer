@@ -368,6 +368,11 @@ if (!empty($reldynCfg['hoover_enabled'] ?? true)) {
     }
 }
 
+// ========== BASELINE DRIFT SAMPLE (PR 13; decisions §2: contact, not time) ==========
+// Today's sample of the drift dimensions (one per game-calendar day, this contact's state):
+// what the diary's drift (postrequest) and its sustained-delta trigger (below) read.
+RelationshipDynamics::recordBaselineDriftSample($dynamics, RelationshipDynamics::currentGamets());
+
 // ========== AUTONOMOUS DIARY TRIGGER (PR 14) ==========
 if (!empty($reldynCfg['autonomous_diary_enabled'])) {
     $diaryTriggered = RelationshipDynamics::checkDiaryTrigger($npcName, $dynamics, 'interaction');

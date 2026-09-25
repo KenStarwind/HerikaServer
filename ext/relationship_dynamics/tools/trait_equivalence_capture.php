@@ -77,7 +77,8 @@ function reldyn_trait_capture_label($t): array
     $r['sensitivity_curve'] = $RD::getSocialSensitivityCurve($t, null);
     foreach ($dims as $dim) {
         foreach ([0, 10, 25, 50, 75, 90, 100] as $b) {
-            $d = ['dimensions' => ['affinity' => ['x' => $b]]];
+            // bond level $b = core affinity toward the player (the mirror x = (core + 100) / 2)
+            $d = ['_aff_mirror_x' => ($b + 100) / 2, 'dimensions' => ['affinity' => ['x' => ($b + 100) / 2]]];
             $r['social_sensitivity'][$dim][$b] = [
                 $RD::applySocialSensitivity($d, $dim, 1.0, $t),
                 $RD::applySocialSensitivity($d, $dim, -1.0, $t),

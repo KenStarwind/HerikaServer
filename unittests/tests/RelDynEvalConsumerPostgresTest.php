@@ -244,8 +244,11 @@ final class RelDynEvalConsumerPostgresTest extends TestCase
         $stored = $this->plugin($id);
         $this->assertEqualsWithDelta(0.15, (float) $stored['dynamics']['_pending_aff_delta'], 1e-3, 'mirror rounding: 4 places x2');
         $this->assertEqualsWithDelta(3.15 / 2.0, $results['affinity'], 1e-4, 'result in mirror units (4 places)');
-        // trust: +10 x R Proud 0.6 x Rigid up 0.3 = +1.8 (no M: tags only shape affinity)
-        $this->assertEqualsWithDelta(31.8, (float) $stored['dynamics']['dimensions']['trust']['x'], 1e-6);
+        // trust: +10 x R Proud 0.6 x Rigid up 0.3 = +1.8 (no M: tags only shape affinity) x S, his
+        // social sensitivity curve at the bond the words were spoken in (core 15)
+        $s = RelationshipDynamics::socialSensitivityFactor($dyn, 'trust', false, null, 15.0);
+        $this->assertLessThan(1.0, $s);
+        $this->assertEqualsWithDelta(30.0 + 1.8 * $s, (float) $stored['dynamics']['dimensions']['trust']['x'], 1e-4);
         // maturity: -4 x Rigid down 0.3 = -1.2 (R maturity retired: MDD 15.4 edit, decisions §16 #6)
         $this->assertEqualsWithDelta(33.8, (float) $stored['dynamics']['dimensions']['maturity']['x'], 1e-6);
         $this->assertArrayNotHasKey('eval_inbox', $stored, 'inbox consumed');

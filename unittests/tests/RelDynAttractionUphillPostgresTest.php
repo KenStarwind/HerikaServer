@@ -1277,7 +1277,8 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
             $all = implode(' | ', $l);
             $this->assertStringContainsString('kind deflection', $l['attraction'] ?? '', $all);
             $this->assertArrayHasKey('passion', $l, $all);
-            $this->assertMatchesRegularExpression('/(not|nothing) romantic/', $l['passion'], 'a friend intensity: ' . $all);
+            // the platonic reading, at the band the bond shows (the per-bond display multiplier)
+            $this->assertContains($l['passion'], RelDynFelt::TEXT_DEFAULTS['passion_platonic'], 'a friend intensity: ' . $all);
             $this->assertDoesNotMatchRegularExpression($desire, $all, "passion {$p}: no desire next to a deflection");
         }
 
@@ -1301,7 +1302,10 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $all = implode(' | ', $l);
         $this->assertStringContainsString('won', $l['attraction'] ?? '', $all);
         $this->assertStringNotContainsString('deflection', $all);
-        $this->assertMatchesRegularExpression('/drifts closer/', $l['passion'] ?? '', $all);
+        // the desire at the band the bond shows (the per-bond display multiplier on passion 65)
+        $band = RelationshipDynamics::getPassionBand(RelationshipDynamics::getEffectiveDimensionValue($won, 'passion'));
+        $this->assertStringStartsWith(RelDynFelt::TEXT_DEFAULTS['passion'][$band], $l['passion'] ?? '', $all);
+        $this->assertMatchesRegularExpression($desire, $l['passion'] ?? '', $all);
         foreach ($l as $t) $this->assertDoesNotMatchRegularExpression('/\d/', $t, 'feelings, never numbers');
         $this->assertNoDbFailures();
     }

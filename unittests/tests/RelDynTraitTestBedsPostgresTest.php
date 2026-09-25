@@ -459,11 +459,13 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
             $gain[$npc] = RelationshipDynamics::getSignalResistance($t, 'trust', $d, false);
             $loss[$npc] = RelationshipDynamics::getSignalResistance($t, 'trust', $d, true);
             $this->assertGreaterThan($gain[$npc], $loss[$npc], "{$npc}: slow gain, fast loss");
-            // through the eval, at the trust baseline: the loss is x R_down x P_down
+            // through the eval, at the trust baseline: the loss is x R_down x P_down x S (her
+            // social sensitivity curve at the bond level)
             $d['dimensions']['trust']['x'] = $d['dimensions']['trust']['baseline'];
             $d['dimensions']['maturity']['x'] = max(30.0, floatval($d['dimensions']['maturity']['x']));
+            $s = RelationshipDynamics::socialSensitivityFactor($d, 'trust', true);
             $r = RelationshipDynamics::applyEvalSignal($npc, $d, 'trust', -4.0, [], 1.0);
-            $this->assertEqualsWithDelta(-4.0 * $loss[$npc] * RelationshipDynamics::effectiveMaturityY($d)['Y_down'], $r['actual'], 1e-3, $npc);
+            $this->assertEqualsWithDelta(-4.0 * $loss[$npc] * RelationshipDynamics::effectiveMaturityY($d)['Y_down'] * $s, $r['actual'], 1e-3, $npc);
         }
         asort($gain);
         $this->assertSame('Ashe', array_key_first($gain), 'Ashe: the slowest to trust');

@@ -612,8 +612,14 @@ if (isset($GLOBALS['RELDYN_MASKING_ACTIVE'])) {
 }
 
 // ========== DIARY COMPLETION (PR 14) ==========
-// If diary was triggered and generated this cycle, mark completed
+// If diary was triggered and generated this cycle, mark completed. The reflection is where
+// sustained experience moves the NPC's global baselines (baseline drift, PR 13 / recap
+// 2026-03-31 Fix 5), before the diary bookmarks are taken.
 if (!empty($GLOBALS['RELDYN_DIARY_TRIGGERED'])) {
+    $driftResults = RelationshipDynamics::processBaselineDrift($npcName, $dynamics);
+    if (!empty($driftResults)) {
+        RelationshipDynamics::log("Baseline drift for {$npcName}: " . json_encode($driftResults));
+    }
     RelationshipDynamics::markDiaryCompleted($dynamics);
 }
 

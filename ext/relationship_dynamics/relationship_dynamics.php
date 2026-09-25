@@ -364,6 +364,25 @@ class RelationshipDynamics
     /** Tolerance band — X must be at least this far from baseline consistently. */
     const BASELINE_DRIFT_TOLERANCE = 5;
 
+    /** Config 'baseline_drift' defaults (units in defaultConfig()). */
+    const BASELINE_DRIFT_DEFAULTS = [
+        'dimensions' => ['affinity', 'trust', 'comfort', 'respect', 'maturity'],
+        'rate' => self::BASELINE_DRIFT_RATE,
+        'max_from_origin' => self::BASELINE_DRIFT_MAX,
+        'min_samples' => self::BASELINE_DRIFT_MIN_SAMPLES,
+        'tolerance' => self::BASELINE_DRIFT_TOLERANCE,
+        'window' => 5,
+    ];
+
+    /** Config 'per_bond_display' defaults (units in defaultConfig()). */
+    const PER_BOND_DISPLAY_DEFAULTS = [
+        'affinity_bonus_max' => 0.15,
+        'type_curve_exponent' => ['passion' => 0.5, 'warmth' => 0.5, 'respect' => 0.5, 'trust' => 0.75, 'comfort' => 0.75],
+    ];
+
+    /** Config 'self_confidence' defaults (units in defaultConfig()). */
+    const SELF_CONFIDENCE_DEFAULTS = ['arrogant_confidence_above' => 75.0, 'arrogant_maturity_below' => 30.0];
+
     // ========== INTERNAL WEATHER / DEPRIVATION ==========
     // Weather, its modifiers and deprivation live in RelDynFacets (config facet_appraisal).
 
@@ -920,6 +939,26 @@ class RelationshipDynamics
             'parasite_detection_enabled' => true,
             // PR 13: Environmental Quirks
             'baseline_drift_enabled' => true,
+            // Baseline drift (audit #57, PR 13; decisions §2 "time does not heal, contact does"):
+            // on contact, one sample per game-calendar day of each listed dimension (its x;
+            // affinity in core units -100..100, as its baseline); at the diary eval, when the last
+            // min_samples samples all sit more than tolerance points on one side of the baseline,
+            // the GLOBAL baseline moves rate x (their average - baseline), at most max_from_origin
+            // points from where it started (the seed, or the value an editor / arc last set).
+            // window = samples (game days) kept. Warmth is not listed (recap 2026-03-31 Fix 5).
+            'baseline_drift' => self::BASELINE_DRIFT_DEFAULTS,
+            // Per-bond display multiplier (feedback_baseline_vs_perbond, feedback_perbond_tuning):
+            // what a per-bond dimension reads as toward the player, at display time only (never
+            // stored): x x (1 + affinity_bonus_max x core affinity 0..100 / 100) x type^exponent,
+            // type = RELATIONSHIP_TYPE_MODIFIERS[bond type][dimension] (unitless). The exponents
+            // soften the type table (session 2026-03-30: sqrt; recap 2026-03-31: pow 0.75 for
+            // trust and comfort). Tension checks (knowledge bridges, emergent emotions) read RAW x.
+            'per_bond_display' => self::PER_BOND_DISPLAY_DEFAULTS,
+            // Self-confidence cross-effect (dimension draft, Dimension 11): above
+            // arrogant_confidence_above with maturity below arrogant_maturity_below (points
+            // 0..100) the self-confidence band speaks as arrogance (felt text
+            // self_confidence_arrogant) instead of its band keywords.
+            'self_confidence' => self::SELF_CONFIDENCE_DEFAULTS,
             'internal_weather_enabled' => true,
             'creature_moodifications_enabled' => true,
             'emergent_emotions_enabled' => true,
@@ -933,6 +972,11 @@ class RelationshipDynamics
             'mask_maturity_cost' => 0.15,            // maturity points per masked interaction
             // PR 15: Social Sensitivity + Ick + Charisma
             'social_sensitivity_enabled' => true,
+            // Eval signals scaled by the NPC's social sensitivity curve at the bond level (core
+            // affinity toward the player, 0..100): how much the player's words land. Affinity
+            // (the bond itself) and passion (the attraction spark / uphill owns "who") are not
+            // listed; global dimensions are never scaled.
+            'social_sensitivity_signals' => ['trust', 'comfort', 'respect'],
             'ick_system_enabled' => true,
             'ick_base_threshold' => 0.5,             // fraction of romantic attempts in the window
             'charisma_detection_enabled' => true,
@@ -6766,53 +6810,44 @@ class RelationshipDynamics
     // ========== SELF-CONFIDENCE DIMENSION (PR 7) ==========
 
     /**
-     * Derive the confidence input signal from other dimension values.
-     *
-     * Self-confidence is NOT directly eval-scored. It is derived from sustained
-     * signals over time:
-     *   confidence_input = (
-     *       avg_respect_received x 0.3
-     *     + maturity x 0.3
-     *     - resentment_self x 0.3
-     *     + goal_completion_rate x 0.1
-     *   )
-     *
-     * This value is used for BASELINE DRIFT in a future PR: if confidence_input
-     * consistently exceeds current X, baseline drifts up (and vice versa).
+     * Derive the confidence input signal from other dimension values (dimension draft,
+     * Dimension 11). Self-confidence is NOT eval-scored; its evidence is:
+     *   confidence_input = respect x 0.3 + maturity x 0.3 - resentment_self x 0.3
+     *                      + goal_completion_rate x 100 x 0.1
+     * (dimension points 0..100; goal_completion_rate 0..1, goalCompletionRate()).
+     * "avg respect received" has no tracker yet: the respect dimension's x stands in (open
+     * question in the roadmap hand-off). Not wired into drift: the formula tops out at 70, so
+     * as an absolute target it would pull every confident NPC down (roadmap hand-off).
      *
      * @param array $dynamics  NPC dynamics array with dimensions sub-object
-     * @return float  Computed confidence input (0-100 range, unclamped)
+     * @return float  Computed confidence input (dimension points, unclamped)
      */
     public static function deriveConfidenceInput($dynamics)
     {
         $dims = $dynamics['dimensions'] ?? [];
-
-        // Read respect (default 50 = neutral)
-        $respect = floatval($dims['respect']['x'] ?? 50);
-
-        // Read maturity (default 50 = neutral)
+        $respect = floatval($dims['respect']['x'] ?? 50);                  // stand-in for respect received
         $maturity = floatval($dims['maturity']['x'] ?? 50);
+        $resentmentSelf = floatval($dims['resentment_self']['x'] ?? 0);    // "I hate what I've done"
+        $goalCompletionRate = self::goalCompletionRate((array) $dynamics); // "I follow through"
 
-        // resentment_self not yet built -- use 0 for now
-        $resentmentSelf = 0.0;
+        $input = $respect * 0.3 + $maturity * 0.3 - $resentmentSelf * 0.3 + $goalCompletionRate * 100.0 * 0.1;
+        return round($input, 2);
+    }
 
-        // goal_completion_rate not yet built -- use 0.5 for now (neutral)
-        $goalCompletionRate = 0.5;
-
-        // Normalize respect and maturity to 0-1 scale for weighting
-        $respectNorm = $respect / 100.0;
-        $maturityNorm = $maturity / 100.0;
-
-        // Weighted sum (result in 0-1 range, then scale to 0-100)
-        $input = (
-            $respectNorm * 0.3
-          + $maturityNorm * 0.3
-          - $resentmentSelf * 0.3
-          + $goalCompletionRate * 0.1
-        );
-
-        // Scale to 0-100 range
-        return round($input * 100.0, 2);
+    /**
+     * Share (0..1) of the NPC's recent director goals (_director_goal_history, the last 5) that
+     * ended fulfilled rather than expired; 0.5 (neutral) before any goal has ended.
+     */
+    public static function goalCompletionRate(array $dynamics): float
+    {
+        $fulfilled = 0;
+        $ended = 0;
+        foreach ((array) ($dynamics['_director_goal_history'] ?? []) as $goal) {
+            $outcome = is_array($goal) ? ($goal['outcome'] ?? null) : null;
+            if ($outcome === 'fulfilled') { $fulfilled++; $ended++; }
+            elseif ($outcome === 'expired') { $ended++; }
+        }
+        return $ended > 0 ? $fulfilled / $ended : 0.5;
     }
 
     // ========== END SELF-CONFIDENCE DIMENSION HELPERS ==========
@@ -8203,6 +8238,16 @@ class RelationshipDynamics
         return $out;
     }
 
+    /** The affinity mirror, read from core when this NPC's state has none yet (the eval's first touch). */
+    private static function ensureEvalAffinityMirror($npcName, array &$dynamics): void
+    {
+        if (!is_numeric($dynamics['_aff_mirror_x'] ?? null)) {
+            $rel = self::getPlayerRelationship($npcName);
+            self::refreshAffinityMirror($dynamics, intval($rel['aff'] ?? 0));
+            self::log("[EVAL] {$npcName}: affinity mirror read from core (aff " . intval($rel['aff'] ?? 0) . ')');
+        }
+    }
+
     /**
      * Apply one raw eval signal through the pipeline (see the section comment).
      *
@@ -8210,10 +8255,12 @@ class RelationshipDynamics
      * @param float  $raw          raw signal (dimension points; affinity in core points), clamped
      *                             to the contract range first
      * @param float  $significance 0..1; |delta| <= eval_significance_clamp x significance
+     * @param float|null $bondLevel social sensitivity bond level (core affinity 0..100) the
+     *               exchange was spoken at; null = now (socialSensitivityBondLevel)
      * @return array ['dimension' => $signal, 'actual' => change of dimensions.<signal>.x (for
      *               affinity: mirror units, core = x2), 'line' => the math, as logged]
      */
-    public static function applyEvalSignal($npcName, array &$dynamics, string $signal, float $raw, array $tags, float $significance): array
+    public static function applyEvalSignal($npcName, array &$dynamics, string $signal, float $raw, array $tags, float $significance, ?float $bondLevel = null): array
     {
         $result = ['dimension' => $signal, 'actual' => 0.0, 'line' => ''];
         $range = self::EVAL_CONTRACT_SIGNALS[$signal] ?? null;
@@ -8302,11 +8349,7 @@ class RelationshipDynamics
         if ($signal === 'affinity') {
             // The mirror must track core before it moves, or commitPlayerAffinity() has no
             // marker to measure RelDyn's change against.
-            if (!is_numeric($dynamics['_aff_mirror_x'] ?? null)) {
-                $rel = self::getPlayerRelationship($npcName);
-                self::refreshAffinityMirror($dynamics, intval($rel['aff'] ?? 0));
-                self::log("[EVAL] {$npcName}: affinity mirror read from core (aff " . intval($rel['aff'] ?? 0) . ')');
-            }
+            self::ensureEvalAffinityMirror($npcName, $dynamics);
             $mods = self::affinityModifiers($dynamics, $raw, $tags);
             $M = $mods['M'];
             $parts = [];
@@ -8320,7 +8363,20 @@ class RelationshipDynamics
             $overrides['skip_caps'] = ['resentment_affinity_gain', 'low_self_confidence_losses'];
         }
 
-        $y = $R * $P * $M;
+        // Social sensitivity (dimension draft "Social Sensitivity"): how much the player's words
+        // land on this NPC, its curve at the bond level (core affinity toward the player, 0..100).
+        // Only the signals config lists (not affinity, the bond itself, nor passion).
+        $S = 1.0;
+        if (in_array($signal, (array) self::configValue('social_sensitivity_signals'), true)) {
+            if ($bondLevel === null) {
+                self::ensureEvalAffinityMirror($npcName, $dynamics);   // the bond level is core affinity
+                $bondLevel = self::socialSensitivityBondLevel($dynamics);
+            }
+            $S = self::socialSensitivityFactor($dynamics, $signal, $raw < 0, $temperament, $bondLevel);
+            $mText .= sprintf(' x S(bond %.1f)=%.4f', $bondLevel, $S);
+        }
+
+        $y = $R * $P * $M * $S;
         // A15h's attachment part rides with the temperament Y it replaced, which this path never read
         $overrides['skip_caps'] = array_merge((array) ($overrides['skip_caps'] ?? []), ['attachment_trust_gain']);
         $overrides['Y_up'] = $y;
@@ -8536,12 +8592,16 @@ class RelationshipDynamics
         }
 
         $totals = [];
+        // The bond the words were spoken in: this item's own affinity change (applied first)
+        // must not decide how much its trust / comfort / respect signals land
+        self::ensureEvalAffinityMirror($npcName, $dynamics);
+        $bondLevel = self::socialSensitivityBondLevel($dynamics);
         foreach (self::EVAL_CONTRACT_SIGNALS as $signal => $_range) {
             $raw = $n['signals'][$signal];
             if (abs($raw) < 0.0001) {
                 continue;
             }
-            $r = self::applyEvalSignal($npcName, $dynamics, $signal, $raw, $n['tags'], $n['significance']);
+            $r = self::applyEvalSignal($npcName, $dynamics, $signal, $raw, $n['tags'], $n['significance'], $bondLevel);
             $totals[$signal] = $r['actual'];
             // What the legacy path fed downstream: the reason per moved dimension (context
             // <recent_emotional_shifts>) and the dimensional memory (confrontation / diary fuel)
@@ -9241,6 +9301,14 @@ class RelationshipDynamics
             'warmth' => 0.0, 'passion' => 0.3,
             'decay_rate' => 0.0, 'resistance' => 0.3,
         ],
+        // Dimension draft "Bond Type Transition: Bonded -> Grieving": trust x0 (can't build trust
+        // with a memory), comfort x1.5, respect / warmth x2 (idealization), passion x0. Its decay
+        // is the grief phases' (processGriefPhases), so no decay_rate column (getTypeModifier 1.0).
+        'grieving' => [
+            'trust' => 0.0, 'comfort' => 1.5, 'respect' => 2.0,
+            'warmth' => 2.0, 'passion' => 0.0,
+            'resistance' => 0.3,
+        ],
         'mercenary' => [
             'trust' => 0.5, 'comfort' => 0.3, 'respect' => 1.0,
             'warmth' => 0.2, 'passion' => 0.2,
@@ -9448,66 +9516,72 @@ class RelationshipDynamics
         // Unknown type or dimension not in table
         return 1.0;
     }
-    /**
-     * Get the effective baseline for a dimension within a specific bond.
-     *
-     * Formula: min(global_baseline * type_modifier, range_max)
-     *
-     * For global dimensions (maturity, self_confidence, coord_m, coord_f,
-     * arousal, valence), returns the global baseline directly -- these are
-     * intrinsic to the NPC, not per-bond.
-     *
-     * @param string      $npcName          NPC name (reserved for future per-NPC overrides)
-     * @param string      $dimensionId      Dimension key
-     * @param string|null $temperament      Temperament name
-     * @param string      $relationshipType Relationship type key
-     * @return float  Effective baseline value, clamped to range_max
-     */
-    public static function getEffectiveBaseline($npcName, $dimensionId, $temperament, $relationshipType)
+
+    // ---- Per-bond display multiplier (feedback_baseline_vs_perbond, feedback_perbond_tuning) ----
+    // Baselines are GLOBAL: who the NPC is with everyone. The bond with the player shows only
+    // at display time, as a multiplier on the stored value: never persisted, never a shifted
+    // baseline (April's applyDeltaWithContext wrote type-modified baselines into the stored
+    // state; it and its helpers are retired). A type change snaps: the multiplier is read from
+    // the current type every time.
+
+    /** Config 'per_bond_display' over its defaults (exponents per dimension merged one by one). */
+    public static function perBondDisplayConfig(): array
     {
-        $globalBaseline = self::getTemperamentBaseline($temperament, $dimensionId);
-
-        // Global dimensions skip modifier -- return global baseline directly
-        if (in_array($dimensionId, self::GLOBAL_DIMENSIONS, true)) {
-            return $globalBaseline;
-        }
-
-        $modifier = self::getTypeModifier($relationshipType, $dimensionId);
-        $def = self::getDimensionDefinition($dimensionId);
-        $rangeMax = $def ? (float) $def['range_max'] : 100.0;
-
-        return min($globalBaseline * $modifier, $rangeMax);
+        $stored = self::configValue('per_bond_display');
+        $cfg = is_array($stored) ? array_replace(self::PER_BOND_DISPLAY_DEFAULTS, $stored) : self::PER_BOND_DISPLAY_DEFAULTS;
+        $cfg['type_curve_exponent'] = array_replace(self::PER_BOND_DISPLAY_DEFAULTS['type_curve_exponent'],
+            is_array($cfg['type_curve_exponent'] ?? null) ? $cfg['type_curve_exponent'] : []);
+        return $cfg;
     }
 
     /**
-     * Get the effective resistance (plasticity profile) for a dimension within a specific bond.
-     *
-     * Formula: Y_up * resistance_modifier, Y_down * resistance_modifier
-     *
-     * For global dimensions (maturity, self_confidence, coord_m, coord_f,
-     * arousal, valence), returns the unmodified plasticity profile.
-     *
-     * @param string|null $temperament      Temperament name
-     * @param string      $dimensionId      Dimension key
-     * @param string      $relationshipType Relationship type key
-     * @param array       $context          Optional context (e.g., ['maturity' => 72])
-     * @return array  ['Y_up' => float, 'Y_down' => float]
+     * The per-bond display multiplier (unitless) of $dimensionId toward the player:
+     *   (1 + affinity_bonus_max x clamp(core affinity, 0, 100) / 100) x type^exponent
+     * with type = RELATIONSHIP_TYPE_MODIFIERS[$relationshipType][$dimensionId] (the bond type
+     * getRelationshipType() reads when null) and exponent = per_bond_display.type_curve_exponent
+     * (0.5 when the dimension has none). 1.0 for the global dimensions and for any dimension
+     * without a type column (affinity, the bond itself; resentment).
      */
-    public static function getEffectiveResistance($temperament, $dimensionId, $relationshipType, $context = [])
+    public static function perBondMultiplier(array $dynamics, string $dimensionId, ?string $relationshipType = null): float
     {
-        $profile = self::getPlasticityProfile($temperament, $dimensionId, $context);
-
-        // Global dimensions skip modifier -- return unmodified profile
         if (in_array($dimensionId, self::GLOBAL_DIMENSIONS, true)) {
-            return $profile;
+            return 1.0;
         }
+        $type = $relationshipType ?? self::getRelationshipType((string) ($dynamics['npc_name'] ?? ''), $dynamics);
+        $row = self::RELATIONSHIP_TYPE_MODIFIERS[$type] ?? null;
+        if (!is_array($row) || !isset($row[$dimensionId])) {
+            return 1.0;
+        }
+        $cfg = self::perBondDisplayConfig();
+        $exponent = floatval($cfg['type_curve_exponent'][$dimensionId] ?? 0.5);
+        $typeMult = pow(max(0.0, floatval($row[$dimensionId])), $exponent);
+        $bond = max(0.0, min(100.0, self::getCoreAffinity($dynamics)));   // core affinity points
+        $bonus = 1.0 + max(0.0, floatval($cfg['affinity_bonus_max'])) * $bond / 100.0;
+        return $bonus * $typeMult;
+    }
 
-        $modifier = self::getTypeModifier($relationshipType, 'resistance');
-
-        return [
-            'Y_up'   => $profile['Y_up'] * $modifier,
-            'Y_down' => $profile['Y_down'] * $modifier,
-        ];
+    /**
+     * A dimension as it reads toward the player (display time only): $value (default: the
+     * stored x; pass a baseline to get the effective baseline) x perBondMultiplier(), clamped
+     * to the dimension's range. Null when there is no value. Tension checks read the RAW value.
+     */
+    public static function getEffectiveDimensionValue(array $dynamics, string $dimensionId, ?float $value = null, ?string $relationshipType = null): ?float
+    {
+        if ($value === null) {
+            $x = $dimensionId === 'passion' ? self::getPassion($dynamics) : ($dynamics['dimensions'][$dimensionId]['x'] ?? null);
+            if (!is_numeric($x)) {
+                return null;
+            }
+            $value = floatval($x);
+        }
+        $mult = self::perBondMultiplier($dynamics, $dimensionId, $relationshipType);
+        if ($mult === 1.0) {
+            return $value;
+        }
+        $def = self::getDimensionDefinition($dimensionId);
+        $min = $def ? floatval($def['range_min']) : 0.0;
+        $max = $def ? floatval($def['range_max']) : 100.0;
+        return max($min, min($max, $value * $mult));
     }
 
     // ========== END RELATIONSHIP TYPE MODIFIERS (PR 5) ==========
@@ -11681,9 +11755,52 @@ class RelationshipDynamics
     }
 
     /**
-     * Apply social sensitivity to a raw delta.
+     * The bond level the curves read: the NPC's core affinity toward the player, clamped to
+     * 0..100 (core points; the dimension draft's worked numbers, stranger 5 / acquaintance 30 /
+     * friend 60 / bonded 85, are core affinity tiers). A hostile bond is 0. Not the 0..100
+     * mirror x, where a core-0 stranger would read 50.
+     */
+    public static function socialSensitivityBondLevel(array $dynamics): float
+    {
+        return max(0.0, min(100.0, self::getCoreAffinity($dynamics)));
+    }
+
+    /**
+     * Social sensitivity multiplier (0..1) of a delta on $dimensionId from the player: the
+     * NPC's curve (per-NPC override; else A22 through the trait engine at the NPC's vector;
+     * else the temperament's curve) at the bond level ($bondLevel, core affinity 0..100; null =
+     * socialSensitivityBondLevel now). 1.0 for the global dimensions (self-evaluative) and when
+     * social_sensitivity_enabled is off.
+     */
+    public static function socialSensitivityFactor(array $dynamics, string $dimensionId, bool $isNegative, ?string $temperament = null, ?float $bondLevel = null): float
+    {
+        if (!self::configValue('social_sensitivity_enabled')) {
+            return 1.0;
+        }
+        if (in_array($dimensionId, self::GLOBAL_DIMENSIONS, true)) {
+            return 1.0;
+        }
+        $temperament = $temperament ?? ($dynamics['inferred_temperament'] ?? null);
+        $bondLevel = $bondLevel === null ? self::socialSensitivityBondLevel($dynamics) : max(0.0, min(100.0, $bondLevel));
+
+        // A22 through the trait engine: the preset curves (with the Proud / Jealous exceptions)
+        // read pointwise at the NPC's vector; a per-NPC curve override or a non-preset label
+        // keeps the curve path below.
+        $vector = empty($dynamics['social_sensitivity_curve']) ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+        if ($vector !== null) {
+            return RelDynTraits::sensitivityAt($vector, $dimensionId, $bondLevel, $isNegative);
+        }
+
+        // The Proud (respect) and Jealous (passion, comfort) open_heart exceptions are preset
+        // curves now (RelDynTraits::presetCurve); a per-NPC override curve never had them.
+        $curve = self::getSocialSensitivityCurve($temperament, $dynamics);
+        return self::calculateSocialSensitivity($curve, $bondLevel, $isNegative);
+    }
+
+    /**
+     * Apply social sensitivity to a raw delta (socialSensitivityFactor).
      *
-     * @param array  $dynamics     NPC dynamics (reads affinity for bond level)
+     * @param array  $dynamics     NPC dynamics (core affinity toward the player = bond level)
      * @param string $dimensionId  Which dimension is being modified
      * @param float  $rawDelta     Raw delta before sensitivity
      * @param string $temperament  NPC temperament
@@ -11691,138 +11808,11 @@ class RelationshipDynamics
      */
     public static function applySocialSensitivity($dynamics, $dimensionId, $rawDelta, $temperament)
     {
-        // Config gate
-        $cfg = self::getConfig();
-        if (isset($cfg['social_sensitivity_enabled']) && !$cfg['social_sensitivity_enabled']) {
-            return $rawDelta;
-        }
-
-        // Global dimensions bypass sensitivity (self-evaluative)
-        if (in_array($dimensionId, self::GLOBAL_DIMENSIONS, true)) {
-            return $rawDelta;
-        }
-
-        $bondLevel = $dynamics['dimensions']['affinity']['x'] ?? 50;
-        $isNegative = ($rawDelta < 0);
-
-        // A22 through the trait engine: the preset curves (with the Proud / Jealous exceptions)
-        // read pointwise at the NPC's vector; a per-NPC curve override or a non-preset label
-        // keeps the curve path below.
-        $vector = empty($dynamics['social_sensitivity_curve']) ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
-        if ($vector !== null) {
-            return $rawDelta * RelDynTraits::sensitivityAt($vector, $dimensionId, $bondLevel, $isNegative);
-        }
-
-        // The Proud (respect) and Jealous (passion, comfort) open_heart exceptions are preset
-        // curves now (RelDynTraits::presetCurve); a per-NPC override curve never had them.
-        $curve = self::getSocialSensitivityCurve($temperament, $dynamics);
-
-        $sensitivity = self::calculateSocialSensitivity($curve, $bondLevel, $isNegative);
-
-        return $rawDelta * $sensitivity;
+        return $rawDelta * self::socialSensitivityFactor((array) $dynamics, (string) $dimensionId, $rawDelta < 0,
+            $temperament === null ? null : (string) $temperament);
     }
 
     // ========== END SOCIAL SENSITIVITY CURVES (PR 5) ==========
-
-    // ========== FULL PIPELINE INTEGRATION (PR 5) ==========
-    //
-    // Wraps applyDelta with type modifiers and social sensitivity so that
-    // callers get the complete physics pipeline in a single call:
-    //   1. Social sensitivity curve (bond-weighted impact)
-    //   2. Type modifier on effective baseline
-    //   3. Type modifier on effective resistance
-    //   4. Cross-signal caps (already wired inside applyDelta)
-    //   5. XYZ physics (Y resistance, Z rubber-band decay)
-    //
-    // Global dimensions (maturity, self_confidence, coord_m, coord_f,
-    // arousal, valence) skip type/sensitivity modifiers -- they are
-    // intrinsic to the NPC, not per-bond.
-    // ===========================================================
-
-    /**
-     * Apply a delta through the full pipeline: social sensitivity, type
-     * modifiers, cross-signal caps, and XYZ physics.
-     *
-     * This is the primary entry point for eval-driven or event-driven
-     * dimension changes once all PR 5 subsystems are available.
-     *
-     * Gated behind dimension_engine_enabled.
-     *
-     * @param string      $dimensionId       Dimension key (e.g. 'trust')
-     * @param array       &$dynamics         NPC dynamics blob (by reference)
-     * @param float       $rawDelta          Raw delta from eval or event
-     * @param string|null $temperament       Temperament name
-     * @param string|null $relationshipType  Bond type (stranger, bonded, etc.) -- auto-detected if null
-     * @param array       $overrides         Caller-supplied overrides for applyDelta
-     * @return float  Actual delta applied (after all pipeline stages)
-     */
-    public static function applyDeltaWithContext($dimensionId, &$dynamics, $rawDelta, $temperament, $relationshipType = null, $overrides = [])
-    {
-        $config = self::getConfig();
-        if (empty($config['dimension_engine_enabled'])) {
-            return 0.0;
-        }
-
-        $rawDelta = floatval($rawDelta);
-        if (abs($rawDelta) < 0.0001) {
-            return 0.0;
-        }
-
-        // --- Global dimensions skip type/sensitivity modifiers ---
-        $isGlobal = in_array($dimensionId, self::GLOBAL_DIMENSIONS, true);
-
-        $delta = $rawDelta;
-        $mergedOverrides = $overrides;
-
-        if (!$isGlobal) {
-            // --- Resolve relationship type if not provided ---
-            if ($relationshipType === null) {
-                $npcName = $dynamics['npc_name'] ?? '';
-                $relationshipType = self::getRelationshipType($npcName, $dynamics);
-            }
-
-            // --- Apply social sensitivity (bond-weighted impact curve) ---
-            if (method_exists(__CLASS__, 'applySocialSensitivity')) {
-                $delta = self::applySocialSensitivity($dynamics, $dimensionId, $rawDelta, $temperament);
-            }
-
-            // --- Get effective baseline (temperament x type modifier) ---
-            $effectiveBaseline = self::getEffectiveBaseline(null, $dimensionId, $temperament, $relationshipType);
-
-            // --- Get effective resistance (temperament x type modifier) ---
-            // getEffectiveResistance returns ['Y_up' => float, 'Y_down' => float]
-            $plasticityCtx = [];
-            if (isset($dynamics['dimensions']['maturity']['x'])) {
-                $plasticityCtx['maturity'] = $dynamics['dimensions']['maturity']['x'];
-            }
-            $effectiveProfile = self::getEffectiveResistance($temperament, $dimensionId, $relationshipType, $plasticityCtx);
-
-            // --- Merge effective values into overrides ---
-            // Set the baseline override so applyDelta uses the type-modified baseline
-            $mergedOverrides['baseline'] = $effectiveBaseline;
-
-            // Also set the stored baseline on the dimension state so the rubber band
-            // center reflects the type-modified value
-            if (!isset($dynamics['dimensions'])) {
-                $dynamics['dimensions'] = [];
-            }
-            if (!isset($dynamics['dimensions'][$dimensionId])) {
-                $dynamics['dimensions'][$dimensionId] = [];
-            }
-            $dynamics['dimensions'][$dimensionId]['baseline'] = $effectiveBaseline;
-
-            // Use the type-modified Y values unless the caller already provided explicit Y overrides
-            if (!isset($mergedOverrides['Y_up']) && !isset($mergedOverrides['Y_down'])) {
-                $mergedOverrides['Y_up']   = $effectiveProfile['Y_up'];
-                $mergedOverrides['Y_down'] = $effectiveProfile['Y_down'];
-            }
-        }
-
-        // --- Delegate to applyDelta (handles cross-signal caps + physics) ---
-        $actualDelta = self::applyDelta($dimensionId, $dynamics, $delta, $temperament, $mergedOverrides);
-
-        return $actualDelta;
-    }
 
     // ========== TEXT INTENSITY ENGINE ==========
     //
@@ -15043,77 +15033,144 @@ class RelationshipDynamics
     // ========== END PARASITE DETECTION (PR 12) ==========
 
     // ========== BASELINE DRIFT (PR 13) ==========
+    //
+    // Significant bonds change who you are (audit #57; recap 2026-03-31 Fix 5): a dimension held
+    // away from its GLOBAL baseline, day after day of contact, slowly moves that baseline.
+    // Time does not heal, contact does (decisions 2026-09-23 §2): samples come only from the
+    // NPC's own requests, one per game-calendar day; waiting or sleeping adds none. The drift is
+    // applied at the diary eval (postrequest, before markDiaryCompleted).
+
+    /** Config 'baseline_drift' over its defaults. */
+    public static function baselineDriftConfig(): array
+    {
+        $stored = self::configValue('baseline_drift');
+        return is_array($stored) ? array_replace(self::BASELINE_DRIFT_DEFAULTS, $stored) : self::BASELINE_DRIFT_DEFAULTS;
+    }
 
     /**
-     * Check and apply baseline drift for all driftable dimensions.
-     * Called during diary eval (~5 hours play time).
-     * Nudges baselines toward sustained reality. Capped at ±20 from temperament default.
+     * The value a drift sample records for $dimId: affinity in core units (-100..100, the units
+     * of its baseline and physics), every other dimension its x. Null when unset.
+     */
+    public static function driftSampleValue(array $dynamics, string $dimId): ?float
+    {
+        if ($dimId === 'affinity') {
+            return is_numeric($dynamics['_aff_mirror_x'] ?? null) ? self::getCoreAffinity($dynamics) : null;
+        }
+        $x = $dynamics['dimensions'][$dimId]['x'] ?? null;
+        return is_numeric($x) ? floatval($x) : null;
+    }
+
+    /**
+     * The GLOBAL baseline of $dimId in its sample units: the stored baseline, else the NPC's
+     * trait / temperament baseline (affinity is not seeded: core units from the traits).
+     */
+    public static function driftBaseline(array $dynamics, string $dimId): float
+    {
+        $stored = $dynamics['dimensions'][$dimId]['baseline'] ?? null;
+        if (is_numeric($stored)) {
+            return floatval($stored);
+        }
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null;
+        return self::getTemperamentBaseline($temperament, $dimId, $dynamics);
+    }
+
+    /**
+     * On contact (prerequest): record today's sample of every drift dimension. One sample per
+     * game-calendar day (raw gamets / GAMETS_PER_DAY); a later contact the same day replaces
+     * that day's sample (the day's experience as it ended). Keeps the last baseline_drift.window
+     * days. No game clock ($now <= 0): nothing can be credited to a day, nothing is recorded.
+     * Returns true when a sample was written.
+     */
+    public static function recordBaselineDriftSample(array &$dynamics, float $now): bool
+    {
+        if (!self::configValue('baseline_drift_enabled') || $now <= 0) {
+            return false;
+        }
+        $cfg = self::baselineDriftConfig();
+        $day = (int) floor($now / self::GAMETS_PER_DAY);
+        $window = max(1, intval($cfg['window']));
+        $samples = is_array($dynamics['_baseline_drift_samples'] ?? null) ? $dynamics['_baseline_drift_samples'] : [];
+        $wrote = false;
+        foreach ((array) $cfg['dimensions'] as $dimId) {
+            $v = self::driftSampleValue($dynamics, (string) $dimId);
+            if ($v === null) continue;
+            // older builds kept bare values (no day): they cannot be placed on the calendar
+            $list = array_values(array_filter((array) ($samples[$dimId] ?? []), fn($s) => is_array($s) && isset($s['day'])));
+            $last = count($list) - 1;
+            if ($last >= 0 && intval($list[$last]['day']) === $day) {
+                $list[$last]['v'] = round($v, 4);
+            } else {
+                $list[] = ['v' => round($v, 4), 'day' => $day];
+            }
+            $samples[$dimId] = array_slice($list, -$window);
+            $wrote = true;
+        }
+        $dynamics['_baseline_drift_samples'] = $samples;
+        return $wrote;
+    }
+
+    /**
+     * At the diary eval: every drift dimension whose last min_samples samples all sit more than
+     * tolerance points on one side of its baseline moves that baseline rate x (their average -
+     * baseline), at most max_from_origin points from its origin. The origin is where drift
+     * started (_baseline_drift_origin: the seed, or the value an editor or a divine-intervention
+     * arc last set; a baseline that no longer equals the value drift left is re-anchored there).
+     * Gated by the game calendar: a day's evidence moves a baseline once, so a second diary eval
+     * before a newer contact day has been sampled leaves it where the first one put it.
+     * Returns dimension => ['old_baseline', 'new_baseline', 'drift'] (sample units).
      */
     public static function processBaselineDrift(string $npcName, array &$dynamics): array
     {
-        $config = self::getConfig();
-        if (empty($config['baseline_drift_enabled'])) return [];
+        if (!self::configValue('baseline_drift_enabled')) return [];
+        $cfg = self::baselineDriftConfig();
+        $minSamples = max(1, intval($cfg['min_samples']));
+        $tolerance = max(0.0, floatval($cfg['tolerance']));
+        $rate = max(0.0, floatval($cfg['rate']));
+        $maxFromOrigin = max(0.0, floatval($cfg['max_from_origin']));
+        $samples = is_array($dynamics['_baseline_drift_samples'] ?? null) ? $dynamics['_baseline_drift_samples'] : [];
+        $origins = is_array($dynamics['_baseline_drift_origin'] ?? null) ? $dynamics['_baseline_drift_origin'] : [];
+        $results = [];
 
-        $driftResults = [];
-        $samples = &$dynamics['_baseline_drift_samples'];
-        if (!is_array($samples)) $samples = [];
+        foreach ((array) $cfg['dimensions'] as $dimId) {
+            $dimId = (string) $dimId;
+            $list = array_values(array_filter((array) ($samples[$dimId] ?? []), fn($s) => is_array($s) && isset($s['v'], $s['day'])));
+            if (count($list) < $minSamples) continue;
+            $latestDay = intval($list[count($list) - 1]['day']);
+            $recent = array_map(fn($s) => floatval($s['v']), array_slice($list, -$minSamples));
+            $baseline = self::driftBaseline($dynamics, $dimId);
 
-        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
-        $dims = &$dynamics['dimensions'];
+            $above = min($recent) > $baseline + $tolerance;
+            $below = max($recent) < $baseline - $tolerance;
+            if (!$above && !$below) continue;   // not held on one side: no drift
 
-        $driftable = ['affinity', 'trust', 'comfort', 'respect', 'warmth', 'maturity'];
-
-        foreach ($driftable as $dimId) {
-            if (!isset($dims[$dimId])) continue;
-
-            $currentX = floatval($dims[$dimId]['x'] ?? 0);
-            $currentBaseline = floatval($dims[$dimId]['baseline'] ?? 0);
-            $temperamentBaseline = self::getTemperamentBaseline($temperament, $dimId);
-
-            // Record sample
-            if (!isset($samples[$dimId])) $samples[$dimId] = [];
-            $samples[$dimId][] = $currentX;
-            if (count($samples[$dimId]) > 5) {
-                $samples[$dimId] = array_slice($samples[$dimId], -5);
+            $o = is_array($origins[$dimId] ?? null) ? $origins[$dimId] : null;
+            if ($o === null || !is_numeric($o['at'] ?? null) || abs(floatval($o['at']) - $baseline) > 1e-6) {
+                $o = ['origin' => $baseline, 'at' => $baseline];   // first drift, or set since
             }
-
-            if (count($samples[$dimId]) < self::BASELINE_DRIFT_MIN_SAMPLES) continue;
-
-            // Check consistency: all samples on same side of baseline (with tolerance)
-            $allAbove = true;
-            $allBelow = true;
-            foreach ($samples[$dimId] as $sample) {
-                if ($sample <= $currentBaseline + self::BASELINE_DRIFT_TOLERANCE) $allAbove = false;
-                if ($sample >= $currentBaseline - self::BASELINE_DRIFT_TOLERANCE) $allBelow = false;
+            if (is_numeric($o['day'] ?? null) && intval($o['day']) >= $latestDay) continue;   // this day already counted
+            $origin = floatval($o['origin']);
+            $avg = array_sum($recent) / count($recent);
+            $new = $baseline + ($avg - $baseline) * $rate;
+            $new = max($origin - $maxFromOrigin, min($origin + $maxFromOrigin, $new));
+            $def = self::getDimensionDefinition($dimId);
+            if ($dimId === 'affinity') {
+                $new = max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, $new));
+            } elseif ($def) {
+                $new = max(floatval($def['range_min']), min(floatval($def['range_max']), $new));
             }
+            $drift = $new - $baseline;
+            if (abs($drift) < 1e-9) continue;   // at the bound
 
-            if (!$allAbove && !$allBelow) continue; // Mixed — no drift
-
-            // Calculate drift
-            $avgSample = array_sum($samples[$dimId]) / count($samples[$dimId]);
-            $driftAmount = ($avgSample - $currentBaseline) * self::BASELINE_DRIFT_RATE;
-
-            // Cap: can't drift more than ±MAX from temperament default
-            $newBaseline = $currentBaseline + $driftAmount;
-            $driftFromDefault = $newBaseline - $temperamentBaseline;
-            if (abs($driftFromDefault) > self::BASELINE_DRIFT_MAX) {
-                $newBaseline = $temperamentBaseline + (self::BASELINE_DRIFT_MAX * ($driftFromDefault > 0 ? 1 : -1));
-                $driftAmount = $newBaseline - $currentBaseline;
-            }
-
-            if (abs($driftAmount) < 0.1) continue;
-
-            $dims[$dimId]['baseline'] = round($newBaseline, 2);
-            $driftResults[$dimId] = [
-                'old_baseline' => $currentBaseline,
-                'new_baseline' => round($newBaseline, 2),
-                'drift' => round($driftAmount, 2),
-            ];
-
-            self::log("[DRIFT] {$npcName} {$dimId}: baseline {$currentBaseline} -> " . round($newBaseline, 2));
+            $dynamics['dimensions'][$dimId]['baseline'] = $new;
+            $origins[$dimId] = ['origin' => $origin, 'at' => $new, 'day' => $latestDay];
+            $results[$dimId] = ['old_baseline' => $baseline, 'new_baseline' => $new, 'drift' => $drift];
+            self::log(sprintf('[DRIFT] %s %s: baseline %.2f -> %.2f (samples avg %.2f, origin %.2f%s)', $npcName, $dimId,
+                $baseline, $new, $avg, $origin, $dimId === 'affinity' ? ', core units' : ''));
         }
-
-        return $driftResults;
+        if ($origins !== []) {
+            $dynamics['_baseline_drift_origin'] = $origins;
+        }
+        return $results;
     }
 
     // ========== END BASELINE DRIFT (PR 13) ==========
@@ -15495,12 +15552,13 @@ class RelationshipDynamics
         $triggers = [];
         $dims = $dynamics['dimensions'] ?? [];
 
-        // 1. Sustained delta: check baseline drift samples for 15+ deviation
+        // 1. Sustained delta: check baseline drift samples for 15+ deviation (the baseline in the
+        // samples' units: affinity core points, driftBaseline)
         $driftSamples = $dynamics['_baseline_drift_samples'] ?? [];
         if (!empty($driftSamples)) {
             foreach ($driftSamples as $dimId => $samples) {
                 if (!is_array($samples) || empty($samples)) continue;
-                $baseline = floatval($dims[$dimId]['baseline'] ?? $dims[$dimId]['x'] ?? 0);
+                $baseline = self::driftBaseline($dynamics, (string) $dimId);
                 $latest = end($samples);
                 $latestVal = is_array($latest) ? floatval($latest['v'] ?? $latest[0] ?? 0) : floatval($latest);
                 $delta = abs($latestVal - $baseline);
