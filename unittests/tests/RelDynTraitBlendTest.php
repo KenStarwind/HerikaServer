@@ -115,10 +115,13 @@ final class RelDynTraitBlendTest extends TestCase
 
     /**
      * Rule R's residual kernel has zero slope at its preset (reviewed issue, phase 2): the
-     * residual adds no kink, so every Rule-R column is differentiable at every preset. The
-     * one-sided slopes along +e and -e are opposite (D+ + D- = 0); with the old (1-u)^2
-     * kernel they differ by -4 r / rho (r = the preset's residual), a cone at the preset.
-     * Along a trait the column does not own, the slope at the preset is 0 (flat, not a cone).
+     * RESIDUAL adds no kink. The one-sided slopes along +e and -e sum to the model's own kink
+     * (D+ + D- = 0 for a linear model); with the old (1-u)^2 kernel they differed by -4 r / rho
+     * (r = the preset's residual), a cone at the preset. Along a trait the column does not own,
+     * the slope at the preset is 0 (flat, not a cone).
+     * NOT claimed (review 2026-09-25): that every column is smooth at every preset. Kinks that
+     * are not the kernel's remain, exactly at presets (the model's own crease and the per-unit
+     * clamps; skipped here, pinned in testTheKinksLeftAtThePresetsAreTheModelsAndTheClamps).
      */
     public function testRuleRKernelHasZeroSlopeAtEveryPreset(): void
     {
@@ -165,10 +168,12 @@ final class RelDynTraitBlendTest extends TestCase
     }
 
     /**
-     * Walking through a preset along an owner the value keeps its direction. Humble's A1
-     * residual (+0.16 passion mult) against the E slope 0.81: the old (1-u)^2 kernel falls
-     * 2r/rho = 1.02 per unit E just past Humble, so passion dropped as expressiveness rose
-     * (a cone); the zero-slope kernel's largest pull, 1.54 r / rho = 0.78, stays under 0.81.
+     * The reviewed case: Humble's A1 residual (+0.16 passion mult) against the E slope 0.81.
+     * The old (1-u)^2 kernel falls 2r/rho = 1.02 per unit E just past Humble, so passion
+     * dropped as expressiveness rose (a cone); the zero-slope kernel's largest pull,
+     * 1.54 r / rho = 0.78, stays under 0.81. This holds for THIS preset and owner only: where a
+     * residual is large against its model slope times rho, the column still turns the wrong
+     * way inside the reach (testRuleRWrongWayNearAPresetIsBoundedByTheResiduals).
      */
     public function testRuleRIsMonotoneThroughAPresetAlongItsOwner(): void
     {
@@ -181,6 +186,123 @@ final class RelDynTraitBlendTest extends TestCase
             if ($prev !== null) $this->assertGreaterThan($prev, $v, sprintf('passion rises with E at %+.2f from Humble', $t));
             $prev = $v;
         }
+    }
+
+    /**
+     * The kinks left at presets (review 2026-09-25), pinned so the report can name them:
+     *   - the A17 maturity Y model itself switches base at L = 0.5 (0.3^(1-2L) below, 1.5^(2L-1)
+     *     above): a crease at Gentle and Playful, the presets at L = 0.5, along L;
+     *   - per-unit clamps where a preset's table value IS the clamp bound (charisma +-1, maturity
+     *     Y 0.3 / 1.5): half the neighbourhood is clamped flat, the other half moves (a half-cone).
+     *     The charisma consumers only threshold at +-0.5, so those kinks change no behaviour.
+     * Nothing else: no other (column, preset) pair has one-sided slopes that disagree.
+     */
+    public function testTheKinksLeftAtThePresetsAreTheModelsAndTheClamps(): void
+    {
+        $h = 1e-5;
+        $found = ['model' => [], 'clamp' => []];
+        foreach (RelDynTraits::columns() as $col => $spec) {
+            if ($spec['rule'] !== 'R') continue;
+            $m = $spec['model'];
+            $f = is_callable($m) ? fn(array $x) => floatval($m($x)) : function (array $x) use ($m) {
+                $v = floatval($m[0] ?? 0.0);
+                foreach ($m as $k => $c) if ($k !== 0) $v += floatval($c) * floatval($x[$k]);
+                return $v;
+            };
+            foreach (RelDynTraits::points() as $name => $p) {
+                $at = floatval(RelDynTraits::value($p, $col));
+                foreach (RelDynTraits::TRAITS as $code => $_) {
+                    if ($p[$code] - $h < 0.0 || $p[$code] + $h > 1.0) continue;
+                    $up = $p; $up[$code] += $h;
+                    $dn = $p; $dn[$code] -= $h;
+                    $kink = (floatval(RelDynTraits::value($up, $col)) + floatval(RelDynTraits::value($dn, $col)) - 2.0 * $at) / $h;
+                    if (abs($kink) <= 1e-2 * max(1.0, abs($at))) continue;
+                    $modelKink = ($f($up) + $f($dn) - 2.0 * $f($p)) / $h;
+                    $found[abs($modelKink) > 1e-2 * max(1.0, abs($at)) ? 'model' : 'clamp']["{$col}@{$name}"][] = $code;
+                }
+            }
+        }
+        $model = [];
+        foreach (['up', 'down'] as $dir) foreach (['Playful', 'Gentle'] as $n) $model["y_maturity_{$dir}@{$n}"] = ['L'];
+        ksort($model);
+        ksort($found['model']);
+        $this->assertEquals($model, $found['model']);
+        $clamp = [];
+        foreach (['Anxious', 'Jealous', 'Independent'] as $n) {
+            $clamp["y_maturity_up@{$n}"] = ['Rs'];
+            $clamp["y_maturity_down@{$n}"] = ['Rs'];
+        }
+        foreach (['Romantic', 'Playful', 'Proud', 'Guarded', 'Stoic'] as $n) $clamp["charisma_catalyst@{$n}"] = ['G', 'E', 'D'];
+        foreach (['Romantic', 'Humble', 'Nurturing', 'Gentle', 'Proud', 'Independent'] as $n) $clamp["charisma_charmer@{$n}"] = ['Pd', 'W'];
+        ksort($clamp);
+        ksort($found['clamp']);
+        $this->assertEquals($clamp, $found['clamp']);
+        foreach (array_keys($found['clamp']) as $k) {
+            [$col, $name] = explode('@', $k);
+            [$lo, $hi] = RelDynTraits::CLAMPS[RelDynTraits::columns()[$col]['unit']];
+            $v = floatval(RelDynTraits::table($col)[$name]);
+            $this->assertTrue(abs($v - $lo) < 1e-9 || abs($v - $hi) < 1e-9, "{$k}: the table value is the clamp bound");
+        }
+    }
+
+    /**
+     * Rule R is exact at the presets and adds no kink, but it is NOT monotone near every
+     * preset (review 2026-09-25). Where a preset's residual r is large against its model slope
+     * times rho, the column turns the wrong way inside the reach: the residual fades from r at
+     * the preset to 0 at rho, and that fade outruns the model (coord_m at Bold along D: about
+     * 20 coordinate points; tier_retention at Independent along Rs: about 7; passion_mult at
+     * Humble along G / D: 0.08). No exactly-interpolating local residual can avoid this when
+     * the table itself runs against the model. The guarantee, tested here for every linear
+     * Rule-R column, preset and owner, both ways: the wrong-way excursion within rho never
+     * exceeds the sum of the |residuals| whose kernels reach the path (in practice the
+     * preset's own |r|).
+     */
+    public function testRuleRWrongWayNearAPresetIsBoundedByTheResiduals(): void
+    {
+        $rho = RelDynTraits::residualReach();
+        $pts = RelDynTraits::points();
+        $checked = 0;
+        $worst = [];
+        foreach (RelDynTraits::columns() as $col => $spec) {
+            if ($spec['rule'] !== 'R' || is_callable($spec['model'])) continue;
+            $m = $spec['model'];
+            $f = function (array $x) use ($m) {
+                $v = floatval($m[0] ?? 0.0);
+                foreach ($m as $k => $c) if ($k !== 0) $v += floatval($c) * floatval($x[$k]);
+                return $v;
+            };
+            $r = [];
+            foreach ($pts as $n => $q) $r[$n] = floatval(RelDynTraits::table($col)[$n]) - $f($q);
+            foreach ($pts as $name => $p) {
+                $at = floatval(RelDynTraits::value($p, $col));
+                foreach ($spec['owners'] as $code) {
+                    if (abs(floatval($m[$code] ?? 0.0)) < 1e-12) continue;
+                    foreach ([1.0, -1.0] as $dir) {
+                        $against = 0.0;
+                        $reach = [];
+                        for ($t = 0.005; $t <= $rho + 1e-12; $t += 0.005) {
+                            $x = $p;
+                            $x[$code] += $dir * $t;
+                            if ($x[$code] < 0.0 || $x[$code] > 1.0) break;
+                            foreach ($pts as $n => $q) if (RelDynTraits::distance($x, $q) < $rho) $reach[$n] = abs($r[$n]);
+                            $sign = $f($x) > $f($p) ? 1.0 : -1.0;
+                            $against = max($against, -$sign * (floatval(RelDynTraits::value($x, $col)) - $at));
+                        }
+                        if (!$reach) continue;
+                        $this->assertLessThanOrEqual(array_sum($reach) + 1e-9, $against,
+                            sprintf('%s at %s along %s%s', $col, $name, $dir > 0 ? '+' : '-', $code));
+                        $worst[$col] = max($worst[$col] ?? 0.0, $against);
+                        $checked++;
+                    }
+                }
+            }
+        }
+        $this->assertGreaterThan(300, $checked);
+        // the reviewed magnitudes (units: coordinate points, core affinity points, multiplier)
+        $this->assertEqualsWithDelta(20.35, $worst['baseline_coord_m'], 0.05);
+        $this->assertEqualsWithDelta(7.13, $worst['tier_retention'], 0.05);
+        $this->assertEqualsWithDelta(0.076, $worst['passion_mult'], 0.005);
+        $this->assertEqualsWithDelta(0.163, $worst['jealousy_mult'], 0.005);
     }
 
     /** Away from every preset (beyond rho) Rule R is the pure model: monotone in each owner. */

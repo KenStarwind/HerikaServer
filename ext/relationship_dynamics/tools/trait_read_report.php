@@ -135,7 +135,7 @@ function near3(array $x): string
 }
 
 $rows = [];
-$stats = ['traits' => 0, 'bio' => 0, 'mismatch' => 0, 'centred' => 0, 'noev' => 0, 'extreme' => 0];
+$stats = ['traits' => 0, 'bio' => 0, 'mismatch' => 0, 'centred' => 0, 'noev' => 0, 'extreme' => 0, 'screened' => 0, 'weak_extreme' => 0, 'rules' => []];
 foreach ($keys as $k) {
     $name = RelDynTraitRead::displayName($k);
     $t = $tpl[$k] ?? [];
@@ -146,7 +146,6 @@ foreach ($keys as $k) {
     RelDynTraits::$assignmentOverride = 'label';
     $prof = RelationshipDynamics::deriveNpcProfile($name, $row, ['config' => $acfg]);
     $beforeLabel = $prof['temperament'];
-    if ($k === 'ysolda') $beforeLabel = 'Anxious';   // phase 1 had her MDD 8.2 C preset (dropped: decisions s16 #2)
     $archetype = $prof['archetype'];
     $bx = RelDynTraits::points()[$beforeLabel];
     $before = params($bx, $beforeLabel, $archetype, $row, $acfg, $attr, $npcPreset, false);
@@ -166,8 +165,12 @@ foreach ($keys as $k) {
         $note = $tv['note'] ?? '';
         if ($tv['conf'] > 0) $stats['bio']++; elseif ($note === '') $stats['noev']++;
         if ($note === 'quote_mismatch') $stats['mismatch']++;
-        if ($note === 'centred') $stats['centred']++;
+        if ($note === 'centred' && !isset($tv['screen'])) $stats['centred']++;
         if ($tv['conf'] >= 0.7 && ($tv['value'] < 0.25 || $tv['value'] > 0.75)) $stats['extreme']++;
+        if (isset($tv['screen'])) {
+            $stats[$note === 'screened' ? 'screened' : 'weak_extreme']++;
+            $stats['rules'][$tv['screen']['rule']] = ($stats['rules'][$tv['screen']['rule']] ?? 0) + 1;
+        }
     }
     $rows[$k] = compact('name', 'beforeLabel', 'before', 'after', 'auto', 'res', 'archetype', 'prior', 'assumed', 'bx');
 }
@@ -185,16 +188,22 @@ foreach ($rows as $k => $r) {
     $x = $r['auto']['x'];
     $moved = RelDynTraits::distance($x, $r['bx']);
     if ($moved > 0.75) $f[] = sprintf('far from the old preset (%.2f)', $moved);
-    if ($r['after']['open'] < RelDynTraits::OPENNESS_LOW_REGIME) $f[] = sprintf('openness %.2f: below the won-over switch (0.45)', $r['after']['open']);
+    if ($r['after']['open'] < RelDynTraits::OPENNESS_LOW_REGIME) $f[] = sprintf('openness %.3f: below the won-over switch (0.45)', $r['after']['open']);
     elseif ($r['after']['open'] < 0.47) $f[] = sprintf('openness %.3f: just above the won-over switch', $r['after']['open']);
     $rej = count(array_filter($r['res']['traits'], fn($t) => ($t['note'] ?? '') === 'quote_mismatch'));
     if ($rej >= 3) $f[] = "{$rej} quotes rejected";
     $ev = count(array_filter($r['res']['traits'], fn($t) => $t['conf'] > 0));
     if ($ev <= 3) $f[] = "thin evidence ({$ev} of 10 traits)";
-    foreach ($r['res']['traits'] as $tn => $t) {
-        if ($t['conf'] > 0 && $tn === 'protectiveness' && preg_match('/\b(revenge|kill|destroy|eliminate|hunt)/i', (string) $t['evidence'])) $f[] = "protectiveness quote reads as hostility: \"{$t['evidence']}\"";
-        if ($t['conf'] > 0 && $tn === 'pride' && preg_match('/\bpride in\b/i', (string) $t['evidence'])) $f[] = "pride from pride-in-work: \"{$t['evidence']}\"";
+    // what still moves her most (after the evidence screen): the top jealousy and protectiveness
+    if ($r['after']['jeal'] >= 1.2) {
+        $po = $r['auto']['src']['possessiveness'];
+        $f[] = sprintf('jealousy x%.2f (possessiveness %.2f from %s)', $r['after']['jeal'], $r['after']['Po'],
+            ($po['source'] ?? '') === 'bio' ? "\"{$po['evidence']}\"" : 'the prior: no jealousy quote');
     }
+    $pr = $r['auto']['src']['protectiveness'];
+    if ($r['after']['Pr'] >= 0.72 && ($pr['source'] ?? '') === 'bio') $f[] = sprintf('protectiveness %.2f from "%s"', $r['after']['Pr'], $pr['evidence']);
+    $scr = array_filter($r['res']['traits'], fn($t) => isset($t['screen']));
+    if (count($scr) >= 3) $f[] = count($scr) . ' quotes failed the evidence screen';
     if ($f) $flags[$k] = $f;
 }
 
@@ -212,7 +221,7 @@ foreach ($rows as $k => $r) {
     $a = $r['after'];
     $md[] = sprintf('| %s%s | %s | %s | %s → **%s** | %s → **%s** (%s) | %s → **%s** | %s → **%s** · %s · %s | %s → **%s** | %s → **%s** |',
         $r['name'], $r['assumed'] ? ' *' : '', $r['beforeLabel'], near3($r['auto']['x']),
-        $fmt($b['passion']), $fmt($a['passion']), $fmt($b['open']), $fmt($a['open']), $a['band'],
+        $fmt($b['passion']), $fmt($a['passion']), sprintf('%.3f', $b['open']), sprintf('%.3f', $a['open']), $a['band'],
         $b['maturity'], $a['maturity'], $fmt($b['jeal']), $fmt($a['jeal']), $fmt($a['Po']), $fmt($a['Pr']),
         sprintf('%.0f', $b['trust']), sprintf('%.0f', $a['trust']), $b['att'], $a['att']);
 }
@@ -221,7 +230,7 @@ $md[] = '\\* assumed vanilla core row (class, factions, top skills, race) used f
 $md[] = '';
 $md[] = '## Evidence per NPC';
 $md[] = '';
-$md[] = 'Each trait: the read value, its confidence, and the verbatim quote (field). `rejected` = the quote was not in that field or was over 12 words, so the trait kept its prior; `centred` = pulled into 0.25..0.75 for want of strong evidence. Traits with no evidence are left out.';
+$md[] = 'Each trait: the read value, its confidence, and the verbatim quote (field). `rejected` = the quote was not in that field or was over 12 words, so the trait kept its prior; `centred` = pulled into 0.25..0.75 for want of strong evidence; **not evidence** = the evidence screen (gate 2) found the quote does not show this trait of this character (duty, a quest object, someone else, job text, pride in work), so the trait kept its prior; **extreme without strong evidence** = kept at the band edge with conf 0.6. Traits with no evidence are left out.';
 foreach ($rows as $k => $r) {
     $md[] = '';
     $md[] = "### {$r['name']}";
@@ -230,6 +239,14 @@ foreach ($rows as $k => $r) {
         implode(', ', $r['auto']['prior']['signals']) ?: 'base only');
     foreach ($r['res']['traits'] + ['maturity_start' => $r['res']['maturity_start']] as $tn => $t) {
         $note = $t['note'] ?? '';
+        if (isset($t['screen'])) {
+            $sc = $t['screen'];
+            $said = $tn === 'maturity_start' ? sprintf('%.0f', $sc['value']) : $fmt($sc['value']);
+            $md[] = $note === 'screened'
+                ? sprintf('- %s: read %s (conf %s) from "%s" (%s): **not evidence** (%s), the prior stands', $tn, $said, $fmt($sc['conf']), $sc['evidence'], $sc['field'], $sc['rule'])
+                : sprintf('- %s: read %s (conf %s) from "%s" (%s): **extreme without strong evidence** (%s), kept at %s conf %s', $tn, $said, $fmt($sc['conf']), $sc['evidence'], $sc['field'], $sc['rule'], $fmt($t['value']), $fmt($t['conf']));
+            continue;
+        }
         if ($t['conf'] <= 0 && $note !== 'quote_mismatch') continue;
         if ($note === 'quote_mismatch') { $md[] = sprintf('- %s: read %s, rejected quote', $tn, $tn === 'maturity_start' ? sprintf('%.0f', $t['value']) : $fmt($t['value'])); continue; }
         $md[] = sprintf('- %s: %s (conf %s%s) "%s" (%s)', $tn, $tn === 'maturity_start' ? sprintf('%.0f', $t['value']) : $fmt($t['value']), $fmt($t['conf']),
@@ -238,7 +255,19 @@ foreach ($rows as $k => $r) {
     if (isset($flags[$k])) $md[] = '- **Flag:** ' . implode('; ', $flags[$k]);
 }
 
-$data = ['rows' => $rows, 'ashe' => ['vector' => $ashe, 'before' => $asheBefore, 'after' => $asheAfter], 'flags' => $flags, 'stats' => $stats, 'seed' => ['llm_calls' => $seed['llm_calls'], 'connector' => $seed['connector']]];
+$near = [];
+$jb = $ja = $pb = $pa = [];
+$closed = [];
+foreach ($rows as $k => $r) {
+    $near[$r['auto']['nearest']['name']] = ($near[$r['auto']['nearest']['name']] ?? 0) + 1;
+    $jb[] = $r['before']['jeal']; $ja[] = $r['after']['jeal']; $pb[] = $r['before']['passion']; $pa[] = $r['after']['passion'];
+    if ($r['after']['open'] < RelDynTraits::OPENNESS_LOW_REGIME) $closed[$r['name']] = round($r['after']['open'], 3);
+}
+arsort($near);
+asort($closed);
+$median = function (array $v) { sort($v); $n = count($v); return $n ? ($n % 2 ? $v[intdiv($n, 2)] : ($v[$n / 2 - 1] + $v[$n / 2]) / 2) : null; };
+$summary = ['nearest' => $near, 'jealousy_median' => [$median($jb), $median($ja)], 'passion_median' => [$median($pb), $median($pa)], 'closed' => $closed];
+$data = ['summary' => $summary, 'rows' => $rows, 'ashe' => ['vector' => $ashe, 'before' => $asheBefore, 'after' => $asheAfter], 'flags' => $flags, 'stats' => $stats, 'seed' => ['llm_calls' => $seed['llm_calls'], 'connector' => $seed['connector']]];
 file_put_contents($out, implode("\n", $md) . "\n");
 file_put_contents($out . '.json', json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR));
 echo "wrote {$out} (" . count($rows) . " NPCs)\n";

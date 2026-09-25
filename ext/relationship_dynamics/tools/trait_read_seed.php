@@ -6,6 +6,7 @@
  *   RELDYN_LIVE_PG_DSN="host=localhost dbname=dwemer user=..." \
  *   php ext/relationship_dynamics/tools/trait_read_seed.php [--keys=FILE] [--budget=110]
  *       [--max-calls=N] [--limit=N] [--only=key,key] [--dry-run] [--json-mode]
+ *   ... trait_read_seed.php --rescreen    (no LLM call: re-apply the evidence screen)
  *
  * - The live database is READ ONLY here: the session runs with default_transaction_read_only,
  *   and the adapter refuses anything but SELECT. It reads bio templates, RELLLM_CONNECTOR
@@ -20,6 +21,9 @@
  *   --budget (default 110) and at --max-calls for this invocation.
  * - The skip list (Ashe) is never selected, fetched or read.
  * - The seed holds quotes (<= 12 words each) and numbers only: no bio text.
+ * - --rescreen: makes NO LLM call. Each done read is passed through the current evidence screen
+ *   (RelDynTraitRead::screen, GATE_V) against its live template text and the NPC's voice-type
+ *   gender, both read only; a read whose template text changed since is left as it is.
  */
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
@@ -36,7 +40,7 @@ require_once __DIR__ . '/readonly_pg.php';
 
 function out(string $s): void { fwrite(STDOUT, $s . "\n"); }
 
-$opts = getopt('', ['keys:', 'budget:', 'max-calls:', 'limit:', 'only:', 'dry-run', 'json-mode', 'seed:']);
+$opts = getopt('', ['keys:', 'budget:', 'max-calls:', 'limit:', 'only:', 'dry-run', 'json-mode', 'seed:', 'rescreen']);
 $keysFile = $opts['keys'] ?? (__DIR__ . '/../data/trait_read_npcs.txt');
 $seedPath = $opts['seed'] ?? RelDynTraitRead::SEED_FILE;
 $budget = max(0, intval($opts['budget'] ?? 110));
@@ -77,6 +81,33 @@ $saveSeed = function () use (&$seed, $seedPath) {
 $dsn = getenv('RELDYN_LIVE_PG_DSN') ?: 'dbname=dwemer';
 $db = new RelDynReadOnlyPg($dsn);
 $GLOBALS['db'] = $db;
+
+// --- --rescreen: the evidence screen over the stored reads, no LLM call ---
+if (isset($opts['rescreen'])) {
+    $changed = 0;
+    foreach ($seed['reads'] as $key => $e) {
+        if (($e['status'] ?? '') !== 'done' || !is_array($e['result'] ?? null) || RelDynTraitRead::isSkipped((string) $key, $cfg)) continue;
+        $tpl = $db->fetchOne('SELECT npc_name, ' . implode(', ', RelDynTraitRead::FIELDS) . ' FROM combined_bio_templates WHERE lower(npc_name) = lower($1) LIMIT 1', [$key]);
+        if (!isset($tpl['npc_name'])) { out("  {$key}: no bio template, left as it is"); continue; }
+        $fields = RelDynTraitRead::fieldsOf($tpl);
+        if (RelDynTraitRead::srcHash($fields) !== ($e['src_hash'] ?? '')) { out("  {$key}: template changed since the read, left as it is"); continue; }
+        $new = RelDynTraitRead::screen($e['result'], $fields, RelDynTraitRead::genderFor((string) $key));
+        $n = 0;
+        foreach ($new['traits'] + ['maturity_start' => $new['maturity_start']] as $t => $v) {
+            $was = $t === 'maturity_start' ? $e['result']['maturity_start'] : $e['result']['traits'][$t];
+            if (isset($v['screen']) && !isset($was['screen'])) {
+                $n++;
+                out(sprintf('  %s.%s: %s (%.2f conf %.2f -> %.2f conf %.2f)', $key, $t, $v['screen']['rule'], $v['screen']['value'], $v['screen']['conf'], $v['value'], $v['conf']));
+            }
+        }
+        $seed['reads'][$key]['result'] = $new;
+        $changed += $n;
+    }
+    $seed['gate_v'] = RelDynTraitRead::GATE_V;
+    $saveSeed();
+    out("rescreened: {$changed} trait(s) changed, 0 LLM calls (total stays {$seed['llm_calls']})");
+    exit(0);
+}
 
 // --- connector: RELLLM_CONNECTOR, else the default profile's primary ---
 $row = $db->fetchOne("SELECT value FROM general_settings WHERE id = 'RELLLM_CONNECTOR' LIMIT 1");

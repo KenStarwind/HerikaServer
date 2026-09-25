@@ -392,6 +392,129 @@ final class RelDynTraitQueuePostgresTest extends TestCase
         $this->assertSame(0, RelDynTraitRead::drain()['processed']);
     }
 
+    /**
+     * Review 2026-09-25: a read stored under an older evidence gate (the committed seed before
+     * GATE_V 2, or a live row) is screened again when it is looked up; no read is repeated.
+     */
+    public function testAReadStoredUnderAnOlderGateIsScreenedOnLookup(): void
+    {
+        $fields = ['goals' => "* Keep the forge running\n* Protect the Skeleton Key"] + self::FIELDS;
+        $this->template('bryn', $fields);
+        $old = RelDynTraitRead::parse(self::readJson(), $fields);
+        unset($old['gate']);
+        $old['traits']['possessiveness'] = ['value' => 0.8, 'conf' => 0.9, 'field' => 'goals', 'evidence' => 'Protect the Skeleton Key'];
+        RelDynTraitRead::ensureTable();
+        pg_query_params($this->db->link, "INSERT INTO reldyn_trait_reads (template_key, src_hash, prompt_v, status, attempts, model, result)
+            VALUES ('bryn', \$1, 1, 'done', 1, 'seed:x', \$2::jsonb)", [RelDynTraitRead::srcHash($fields), json_encode($old)]);
+        $id = $this->npc('Bryn');
+        $this->meet('Bryn');
+        $src = $this->stored($id)['_trait_vector_src'];
+        $this->assertSame('done', $src['read_status']);
+        $this->assertSame('prior', $src['traits']['possessiveness']['source'], 'a quest object is not jealousy: the prior stands');
+        $this->assertSame('bio', $src['traits']['warmth']['source'], 'the good evidence still counts');
+        $this->assertSame(0, $this->llmCalls);
+    }
+
+    /**
+     * Review 2026-09-25: the trait drain holds the shared work lease like the eval drain, so it
+     * checks for a pending Playthrough Save switch before every read and stops there.
+     */
+    public function testTheTraitDrainStopsBetweenReadsWhenASwitchIsPending(): void
+    {
+        foreach (['bryn', 'hild', 'sigrid'] as $key) {
+            $this->template($key);
+            $this->npc(ucfirst($key));
+            $this->meet(ucfirst($key));
+        }
+        $this->assertSame(3, RelDynTraitRead::pendingCount());
+        $switch = false;
+        RelDynEval::$pauseCheck = function () use (&$switch) { return $switch; };
+        $this->llmOut = function () use (&$switch) { $switch = true; return self::readJson(); };   // the switch arrives during the first read
+        try {
+            $stats = RelDynEval::drainTraitReadsAfterEval(['locked' => false, 'paused' => false]);
+        } finally {
+            RelDynEval::$pauseCheck = null;
+        }
+        $this->assertSame(1, $this->llmCalls, 'one read, then it lets go');
+        $this->assertSame(1, $stats['done']);
+        $this->assertTrue($stats['paused']);
+        $this->assertSame(2, RelDynTraitRead::pendingCount(), 'the rest wait for the next worker');
+        // a direct drain honours the same check
+        RelDynEval::$pauseCheck = fn() => true;
+        try {
+            $this->assertTrue(RelDynTraitRead::drain()['paused']);
+        } finally {
+            RelDynEval::$pauseCheck = null;
+        }
+        $this->assertSame(1, $this->llmCalls);
+    }
+
+    /**
+     * Review 2026-09-25: switching traits.assignment back to 'label' rolls an NPC resolved under
+     * 'read' back to the phase-1 profile: the vote's label, its preset point, its seeded
+     * baselines (a baseline still at its read seed); a value the player moved stays.
+     */
+    public function testSwitchingBackToLabelRestoresThePhaseOneProfile(): void
+    {
+        $this->template('bryn');
+        RelDynTraitRead::ensureTable();
+        pg_query_params($this->db->link, "INSERT INTO reldyn_trait_reads (template_key, src_hash, prompt_v, status, attempts, model, result)
+            VALUES ('bryn', \$1, 1, 'done', 1, 'seed:x', \$2::jsonb)", [RelDynTraitRead::srcHash(self::FIELDS), json_encode(RelDynTraitRead::parse(self::readJson(), self::FIELDS))]);
+        $id = $this->npc('Bryn');
+        $twin = $this->npc('Bryn Twin');   // the same core row, never read, met only under 'label'
+        $this->meet('Bryn');
+        $read = $this->stored($id);
+        $this->assertSame('read', $read['_trait_vector_src']['assignment']);
+        RelationshipDynamics::beginRequest();
+        $d = RelationshipDynamics::getDynamics('Bryn');
+        $d['dimensions']['comfort']['x'] = 77.0;   // the player moved her comfort
+        RelationshipDynamics::saveDynamics('Bryn', $d);
+        RelationshipDynamics::endRequest();
+
+        $this->config(['traits' => ['assignment' => 'label']]);
+        $this->meet('Bryn');
+        $this->meet('Bryn Twin');
+        $back = $this->stored($id);
+        $fresh = $this->stored($twin);
+        $this->assertSame('label', $back['_trait_vector_src']['assignment']);
+        $this->assertSame($fresh['inferred_temperament'], $back['inferred_temperament'], 'the vote label again');
+        $this->assertSame(0.0, RelDynTraits::distance(RelDynTraits::fromStored($back['trait_vector']), RelDynTraits::points()[$back['inferred_temperament']]));
+        foreach (['trust', 'warmth', 'respect', 'self_confidence'] as $dim) {
+            $this->assertEqualsWithDelta(floatval($fresh['dimensions'][$dim]['baseline']), floatval($back['dimensions'][$dim]['baseline']), 1e-9, "{$dim}: the preset's seed");
+        }
+        $this->assertSame(77.0, floatval($back['dimensions']['comfort']['x']), 'a live value stays');
+        $this->assertSame($fresh['dimensions']['maturity']['plasticity_type'], $back['dimensions']['maturity']['plasticity_type']);
+        $this->assertArrayNotHasKey('seeded', $back['_profile_autogen']);
+        $this->assertNull(RelationshipDynamics::continuousMaturityY($back), 'the corner applies again');
+    }
+
+    /**
+     * Review 2026-09-25: priors resolved from a core row the game had not filled yet (no race,
+     * no class) are resolved again once it is, instead of keeping the thinner prior for good.
+     */
+    public function testPriorsFromAnIncompleteCoreRowAreResolvedAgainWhenItIsFilled(): void
+    {
+        $this->template('bryn');
+        $row = pg_fetch_assoc(pg_query($this->db->link, "INSERT INTO core_npc_master (npc_name, core, gender, race, metadata, extended_data)
+            VALUES ('Bryn', 'Roleplay as Bryn', 'female', '', '{}'::jsonb, '{}'::jsonb) RETURNING id"));
+        $id = (int) $row['id'];
+        $this->meet('Bryn');
+        $src = $this->stored($id)['_trait_vector_src'];
+        $this->assertFalse($src['prior']['complete']);
+        $this->assertNotContains('race:Bold', $src['prior']['signals']);
+        $this->meet('Bryn');   // still incomplete: nothing changes
+        $this->assertSame($src['prior'], $this->stored($id)['_trait_vector_src']['prior']);
+
+        pg_query_params($this->db->link, 'UPDATE core_npc_master SET race = $2, extended_data = $3::jsonb, metadata = $4::jsonb WHERE id = $1',
+            [$id, 'NordRace', json_encode(['class' => ['name' => 'Blacksmith'], 'factions' => []]), json_encode(['skills' => ['smithing' => '60']])]);
+        $this->meet('Bryn');
+        $src = $this->stored($id)['_trait_vector_src'];
+        $this->assertTrue($src['prior']['complete']);
+        $this->assertContains('race:Bold', $src['prior']['signals']);
+        $this->assertContains('class:Merchant', $src['prior']['signals']);
+        $this->assertSame(0, $this->llmCalls);
+    }
+
     public function testLabelAssignmentIsThePhaseOnePath(): void
     {
         $this->config(['traits' => ['assignment' => 'label']]);

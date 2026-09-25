@@ -2493,7 +2493,9 @@ class RelationshipDynamics
                 'mikael' => ['maturity_type' => 'Volatile'],                            // MDD 15.6
                 'serana' => ['maturity_type' => 'Growth'],                              // MDD 15.6
                 'nazeem' => ['maturity_type' => 'Rigid'],                               // MDD 15.6
-                // Ysolda's hand-set Anxious (MDD 8.2 C) is dropped: her bio decides (decisions §16 #2)
+                // MDD 8.2 C, for the label assignment only (phase 1 legacy, reproduced exactly): under
+                // the read assignment her bio decides (decisions §16 #2), so the entry is ignored there
+                'ysolda' => ['temperament' => 'Anxious', 'assignment' => 'label'],
             ],
         ];
     }
@@ -2838,13 +2840,17 @@ class RelationshipDynamics
      * too and stored as _trait_vector_src.auto; the label is its preset or nearest preset. The
      * cheap exit also needs the vector current (read assignment, VERSION); an NPC whose read is
      * still pending costs one lookup per request (RelDynTraitRead::stateFor) until it is done,
-     * then is resolved again (untouched seeded baselines move, live values stay).
+     * then is resolved again (untouched seeded baselines move, live values stay). So does an NPC
+     * whose priors came from an incomplete core row (no race or class yet), until the row is filled.
+     * Label assignment: an NPC last resolved under the read assignment is resolved again, so
+     * switching back to 'label' restores the phase-1 profile (its untouched seeds included).
      */
     public static function ensureTemperamentProfile($npcName, &$dynamics): bool
     {
         $readMode = RelDynTraits::assignment() === 'read';
+        $wasRead = (($dynamics['_trait_vector_src']['assignment'] ?? null) === 'read');
         if (intval($dynamics['_profile_autogen']['version'] ?? 0) >= self::PROFILE_AUTOGEN_VERSION) {
-            if (!$readMode || !self::traitProfileStale((string) $npcName, $dynamics)) {
+            if ($readMode ? !self::traitProfileStale((string) $npcName, $dynamics) : !$wasRead) {
                 return false;
             }
         }
@@ -2910,7 +2916,8 @@ class RelationshipDynamics
         // null-temperament fallback ('Stoic'). Dimensions already seeded from that fallback
         // and untouched since (x and baseline still equal the seed) are seeded again.
         // Read assignment: a baseline still at the value it was seeded with (this resolution's
-        // previous seed, or the previous label's preset seed) is seeded again from the vector.
+        // previous seed, or the previous label's preset seed) is seeded again from the vector;
+        // back under the label assignment, a read seed still untouched goes back to the preset's.
         $seeded = [];
         foreach (self::TEMPERAMENT_SEEDED_DIMENSIONS as $dim) {
             if (!is_array($dynamics['dimensions'][$dim] ?? null)) continue;
@@ -2923,7 +2930,7 @@ class RelationshipDynamics
             // warmth's defaultDynamics() placeholder (x 0, baseline null) is unset, not a value
             $placeholder = $dim === 'warmth' && $base === null && is_numeric($x) && abs(floatval($x)) < 1e-9;
             $untouchedSeed = false;
-            if ($readMode && $x !== null && $base !== null) {
+            if (($readMode || $wasRead) && $x !== null && $base !== null) {
                 $prevSeed = $prevGen['seeded'][$dim] ?? ($prevTemp !== null ? self::getTemperamentBaseline($prevTemp, $dim) : null);
                 $untouchedSeed = is_numeric($prevSeed) && abs(floatval($x) - floatval($prevSeed)) < 1e-9
                     && abs(floatval($base) - floatval($prevSeed)) < 1e-9;
@@ -2981,10 +2988,41 @@ class RelationshipDynamics
             || intval($dynamics['trait_vector_version'] ?? 0) < RelDynTraits::VERSION) {
             return true;
         }
-        if (in_array($src['read_status'] ?? null, ['pending', 'error'], true)) {
-            return RelDynTraitRead::stateFor($npcName)['status'] === 'done';
+        if (in_array($src['read_status'] ?? null, ['pending', 'error'], true)
+            && RelDynTraitRead::stateFor($npcName)['status'] === 'done') {
+            return true;
+        }
+        // priors from an incomplete core row (the game had not sent race / class yet): resolved
+        // again once it has (one core row read per request until then)
+        if (($src['prior']['complete'] ?? true) === false) {
+            $token = self::requestScopeToken();
+            $key = strtolower($npcName);
+            if ($token === null || (self::$priorRowChecked['token'] ?? null) !== $token) self::$priorRowChecked = ['token' => $token, 'names' => []];
+            if ($token !== null && isset(self::$priorRowChecked['names'][$key])) return false;
+            if ($token !== null) self::$priorRowChecked['names'][$key] = true;
+            try {
+                return self::corePriorRowComplete(self::fetchCoreProfileRow($npcName));
+            } catch (Throwable $e) {
+                error_log("[RelDyn-TRAITS] core row re-check failed for {$npcName}: " . $e->getMessage());
+                return false;   // keep the stored vector; checked again next request
+            }
         }
         return false;
+    }
+
+    /** Per request: NPCs whose incomplete prior row was already checked (traitProfileStale). */
+    private static $priorRowChecked = ['token' => null, 'names' => []];
+
+    /**
+     * True when a core row carries what the priors read from the game (design §4.4): a race and
+     * a class. Voice comes from npc_templates_v2; factions and skills may legitimately be empty.
+     */
+    public static function corePriorRowComplete(array $row): bool
+    {
+        $ext = self::decodeProfileJson($row['extended_data'] ?? null);
+        $class = $ext['class'] ?? null;
+        $className = is_array($class) ? ($class['name'] ?? '') : $class;
+        return trim((string) ($row['race'] ?? '')) !== '' && trim((string) $className) !== '';
     }
 
     /**
@@ -2998,6 +3036,8 @@ class RelationshipDynamics
     {
         $cfg = self::getTemperamentAutogenConfig();
         $preset = (array) (((array) ($cfg['npc_overrides'] ?? []))[strtolower(trim($npcName))] ?? []);
+        // an entry marked for the label assignment only (Ysolda's MDD 8.2 C Anxious, decisions §16 #2)
+        if (($preset['assignment'] ?? null) === 'label') $preset = [];
         $hand = is_array($preset['trait_vector'] ?? null) ? $preset['trait_vector'] : null;
         $cfgPreset = $hand === null ? self::validTemperament($preset['temperament'] ?? null) : null;
         $state = RelDynTraitRead::stateFor($npcName);
@@ -3028,7 +3068,7 @@ class RelationshipDynamics
             'auto_label'   => $auto['label'],
             'auto_source'  => $auto['label_source'],
             'traits'       => $auto['src'],
-            'prior'        => ['signals' => $auto['prior']['signals'], 'voice' => $voice],
+            'prior'        => ['signals' => $auto['prior']['signals'], 'voice' => $voice, 'complete' => self::corePriorRowComplete($row)],
             'read_status'  => $state['status'],
             'template_key' => $state['key'],
             'src_hash'     => $state['hash'],

@@ -41,8 +41,12 @@
 
 final class RelDynTraits
 {
-    /** Bump when the stored vector's shape changes. 2: phase 2 (auto vector, read state in _trait_vector_src). */
-    const VERSION = 2;
+    /**
+     * Bump when the stored vector's shape or resolution changes (every read-assignment NPC is
+     * resolved again once). 2: phase 2 (auto vector, read state in _trait_vector_src).
+     * 3: the evidence screen (RelDynTraitRead::GATE_V 2) and _trait_vector_src.prior.complete.
+     */
+    const VERSION = 3;
 
     /**
      * Default assignment (config traits.assignment): 'read' (phase 2) = override > preset >
@@ -297,6 +301,14 @@ final class RelDynTraits
      * 2r/rho = 1.02 > 0.81). Phase 2 fix (review, 2026-09-24): with (1 - u^2)^2 the largest
      * residual pull is 1.54 r / rho at u = 1/sqrt(3), k'(1) = 0 as well (the fade-out is smooth),
      * and values at the presets are unchanged.
+     * What the kernel does NOT give (review 2026-09-25): monotonicity near every preset. Where
+     * r is large against the model slope times rho the column still turns the wrong way inside
+     * the reach, by at most the |residuals| that reach the path (coord_m at Bold along D: ~20
+     * coordinate points; tier_retention at Independent along Rs: ~7); an exactly-interpolating
+     * local residual cannot avoid it when the table runs against the model. And kinks that are
+     * not the kernel's stay exactly at presets: the A17 model's crease at L = 0.5 (Gentle,
+     * Playful) and the per-unit clamps where a table value is the bound (charisma +-1, maturity
+     * Y 0.3 / 1.5). RelDynTraitBlendTest pins both.
      */
     public static function residualKernel(float $u): float
     {

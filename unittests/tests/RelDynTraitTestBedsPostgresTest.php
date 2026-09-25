@@ -69,9 +69,14 @@ final class RelDynTraitBedsPgDb
  * she has a template, is never queued or read, and is her hand-set conclusion. No LLM call.
  *
  * What the reads give (the report, D:\docs\reldyn-trait-read-report.md, has the numbers):
- *   - Aela: the most confident; low possessiveness; resists collapse (Y_down < 1).
- *   - Muiri: the most reactive (volatile-leaning, largest swings), the least confident
- *     (fearful-leaning) and the most jealousy-prone (vengeful side) of the four.
+ *   - Aela: the most confident; low possessiveness; resists collapse (Y_down < 1); openness
+ *     medium from her traits (the won-over switch is on; ruling #8 itself is tested on her
+ *     read in RelDynAttractionUphillPostgresTest::testRulingEightUnderTheReadAssignment).
+ *   - Muiri: the most reactive (her read), with the largest swings of the trait-derived
+ *     maturity types (Adaptive-leaning, both ways over 1; Lynly's Bard class rule makes hers
+ *     Volatile and larger). Her low confidence (fearful-leaning) and top jealousy come from her
+ *     PRIORS (YoungEager voice, the race pull, the base possessiveness of low confidence), not
+ *     from her bio; the ten traits have no vengeance.
  *   - Ashe: exactly Serene's hand-set vector (Stoic-leaning, Resilient, maturity 75,
  *     romance momentum 1.6), the most guarded and the least open.
  *   - Lynly: the most resilient of the three reads ("remarkable resilience"). The
@@ -307,7 +312,9 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
             arsort($v);
             return array_keys($v);
         };
-        $Y = array_map(fn($v) => RelDynTraits::maturityY(floatval($v['Rs']), floatval($v['L'])), $x);
+        // the maturity Y the engine applies (review 2026-09-25: not the formula at (Rs, L) alone:
+        // a class rule such as Bard -> Volatile, or a preset type, replaces it)
+        $Y = array_map(fn($dd) => RelationshipDynamics::effectiveMaturityY($dd), $d);
 
         // ---- Ashe: Serene's hand-set conclusion, never read
         $ashe = $d['Ashe'];
@@ -327,21 +334,39 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         // ---- Aela: confident, resilient-leaning, low possessive
         $this->assertSame('Aela the Huntress', $by('C')[0], 'Aela: the most confident');
         $this->assertLessThan(0.3, $x['Aela the Huntress']['Po'], 'Aela: low possessiveness');
-        $this->assertLessThan(1.0, $Y['Aela the Huntress'][1], 'Aela: resists collapse');
-        $this->assertGreaterThan(1.0, $Y['Aela the Huntress'][0] / $Y['Aela the Huntress'][1]);
+        $this->assertSame('traits', $d['Aela the Huntress']['_profile_autogen']['maturity_type_origin']);
+        $this->assertLessThan(1.0, $Y['Aela the Huntress']['Y_down'], 'Aela: resists collapse');
+        $this->assertGreaterThan(1.0, $Y['Aela the Huntress']['Y_up'] / $Y['Aela the Huntress']['Y_down']);
         $this->assertGreaterThan(0.45, RelDynTraits::opennessAt($x['Aela the Huntress'], RelDynAttraction::defaults()['temperament_openness'],
             RelDynAttraction::defaults()['openness_levels'])['o'], 'her openness from her traits sits just above the won-over switch (ruling #8: steep, not closed)');
         $this->assertSame('medium', RelDynAttraction::definition('Aela the Huntress', $d['Aela the Huntress'])['openness']);
 
-        // ---- Muiri: volatile-leaning, fearful-leaning, the most jealousy-prone
-        $this->assertSame('Muiri', $by('L')[0], 'Muiri: the most reactive');
-        $swing = array_map(fn($y) => $y[0] * $y[1], $Y);
-        arsort($swing);
-        $this->assertSame('Muiri', array_key_first($swing), 'Muiri: the largest swings both ways');
+        // ---- Muiri: volatile-leaning (her read), fearful-leaning and jealousy-prone (her PRIORS)
+        $muiri = $d['Muiri']['_trait_vector_src'];
+        $this->assertSame('Muiri', $by('L')[0], 'Muiri: the most reactive (her read: reactivity 0.7)');
+        $this->assertSame('bio', $muiri['traits']['reactivity']['source']);
+        // her swings are the largest of the maturity types that come from the traits (Aela's and
+        // hers); Lynly's are larger still, but from her class (Bard -> Volatile), not her traits
+        $this->assertSame('traits', $d['Muiri']['_profile_autogen']['maturity_type_origin']);
+        $swing = fn(string $n) => $Y[$n]['Y_up'] * $Y[$n]['Y_down'];
+        $this->assertGreaterThan($swing('Aela the Huntress'), $swing('Muiri'));
+        $this->assertGreaterThan(1.0, $Y['Muiri']['Y_up']);
+        $this->assertGreaterThan(1.0, $Y['Muiri']['Y_down'], 'Muiri: swings both ways (Adaptive-leaning, not Volatile)');
+        $this->assertSame('class', $d['Lynly Star-Sung']['_profile_autogen']['maturity_type_origin']);
+        $this->assertSame(['Y_up' => 1.5, 'Y_down' => 1.5], $Y['Lynly Star-Sung'], "Lynly: the Bard class rule's Volatile outranks her traits");
+        $this->assertGreaterThan($swing('Muiri'), $swing('Lynly Star-Sung'));
+        // the least confident, from her priors (YoungEager voice, the race pull): her read's
+        // confidence quote moved her UP, toward 0.6
         $this->assertSame('Muiri', array_reverse($by('C'))[0], 'Muiri: the least confident (fearful-leaning)');
+        $this->assertContains('voice:YoungEager', $muiri['prior']['signals']);
+        $this->assertLessThan(0.45, $muiri['traits']['confidence']['prior']);
+        $this->assertGreaterThan($muiri['traits']['confidence']['prior'], $x['Muiri']['C']);
+        // the most jealousy-prone, also from her priors: no possessiveness quote, the base
+        // Po = 0.15 + 0.35 (1 - C) of that low confidence (the traits have no vengeance)
         $jeal = array_map(fn($v) => RelDynTraits::value($v, 'jealousy_mult'), $x);
         arsort($jeal);
-        $this->assertSame('Muiri', array_key_first($jeal), 'Muiri: the most jealousy-prone (the vengeful side)');
+        $this->assertSame('Muiri', array_key_first($jeal), 'Muiri: the most jealousy-prone');
+        $this->assertSame('prior', $muiri['traits']['possessiveness']['source']);
 
         // ---- Lynly: her read's resilience; the shy / anxious / masking target is not met (class doc, report)
         $read = array_diff_key($x, ['Ashe' => 1]);

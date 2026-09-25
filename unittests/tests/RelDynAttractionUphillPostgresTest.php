@@ -104,7 +104,9 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
     protected function setUp(): void
     {
         // Personality traits phase 2: this class pins the LABEL assignment (the phase-1 legacy path):
-        // its NPCs' temperaments are the old core-data vote's. The read assignment has its own tests.
+        // its NPCs' temperaments are the old core-data vote's, so these are the attraction
+        // mechanics on the Independent preset. Ruling #8 on the shipped read assignment (her own
+        // vector from the seed's read) is testRulingEightUnderTheReadAssignment.
         RelDynTraits::$assignmentOverride = 'label';
         $dsn = getenv('RELDYN_TEST_PG_DSN');
         if (!$dsn || !function_exists('pg_connect')) {
@@ -189,6 +191,9 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
     protected function tearDown(): void
     {
         RelDynTraits::$assignmentOverride = null;
+        RelDynTraitRead::$launcher = null;
+        RelDynTraitRead::$llm = null;
+        RelDynTraitRead::reset();
         if (!isset($this->schema)) return;
         ini_set('error_log', $this->prevErrorLog === false ? '' : (string) $this->prevErrorLog);
         @unlink($this->errorLog);
@@ -560,6 +565,146 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertLessThan(1.0, $won['passion']['curve'], 'still an uphill: being won over does not change the rate');
         $this->assertEquals(50.0, $won['passion_ceiling'], 'MDD 1.4 medium: a failed pillar cuts the passion ceiling 50%');
         $this->assertSame(2, $won['romance']['allowed'], 'the romance axis opens (her standing met); lifts still wait on significant moments');
+        $this->assertNoDbFailures();
+    }
+
+    // ------------------------------------------------------------------ ruling #8 under the read assignment
+
+    /**
+     * Personality traits phase 2 (the shipped default, traits.assignment 'read'): Aela is her
+     * own trait vector, the committed seed's bio read over her priors (Commander voice from
+     * npc_templates_v2, Ranger class, the Companions, Nord). Her template here is placeholder
+     * text (no bio is committed) and her read row is keyed to it with the seed's own result.
+     */
+    private function aelaUnderTheReadAssignment(): void
+    {
+        RelDynTraits::$assignmentOverride = 'read';
+        RelDynTraitRead::reset();
+        RelDynTraitRead::$launcher = function (): void {};
+        RelDynTraitRead::$llm = function () { $this->fail('no LLM call: her read is the seed'); };
+        pg_query($this->db->link, "CREATE TABLE combined_bio_templates (npc_name varchar, oghma_knowledge_tags text, core text,
+            npc_static_bio text, appearance text, personality text, relationships text, occupation text, skills text,
+            speechstyle text, goals text, voiceid text, gender text, race text, refid text, tts_filter_preset text)");
+        pg_query($this->db->link, "CREATE TABLE npc_templates_v2 (npc_name varchar, npc_pers text, npc_misc text,
+            melotts_voiceid varchar, xtts_voiceid varchar, xvasynth_voiceid varchar)");
+        $key = 'aela_the_huntress';
+        $fields = array_fill_keys(RelDynTraitRead::FIELDS, "Placeholder {$key} text (the live bio is not committed).");
+        pg_query_params($this->db->link, 'INSERT INTO combined_bio_templates (npc_name, core, personality, relationships, npc_static_bio, speechstyle, goals, occupation)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [$key, 'core', $fields['personality'], $fields['relationships'],
+            $fields['npc_static_bio'], $fields['speechstyle'], $fields['goals'], $fields['occupation']]);
+        pg_query_params($this->db->link, 'INSERT INTO npc_templates_v2 (npc_name, xvasynth_voiceid) VALUES ($1, $2)', [$key, 'sk_femalecommander']);
+        RelDynTraitRead::ensureTable();
+        $e = RelDynTraitRead::loadSeedFile()['reads'][$key];
+        pg_query_params($this->db->link, "INSERT INTO reldyn_trait_reads (template_key, src_hash, prompt_v, status, attempts, model, result)
+            VALUES (\$1, \$2, \$3, 'done', 1, \$4, \$5::jsonb)",
+            [$key, RelDynTraitRead::srcHash($fields), RelDynTraitRead::PROMPT_V, 'seed:' . $e['model'], json_encode($e['result'])]);
+    }
+
+    /** A charming fighter: speechcraft $speech on top of the warrior's career at step $k. */
+    private function charmingFighter(int $speech, float $k): void
+    {
+        $this->warriorAt($k);
+        $skills = json_decode(pg_fetch_assoc(pg_query($this->db->link, "SELECT value FROM core_player WHERE id = 'skills'"))['value'], true);
+        $this->corePlayer('skills', array_merge($skills, ['speechcraft' => $speech, 'illusion' => 75]));
+    }
+
+    /**
+     * One evening a game day of courting from passion 20 (the loop of the silver-tongue test).
+     * Returns ['a' => attraction at the start, 'passion' => day => passion, 'won_day' => ?int].
+     */
+    private function courtAela(callable $build, int $maxDays): array
+    {
+        pg_query_params($this->db->link, "UPDATE core_npc_master SET plugin_extended_data = '{}'::jsonb WHERE npc_name = $1", [self::AELA]);
+        pg_query($this->db->link, 'DELETE FROM eventlog');
+        pg_query($this->db->link, 'DELETE FROM moods_issued');
+        pg_query($this->db->link, 'DELETE FROM core_player');
+        $build();
+        $this->setCoreAff(40);
+        $this->turn('A song for the Huntress?');
+        $d = $this->dynamics();
+        $run = ['a' => $this->attractionNow($d), 'd' => $d, 'passion' => [], 'won_day' => null];
+        $this->editDynamics(function (array &$d): void { RelationshipDynamics::setPassion($d, 20.0); });
+        for ($day = 1; $day <= $maxDays; $day++) {
+            $this->gamets += 20 * self::DAY / 24;
+            $this->realTs += 3600;
+            $this->editDynamics(function (array &$d): void {
+                $d['_accumulated_play_gamets'] = floatval($d['_accumulated_play_gamets'] ?? 0) + 0.5 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
+            });
+            $this->queueEval(['passion' => 12], ['quality_time']);
+            $this->turn('Walk with me a while?', 'default');
+            $now = $this->dynamics();
+            $run['passion'][$day] = round(RelationshipDynamics::getPassion($now), 2);
+            $run['outcome'][$day] = $now['_attraction']['outcome'] ?? null;
+            if (!empty($now['_attraction']['won_over'])) {
+                $run['won_day'] = $day;
+                $run['won'] = $now['_attraction'];
+                break;
+            }
+        }
+        return $run;
+    }
+
+    /**
+     * Ruling #8 under the shipped read assignment (review 2026-09-25: the silver-tongue test
+     * above pins the phase-1 label path, where Aela is the Independent preset; there a pure
+     * silver tongue wins her over on day ~115). Ken: "must be steep, not everyone is for
+     * everyone. Won-over stays possible but steep; a plain bard doesn't get there, only strong
+     * charm plus partial fit might." Her own vector (openness medium from her traits, so the
+     * won-over switch is on) loses passion faster than the Independent preset between evenings
+     * (passion Y_down about 0.88 against 0.70), so:
+     *   - the plain bard hovers at the spark and is never won over;
+     *   - a pure silver tongue climbs (charm is a real lever) but levels off in the mid 30s,
+     *     below the won-over line of 40, in 150 game days: charm alone does not get there;
+     *   - strong charm plus a partial martial fit (a green sellsword, far below her floor of 68)
+     *     draws her: attracted from the first evening, below her floor, and passion past 40
+     *     only after weeks of courting; the same fighter without the charm is still short of
+     *     40 after two months.
+     */
+    public function testRulingEightUnderTheReadAssignment(): void
+    {
+        $this->aelaUnderTheReadAssignment();
+        $clock = [$this->gamets, $this->realTs];
+        $run = function (callable $build, int $days) use ($clock): array {
+            [$this->gamets, $this->realTs] = $clock;
+            return $this->courtAela($build, $days);
+        };
+        $plain = $run(fn() => $this->bardWith(15), 150);
+        $silver = $run(fn() => $this->bardWith(100), 150);
+        $fit = $run(fn() => $this->charmingFighter(15, 1.0), 60);
+        $charmFit = $run(fn() => $this->charmingFighter(100, 1.0), 60);
+        $why = json_encode(['plain' => $plain['passion'], 'silver' => $silver['passion'], 'fit' => $fit['passion'], 'charm+fit' => $charmFit['passion']]);
+
+        // her own vector, from her read (no LLM call: the stub fails the test on one)
+        $src = $plain['d']['_trait_vector_src'];
+        $this->assertSame('read', $src['assignment']);
+        $this->assertSame('read', $src['auto_source']);
+        $this->assertSame('medium', RelDynAttraction::definition(self::AELA, $plain['d'])['openness'], 'openness from her traits: the won-over switch is on');
+        $this->assertGreaterThan(0.8, RelDynTraits::value(RelDynTraits::readVector($plain['d']), 'y_passion_down'));
+
+        // a plain bard never gets there
+        foreach (['plain' => $plain, 'silver' => $silver] as $who => $r) {
+            $this->assertTrue($r['a']['friendzoned'], "{$who}: no fit at all");
+            $this->assertNull($r['won_day'], "{$who}: {$why}");
+        }
+        $this->assertLessThan(22.0, max($plain['passion']), 'the plain bard hovers at the spark: ' . $why);
+        // charm alone climbs, but not to the line
+        $this->assertGreaterThan(max($plain['passion']) + 8.0, max($silver['passion']), 'charm is a real lever: ' . $why);
+        $this->assertLessThan(40.0, max($silver['passion']), 'charm alone does not win her over: ' . $why);
+        $this->assertLessThan(3.0, max($silver['passion']) - $silver['passion'][150], 'it levels off: ' . $why);
+        // strong charm plus partial fit might: drawn, far below her floor, and slowly past 40
+        $u = $charmFit['a']['passion']['units']['flexible:visceral'];
+        $this->assertTrue($charmFit['a']['attracted'], $charmFit['a']['reason']);
+        $this->assertSame('drawn', $charmFit['a']['outcome'], $charmFit['a']['reason']);
+        $this->assertTrue($charmFit['a']['below_floor']);
+        $this->assertLessThan(45.0, $u['score'], 'a partial fit: far below her martial floor of 68');
+        $first40 = array_key_first(array_filter($charmFit['passion'], fn($p) => $p >= 40.0));
+        $this->assertNotNull($first40, 'strong charm plus partial fit gets there: ' . $why);
+        $this->assertGreaterThan(20, $first40, 'steep: weeks of courting: ' . $why);
+        // ... the fit without the charm does not, in the same two months
+        $this->assertTrue($fit['a']['attracted']);
+        $this->assertNotSame('drawn', $fit['a']['outcome'], $fit['a']['reason']);
+        $this->assertLessThan(40.0, max($fit['passion']), $why);
+        $this->assertLessThan($charmFit['passion'][60] - 5.0, $fit['passion'][60], $why);
         $this->assertNoDbFailures();
     }
 

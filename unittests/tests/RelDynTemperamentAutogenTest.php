@@ -296,15 +296,28 @@ final class RelDynTemperamentAutogenTest extends TestCase
             'Mikael' => ['Mikael', 'maturity_type', 'Volatile'],
             'Serana' => ['Serana', 'maturity_type', 'Growth'],
             'Nazeem' => ['Nazeem', 'maturity_type', 'Rigid'],
+            'Ysolda' => ['Ysolda', 'temperament', 'Anxious'],   // label assignment only (below)
         ];
     }
 
-    /** Decisions §16 #2: Ysolda's hand-set Anxious (MDD 8.2 C) is dropped; her own evidence decides. */
-    public function testYsoldaHasNoPresetAnyMore(): void
+    /**
+     * Decisions §16 #2: Ysolda's hand-set Anxious (MDD 8.2 C) is dropped under the READ
+     * assignment (her bio decides); the label assignment is the phase-1 path, reproduced exactly,
+     * so it keeps her preset.
+     */
+    public function testYsoldasAnxiousIsTheLabelAssignmentsOnly(): void
     {
-        $p = RelationshipDynamics::deriveNpcProfile('Ysolda', self::withClass('Food Vendor'));
-        $this->assertNotSame('preset', $p['sources']['temperament']);
-        $this->assertArrayNotHasKey('ysolda', RelationshipDynamics::getTemperamentAutogenConfig()['npc_overrides']);
+        $label = RelationshipDynamics::deriveNpcProfile('Ysolda', self::withClass('Food Vendor'));
+        $this->assertSame('Anxious', $label['temperament'], 'label assignment: phase 1 exactly');
+        $this->assertSame('preset', $label['sources']['temperament']);
+        $this->assertSame('label', RelationshipDynamics::getTemperamentAutogenConfig()['npc_overrides']['ysolda']['assignment']);
+
+        RelDynTraits::$assignmentOverride = 'read';
+        $auto = RelDynTraitAssign::resolve(['prior_in' => ['class' => 'Merchant', 'race' => 'NordRace']]);
+        $read = RelationshipDynamics::deriveNpcProfile('Ysolda', self::withClass('Food Vendor'), ['trait_auto' => $auto]);
+        $this->assertNotSame('preset', $read['sources']['temperament'], 'read assignment: not the hand-set preset');
+        $this->assertSame($auto['label'], $read['temperament']);
+        $this->assertArrayNotHasKey('temperament', $read['preset']);
     }
 
     #[DataProvider('namedPresets')]
@@ -359,6 +372,7 @@ final class RelDynTemperamentAutogenTest extends TestCase
 
     public function testAnxiousIsInsecureAndBoldHasNoTraits(): void
     {
+        $this->assertSame(['insecure'], RelationshipDynamics::deriveNpcProfile('Ysolda', self::coreRow())['traits']);
         $shy = RelationshipDynamics::deriveNpcProfile('Shy Girl', self::coreRow(['personality' => 'A shy, timid and nervous girl.']));
         $this->assertSame('Anxious', $shy['temperament']);
         $this->assertSame(['insecure'], $shy['traits']);

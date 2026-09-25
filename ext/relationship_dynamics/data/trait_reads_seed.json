@@ -75,9 +75,17 @@
                     },
                     "protectiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "ensure Whiterun's prosperity and security"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "ensure Whiterun's prosperity and security"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -85,7 +93,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "political savvy in how she subtly influences"
-                }
+                },
+                "gate": 2
             }
         },
         "aela_the_huntress": {
@@ -117,9 +126,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "She takes pride in mentoring promising warriors"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "She takes pride in mentoring promising warriors"
+                        }
                     },
                     "resilience": {
                         "value": 0.65,
@@ -164,7 +181,8 @@
                     "conf": 0.6,
                     "field": "goals",
                     "evidence": "Preserve the traditions of the Companions while honoring her mother's legacy"
-                }
+                },
+                "gate": 2
             }
         },
         "aeri": {
@@ -246,7 +264,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "shows signs of being somewhat jaded toward political affairs"
-                }
+                },
+                "gate": 2
             }
         },
         "agmaer": {
@@ -314,9 +333,17 @@
                     },
                     "protectiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "Eliminate vampires"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "Eliminate vampires"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -324,7 +351,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "somewhat insecure about his abilities"
-                }
+                },
+                "gate": 2
             }
         },
         "ahtar": {
@@ -379,10 +407,18 @@
                         "evidence": "little patience for pleasantries"
                     },
                     "restraint": {
-                        "value": 0.8,
-                        "conf": 0.7,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "goals",
-                        "evidence": "Maintain order and security"
+                        "evidence": "Maintain order and security",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_field",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "goals",
+                            "evidence": "Maintain order and security"
+                        }
                     },
                     "possessiveness": {
                         "value": 0.5,
@@ -392,9 +428,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "uphold justice through his role"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "uphold justice through his role"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -402,7 +446,8 @@
                     "conf": 0.5,
                     "field": "personality",
                     "evidence": "takes his duties seriously"
-                }
+                },
+                "gate": 2
             }
         },
         "annekke_crag-jumper": {
@@ -474,9 +519,17 @@
                     },
                     "protectiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "occupation",
-                        "evidence": "guardian of Darkwater Crossing"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "job",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "occupation",
+                            "evidence": "guardian of Darkwater Crossing"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -484,7 +537,8 @@
                     "conf": 0.6,
                     "field": "goals",
                     "evidence": "find a balance"
-                }
+                },
+                "gate": 2
             }
         },
         "anwen": {
@@ -565,7 +619,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "aranea_ienith": {
@@ -638,10 +693,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "Protect and maintain Azura's Shrine",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "Protect and maintain Azura's Shrine"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -650,7 +712,8 @@
                     "field": "personality",
                     "evidence": "calm, wise demeanor",
                     "note": "centred"
-                }
+                },
+                "gate": 2
             }
         },
         "argis_the_bulwark": {
@@ -720,15 +783,31 @@
                     },
                     "possessiveness": {
                         "value": 0.3,
-                        "conf": 0.3,
-                        "field": "relationships",
-                        "evidence": "Sworn to protect and serve with his life at Vlindrel Hall."
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_jealousy",
+                            "value": 0.3,
+                            "conf": 0.3,
+                            "field": "relationships",
+                            "evidence": "Sworn to protect and serve with his life at Vlindrel Hall."
+                        }
                     },
                     "protectiveness": {
-                        "value": 0.9,
-                        "conf": 0.8,
-                        "field": "relationships",
-                        "evidence": "Sworn to protect and serve with his life at Vlindrel Hall."
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.9,
+                            "conf": 0.8,
+                            "field": "relationships",
+                            "evidence": "Sworn to protect and serve with his life at Vlindrel Hall."
+                        }
                     }
                 },
                 "maturity_start": {
@@ -737,7 +816,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "astrid": {
@@ -809,9 +889,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "fiercely protective of her power and authority"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "fiercely protective of her power and authority"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -819,7 +907,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "calculating, manipulative, and fiercely protective"
-                }
+                },
+                "gate": 2
             }
         },
         "athis": {
@@ -897,7 +986,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "dedication to martial discipline"
-                }
+                },
+                "gate": 2
             }
         },
         "babette": {
@@ -967,9 +1057,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Treats fellow members as extended family and has served loyally for centuries"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Treats fellow members as extended family and has served loyally for centuries"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -977,7 +1075,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "displays the wisdom and dark humor of a centuries-old killer"
-                }
+                },
+                "gate": 2
             }
         },
         "balgruuf_the_greater": {
@@ -1044,10 +1143,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.7,
-                        "field": "relationships",
-                        "evidence": "Trusts his Dunmer housecarl above all others"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "relationships",
+                            "evidence": "Trusts his Dunmer housecarl above all others"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -1055,7 +1162,8 @@
                     "conf": 0.7,
                     "field": "personality",
                     "evidence": "pragmatic and measured approach to leadership"
-                }
+                },
+                "gate": 2
             }
         },
         "balimund": {
@@ -1087,9 +1195,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.9,
-                        "field": "personality",
-                        "evidence": "takes immense pride in his craft"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.9,
+                            "field": "personality",
+                            "evidence": "takes immense pride in his craft"
+                        }
                     },
                     "resilience": {
                         "value": 0.6,
@@ -1133,7 +1249,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "maintains strong ethical principles"
-                }
+                },
+                "gate": 2
             }
         },
         "beleval": {
@@ -1201,10 +1318,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
-                        "field": "goals",
-                        "evidence": "Protect the people of Skyrim"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "Protect the people of Skyrim"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -1212,7 +1337,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "Strong sense of duty"
-                }
+                },
+                "gate": 2
             }
         },
         "belrand": {
@@ -1292,7 +1418,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "He maintains a jovial and enthusiastic attitude"
-                }
+                },
+                "gate": 2
             }
         },
         "benor": {
@@ -1355,15 +1482,31 @@
                     },
                     "possessiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "refuses to cuckold Hroggar on principle"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_jealousy",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "refuses to cuckold Hroggar on principle"
+                        }
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
-                        "field": "goals",
-                        "evidence": "Protect Morthal from both external threats and internal magical influences"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "Protect Morthal from both external threats and internal magical influences"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -1371,7 +1514,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "demonstrating both loyalty and independent thinking"
-                }
+                },
+                "gate": 2
             }
         },
         "borgakh_the_steel_heart": {
@@ -1451,7 +1595,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "internal conflict between tribal obligations"
-                }
+                },
+                "gate": 2
             }
         },
         "brelyna_maryon": {
@@ -1529,7 +1674,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "brynjolf": {
@@ -1597,9 +1743,17 @@
                     },
                     "protectiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "fought alongside her to avenge the Guild"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "fought alongside her to avenge the Guild"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -1607,7 +1761,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "follows a personal code of honor"
-                }
+                },
+                "gate": 2
             }
         },
         "calder": {
@@ -1639,9 +1794,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "pride in his warrior heritage"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "pride in his warrior heritage"
+                        }
                     },
                     "resilience": {
                         "value": 0.6,
@@ -1676,10 +1839,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Sworn to protect and serve",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Sworn to protect and serve"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -1687,7 +1857,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "unwavering loyalty to his duty"
-                }
+                },
+                "gate": 2
             }
         },
         "camilla_valerius": {
@@ -1765,7 +1936,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "Demonstrates strong business sense and independence"
-                }
+                },
+                "gate": 2
             }
         },
         "carlotta_valentia": {
@@ -1827,10 +1999,18 @@
                         "evidence": "maintains a professional demeanor"
                     },
                     "possessiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
-                        "field": "relationships",
-                        "evidence": "refuses to let any man come between them"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "not_a_partner",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "relationships",
+                            "evidence": "refuses to let any man come between them"
+                        }
                     },
                     "protectiveness": {
                         "value": 0.9,
@@ -1844,7 +2024,8 @@
                     "conf": 0.7,
                     "field": "personality",
                     "evidence": "maintains a professional demeanor and strong work ethic"
-                }
+                },
+                "gate": 2
             }
         },
         "celann": {
@@ -1912,9 +2093,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.9,
-                        "field": "goals",
-                        "evidence": "Protect Skyrim from the growing vampire menace"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.7,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "Protect Skyrim from the growing vampire menace"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -1922,7 +2111,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "pragmatism tempered by experience"
-                }
+                },
+                "gate": 2
             }
         },
         "cicero": {
@@ -1986,15 +2176,31 @@
                     },
                     "possessiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "absolute devotion to the Night Mother and the ancient traditions"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_jealousy",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "absolute devotion to the Night Mother and the ancient traditions"
+                        }
                     },
                     "protectiveness": {
-                        "value": 0.9,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "goals",
-                        "evidence": "Protect and serve the Night Mother with absolute dedication"
+                        "evidence": "Protect and serve the Night Mother with absolute dedication",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_field",
+                            "value": 0.9,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "Protect and serve the Night Mother with absolute dedication"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -2003,7 +2209,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "cosnach": {
@@ -2082,7 +2289,8 @@
                     "conf": 0.7,
                     "field": "personality",
                     "evidence": "masks his insecurities with drinking and bravado"
-                }
+                },
+                "gate": 2
             }
         },
         "delphine": {
@@ -2119,10 +2327,18 @@
                         "evidence": "deep sense of duty"
                     },
                     "resilience": {
-                        "value": 0.8,
-                        "conf": 0.8,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "years of evading Thalmor persecution"
+                        "evidence": "years of evading Thalmor persecution",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.8,
+                            "field": "personality",
+                            "evidence": "years of evading Thalmor persecution"
+                        }
                     },
                     "reactivity": {
                         "value": 0.6,
@@ -2137,10 +2353,18 @@
                         "evidence": "keeps him at careful distance"
                     },
                     "restraint": {
-                        "value": 0.8,
-                        "conf": 0.8,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "maintains a suspicious nature"
+                        "evidence": "maintains a suspicious nature",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.8,
+                            "field": "personality",
+                            "evidence": "maintains a suspicious nature"
+                        }
                     },
                     "possessiveness": {
                         "value": 0.5,
@@ -2149,10 +2373,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.9,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "goals",
-                        "evidence": "protect a true Dragonborn"
+                        "evidence": "protect a true Dragonborn",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_field",
+                            "value": 0.9,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "protect a true Dragonborn"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -2160,7 +2392,8 @@
                     "conf": 0.8,
                     "field": "personality",
                     "evidence": "years of evading Thalmor persecution"
-                }
+                },
+                "gate": 2
             }
         },
         "delvin_mallory": {
@@ -2239,7 +2472,8 @@
                     "conf": 0.6,
                     "field": "npc_static_bio",
                     "evidence": "experience and survival through the Guild's hardest times"
-                }
+                },
+                "gate": 2
             }
         },
         "derkeethus": {
@@ -2321,7 +2555,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "dravynea_the_stoneweaver": {
@@ -2353,9 +2588,17 @@
                     },
                     "pride": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "takes pride in using her magical talents"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "takes pride in using her magical talents"
+                        }
                     },
                     "resilience": {
                         "value": 0.5,
@@ -2389,9 +2632,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "works long hours maintaining safe conditions"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "works long hours maintaining safe conditions"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -2399,7 +2650,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "practical and dedicated"
-                }
+                },
+                "gate": 2
             }
         },
         "eorlund_gray-mane": {
@@ -2467,10 +2719,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "deep sense of duty to both his family",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "deep sense of duty to both his family"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -2479,7 +2738,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "erandur": {
@@ -2548,10 +2808,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Dedicated to ending the nightmare curse",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Dedicated to ending the nightmare curse"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -2559,7 +2826,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "strives to atone through selfless service"
-                }
+                },
+                "gate": 2
             }
         },
         "erik_the_slayer": {
@@ -2639,7 +2907,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "esbern": {
@@ -2710,9 +2979,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "maintains deep reverence for their legacy and seeks to preserve their knowledge"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "maintains deep reverence for their legacy and seeks to preserve their knowledge"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -2721,7 +2998,8 @@
                     "field": "personality",
                     "evidence": "maintains a sharp mind and demonstrates unwavering conviction",
                     "note": "centred"
-                }
+                },
+                "gate": 2
             }
         },
         "faendal": {
@@ -2753,9 +3031,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "takes pride in his archery skills and hunting abilities"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "takes pride in his archery skills and hunting abilities"
+                        }
                     },
                     "resilience": {
                         "value": 0.5,
@@ -2799,7 +3085,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "farengar_secret-fire": {
@@ -2882,7 +3169,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "farkas": {
@@ -2960,7 +3248,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "frea": {
@@ -3039,7 +3328,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "balanced mixture of warrior's determination and shaman's wisdom"
-                }
+                },
+                "gate": 2
             }
         },
         "galmar_stone-fist": {
@@ -3064,16 +3354,32 @@
                         "evidence": "passionate declarations about Skyrim's freedom"
                     },
                     "confidence": {
-                        "value": 0.8,
-                        "conf": 0.7,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "values strength, loyalty, and Nord traditions"
+                        "evidence": "values strength, loyalty, and Nord traditions",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "personality",
+                            "evidence": "values strength, loyalty, and Nord traditions"
+                        }
                     },
                     "pride": {
-                        "value": 0.8,
-                        "conf": 0.7,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "values strength, loyalty, and Nord traditions"
+                        "evidence": "values strength, loyalty, and Nord traditions",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "personality",
+                            "evidence": "values strength, loyalty, and Nord traditions"
+                        }
                     },
                     "resilience": {
                         "value": 0.7,
@@ -3094,16 +3400,32 @@
                         "evidence": "gruff, no-nonsense warrior"
                     },
                     "restraint": {
-                        "value": 0.8,
-                        "conf": 0.7,
-                        "field": "occupation",
-                        "evidence": "oversees military strategy, troop deployment, and battlefield operations"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "job",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "occupation",
+                            "evidence": "oversees military strategy, troop deployment, and battlefield operations"
+                        }
                     },
                     "possessiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "bound by shared vision for Skyrim's freedom"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_jealousy",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "bound by shared vision for Skyrim's freedom"
+                        }
                     },
                     "protectiveness": {
                         "value": 0.75,
@@ -3118,7 +3440,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "unwavering dedication to the Stormcloak cause"
-                }
+                },
+                "gate": 2
             }
         },
         "gat_gro-shargakh": {
@@ -3187,9 +3510,17 @@
                     },
                     "protectiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Fought their way out of Kolskeggr Mine"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Fought their way out of Kolskeggr Mine"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -3197,7 +3528,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "maintaining a pragmatic outlook"
-                }
+                },
+                "gate": 2
             }
         },
         "general_tullius": {
@@ -3252,10 +3584,18 @@
                         "evidence": "often appearing cold and calculating"
                     },
                     "restraint": {
-                        "value": 0.8,
-                        "conf": 0.9,
-                        "field": "occupation",
-                        "evidence": "commands all Imperial military forces"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "job",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "occupation",
+                            "evidence": "commands all Imperial military forces"
+                        }
                     },
                     "possessiveness": {
                         "value": 0.5,
@@ -3265,9 +3605,17 @@
                     },
                     "protectiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "supports her as the legitimate Jarl"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "supports her as the legitimate Jarl"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -3275,7 +3623,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "stern, pragmatic, and firmly devoted"
-                }
+                },
+                "gate": 2
             }
         },
         "ghorbash_the_iron_hand": {
@@ -3354,7 +3703,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "philosophical depth that sets him apart"
-                }
+                },
+                "gate": 2
             }
         },
         "gregor": {
@@ -3424,10 +3774,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Sworn protector and personal bodyguard",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Sworn protector and personal bodyguard"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -3435,7 +3792,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "exhibits the archetypal Nord traits of loyalty"
-                }
+                },
+                "gate": 2
             }
         },
         "hulda": {
@@ -3467,9 +3825,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.8,
-                        "field": "personality",
-                        "evidence": "takes pride in running an orderly establishment"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.8,
+                            "field": "personality",
+                            "evidence": "takes pride in running an orderly establishment"
+                        }
                     },
                     "resilience": {
                         "value": 0.6,
@@ -3513,7 +3879,8 @@
                     "conf": 0.7,
                     "field": "personality",
                     "evidence": "practical and business-minded individual"
-                }
+                },
+                "gate": 2
             }
         },
         "illia": {
@@ -3581,9 +3948,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "Prevent others from falling victim to hagraven ceremonies"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "Prevent others from falling victim to hagraven ceremonies"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -3591,7 +3966,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "torn between familial loyalty and moral conscience"
-                }
+                },
+                "gate": 2
             }
         },
         "ingjard": {
@@ -3670,7 +4046,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "strong sense of duty and pragmatism"
-                }
+                },
+                "gate": 2
             }
         },
         "iona": {
@@ -3738,10 +4115,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.9,
-                        "conf": 0.9,
-                        "field": "relationships",
-                        "evidence": "Bound by oath to protect"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.9,
+                            "conf": 0.9,
+                            "field": "relationships",
+                            "evidence": "Bound by oath to protect"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -3749,7 +4134,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "unwavering loyalty and tends"
-                }
+                },
+                "gate": 2
             }
         },
         "irileth": {
@@ -3774,10 +4160,18 @@
                         "evidence": "maintains a professional demeanor at all times, rarely showing emotion"
                     },
                     "confidence": {
-                        "value": 0.8,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "stern, cautious, and deeply suspicious of outsiders"
+                        "evidence": "stern, cautious, and deeply suspicious of outsiders",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "personality",
+                            "evidence": "stern, cautious, and deeply suspicious of outsiders"
+                        }
                     },
                     "pride": {
                         "value": 0.7,
@@ -3831,7 +4225,8 @@
                     "conf": 0.6,
                     "field": "npc_static_bio",
                     "evidence": "Fought numerous battles together, forging a deep bond of trust and loyalty"
-                }
+                },
+                "gate": 2
             }
         },
         "isran": {
@@ -3856,10 +4251,18 @@
                         "evidence": "gruff, no-nonsense demeanor"
                     },
                     "confidence": {
-                        "value": 0.8,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "unwavering dedication"
+                        "evidence": "unwavering dedication",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "personality",
+                            "evidence": "unwavering dedication"
+                        }
                     },
                     "pride": {
                         "value": 0.7,
@@ -3912,7 +4315,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "j'zargo": {
@@ -3991,7 +4395,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "jenassa": {
@@ -4023,9 +4428,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.9,
-                        "field": "personality",
-                        "evidence": "takes pride in her lethal abilities"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.9,
+                            "field": "personality",
+                            "evidence": "takes pride in her lethal abilities"
+                        }
                     },
                     "resilience": {
                         "value": 0.5,
@@ -4069,7 +4482,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "maintains a professional demeanor with clients"
-                }
+                },
+                "gate": 2
             }
         },
         "jordis_the_sword-maiden": {
@@ -4140,10 +4554,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "serves with unwavering loyalty",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "serves with unwavering loyalty"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -4152,7 +4573,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "karliah": {
@@ -4222,10 +4644,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "protect the Twilight Sepulcher and recover the Skeleton Key",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "protect the Twilight Sepulcher and recover the Skeleton Key"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -4233,7 +4662,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "incredibly determined, willing to spend decades"
-                }
+                },
+                "gate": 2
             }
         },
         "kharjo": {
@@ -4304,10 +4734,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
-                        "field": "goals",
-                        "evidence": "Protect the caravan and its members from harm"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "Protect the caravan and its members from harm"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -4315,7 +4753,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "shows wisdom in his advice to others"
-                }
+                },
+                "gate": 2
             }
         },
         "kodlak_whitemane": {
@@ -4396,7 +4835,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "legate_rikke": {
@@ -4463,10 +4903,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.7,
-                        "field": "relationships",
-                        "evidence": "wholly devoted to the Empire as Skyrim's best hope"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "relationships",
+                            "evidence": "wholly devoted to the Empire as Skyrim's best hope"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -4474,7 +4922,8 @@
                     "conf": 0.7,
                     "field": "personality",
                     "evidence": "pragmatic, disciplined, and deeply loyal"
-                }
+                },
+                "gate": 2
             }
         },
         "lydia": {
@@ -4546,10 +4995,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.9,
-                        "conf": 0.9,
-                        "field": "relationships",
-                        "evidence": "Sworn to serve and protect with her life"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.9,
+                            "conf": 0.9,
+                            "field": "relationships",
+                            "evidence": "Sworn to serve and protect with her life"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -4557,7 +5014,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "unwavering loyalty and dedication"
-                }
+                },
+                "gate": 2
             }
         },
         "lynly_star-sung": {
@@ -4640,7 +5098,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "marcurio": {
@@ -4672,9 +5131,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.8,
-                        "field": "personality",
-                        "evidence": "takes pride in his reliability as a hired companion"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.8,
+                            "field": "personality",
+                            "evidence": "takes pride in his reliability as a hired companion"
+                        }
                     },
                     "resilience": {
                         "value": 0.5,
@@ -4720,7 +5187,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "maven_black-briar": {
@@ -4787,9 +5255,17 @@
                     },
                     "possessiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Groomed to continue the Black-Briar legacy"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_jealousy",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Groomed to continue the Black-Briar legacy"
+                        }
                     },
                     "protectiveness": {
                         "value": 0.4,
@@ -4805,7 +5281,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "mercer_frey": {
@@ -4824,16 +5301,32 @@
                         "evidence": "maintains a facade"
                     },
                     "expressiveness": {
-                        "value": 0.2,
-                        "conf": 0.9,
+                        "value": 0.25,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "harboring complete disdain"
+                        "evidence": "harboring complete disdain",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.2,
+                            "conf": 0.9,
+                            "field": "personality",
+                            "evidence": "harboring complete disdain"
+                        }
                     },
                     "confidence": {
-                        "value": 0.8,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "calculating, ruthless"
+                        "evidence": "calculating, ruthless",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "personality",
+                            "evidence": "calculating, ruthless"
+                        }
                     },
                     "pride": {
                         "value": 0.7,
@@ -4869,10 +5362,18 @@
                         "note": "quote_mismatch"
                     },
                     "possessiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
-                        "field": "goals",
-                        "evidence": "protect the Skeleton Key"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_jealousy",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "protect the Skeleton Key"
+                        }
                     },
                     "protectiveness": {
                         "value": 0.5,
@@ -4887,7 +5388,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "mikael": {
@@ -4969,7 +5471,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "showing little respect for their personal boundaries"
-                }
+                },
+                "gate": 2
             }
         },
         "mjoll_the_lioness": {
@@ -5037,10 +5540,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "relationships",
-                        "evidence": "self-appointed guardian"
+                        "evidence": "self-appointed guardian",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_no_loved_one",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "relationships",
+                            "evidence": "self-appointed guardian"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -5048,7 +5559,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "unwavering moral principles"
-                }
+                },
+                "gate": 2
             }
         },
         "moth_gro-bagol": {
@@ -5131,7 +5643,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "muiri": {
@@ -5210,7 +5723,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "calculated malice in her pursuit of revenge"
-                }
+                },
+                "gate": 2
             }
         },
         "nazeem": {
@@ -5241,10 +5755,18 @@
                         "evidence": "Nazeem is insufferably arrogant"
                     },
                     "pride": {
-                        "value": 0.9,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "He constantly reminds others"
+                        "evidence": "He constantly reminds others",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.9,
+                            "conf": 0.9,
+                            "field": "personality",
+                            "evidence": "He constantly reminds others"
+                        }
                     },
                     "resilience": {
                         "value": 0.5,
@@ -5254,15 +5776,31 @@
                     },
                     "reactivity": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Her constant expressions"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "someone_else",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Her constant expressions"
+                        }
                     },
                     "warmth": {
-                        "value": 0.2,
-                        "conf": 0.9,
-                        "field": "relationships",
-                        "evidence": "she openly resents his"
+                        "value": 0.25,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "someone_else",
+                            "value": 0.2,
+                            "conf": 0.9,
+                            "field": "relationships",
+                            "evidence": "she openly resents his"
+                        }
                     },
                     "restraint": {
                         "value": 0.3,
@@ -5288,7 +5826,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "delusional sense of self-importance"
-                }
+                },
+                "gate": 2
             }
         },
         "nazir": {
@@ -5313,10 +5852,18 @@
                         "evidence": "dry wit and darkly sarcastic"
                     },
                     "confidence": {
-                        "value": 0.8,
-                        "conf": 0.7,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "unwavering loyalty to the Dark Brotherhood"
+                        "evidence": "unwavering loyalty to the Dark Brotherhood",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "personality",
+                            "evidence": "unwavering loyalty to the Dark Brotherhood"
+                        }
                     },
                     "pride": {
                         "value": 0.7,
@@ -5346,10 +5893,18 @@
                         "evidence": "dry wit and darkly sarcastic"
                     },
                     "restraint": {
-                        "value": 0.8,
-                        "conf": 0.7,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "goals",
-                        "evidence": "preserve the practical aspects"
+                        "evidence": "preserve the practical aspects",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_field",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "goals",
+                            "evidence": "preserve the practical aspects"
+                        }
                     },
                     "possessiveness": {
                         "value": 0.5,
@@ -5359,9 +5914,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Nazir worships the ground she walks on"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Nazir worships the ground she walks on"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -5369,7 +5932,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "pragmatic and skeptical of tradition"
-                }
+                },
+                "gate": 2
             }
         },
         "neloth": {
@@ -5448,7 +6012,8 @@
                     "field": "npc_static_bio",
                     "evidence": "centuries of magical research and political maneuvering",
                     "note": "centred"
-                }
+                },
+                "gate": 2
             }
         },
         "njada_stonearm": {
@@ -5527,7 +6092,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "unwavering loyalty to the Companions"
-                }
+                },
+                "gate": 2
             }
         },
         "octieve_san": {
@@ -5606,7 +6172,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "cynical and grumpy"
-                }
+                },
+                "gate": 2
             }
         },
         "omluag": {
@@ -5685,7 +6252,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "onmund": {
@@ -5717,9 +6285,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "proud of his Nordic heritage"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "proud of his Nordic heritage"
+                        }
                     },
                     "resilience": {
                         "value": 0.5,
@@ -5764,7 +6340,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "quintus_navale": {
@@ -5842,7 +6419,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "maintaining his composure"
-                }
+                },
+                "gate": 2
             }
         },
         "ravam_verethi": {
@@ -5920,7 +6498,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "deeply bitter and resentful"
-                }
+                },
+                "gate": 2
             }
         },
         "rayya": {
@@ -5990,10 +6569,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "sworn housecarl dedicated to protecting",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "sworn housecarl dedicated to protecting"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -6001,7 +6587,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "unwavering dedication to her duties"
-                }
+                },
+                "gate": 2
             }
         },
         "revyn_sadri": {
@@ -6069,9 +6656,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Grey Quarter Dunmer"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Grey Quarter Dunmer"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -6079,7 +6674,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "He takes great satisfaction"
-                }
+                },
+                "gate": 2
             }
         },
         "ria": {
@@ -6163,7 +6759,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "roggi_knot-beard": {
@@ -6242,7 +6839,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "scouts-many-marshes": {
@@ -6322,7 +6920,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "strong leadership qualities"
-                }
+                },
+                "gate": 2
             }
         },
         "senna": {
@@ -6390,10 +6989,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "relationships",
-                        "evidence": "Reverent guardian of the young oracle's safety and spiritual development"
+                        "evidence": "Reverent guardian of the young oracle's safety and spiritual development",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_no_loved_one",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "relationships",
+                            "evidence": "Reverent guardian of the young oracle's safety and spiritual development"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -6401,7 +7008,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "shows patience with the ignorant and forgiveness toward transgressors"
-                }
+                },
+                "gate": 2
             }
         },
         "serana": {
@@ -6479,7 +7087,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "remarkable adaptability and curiosity"
-                }
+                },
+                "gate": 2
             }
         },
         "shahvee": {
@@ -6549,9 +7158,17 @@
                     },
                     "protectiveness": {
                         "value": 0.6,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "help improve conditions"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.6,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "help improve conditions"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -6559,7 +7176,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "deeply spiritual, hardworking"
-                }
+                },
+                "gate": 2
             }
         },
         "skjor": {
@@ -6641,7 +7259,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "stenvar": {
@@ -6722,7 +7341,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "exhibits a boisterous and self-assured personality"
-                }
+                },
+                "gate": 2
             }
         },
         "sven": {
@@ -6801,7 +7421,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "somewhat self-centered nature"
-                }
+                },
+                "gate": 2
             }
         },
         "sylgja": {
@@ -6880,7 +7501,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "taarie": {
@@ -6958,7 +7580,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "more diplomatic and socially adept"
-                }
+                },
+                "gate": 2
             }
         },
         "teldryn_sero": {
@@ -6990,9 +7613,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.7,
-                        "field": "personality",
-                        "evidence": "professional pride in his work"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.7,
+                            "field": "personality",
+                            "evidence": "professional pride in his work"
+                        }
                     },
                     "resilience": {
                         "value": 0.6,
@@ -7038,7 +7669,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "temba_wide-arm": {
@@ -7109,9 +7741,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.7,
-                        "field": "goals",
-                        "evidence": "Eliminate the bear threat"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.7,
+                            "field": "goals",
+                            "evidence": "Eliminate the bear threat"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -7119,7 +7759,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "tilma_the_haggard": {
@@ -7151,9 +7792,17 @@
                     },
                     "pride": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "takes pride in maintaining the ancient mead hall's traditions"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "takes pride in maintaining the ancient mead hall's traditions"
+                        }
                     },
                     "resilience": {
                         "value": 0.75,
@@ -7189,10 +7838,17 @@
                     },
                     "protectiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "relationships",
-                        "evidence": "Trusted confidante who knows of their lycanthropy",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "relationships",
+                            "evidence": "Trusted confidante who knows of their lycanthropy"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -7201,7 +7857,8 @@
                     "field": null,
                     "evidence": null,
                     "note": "quote_mismatch"
-                }
+                },
+                "gate": 2
             }
         },
         "tolfdir": {
@@ -7279,7 +7936,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "ideal magical instructor"
-                }
+                },
+                "gate": 2
             }
         },
         "torvar": {
@@ -7358,7 +8016,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "boisterous and impulsive"
-                }
+                },
+                "gate": 2
             }
         },
         "ulfric_stormcloak": {
@@ -7426,9 +8085,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "Preserve Nord culture"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "Preserve Nord culture"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -7436,7 +8103,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "natural leadership abilities and genuine conviction"
-                }
+                },
+                "gate": 2
             }
         },
         "uthgerd_the_unbroken": {
@@ -7516,7 +8184,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "harbors deep regret over her past actions and seeks to redeem herself"
-                }
+                },
+                "gate": 2
             }
         },
         "valdimar": {
@@ -7585,10 +8254,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.9,
-                        "field": "goals",
-                        "evidence": "Protect and serve his"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.8,
+                            "conf": 0.9,
+                            "field": "goals",
+                            "evidence": "Protect and serve his"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -7596,7 +8273,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "contemplative and pragmatic"
-                }
+                },
+                "gate": 2
             }
         },
         "valerica": {
@@ -7663,10 +8341,17 @@
                     },
                     "possessiveness": {
                         "value": 0.75,
-                        "conf": 0.6,
-                        "field": "personality",
-                        "evidence": "deeply protective of her daughter",
-                        "note": "centred"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_jealousy",
+                            "value": 0.75,
+                            "conf": 0.6,
+                            "field": "personality",
+                            "evidence": "deeply protective of her daughter"
+                        }
                     },
                     "protectiveness": {
                         "value": 0.9,
@@ -7680,7 +8365,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "shows genuine remorse for her past mistakes"
-                }
+                },
+                "gate": 2
             }
         },
         "vex": {
@@ -7705,16 +8391,32 @@
                         "evidence": "speaks in a direct, often cutting manner"
                     },
                     "confidence": {
-                        "value": 0.8,
-                        "conf": 0.7,
+                        "value": 0.75,
+                        "conf": 0.6,
                         "field": "personality",
-                        "evidence": "takes immense pride in her abilities"
+                        "evidence": "takes immense pride in her abilities",
+                        "note": "centred",
+                        "screen": {
+                            "rule": "extreme_cue",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "personality",
+                            "evidence": "takes immense pride in her abilities"
+                        }
                     },
                     "pride": {
-                        "value": 0.8,
-                        "conf": 0.7,
-                        "field": "personality",
-                        "evidence": "takes immense pride in her abilities"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "pride_in_work",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "personality",
+                            "evidence": "takes immense pride in her abilities"
+                        }
                     },
                     "resilience": {
                         "value": 0.7,
@@ -7747,10 +8449,18 @@
                         "evidence": null
                     },
                     "protectiveness": {
-                        "value": 0.8,
-                        "conf": 0.7,
-                        "field": "relationships",
-                        "evidence": "Remained steadfastly loyal through the guild's darkest period"
+                        "value": 0.75,
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "no_care",
+                            "value": 0.8,
+                            "conf": 0.7,
+                            "field": "relationships",
+                            "evidence": "Remained steadfastly loyal through the guild's darkest period"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -7758,7 +8468,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "her tough attitude serves as both a defense mechanism"
-                }
+                },
+                "gate": 2
             }
         },
         "vilkas": {
@@ -7826,9 +8537,17 @@
                     },
                     "protectiveness": {
                         "value": 0.7,
-                        "conf": 0.6,
-                        "field": "goals",
-                        "evidence": "protect Whiterun and maintain the Companions' reputation"
+                        "conf": 0,
+                        "field": null,
+                        "evidence": null,
+                        "note": "screened",
+                        "screen": {
+                            "rule": "duty",
+                            "value": 0.7,
+                            "conf": 0.6,
+                            "field": "goals",
+                            "evidence": "protect Whiterun and maintain the Companions' reputation"
+                        }
                     }
                 },
                 "maturity_start": {
@@ -7836,7 +8555,8 @@
                     "conf": 0.6,
                     "field": "personality",
                     "evidence": "Intelligent and analytical"
-                }
+                },
+                "gate": 2
             }
         },
         "vorstag": {
@@ -7916,7 +8636,8 @@
                     "conf": 0,
                     "field": null,
                     "evidence": null
-                }
+                },
+                "gate": 2
             }
         },
         "ysolda": {
@@ -7994,7 +8715,8 @@
                     "conf": 0.6,
                     "field": "goals",
                     "evidence": "Establish herself as a respected merchant"
-                }
+                },
+                "gate": 2
             }
         }
     },
@@ -8100,6 +8822,7 @@
         "neloth",
         "tolfdir"
     ],
-    "updated": "2026-09-25T07:06:32+00:00",
-    "note_calls": "llm_calls counts every call made for this seed, including one probe read of aela_the_huntress with an earlier wording of the prompt (discarded)."
+    "updated": "2026-09-25T08:10:22+00:00",
+    "note_calls": "llm_calls counts every call made for this seed, including one probe read of aela_the_huntress with an earlier wording of the prompt (discarded).",
+    "gate_v": 2
 }

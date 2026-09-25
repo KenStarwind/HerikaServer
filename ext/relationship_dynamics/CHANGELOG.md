@@ -9,8 +9,12 @@ quote from the bio, blended with small hints from her voice, class, faction, ski
 near the middle unless the bio is clear. Around 100 key NPCs come pre-read; anyone else is read in the background
 the first time you meet her, after the conversation work, and keeps her hints until then. Ashe is never read: she is
 Serene's hand-set, spoiler-free conclusion (Stoic-leaning, resilient, slow to warm, maturity 75). Ysolda is no longer
-forced to be Anxious. Between the old temperaments the blend is now smooth (no spikes at a preset). The old
-class-based vote is still there as a switch (traits.assignment 'label').
+forced to be Anxious (the old switch keeps her old preset). A quote only counts when it shows that trait of that
+character: an oath to a hold is duty, not protectiveness; a quest item or a daughter is not a partner to be jealous
+over; a wife's resentment is not her husband's coldness; a job or an aim is not a strong sign; taking pride in one's
+work is not vanity. Between the old temperaments the blend no longer makes spikes at a preset, though a few values
+still turn back briefly near one. The old class-based vote is still there as a switch (traits.assignment 'label'),
+and switching back to it restores everyone's old personality.
 
 ## reldyn-v0.11 — Personality engine under the hood
 Temperaments are now presets inside a trait engine (guard, expressiveness, confidence, pride, resilience, reactivity,

@@ -150,6 +150,12 @@ final class RelDynEval
         return function_exists('ptr_runtime_paused') && ptr_runtime_paused();
     }
 
+    /** switchPending() for the other drainer on the same lease (RelDynTraitRead::drain checks it between reads). */
+    public static function playthroughSwitchPending(): bool
+    {
+        return self::switchPending();
+    }
+
     // =========================================================================
     // CONFIG
     // =========================================================================
@@ -582,7 +588,10 @@ final class RelDynEval
      * The eval worker's tail (design §4.7): drain personality trait reads only after the eval
      * worker returned, only when it was neither locked out nor paused by a switch, and only when
      * no eval job is pending. Their own table and lock (RelDynTraitRead::drain); a failed read
-     * never touches reldyn_eval_queue. Returns the trait drain's stats, or null when skipped.
+     * never touches reldyn_eval_queue. The trait drain checks for a pending Playthrough Save
+     * switch before every read, as the eval drain does between jobs, so the worker lets go of
+     * the shared lease instead of holding it through several slow reads.
+     * Returns the trait drain's stats, or null when skipped.
      */
     public static function drainTraitReadsAfterEval(array $evalStats, ?callable $llm = null): ?array
     {
@@ -591,7 +600,7 @@ final class RelDynEval
         try {
             self::ensureQueueTable();
             if (self::pendingCount([], []) > 0) return null;
-            return RelDynTraitRead::drain($llm);
+            return RelDynTraitRead::drain($llm, [self::class, 'playthroughSwitchPending']);
         } catch (\Throwable $e) {
             error_log('[RelDyn-TRAITS] ERROR trait read drain: ' . get_class($e) . ': ' . $e->getMessage());
             return null;

@@ -217,6 +217,173 @@ final class RelDynTraitReadTest extends TestCase
         $this->assertStringStartsWith('malformed', $bad['error']);
     }
 
+    // ------------------------------------------------------------------ the evidence screen (GATE_V 2)
+
+    /**
+     * A made-up template shaped like the live misreads the review found (no real bio): a quest
+     * object in the goals, a daughter's entry, a housecarl's oath, a wife's resentment, job text.
+     */
+    private static function misreadFields(): array
+    {
+        return [
+            'personality'    => 'Hild takes pride in mentoring young hunters. Stern and deeply suspicious of outsiders. '
+                              . 'Unwavering loyalty to her order. Deeply protective of her daughter. Jealous of every rival.',
+            'relationships'  => json_encode([
+                'Mila'   => ['aff' => 95, 'type' => 'familial', 'relation' => 'daughter',
+                             'note' => 'Fiercely devoted to raising her alone; refuses to let any man come between them'],
+                'Thane'  => ['aff' => 80, 'type' => 'protective', 'relation' => 'housecarl',
+                             'note' => 'Sworn to serve and protect with her life after the Jarl appointed her'],
+                'Jarl Hrolf' => ['aff' => 60, 'type' => 'professional', 'relation' => 'Jarl and appointer',
+                             'note' => 'Trusts his housecarl above all others; she serves his hold with pride'],
+                'Ahlam'  => ['aff' => 15, 'type' => 'estranged', 'relation' => 'wife',
+                             'note' => 'Marriage of convenience; she openly resents his arrogance',
+                             'worst' => 'Her constant complaints about him'],
+            ]),
+            'npc_static_bio' => 'Born in the Pale.',
+            'speechstyle'    => 'Speaks curtly.',
+            'goals'          => "* Protect the Skeleton Key\n* Protect Morthal from bandits\n* Maintain order and security",
+            'occupation'     => 'Commands all the hold guards.',
+        ];
+    }
+
+    private static function screened(array $over, ?string $gender = null): array
+    {
+        $r = RelDynTraitRead::parse(self::raw($over), self::misreadFields(), $why, $gender);
+        self::assertNotNull($r, (string) $why);
+        return $r;
+    }
+
+    /** Rule O: possessiveness is jealousy over a partner; not a quest object, not a daughter. */
+    public function testPossessivenessNeedsJealousyOverAPartner(): void
+    {
+        $r = self::screened(['possessiveness' => self::entry(0.8, 0.9, 'goals', 'protect the Skeleton Key')]);
+        $po = $r['traits']['possessiveness'];
+        $this->assertSame(0.0, $po['conf'], 'an object is not a partner');
+        $this->assertSame('screened', $po['note']);
+        $this->assertSame('no_jealousy', $po['screen']['rule']);
+        $this->assertSame(['value' => 0.8, 'conf' => 0.9, 'field' => 'goals', 'evidence' => 'protect the Skeleton Key'],
+            array_diff_key($po['screen'], ['rule' => 1]), 'what the read said is kept for the report');
+        $this->assertSame(0.75, $po['value'], 'no evidence: centred');
+
+        $r = self::screened(['possessiveness' => self::entry(0.8, 0.9, 'relationships', 'refuses to let any man come between them')]);
+        $this->assertSame(0.0, $r['traits']['possessiveness']['conf'], "a daughter's entry is not a partner's");
+        $this->assertSame('not_a_partner', $r['traits']['possessiveness']['screen']['rule']);
+
+        $r = self::screened(['possessiveness' => self::entry(0.3, 0.3, 'relationships', 'Sworn to serve and protect with her life')]);
+        $this->assertSame('no_jealousy', $r['traits']['possessiveness']['screen']['rule'], 'an oath says nothing about jealousy either way');
+
+        $r = self::screened(['possessiveness' => self::entry(0.8, 0.9, 'personality', 'Jealous of every rival')]);
+        $this->assertSame(0.8, $r['traits']['possessiveness']['value'], 'real jealousy, from the character: kept');
+        $this->assertSame(0.9, $r['traits']['possessiveness']['conf']);
+        $this->assertArrayNotHasKey('screen', $r['traits']['possessiveness']);
+    }
+
+    /** Rule P: a sworn duty, a post or a place is restraint; worry for loved ones is protectiveness. */
+    public function testDutyToAPostOrAPlaceIsNotProtectiveness(): void
+    {
+        foreach ([
+            ['relationships', 'Sworn to serve and protect with her life', 'duty'],
+            ['goals', 'Protect Morthal from bandits', 'duty'],
+            ['relationships', 'Trusts his housecarl above all others', 'no_care'],
+        ] as [$field, $quote, $rule]) {
+            $r = self::screened(['protectiveness' => self::entry(0.9, 0.9, $field, $quote)], 'female');
+            $this->assertSame(0.0, $r['traits']['protectiveness']['conf'], $quote);
+            $this->assertSame($rule, $r['traits']['protectiveness']['screen']['rule'], $quote);
+        }
+        $r = self::screened(['protectiveness' => self::entry(0.9, 0.9, 'relationships', 'Fiercely devoted to raising her alone')], 'female');
+        $this->assertSame(0.9, $r['traits']['protectiveness']['value'], "her daughter's entry: a loved one");
+        $this->assertSame(0.9, $r['traits']['protectiveness']['conf']);
+        $r = self::screened(['protectiveness' => self::entry(0.9, 0.9, 'personality', 'Deeply protective of her daughter')]);
+        $this->assertSame(0.9, $r['traits']['protectiveness']['value']);
+        $this->assertArrayNotHasKey('screen', $r['traits']['protectiveness']);
+    }
+
+    /** Rule S: a relationships note led by the other person's pronoun is about that person. */
+    public function testAQuoteAboutSomeoneElseIsNotEvidence(): void
+    {
+        foreach (['male', null] as $gender) {
+            $r = self::screened([
+                'warmth' => self::entry(0.2, 0.9, 'relationships', 'she openly resents his'),
+                'reactivity' => self::entry(0.6, 0.6, 'relationships', 'Her constant complaints'),
+            ], $gender);
+            $this->assertSame(0.0, $r['traits']['warmth']['conf'], "his wife's resentment is not his warmth (gender " . var_export($gender, true) . ')');
+            $this->assertSame('someone_else', $r['traits']['warmth']['screen']['rule']);
+            $this->assertSame(0.25, $r['traits']['warmth']['value']);
+            $this->assertSame(0.0, $r['traits']['reactivity']['conf'], "the wife's complaints");
+        }
+        // the NPC's own pronoun in a note about her Jarl is her own
+        $r = self::screened(['pride' => self::entry(0.65, 0.6, 'relationships', 'she serves his hold with pride')], 'female');
+        $this->assertSame(0.6, $r['traits']['pride']['conf']);
+        $this->assertArrayNotHasKey('screen', $r['traits']['pride']);
+    }
+
+    /** Rules J and D: job text is not evidence; pride in one's work is not ego. */
+    public function testJobTextAndPrideInWorkAreNotEvidence(): void
+    {
+        $r = self::screened([
+            'restraint' => self::entry(0.8, 0.9, 'occupation', 'Commands all the hold guards'),
+            'pride' => self::entry(0.7, 0.6, 'personality', 'takes pride in mentoring young hunters'),
+        ]);
+        $this->assertSame(0.0, $r['traits']['restraint']['conf']);
+        $this->assertSame('job', $r['traits']['restraint']['screen']['rule']);
+        $this->assertSame(0.0, $r['traits']['pride']['conf']);
+        $this->assertSame('pride_in_work', $r['traits']['pride']['screen']['rule']);
+        $this->assertSame(0.7, $r['traits']['pride']['value'], 'inside the band: the value is left as read (conf 0 ignores it)');
+    }
+
+    /**
+     * Rule E (ruling #10 in code): an extreme needs strong evidence, not just conf 0.9: a quote
+     * from the character (not goals / occupation) that names the quality. Otherwise the band
+     * edge at conf 0.6, like any read without strong evidence.
+     */
+    public function testExtremesNeedAQuoteThatNamesTheQuality(): void
+    {
+        $r = self::screened([
+            'restraint' => self::entry(0.8, 0.7, 'goals', 'Maintain order and security'),
+            'confidence' => self::entry(0.8, 0.7, 'personality', 'Unwavering loyalty to her order'),
+            'guard' => self::entry(0.8, 0.9, 'personality', 'deeply suspicious of outsiders'),
+        ]);
+        $this->assertSame(0.75, $r['traits']['restraint']['value']);
+        $this->assertSame(0.6, $r['traits']['restraint']['conf'], 'aims are not strong evidence');
+        $this->assertSame('extreme_field', $r['traits']['restraint']['screen']['rule']);
+        $this->assertSame(0.75, $r['traits']['confidence']['value']);
+        $this->assertSame(0.6, $r['traits']['confidence']['conf']);
+        $this->assertSame('extreme_cue', $r['traits']['confidence']['screen']['rule'], 'loyalty names no confidence');
+        $this->assertSame('centred', $r['traits']['confidence']['note']);
+        $this->assertSame(0.8, $r['traits']['guard']['value'], 'suspicious of outsiders: guard, stated outright');
+        $this->assertSame(0.9, $r['traits']['guard']['conf']);
+        // high protectiveness also needs a loved one: "protect" alone is not "fiercely guards the people they love"
+        $r = self::screened(['protectiveness' => self::entry(0.9, 0.9, 'personality', 'Deeply protective of her daughter')]);
+        $this->assertSame(0.9, $r['traits']['protectiveness']['value']);
+    }
+
+    public function testTheScreenIsIdempotentAndVersioned(): void
+    {
+        $r = self::screened([
+            'possessiveness' => self::entry(0.8, 0.9, 'goals', 'protect the Skeleton Key'),
+            'confidence' => self::entry(0.8, 0.7, 'personality', 'Unwavering loyalty to her order'),
+            'guard' => self::entry(0.8, 0.9, 'personality', 'deeply suspicious of outsiders'),
+        ]);
+        $this->assertSame(RelDynTraitRead::GATE_V, $r['gate']);
+        $this->assertSame($r, RelDynTraitRead::screen($r, self::misreadFields()), 'screening twice changes nothing');
+        // a stored gate-1 result (no screen yet) gets the same answer
+        $old = json_decode(json_encode($r), true);
+        foreach ($old['traits'] as $k => $t) {
+            if (isset($t['screen'])) $old['traits'][$k] = array_diff_key($t['screen'], ['rule' => 1]);
+        }
+        unset($old['gate']);
+        $this->assertEquals($r, RelDynTraitRead::screen($old, self::misreadFields()));
+    }
+
+    public function testGenderOfAVoiceType(): void
+    {
+        $this->assertSame('female', RelDynTraitRead::genderOfVoice('sk_femalecommander'));
+        $this->assertSame('female', RelDynTraitRead::genderOfVoice('FemaleEvenToned'));
+        $this->assertSame('male', RelDynTraitRead::genderOfVoice('sk_malecondescending'));
+        $this->assertNull(RelDynTraitRead::genderOfVoice('sk_serana'));
+        $this->assertNull(RelDynTraitRead::genderOfVoice(null));
+    }
+
     public function testTemplateKeyAndHash(): void
     {
         $this->assertSame(['aela_the_huntress'], RelDynTraitRead::keyCandidates('Aela the Huntress'));

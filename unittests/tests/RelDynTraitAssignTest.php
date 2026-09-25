@@ -112,6 +112,33 @@ final class RelDynTraitAssignTest extends TestCase
 
     // ------------------------------------------------------------------ combination (§4.3)
 
+    /**
+     * Review 2026-09-25 (rulings #7 and #8): Aela's medium openness (the won-over switch on)
+     * must come from her traits, not hang on the minor race pull or on the core row being
+     * complete. With the evidence screen her "takes pride in mentoring" no longer reads as ego,
+     * and she is medium with the full row, without race, and from her template and voice alone.
+     * The margin stays thin (0.45 is the switch): the report flags it for Ken.
+     */
+    public function testAelasOpennessDoesNotHangOnTheRacePrior(): void
+    {
+        $read = RelDynTraitRead::loadSeedFile()['reads']['aela_the_huntress']['result'];
+        $this->assertSame('pride_in_work', $read['traits']['pride']['screen']['rule']);
+        $att = RelDynAttraction::defaults();
+        $open = function (array $prior) use ($read, $att): float {
+            $x = RelDynTraitAssign::resolve(['prior_in' => $prior, 'read' => $read])['x'];
+            return RelDynTraits::opennessAt($x, $att['temperament_openness'], $att['openness_levels'])['o'];
+        };
+        $row = ['voice' => 'sk_femalecommander', 'class' => 'Ranger', 'factions' => ['CompanionsFaction', 'CompanionsCircle'],
+                'skills' => ['archery' => 72, 'sneak' => 56], 'race' => 'NordRace'];
+        $full = $open($row);
+        $noRace = $open(array_diff_key($row, ['race' => 1]));
+        $voiceOnly = $open(['voice' => 'sk_femalecommander']);
+        foreach (['full row' => $full, 'no race' => $noRace, 'template and voice only' => $voiceOnly] as $case => $o) {
+            $this->assertGreaterThan(RelDynTraits::OPENNESS_LOW_REGIME, $o, "{$case}: medium, the won-over switch on");
+        }
+        $this->assertLessThan(0.015, $full - $noRace, 'the race pull is minor (ruling #7)');
+    }
+
     public function testReadBlendsOverThePriorByConfidence(): void
     {
         $prior = RelDynTraitAssign::prior([])['x'];
@@ -158,7 +185,8 @@ final class RelDynTraitAssignTest extends TestCase
         $cfg = RelationshipDynamics::temperamentAutogenDefaults()['npc_overrides'];
         $this->assertArrayHasKey('trait_vector', $cfg['ashe']);
         $this->assertSame(75, $cfg['ashe']['maturity_start']);
-        $this->assertArrayNotHasKey('ysolda', $cfg, 'decisions §16 #2');
+        // decisions §16 #2: Ysolda's Anxious is kept for the label assignment only (phase 1 exactly)
+        $this->assertSame(['temperament' => 'Anxious', 'assignment' => 'label'], $cfg['ysolda']);
         $r = RelDynTraitAssign::resolve(['hand_set' => $cfg['ashe']['trait_vector'], 'maturity_start' => $cfg['ashe']['maturity_start'],
             'read' => self::read(['guard' => [0.1, 1.0]]), 'screened' => true]);
         $this->assertSame('hand-set', $r['label_source']);

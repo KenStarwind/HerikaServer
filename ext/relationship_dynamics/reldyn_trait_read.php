@@ -49,6 +49,93 @@ final class RelDynTraitRead
     /** The same rule for maturity_start (0..100). */
     const MATURITY_CENTRE = [30.0, 70.0];
 
+    /**
+     * Evidence gate version (screen()). 1: the quote rule and conf-gated centring only.
+     * 2 (review 2026-09-25): the evidence screen. A result stored under an older gate is screened
+     * again when it is looked up (stateFor), so no read is repeated for a gate change.
+     */
+    const GATE_V = 2;
+
+    /** Fields that may carry an extreme (ruling #10): the character described, not her job or aims. */
+    const EXTREME_FIELDS = ['personality', 'speechstyle', 'npc_static_bio', 'relationships'];
+
+    /** A conf-0.7+ extreme without supporting evidence is kept at the band edge with at most this conf. */
+    const WEAK_EXTREME_CONF = 0.6;
+
+    /**
+     * Cue words an extreme must carry in its quote (screen(), rule E), per trait and direction,
+     * on the normalized quote (lower case). A crude but auditable test that the quote names the
+     * quality: "unwavering loyalty to the Dark Brotherhood" names no confidence.
+     */
+    const EXTREME_CUES = [
+        'guard' => [
+            'hi' => "/\\b(guarded|wary|wariness|suspicio\\w*|distrust\\w*|mistrust\\w*|trusts? (very )?few|trusts? no ?one|paranoi\\w*|facade|aloof|reserved|secretive|cautious|closed off|arm's length|at a distance|keeps? \\w+ at|intimidating|standoffish|reclusive|withdrawn)\\b/",
+            'lo' => "/\\b(trusts? easily|trusting|open-hearted|welcoming|approachable|naive|lets? anyone|friendly to (all|everyone|strangers))\\b/",
+        ],
+        'expressiveness' => [
+            'hi' => '/\b(exaggerated|dramatic|theatrical|boisterous|flamboyant|emotional|expressive|animated|sing-song|jovial|passionate|loud\w*|effusive|heart on|exuberant|enthusias\w*|laughs?|bubbly|excitab\w*)\b/',
+            'lo' => '/\b(rarely (show|express)\w*|stoic\w*|reserved|impassive|contained|hard to read|emotionless|unreadable|stone-faced|deadpan|terse|laconic|hides? (her|his|their) (feelings|emotions)|composed)\b/',
+        ],
+        'confidence' => [
+            'hi' => '/\b(confiden\w*|self-assured|assured|commanding|authoritative|authority|arrogan\w*|bold|fearless|assertive|domineering|leadership|superiority|self-important\w*|swagger\w*|cocky|brash)\b/',
+            'lo' => '/\b(timid|shy|insecure|self-doubt\w*|doubts? (her|him|them)sel\w*|meek|fearful|nervous|anxious|hesitant|coward\w*|diffident|unsure|afraid)\b/',
+        ],
+        'pride' => [
+            'hi' => '/\b(proud|prideful|pride|arrogan\w*|vain|vanity|haughty|superior\w*|beneath (her|his|their)|condescen\w*|conceited|self-important\w*|ego\w*|entitle\w*|demands? respect|snob\w*|pompous|insufferabl\w*)\b/',
+            'lo' => '/\b(humble|humility|modest\w*|self-effacing|unassuming|meek)\b/',
+        ],
+        'resilience' => [
+            'hi' => '/\b(resilien\w*|endur\w*|surviv\w*|unbreakable|hard to break|persever\w*|weathered|recover\w*|bounced back|tough\w*|indomitable|undaunted|rebuil\w*|overc[oa]me\w*)\b/',
+            'lo' => '/\b(fragile|broken|breaks|shattered|never recovered|brittle|crushed|despair\w*|defeated|gave up)\b/',
+        ],
+        'reactivity' => [
+            'hi' => '/\b((short|quick|hot|bad|fiery)[- ]temper\w*|temper|rage|volatile|explosive|quick to anger|hot-headed|erratic|unstable|mood swings?|snaps?|outbursts?|panic\w*|hysteric\w*|furious|fury|lashes out|unpredictable)\b/',
+            'lo' => '/\b(even-tempered|calm|steady|unflappable|placid|serene|measured|level-headed|glacial|unshak\w*|imperturbable)\b/',
+        ],
+        'warmth' => [
+            'hi' => '/\b(warm\w*|welcoming|kind\w*|friendl\w*|gentle|caring|generous|compassion\w*|cheerful|affable|amiable|hospitab\w*|good-natured|open-hearted|big-hearted)\b/',
+            'lo' => '/\b(cold\w*|curt|dismissive|indifferen\w*|contempt\w*|disdain\w*|hostil\w*|callous|rude|aloof|tools|cruel\w*|scorn\w*|harsh|unfriendly|icy|ruthless|misanthrop\w*)\b/',
+        ],
+        'restraint' => [
+            'hi' => '/\b(disciplin\w*|dutiful|duty|self-control\w*|controlled|composed|restrain\w*|reserved|stoic\w*|professional|no-nonsense|principled|honou?r\w*|oath|sworn|loyal\w*|law-abiding|measured|by the book)\b/',
+            'lo' => '/\b(impulsive|reckless|rash|defian\w*|rebel\w*|wild|undisciplined|hot-headed|lawless|carefree|hedonis\w*|indulgen\w*|whims?)\b/',
+        ],
+        'possessiveness' => [
+            'hi' => self::POSSESSIVE_CUE,
+            'lo' => '/\b(never jealous|not jealous|free-spirited|lets? (her|him|them) go)\b/',
+        ],
+        'protectiveness' => [
+            'hi' => self::CARE_CUE,   // and a loved one (rule P)
+            'lo' => '/\b(fend for|selfish|callous|indifferen\w*|neglect\w*|abandon\w*|leaves? (others|them)|replaceable|tools?|inconvenien\w*)\b/',
+        ],
+    ];
+
+    /** Possessiveness (rule O): jealousy, control, rivals. A treasure, a daughter or a cause is not it. */
+    const POSSESSIVE_CUE = "/\\b(jealous\\w*|possessiv\\w*|control\\w*|rivals?|suitors?|come between|obsess\\w*|covet\\w*|env(y|ious)|clingy|won't share|all to (her|him)sel\\w*|smother\\w*)\\b/";
+
+    /** Protectiveness (rule P): worry or care for someone's safety. */
+    const CARE_CUE = '/\b(protect\w*|guardian|guards?|guarding|safe|safety|shield\w*|defend\w*|worr(y|ies|ied)|concern(ed|s)?|car(e|es|ing)|looks? after|watch(es)? over|devot\w*|affection\w*|nurtur\w*|rais(e|ed|ing))\b/';
+
+    /** The people one loves (rule P): kin, partners, friends, one's own people. */
+    const LOVED_CUE = '/\b(daughters?|sons?|child|children|kids?|family|wife|husband|spouse|mother|father|sisters?|brothers?|siblings?|friends?|fellow|followers|kin|loved ones?|(her|his|their) people|students|pupils|wards?|nieces?|nephews?|grand\w+|lover|little ones?)\b/';
+
+    /**
+     * A duty, a post, a place, an order or a thing (rule P: the prompt's "duty to protect a
+     * place or a lord is restraint"; hatred of an enemy is neither).
+     */
+    const DUTY_CUE = "/\\b(sworn|oath|bound by|dut(y|ies)|serv(e|es|ed|ing)|housecarl|bodyguard|post|order|security|justice|reputation|role|job|works?|position|hold|city|town|village|realm|empire|kingdom|crossing|caravan|guild|college|shrine|sepulcher|temple|legacy|key|traditions?|culture|power|authority|wealth|gold|business|shop|farm|status|the mine|the people of|jarl|thane|lord|master|night mother|skyrim|tamriel|whiterun|solitude|windhelm|riften|markarth|morthal|dawnstar|winterhold|falkreath|riverwood|rorikstead|ivarstead|dragonsreach)\\b/";
+
+    /** Relationship entries (type + relation) by kind. */
+    const REL_FAMILY = '/\b(familial|family|daughter|son|child|mother|father|mom|dad|sister|brother|sibling|aunt|uncle|niece|nephew|cousin|grand\w*|parent|ward|adopt\w*|step\w*|twin)\b/';
+    const REL_ROMANTIC = '/\b(wife|husband|spouse|lover|betrothed|fianc\w*|girlfriend|boyfriend|romantic|romance|beloved|courting|suitor|crush|ex-\w+)\b/';
+    const REL_FRIEND = '/\b(friends?|friendly|companion|confidante?|comrade|shield-\w+|loving)\b/';
+    const REL_DUTY = '/\b(housecarl|bodyguard|jarl|thane|employer|employee|professional|lord|master|servant|client|superior|subordinate|commander|steward|captain|appointer|patron|liege)\b/';
+    const REL_FEMALE = '/\b(wife|daughter|mother|mom|sister|aunt|niece|girlfriend|grandmother|granddaughter|stepdaughter|stepmother|queen|matron)\b/';
+    const REL_MALE = '/\b(husband|son|father|dad|brother|uncle|nephew|boyfriend|grandfather|grandson|stepson|stepfather|king)\b/';
+
+    /** Pride (rule D): taking pride in one's craft, family or order is not ego (the prompt says so). */
+    const PRIDE_IN_WORK = '/\b((takes?|taking|took)\s+(\w+\s+){0,2}pride in|pride in (her|his|their|the)|proud of (her|his|their))\b/';
+
     /** Advisory lock (RelDynEval::LOCK_CLASS, LOCK_TRAITS): one trait drainer at a time. */
     const LOCK_TRAITS = 2;
 
@@ -319,8 +406,9 @@ TXT;
      * ['v' => 1, 'traits' => [name => [value, conf, field, evidence, note?]], 'maturity_start' => [...]]
      * or null (with $reason) when the output is unusable (counts as a failed attempt).
      * A single trait with a bad quote or field is not a failure: its conf becomes 0.
+     * The result then passes the evidence screen (screen(); $gender = the NPC's, for rule S).
      */
-    public static function parse(string $raw, array $fields, ?string &$reason = null): ?array
+    public static function parse(string $raw, array $fields, ?string &$reason = null, ?string $gender = null): ?array
     {
         $reason = null;
         $text = trim($raw);
@@ -364,7 +452,7 @@ TXT;
         } else {
             $out['maturity_start'] = ['value' => 50.0, 'conf' => 0.0, 'field' => null, 'evidence' => null, 'note' => 'missing'];
         }
-        return $out;
+        return self::screen($out, $fields, $gender);
     }
 
     /** One entry: quote check (conf 0 on a bad quote or field), rounding, centring (ruling #10). */
@@ -405,6 +493,155 @@ TXT;
     private static function collapse(string $s): string
     {
         return trim(preg_replace('/\s+/u', ' ', $s) ?? $s);
+    }
+
+    // =========================================================================
+    // EVIDENCE SCREEN (GATE_V 2: ruling #10 enforced in code, review 2026-09-25)
+    // =========================================================================
+
+    /** 'female' | 'male' from a voice id ("sk_femalecommander", "FemaleEvenToned"), else null. */
+    public static function genderOfVoice(?string $voiceId): ?string
+    {
+        $v = self::matchKey((string) $voiceId);
+        if (strncmp($v, 'sk', 2) === 0) $v = substr($v, 2);
+        if (strncmp($v, 'female', 6) === 0) return 'female';
+        if (strncmp($v, 'male', 4) === 0) return 'male';
+        return null;
+    }
+
+    /** The NPC's gender for rule S, from her npc_templates_v2 voice type (null when unknown). */
+    public static function genderFor(string $templateKey): ?string
+    {
+        return self::genderOfVoice(self::voiceFor($templateKey, self::displayName($templateKey)));
+    }
+
+    /**
+     * The relationships entry (CHIM's JSON: name => {type, relation, note, best, worst}) whose
+     * text holds $quote: ['name', 'kind' => duty|family|romantic|friend|other, 'other_gender' =>
+     * female|male|null (from a gendered relation word)], or null (not JSON, or not in one entry).
+     */
+    public static function relationshipEntryOf(string $quote, string $relationships): ?array
+    {
+        $data = json_decode($relationships, true);
+        if (!is_array($data)) return null;
+        $q = self::normalizeQuote($quote);
+        if ($q === '') return null;
+        foreach ($data as $name => $e) {
+            if (!is_array($e)) continue;
+            $text = '';
+            foreach ($e as $v) if (is_string($v)) $text .= ' ' . $v;
+            if (strpos(self::normalizeText($text), $q) === false) continue;
+            $relation = self::normalizeText((string) ($e['relation'] ?? ''));
+            $rel = self::normalizeText((string) ($e['type'] ?? '')) . ' ' . $relation;
+            $kind = preg_match(self::REL_DUTY, $rel) ? 'duty'
+                : (preg_match(self::REL_FAMILY, $rel) ? 'family'
+                : (preg_match(self::REL_ROMANTIC, $rel) ? 'romantic'
+                : (preg_match(self::REL_FRIEND, $rel) ? 'friend' : 'other')));
+            $other = preg_match(self::REL_FEMALE, $relation) ? 'female' : (preg_match(self::REL_MALE, $relation) ? 'male' : null);
+            return ['name' => (string) $name, 'kind' => $kind, 'other_gender' => $other];
+        }
+        return null;
+    }
+
+    /**
+     * The evidence screen. Pure and idempotent: $result is a parse() result (or a stored one),
+     * $fields the template's text fields, $gender the NPC's (female | male | null, her voice type).
+     * The quote rule (checkEntry) only proves the words are in the bio; this asks whether they
+     * show THIS trait of THIS character. Per trait with conf > 0:
+     *   S  someone else: a relationships quote led by a pronoun of the other person (against the
+     *      NPC's gender, or a gendered relation word such as "wife") describes that person.
+     *   J  job text: the occupation field is not evidence ("having a job is not evidence").
+     *   D  pride above 0.5 from taking pride in one's work, family or order: not ego.
+     *   O  possessiveness (any value but 0.5) needs jealousy / control / rival words (or their
+     *      absence named: "never jealous"), and above 0.5 not inside a family or duty
+     *      relationship entry (it is about a partner and rivals, not a daughter or a treasure).
+     *   P  protectiveness above 0.5 needs worry / care words; a duty, post, place, order or
+     *      thing without a loved one is restraint, not protectiveness (the prompt's own rule).
+     *      Below 0.5 it needs care words or their absence named ("a replaceable tool").
+     * A rule that fires sets conf 0 (the trait keeps its prior), as a quote mismatch does.
+     *   E  an extreme (outside 0.25..0.75; maturity 30..70) is kept only when its quote comes from
+     *      a character field (EXTREME_FIELDS: not goals, not occupation) and names the quality
+     *      (EXTREME_CUES; high protectiveness also a loved one). Otherwise it stays at the band
+     *      edge with conf at most WEAK_EXTREME_CONF: a strong claim without strong evidence reads
+     *      as an ordinary one (ruling #10).
+     * A changed entry keeps what the read said under 'screen' (rule, the read's value, conf,
+     * field and quote). $result['gate'] = GATE_V.
+     */
+    public static function screen(array $result, array $fields, ?string $gender = null): array
+    {
+        $fields = self::fieldsOf($fields);
+        foreach (self::TRAIT_KEYS as $name) {
+            if (is_array($result['traits'][$name] ?? null)) {
+                $result['traits'][$name] = self::screenEntry($name, $result['traits'][$name], $fields, $gender);
+            }
+        }
+        if (is_array($result['maturity_start'] ?? null)) {
+            $result['maturity_start'] = self::screenEntry('maturity_start', $result['maturity_start'], $fields, $gender);
+        }
+        $result['gate'] = self::GATE_V;
+        return $result;
+    }
+
+    private static function screenEntry(string $name, array $e, array $fields, ?string $gender): array
+    {
+        $v = floatval($e['value'] ?? 0.5);
+        $c = floatval($e['conf'] ?? 0);
+        $field = is_string($e['field'] ?? null) ? $e['field'] : null;
+        $ev = is_string($e['evidence'] ?? null) ? $e['evidence'] : null;
+        if ($c <= 0.0 || $field === null || $ev === null) return $e;
+        $q = self::normalizeQuote($ev);
+        $entry = $field === 'relationships' ? self::relationshipEntryOf($ev, $fields['relationships'] ?? '') : null;
+        $kind = $entry['kind'] ?? null;
+        $rule = null;
+        if ($field === 'relationships' && preg_match('/^(she|her|hers|he|his|him)\b/', $q, $m)) {
+            $pg = in_array($m[1], ['she', 'her', 'hers'], true) ? 'female' : 'male';
+            $og = $entry['other_gender'] ?? null;
+            if (($gender !== null && $pg !== $gender) || ($gender === null && $og !== null && $pg === $og)) $rule = 'someone_else';
+        }
+        if ($rule === null && $field === 'occupation') $rule = 'job';
+        if ($rule === null && $name === 'pride' && $v > 0.5 && preg_match(self::PRIDE_IN_WORK, $q)) $rule = 'pride_in_work';
+        if ($rule === null && $name === 'possessiveness' && $v != 0.5) {
+            if (!preg_match(self::POSSESSIVE_CUE, $q) && !preg_match(self::EXTREME_CUES['possessiveness']['lo'], $q)) $rule = 'no_jealousy';
+            elseif ($v > 0.5 && in_array($kind, ['family', 'duty'], true)) $rule = 'not_a_partner';
+        }
+        $loved = $name === 'protectiveness'
+            && (preg_match(self::LOVED_CUE, $q) === 1 || in_array($kind, ['family', 'romantic', 'friend'], true));
+        if ($rule === null && $name === 'protectiveness' && $v > 0.5) {
+            if (!preg_match(self::CARE_CUE, $q)) $rule = 'no_care';
+            elseif (!$loved && (preg_match(self::DUTY_CUE, $q) === 1 || $kind === 'duty')) $rule = 'duty';
+        } elseif ($rule === null && $name === 'protectiveness' && $v < 0.5
+            && !preg_match(self::CARE_CUE, $q) && !preg_match(self::EXTREME_CUES['protectiveness']['lo'], $q)) {
+            $rule = 'no_care';
+        }
+        $centre = $name === 'maturity_start' ? self::MATURITY_CENTRE : [self::CENTRE_LO, self::CENTRE_HI];
+        $outside = $v < $centre[0] || $v > $centre[1];
+        $said = ['value' => $v, 'conf' => $c, 'field' => $field, 'evidence' => $ev];
+        if ($rule !== null) {
+            $e['value'] = $outside ? max($centre[0], min($centre[1], $v)) : $v;
+            $e['conf'] = 0.0;
+            $e['field'] = null;
+            $e['evidence'] = null;
+            $e['note'] = 'screened';
+            $e['screen'] = ['rule' => $rule] + $said;
+            return $e;
+        }
+        if ($outside) {
+            $why = null;
+            if (!in_array($field, self::EXTREME_FIELDS, true)) {
+                $why = 'extreme_field';
+            } elseif ($name !== 'maturity_start') {
+                $dir = $v > $centre[1] ? 'hi' : 'lo';
+                if (!preg_match(self::EXTREME_CUES[$name][$dir], $q)) $why = 'extreme_cue';
+                elseif ($name === 'protectiveness' && $dir === 'hi' && !$loved) $why = 'extreme_no_loved_one';
+            }
+            if ($why !== null) {
+                $e['value'] = max($centre[0], min($centre[1], $v));
+                $e['conf'] = min($c, self::WEAK_EXTREME_CONF);
+                $e['note'] = 'centred';
+                $e['screen'] = ['rule' => $why] + $said;
+            }
+        }
+        return $e;
     }
 
     // =========================================================================
@@ -531,8 +768,13 @@ TXT;
                     $state['model'] = $row['model'] ?? null;
                     if ($state['status'] === 'done') {
                         $res = json_decode((string) ($row['result'] ?? ''), true);
-                        if (is_array($res) && is_array($res['traits'] ?? null)) $state['result'] = $res;
-                        else $state['status'] = 'dead';
+                        if (is_array($res) && is_array($res['traits'] ?? null)) {
+                            // a read stored under an older evidence gate is screened again (no new read)
+                            if (intval($res['gate'] ?? 1) < self::GATE_V) $res = self::screen($res, $tpl['fields'], self::genderFor($tpl['key']));
+                            $state['result'] = $res;
+                        } else {
+                            $state['status'] = 'dead';
+                        }
                     }
                 } elseif ($enqueue) {
                     $ins = $db->fetchOne('INSERT INTO ' . self::TABLE . " (template_key, src_hash, prompt_v, status) VALUES (\$1, \$2, \$3, 'pending')
@@ -615,9 +857,9 @@ TXT;
     /**
      * One read of a template: messages -> LLM -> parse. Returns ['ok' => bool, 'result' =>
      * ?array, 'error' => ?string, 'model' => ?string]. The LLM callable returns a string or
-     * ['text' => string, 'model' => string].
+     * ['text' => string, 'model' => string]. $gender: the NPC's (screen rule S); null = looked up.
      */
-    public static function readOnce(string $templateKey, array $fields, callable $llm, array $cfg): array
+    public static function readOnce(string $templateKey, array $fields, callable $llm, array $cfg, ?string $gender = null): array
     {
         if (self::isSkipped($templateKey, $cfg)) return ['ok' => false, 'result' => null, 'error' => 'skip-listed', 'model' => null];
         $out = $llm(self::buildMessages(self::displayName($templateKey), $fields), self::callParams($cfg));
@@ -625,7 +867,7 @@ TXT;
         $text = is_array($out) ? ($out['text'] ?? null) : $out;
         if (!is_string($text) || trim($text) === '') return ['ok' => false, 'result' => null, 'error' => 'empty response', 'model' => $model];
         $reason = null;
-        $res = self::parse($text, $fields, $reason);
+        $res = self::parse($text, $fields, $reason, $gender ?? self::genderFor($templateKey));
         if ($res === null) return ['ok' => false, 'result' => null, 'error' => 'malformed: ' . $reason, 'model' => $model];
         return ['ok' => true, 'result' => $res, 'error' => null, 'model' => $model];
     }
@@ -634,11 +876,15 @@ TXT;
      * Drain pending reads (eval worker, only after RelDynEval::runWorker() and only with no
      * pending eval job). Own advisory lock, jobs_per_run reads, attempts +1 per failure and
      * 'dead' at max_attempts. Switched off: returns at once and pending rows STAY. Never
-     * touches reldyn_eval_queue.
+     * touches reldyn_eval_queue. $pause (default: a pending Playthrough Save switch,
+     * RelDynEval::playthroughSwitchPending) is checked before every read: the worker holds the
+     * shared work lease, which the switch waits 30 s for, so it stops between reads ('paused').
      */
-    public static function drain(?callable $llm = null): array
+    public static function drain(?callable $llm = null, ?callable $pause = null): array
     {
-        $stats = ['processed' => 0, 'done' => 0, 'failed' => 0, 'dead' => 0, 'skipped' => 0, 'locked' => false, 'off' => false];
+        $stats = ['processed' => 0, 'done' => 0, 'failed' => 0, 'dead' => 0, 'skipped' => 0, 'locked' => false, 'off' => false, 'paused' => false];
+        $pause = $pause ?? (class_exists('RelDynEval') ? [RelDynEval::class, 'playthroughSwitchPending']
+            : fn() => function_exists('ptr_runtime_paused') && ptr_runtime_paused());
         $cfg = self::config();
         if (empty($cfg['enabled']) || (class_exists('RelationshipDynamics') && !RelationshipDynamics::isEnabled())) {
             $stats['off'] = true;
@@ -654,6 +900,11 @@ TXT;
             $llm = $llm ?? self::$llm ?? self::defaultLlm();
             $tried = [];
             while ($stats['processed'] < max(1, intval($cfg['jobs_per_run']))) {
+                if ($pause()) {
+                    error_log('[RelDyn-TRAITS] trait reads stop: a Playthrough Save switch is pending; the rest wait for the next worker');
+                    $stats['paused'] = true;
+                    break;
+                }
                 $row = $db->fetchOne('SELECT template_key, src_hash, attempts FROM ' . self::TABLE . "
                      WHERE status = 'pending' AND NOT ((template_key || '|' || src_hash) = ANY(\$1::text[]))
                      ORDER BY created, template_key LIMIT 1", [self::pgTextArray($tried)]);
