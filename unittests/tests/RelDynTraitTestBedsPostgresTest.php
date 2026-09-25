@@ -441,4 +441,33 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         $this->assertGreaterThan(4.0, $loss['Muiri'], 'Muiri swings');
         $this->assertSame([], $this->db->failures);
     }
+
+    /**
+     * Phase 3, A16 split: trust gains and losses resist separately, through the eval on each
+     * bed's stored state. Ashe (the most guarded) is the slowest to trust; Muiri (the most
+     * possessive, from her priors) loses trust the fastest; each bed loses trust faster than
+     * she gains it.
+     */
+    public function testPhaseThreeTrustGainAndLossResistSeparatelyOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $gain = $loss = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $t = $d['inferred_temperament'] ?? null;
+            $gain[$npc] = RelationshipDynamics::getSignalResistance($t, 'trust', $d, false);
+            $loss[$npc] = RelationshipDynamics::getSignalResistance($t, 'trust', $d, true);
+            $this->assertGreaterThan($gain[$npc], $loss[$npc], "{$npc}: slow gain, fast loss");
+            // through the eval, at the trust baseline: the loss is x R_down x P_down
+            $d['dimensions']['trust']['x'] = $d['dimensions']['trust']['baseline'];
+            $d['dimensions']['maturity']['x'] = max(30.0, floatval($d['dimensions']['maturity']['x']));
+            $r = RelationshipDynamics::applyEvalSignal($npc, $d, 'trust', -4.0, [], 1.0);
+            $this->assertEqualsWithDelta(-4.0 * $loss[$npc] * RelationshipDynamics::effectiveMaturityY($d)['Y_down'], $r['actual'], 1e-3, $npc);
+        }
+        asort($gain);
+        $this->assertSame('Ashe', array_key_first($gain), 'Ashe: the slowest to trust');
+        arsort($loss);
+        $this->assertSame('Muiri', array_key_first($loss), 'Muiri: the most betrayal-sensitive');
+        $this->assertSame([], $this->db->failures);
+    }
 }

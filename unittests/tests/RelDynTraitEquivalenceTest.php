@@ -165,6 +165,10 @@ final class RelDynTraitEquivalenceTest extends TestCase
             foreach (['affinity', 'trust', 'comfort', 'respect'] as $sig) {   // maturity: retired (phase 3)
                 $expect["resist_{$sig}"] = $b['resistance'][$sig];
             }
+            // phase 3 (A16 split): the loss side is the MDD's Y_down column; Humble resists nothing (1.0)
+            foreach (['trust', 'comfort'] as $sig) {
+                $expect["resist_{$sig}_down"] = $p === 'Humble' ? 1.0 : $b['plasticity'][$sig]['Y_down'];
+            }
             foreach (['half_life', 'decay_rate', 'lambda', 'passion_decay'] as $k) {
                 $expect["warmth_{$k}"] = RelationshipDynamics::CURVE_PARAMS[$b['warmth_curve']][$k];
             }

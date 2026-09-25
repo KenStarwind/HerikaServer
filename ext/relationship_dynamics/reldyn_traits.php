@@ -573,9 +573,12 @@ final class RelDynTraits
         // decisions §16 #6 keeps it). Phase 3 retired the maturity column (the MDD 15.6 maturity
         // type is the only maturity Y) and the unreachable 'Volatile' row; a label that is not a
         // preset keeps today's lookup (none left: every other label resists nothing, 1.0).
+        // Phase 3 (design §2.1 A16): trust and comfort split by direction. resist_{signal} is the
+        // gain (R_up; trust owned by guard alone, refit over the 13 presets, R^2 .67);
+        // resist_{signal}_down is the loss (resistLossTable). Affinity and respect stay symmetric.
         $resist = [
             'affinity' => [['E', 'L', 'G'], [0.29, 'E' => 0.99, 'L' => 0.42, 'G' => -0.10]],
-            'trust'    => [['G', 'Po'], [1.28, 'G' => -0.79, 'Po' => -0.36]],
+            'trust'    => [['G'], [1.19, 'G' => -0.86]],
             'comfort'  => [['G', 'C'], [1.51, 'G' => -1.78, 'C' => 0.29]],
             'respect'  => [['Pd', 'C'], [0.34, 'Pd' => 0.88, 'C' => 0.41]],
         ];
@@ -583,6 +586,16 @@ final class RelDynTraits
             $add("resist_{$signal}", 'A16', 'R', $owners, $model, 'mult',
                 fn() => self::fill(array_map(fn($row) => $row[$signal] ?? 1.0, $RD::TEMPERAMENT_SIGNAL_RESISTANCE), 1.0),
                 fn($label) => $RD::TEMPERAMENT_SIGNAL_RESISTANCE[$label][$signal] ?? null);
+        }
+        // R_down: trust = betrayal sensitivity (possessiveness, pride; R^2 .73, Rule R);
+        // comfort (R^2 .45 over guard and confidence: Rule I, preset-keyed)
+        $resistDown = [
+            'trust'   => ['R', ['Po', 'Pd'], [0.80, 'Po' => 0.93, 'Pd' => 0.40]],
+            'comfort' => ['I', ['G', 'C'], null],
+        ];
+        foreach ($resistDown as $signal => [$rule, $owners, $model]) {
+            $add("resist_{$signal}_down", 'A16', $rule, $owners, $model, 'mult',
+                fn() => self::resistLossTable($signal));
         }
 
         // A18 absence decay (core affinity points per tick; leaves temperament in phase 3), A19 tier retention
@@ -628,6 +641,22 @@ final class RelDynTraits
             fn() => array_map(fn($n) => in_array($n, $RD::PHYSICAL_WARRIOR_TEMPERAMENTS, true) ? 1.0 : 0.0, array_combine(array_keys(self::PRESET_TRAITS), array_keys(self::PRESET_TRAITS))));
 
         return $cols;
+    }
+
+    /**
+     * A16 phase 3, the loss side of a direction-split resistance (trust, comfort), per preset:
+     * the MDD's own "slow gain, fast loss" Y_down column (RelationshipDynamics::
+     * PLASTICITY_PROFILES, the loss rate every non-eval delta already reads), except Humble,
+     * who resists nothing either way (1.0, decisions §16 #6). Unitless.
+     */
+    public static function resistLossTable(string $signal): array
+    {
+        $out = [];
+        foreach (self::PRESET_TRAITS as $name => $_) {
+            $out[$name] = $name === 'Humble' ? 1.0
+                : floatval(RelationshipDynamics::PLASTICITY_PROFILES[$signal][$name]['Y_down'] ?? 1.0);
+        }
+        return $out;
     }
 
     public static function hasColumn(string $col): bool

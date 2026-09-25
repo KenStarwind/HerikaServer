@@ -405,9 +405,10 @@ final class RelDynEvalPipelineTest extends TestCase
             'trust gain, Guarded Brittle'      => ['Guarded', 'Brittle', 'trust', 20, 20, 10, 2.8],
             // away from baseline by 30, Z 30: decay 0.5
             'trust gain away from baseline'    => ['Guarded', 'Brittle', 'trust', 50, 20, 10, 1.4],
-            // toward baseline: decay 1 + 30/30 = 2; -10 x 0.4 x 1.3 x 2
-            'trust loss toward baseline'       => ['Guarded', 'Brittle', 'trust', 50, 20, -10, -10.4],
-            // Playful comfort R 1.4, Volatile down 1.5
+            // toward baseline: decay 1 + 30/30 = 2; a loss reads the loss resistance (traits phase 3,
+            // A16 split: Guarded trust loss 1.5, the MDD's fast loss): -5 x 1.5 x 1.3 x 2
+            'trust loss toward baseline'       => ['Guarded', 'Brittle', 'trust', 50, 20, -5, -19.5],
+            // Playful comfort loss R 1.4 (the loss side is 1.4 as well), Volatile down 1.5
             'comfort loss, Playful Volatile'   => ['Playful', 'Volatile', 'comfort', 55, 55, -10, -21.0],
             // Proud respect R 1.5, Brittle down 1.3
             'respect loss, Proud Brittle'      => ['Proud', 'Brittle', 'respect', 25, 25, -10, -19.5],
@@ -446,8 +447,8 @@ final class RelDynEvalPipelineTest extends TestCase
         $npc['_plasticity_override_expires_gamets'] = 5000;
         $npc['_last_gamets'] = 1000;
         $r = RelationshipDynamics::applyEvalSignal('Ashe', $npc, 'trust', -10, [], 1.0);
-        // Stoic trust R 0.7 x Volatile down 1.5 at baseline
-        $this->assertEqualsWithDelta(-10.5, $r['actual'], 1e-3);
+        // Stoic trust loss R 1.0 (A16 split, phase 3) x Volatile down 1.5 at baseline
+        $this->assertEqualsWithDelta(-15.0, $r['actual'], 1e-3);
     }
 
     // ------------------------------------------------------------------------------------
@@ -564,11 +565,12 @@ final class RelDynEvalPipelineTest extends TestCase
 
         $totals = RelationshipDynamics::processEvalContractItem('Mjoll', $item, $npc);
 
-        // Stoic: R affinity 0.5, trust 0.7 (maturity R retired: 1.0, decisions §16 #6); Adaptive 1.0;
+        // Stoic: R affinity 0.5, trust loss 1.0 (A16 split, phase 3; the gain is 0.7), maturity R
+        // retired (1.0, decisions §16 #6); Adaptive 1.0;
         // maturity 55 -> losses x0.95
         $this->assertEqualsWithDelta(-10 * 0.5 * 0.95, $this->coreAffinityMoved($n0, $npc), 1e-3);
         $this->assertEqualsWithDelta(-10 * 0.5 * 0.95 / 2.0, $totals['affinity'], 1e-3, 'totals in dimension (mirror) units');
-        $this->assertEqualsWithDelta(-7.0, $totals['trust'], 1e-3);
+        $this->assertEqualsWithDelta(-10.0, $totals['trust'], 1e-3);
         $this->assertEqualsWithDelta(-4.0, $totals['maturity'], 1e-3);
         $this->assertArrayNotHasKey('comfort', $totals, 'zero signals are not applied');
         // The grievance goes through the resentment accumulator (applyEvalFeelings ->

@@ -7774,6 +7774,10 @@ class RelationshipDynamics
      *   - the unreachable 'Volatile' row is deleted (no temperament has that name; Volatile is
      *     a maturity type, MATURITY_PLASTICITY_VALUES);
      *   - Humble stays without a row: 1.0 on every signal ("modest, steady, low drama").
+     * Traits phase 3 (design §2.1 A16) splits trust and comfort by direction: these rows are the
+     * GAIN resistance; a loss reads RelDynTraits column resist_{signal}_down (the MDD's
+     * slow-gain / fast-loss Y_down columns, RelDynTraits::resistLossTable). Symmetric R made a
+     * Guarded NPC as hard to lose trust with as to win it.
      */
     const TEMPERAMENT_SIGNAL_RESISTANCE = [
         'Stoic'       => ['affinity' => 0.5, 'trust' => 0.7, 'comfort' => 0.4, 'respect' => 0.8],
@@ -7790,12 +7794,18 @@ class RelationshipDynamics
         'Defiant'     => ['affinity' => 1.1, 'trust' => 0.7, 'comfort' => 0.8, 'respect' => 1.2],
     ];
 
-    /** R_temperament[signal] (MDD 15.4; passion: MDD 1.3; maturity: retired, 1.0). Unitless. */
-    public static function getSignalResistance($temperament, string $signal, ?array $dynamics = null): float
+    /**
+     * R_temperament[signal] (MDD 15.4; passion: MDD 1.3; maturity: retired, 1.0). Unitless.
+     * $loss: the delta is a loss (trust and comfort have a separate loss resistance, phase 3).
+     */
+    public static function getSignalResistance($temperament, string $signal, ?array $dynamics = null, bool $loss = false): float
     {
         // A1 / A16 through the trait engine (a non-preset label keeps today's row lookup)
         if ($signal === 'passion') {
             return (float) RelDynTraits::param($temperament, 'passion_mult', 1.0, $dynamics);
+        }
+        if ($loss && RelDynTraits::hasColumn("resist_{$signal}_down")) {
+            return (float) RelDynTraits::param($temperament, "resist_{$signal}_down", 1.0, $dynamics);
         }
         if (RelDynTraits::hasColumn("resist_{$signal}")) {
             return (float) RelDynTraits::param($temperament, "resist_{$signal}", 1.0, $dynamics);
@@ -8102,7 +8112,7 @@ class RelationshipDynamics
             }
         }
 
-        $R = self::getSignalResistance($temperament, $signal, $dynamics);
+        $R = self::getSignalResistance($temperament, $signal, $dynamics, $raw < 0);
         $type = self::resolveMaturityType($dynamics);
         $dirKey = $raw > 0 ? 'Y_up' : 'Y_down';
         $P = floatval(self::effectiveMaturityY($dynamics)[$dirKey]);

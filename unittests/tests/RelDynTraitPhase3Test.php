@@ -144,4 +144,57 @@ final class RelDynTraitPhase3Test extends TestCase
             $this->assertEqualsWithDelta($want, $r['actual'], 1e-6, "{$p} {$type}");
         }
     }
+
+    // =========================================================================
+    // A16 split: trust and comfort resist gains and losses separately
+    // =========================================================================
+
+    public function testTrustAndComfortResistGainsAndLossesSeparately(): void
+    {
+        $R = fn($d, string $sig, bool $loss) => RelationshipDynamics::getSignalResistance($d['inferred_temperament'], $sig, $d, $loss);
+        // at the presets: the gain is today's MDD 15.4 row, the loss the MDD's Y_down column
+        $loss = ['Guarded' => [1.5, 0.3], 'Jealous' => [1.8, 1.3], 'Proud' => [1.8, 1.0], 'Stoic' => [1.0, 0.4],
+                 'Anxious' => [1.5, 1.3], 'Bold' => [1.0, 0.7], 'Humble' => [1.0, 1.0]];
+        foreach ($loss as $p => [$trustDown, $comfortDown]) {
+            $d = self::preset($p);
+            $this->assertEqualsWithDelta(RelationshipDynamics::TEMPERAMENT_SIGNAL_RESISTANCE[$p]['trust'] ?? 1.0, $R($d, 'trust', false), 1e-12, "{$p} trust gain");
+            $this->assertEqualsWithDelta(RelationshipDynamics::TEMPERAMENT_SIGNAL_RESISTANCE[$p]['comfort'] ?? 1.0, $R($d, 'comfort', false), 1e-12, "{$p} comfort gain");
+            $this->assertEqualsWithDelta($trustDown, $R($d, 'trust', true), 1e-12, "{$p} trust loss");
+            $this->assertEqualsWithDelta($comfortDown, $R($d, 'comfort', true), 1e-12, "{$p} comfort loss");
+            foreach (['affinity', 'respect'] as $sig) {
+                $this->assertSame($R($d, $sig, false), $R($d, $sig, true), "{$p} {$sig}: symmetric");
+            }
+        }
+        // the label path (no vector) reads the same tables
+        $this->assertSame(1.5, RelationshipDynamics::getSignalResistance('Guarded', 'trust', null, true));
+        $this->assertSame(0.4, RelationshipDynamics::getSignalResistance('Guarded', 'trust', null, false));
+        $this->assertSame(1.0, RelationshipDynamics::getSignalResistance(null, 'trust', null, true), 'no temperament: 1.0 both ways');
+
+        // slow gain, fast loss for the guarded: Guarded wins trust at x0.4 and loses it at x1.5
+        $g = self::preset('Guarded');
+        $this->assertGreaterThan(3.0 * $R($g, 'trust', false), $R($g, 'trust', true));
+        // Ashe (her own vector, far from every preset: the pure models): slow to trust
+        // (guard .75), and losing it is betrayal-sensitive but moderate (low possessiveness)
+        $ashe = self::at(self::asheVector());
+        $this->assertEqualsWithDelta(1.19 - 0.86 * 0.75, $R($ashe, 'trust', false), 1e-9);
+        $this->assertEqualsWithDelta(0.80 + 0.93 * 0.20 + 0.40 * 0.40, $R($ashe, 'trust', true), 1e-9);
+        // between presets the loss side rises with possessiveness and pride (betrayal sensitivity)
+        $prev = -INF;
+        foreach ([0.05, 0.25, 0.45, 0.65, 0.85] as $po) {
+            $v = $R(self::at(['possessiveness' => $po, 'guard' => 0.5, 'pride' => 0.5]), 'trust', true);
+            $this->assertGreaterThan($prev, $v, "trust loss rises with Po ({$po})");
+            $prev = $v;
+        }
+
+        // End to end through the eval (Guarded, Brittle, at baseline): a gain is unchanged
+        // (10 x 0.4 x 0.7 = 2.8); a loss is x1.5 x 1.3 = -19.5 (was 0.4 x 1.3 = -5.2)
+        foreach ([[10.0, 2.8], [-10.0, -19.5]] as [$raw, $want]) {
+            $d = self::preset('Guarded');
+            $d['dimensions']['maturity']['plasticity_type'] = 'Brittle';
+            $d['dimensions']['maturity']['x'] = 45;
+            $d['dimensions']['trust']['x'] = $d['dimensions']['trust']['baseline'];
+            $r = RelationshipDynamics::applyEvalSignal('Npc', $d, 'trust', $raw, [], 1.0);
+            $this->assertEqualsWithDelta($want, $r['actual'], 1e-3, "Guarded trust {$raw}");
+        }
+    }
 }
