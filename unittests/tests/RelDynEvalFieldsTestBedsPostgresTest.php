@@ -540,15 +540,51 @@ final class RelDynEvalFieldsTestBedsPostgresTest extends TestCase
                 $this->assertArrayNotHasKey('ts', $m, 'game time, not the wall clock');
             }
         }
-        // At the MDD 15.5 confrontation threshold the stings are the grievances she is ready to raise
+        // At resentment 55 the stings are the grievances. With the resentment arc on (shipped), its
+        // confrontation is the one voice: said at each NPC's own attachment threshold, and the
+        // memory line leaves out what it said. Ashe, avoidant, holds hers until later.
+        $sting = 'Kaida called her useless three times in front of Hulda';
+        $said = [];
         foreach (array_keys(self::BEDS) as $npc) {
             $this->editDynamics($npc, function (array &$d): void { $d['dimensions']['resentment']['x'] = 55.0; });
             $this->turn($npc, 'Can we talk?', 'talk');
             $f = $this->felt[$npc]['talk'];
+            $d = $this->dynamics($npc);
+            $this->assertArrayNotHasKey('grievances', $f, "{$npc}: one voice, the confrontation carries them");
+            $due = RelDynResentment::confrontationThreshold($d) <= 55.0 && !RelationshipDynamics::isPeoplePleaser($d);
+            $said[$npc] = isset($f['resentment_confront']);
+            $this->assertSame($due, $said[$npc], "{$npc}: said at her own threshold " . json_encode(array_keys($f)));
+            if ($said[$npc]) {
+                $this->assertStringContainsString($sting, $f['resentment_confront'], "{$npc}: the stored event is what she raises");
+                $this->assertStringNotContainsString($sting, (string) ($f['memory'] ?? ''), "{$npc}: not repeated in the memory line");
+            }
+        }
+        $this->assertTrue($said['Aela the Huntress'], 'Aela says it at the secure threshold');
+        $this->assertFalse($said['Ashe'], 'Ashe holds it: avoidant, her threshold is higher');
+
+        // With the arc's confrontation switched off, the standing grievances line at the flat
+        // MDD 15.5 threshold names the same stings for all four, and the memory line leaves them out
+        $this->patchConfig(function (array &$c): void { $c['resentment_arc']['confrontation']['enabled'] = false; });
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->editDynamics($npc, function (array &$d): void { $d['dimensions']['resentment']['x'] = 55.0; });
+            $this->turn($npc, 'Can we talk?', 'talk_flat');
+            $f = $this->felt[$npc]['talk_flat'];
             $this->assertArrayHasKey('grievances', $f, "{$npc}: " . json_encode(array_keys($f)));
-            $this->assertStringContainsString("'Kaida called her useless three times in front of Hulda'", $f['grievances']);
+            $this->assertStringContainsString("'{$sting}'", $f['grievances']);
+            $this->assertArrayNotHasKey('resentment_confront', $f);
+            $this->assertStringNotContainsString($sting, (string) ($f['memory'] ?? ''), "{$npc}: not repeated in the memory line");
         }
         foreach ($this->blocks as $b) $this->assertDoesNotMatchRegularExpression('/\d/', $b, "no number reaches the LLM:\n{$b}");
         $this->assertSame([], $this->db->failures);
+    }
+
+    /** Change the stored config the way the config page does (conf_opts row), then reload it. */
+    private function patchConfig(callable $edit): void
+    {
+        $r = pg_query_params($this->db->link, 'SELECT value FROM conf_opts WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID]);
+        $cfg = json_decode((string) pg_fetch_result($r, 0, 0), true);
+        $edit($cfg);
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID, json_encode($cfg)]);
+        RelationshipDynamics::clearConfigCache();
     }
 }

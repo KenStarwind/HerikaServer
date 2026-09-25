@@ -176,6 +176,17 @@ final class RelDynResentment
         return !empty($cfg['enabled']) && !empty(RelationshipDynamics::configValue('dimension_engine_enabled'));
     }
 
+    /**
+     * This arc's confrontation is the one voice for grievances (MDD 15.5): said at the NPC's own
+     * attachment threshold, once, in her way, never by a people-pleaser. When it is off, the felt
+     * text falls back to the standing grievances line at the flat threshold.
+     */
+    public static function voicesConfrontation(?array $cfg = null): bool
+    {
+        $cfg = $cfg ?? self::config();
+        return self::enabled($cfg) && !empty($cfg['confrontation']['enabled']);
+    }
+
     /** Play gamets in $minutes of played time (the play clock's "real minutes of play"). */
     public static function playGamets(float $minutes): float
     {
@@ -621,11 +632,12 @@ final class RelDynResentment
      * ($playerAddressed): the confrontation (its relief applied as it is said) and the
      * self-reflection. Lines: ['key', 'lane', 'salience', 'must', 'intense', 'text'].
      *
-     * @return array ['lines' => list, 'changed' => bool, 'relief' => resentment points taken off]
+     * @return array ['lines' => list, 'changed' => bool, 'relief' => resentment points taken off,
+     *               'named' => the grievances the confrontation said (other lines leave them out)]
      */
     public static function takeFeltLines(array &$dynamics, string $npcName, string $playerName, float $now, bool $playerAddressed = true): array
     {
-        $out = ['lines' => [], 'changed' => false, 'relief' => 0.0];
+        $out = ['lines' => [], 'changed' => false, 'relief' => 0.0, 'named' => []];
         $cfg = self::config();
         if (!self::enabled($cfg) || !$playerAddressed || !is_array($dynamics[self::STATE_KEY] ?? null)) return $out;
         $t = (array) $cfg['felt_text'];
@@ -651,6 +663,7 @@ final class RelDynResentment
             $out['lines'][] = ['key' => 'confront', 'lane' => 'turn', 'salience' => 1.0, 'must' => true,
                 'intense' => $mode === 'immature', 'text' => $text];
             $out['changed'] = true;
+            $out['named'] = $fuel['phrases'];
             RelationshipDynamics::log("[RESENT] {$npcName}: confrontation said ({$mode}, " . count($phrases) . " grievance(s)), resentment -"
                 . round($out['relief'], 2));
         }

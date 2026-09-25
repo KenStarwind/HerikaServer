@@ -699,10 +699,14 @@ final class RelDynFelt
 
         // --- Memories: the strongest moments of this bond and the last eval reasons (tier 2+) ---
         if ($tier >= intval($cfg['memory_min_tier'])) {
-            // At the confrontation threshold (MDD 15.5, resentment 50) the stings are a list of
-            // grievances she is ready to bring up; the memory line keeps the rest
+            // The stings she brings up are the grievances; the memory line keeps the rest. With the
+            // resentment arc on, its confrontation is the one voice (her own attachment threshold,
+            // said once, never by a people-pleaser): what it said this turn stays out of the
+            // memory line. Without it, a standing grievances line at the flat MDD 15.5 threshold.
             $held = [];
-            if (RelationshipDynamics::getResentmentEffects($dynamics)['confrontation_due']) {
+            if (RelDynResentment::voicesConfrontation()) {
+                $held = (array) ($resent['named'] ?? []);
+            } elseif (RelationshipDynamics::getResentmentEffects($dynamics)['confrontation_due']) {
                 $held = array_slice(RelationshipDynamics::getConfrontationFuel($dynamics, $bond), 0, max(1, intval($cfg['grievance_items'])));
                 if ($held !== []) {
                     $lines[] = self::line('grievances', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['grievances']),
