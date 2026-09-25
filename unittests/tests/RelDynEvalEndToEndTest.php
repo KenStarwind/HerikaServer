@@ -397,9 +397,10 @@ final class RelDynEvalEndToEndTest extends TestCase
         $this->assertEqualsWithDelta(0.0, (float) $after['passion'], 1e-9, 'passion moved only by the eval (0 here)');
         $this->assertStringContainsString('[AFF] Muiri -> Player: -25 (aff 20 -> -5)', $log);
 
-        // Trust (0..100): -8 x R(Jealous trust) 0.4 x P(Adaptive down) 1.0, at baseline (decay 1) = -3.2
-        $this->assertEqualsWithDelta(50.0 - 3.2,
-            (float) $after['dimensions']['trust']['x'], 1e-9, 'trust 50 -> 46.8');
+        // Trust (0..100): -8 x R(Jealous trust LOSS) 1.8 x P(Adaptive down) 1.0, at baseline (decay 1)
+        //   = -14.4 (traits phase 3, A16 split: the gain side is 0.4, a loss the MDD's fast 1.8)
+        $this->assertEqualsWithDelta(50.0 - 14.4,
+            (float) $after['dimensions']['trust']['x'], 1e-9, 'trust 50 -> 35.6');
 
         // Resentment (0..100), MDD 15.5 via recordGrievance: raw 5 x severity-2 mult 1.5
         //   x (1 + power_gap 0: romantic, not in party, no factions) = 7.5

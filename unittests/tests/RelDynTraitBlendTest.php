@@ -48,6 +48,19 @@ final class RelDynTraitBlendTest extends TestCase
         return RelDynTraits::normalizeVector($v);
     }
 
+    /**
+     * The phase-1/2 bleedout table (MDD 1.3 drain, passion points). Phase 3 retired it (the fall is
+     * a trait outcome, RelDynTraits::bleedout); it stays here as §3.5's Rule I example.
+     */
+    private const BLEEDOUT_TABLE = ['Romantic' => -1.0, 'Anxious' => -3.0, 'Bold' => -0.3, 'Playful' => -0.5, 'Humble' => -0.8,
+        'Nurturing' => -1.0, 'Gentle' => -1.5, 'Jealous' => -1.5, 'Proud' => -2.0, 'Defiant' => 1.0, 'Guarded' => -2.5,
+        'Independent' => -2.0, 'Stoic' => -0.5];
+
+    private static function bleedoutI(array $x): float
+    {
+        return RelDynTraits::blend($x, self::BLEEDOUT_TABLE, 'I', null, 'bleedout');
+    }
+
     /** §3.5: Defiant (+1.0 rage) to Bold (-0.3) under Rule I: monotone (to 1e-3), bounded, still rage at 0.15. */
     public function testDefiantToBoldBleedoutWalkIsMonotoneAndKeepsTheRageNearDefiant(): void
     {
@@ -56,10 +69,10 @@ final class RelDynTraitBlendTest extends TestCase
         $len = RelDynTraits::distance($def, $bold);
         $this->assertEqualsWithDelta(0.515, $len, 0.002);
         $prev = INF;
-        $table = RelDynTraits::table('bleedout');
+        $table = self::BLEEDOUT_TABLE;
         for ($i = 0; $i <= 40; $i++) {
             $x = self::lerp($def, $bold, $i / 40);
-            $v = RelDynTraits::value($x, 'bleedout');
+            $v = self::bleedoutI($x);
             // monotone up to the pull of the other presets' weights (w = d^-4), well under 0.001 passion points
             $this->assertLessThanOrEqual($prev + 1e-3, $v, "monotone at step {$i}");
             $this->assertGreaterThanOrEqual(min($table) - 1e-12, $v);
@@ -67,11 +80,11 @@ final class RelDynTraitBlendTest extends TestCase
             $prev = $v;
             if ($i / 40 * $len <= 0.15) $this->assertGreaterThan(0.0, $v, sprintf('rage kept %.3f from Defiant', $i / 40 * $len));
         }
-        $this->assertSame(1.0, RelDynTraits::value($def, 'bleedout'));
-        $this->assertSame(-0.3, RelDynTraits::value($bold, 'bleedout'));
+        $this->assertSame(1.0, self::bleedoutI($def));
+        $this->assertSame(-0.3, self::bleedoutI($bold));
         // design table: +0.92 at 0.15, crossing zero about 0.29 from Defiant
-        $this->assertEqualsWithDelta(0.92, RelDynTraits::value(self::lerp($def, $bold, 0.15 / $len), 'bleedout'), 0.02);
-        $this->assertEqualsWithDelta(-0.15, RelDynTraits::value(self::lerp($def, $bold, 0.31 / $len), 'bleedout'), 0.03);
+        $this->assertEqualsWithDelta(0.92, self::bleedoutI(self::lerp($def, $bold, 0.15 / $len)), 0.02);
+        $this->assertEqualsWithDelta(-0.15, self::bleedoutI(self::lerp($def, $bold, 0.31 / $len)), 0.03);
     }
 
     /** Rule I is a convex combination: never outside [min T, max T]; continuous at a preset. */
@@ -79,7 +92,7 @@ final class RelDynTraitBlendTest extends TestCase
     {
         mt_srand(20260924);
         $iCols = array_keys(array_filter(RelDynTraits::columns(), fn($c) => $c['rule'] === 'I'));
-        $this->assertContains('bleedout', $iCols);
+        $this->assertNotContains('bleedout', $iCols, 'retired in phase 3 (RelDynTraits::bleedout)');
         $this->assertContains('reunion_mult', $iCols);
         $this->assertContains('baseline_respect', $iCols);
         for ($n = 0; $n < 200; $n++) {
@@ -202,7 +215,7 @@ final class RelDynTraitBlendTest extends TestCase
         $h = 1e-5;
         $found = ['model' => [], 'clamp' => []];
         foreach (RelDynTraits::columns() as $col => $spec) {
-            if ($spec['rule'] !== 'R') continue;
+            if (!in_array($spec['rule'], ['R', 'RI'], true)) continue;   // RI: flat residual at a preset too
             $m = $spec['model'];
             $f = is_callable($m) ? fn(array $x) => floatval($m($x)) : function (array $x) use ($m) {
                 $v = floatval($m[0] ?? 0.0);
@@ -297,12 +310,73 @@ final class RelDynTraitBlendTest extends TestCase
                 }
             }
         }
-        $this->assertGreaterThan(300, $checked);
-        // the reviewed magnitudes (units: coordinate points, core affinity points, multiplier)
-        $this->assertEqualsWithDelta(20.35, $worst['baseline_coord_m'], 0.05);
-        $this->assertEqualsWithDelta(7.13, $worst['tier_retention'], 0.05);
+        $this->assertGreaterThan(250, $checked);
+        // the reviewed magnitudes (units: multiplier); coord_m (20.35 coordinate points) and
+        // tier_retention (7.13 core points) moved to Rule RI in phase 3 (next test)
         $this->assertEqualsWithDelta(0.076, $worst['passion_mult'], 0.005);
         $this->assertEqualsWithDelta(0.163, $worst['jealousy_mult'], 0.005);
+        // every Rule-R column left turns the wrong way by less than 20% of its table span
+        foreach ($worst as $col => $w) {
+            $t = array_map('floatval', RelDynTraits::table($col));
+            $this->assertLessThan(0.20 * (max($t) - min($t)), $w, $col);
+        }
+    }
+
+    /**
+     * Phase 3, the preset-quirk columns (Rule RI: the model plus the residuals blended by inverse
+     * distance): exact at every preset, and near a preset they follow their model. Walking each
+     * owner half an axis away from each preset, the excursion against the model stays under 20%
+     * of the table span (Rule R turned coord_m 25%, coord_f 22%, tier_retention 29% within rho).
+     */
+    public function testPresetQuirkColumnsFollowTheirModelNearThePresets(): void
+    {
+        $pts = RelDynTraits::points();
+        $ri = array_keys(array_filter(RelDynTraits::columns(), fn($c) => $c['rule'] === 'RI'));
+        sort($ri);
+        $want = RelDynTraits::RI_COLUMNS;
+        sort($want);
+        $this->assertSame($want, $ri);
+        foreach ($ri as $col) {
+            $spec = RelDynTraits::columns()[$col];
+            $m = $spec['model'];
+            $f = function (array $x) use ($m) {
+                $v = floatval($m[0] ?? 0.0);
+                foreach ($m as $k => $c) if ($k !== 0) $v += floatval($c) * floatval($x[$k]);
+                return $v;
+            };
+            $t = array_map('floatval', RelDynTraits::table($col));
+            $span = max($t) - min($t);
+            $worst = 0.0;
+            foreach ($pts as $name => $p) {
+                $at = floatval(RelDynTraits::value($p, $col));
+                $this->assertSame($t[$name], $at, "{$col} exact at {$name}");
+                foreach ($spec['owners'] as $code) {
+                    foreach ([1.0, -1.0] as $dir) {
+                        for ($s = 0.01; $s <= 0.5; $s += 0.01) {
+                            $x = $p;
+                            $x[$code] += $dir * $s;
+                            if ($x[$code] < 0.0 || $x[$code] > 1.0) break;
+                            $sign = $f($x) > $f($p) ? 1.0 : -1.0;
+                            $worst = max($worst, -$sign * (floatval(RelDynTraits::value($x, $col)) - $at));
+                        }
+                    }
+                }
+            }
+            $this->assertLessThan(0.20 * $span, $worst, $col);
+        }
+        // coord_m at Bold along restraint, the reviewed case: as restraint drops the model rises
+        // (-3 D) but Rule R fell 20.35 coordinate points inside the reach (60 -> 39.7). Rule RI
+        // follows the model near Bold (a flat residual) and drifts gently toward the neighbouring
+        // presets' values over the whole way (7 points by D = 0)
+        $bold = $pts['Bold'];
+        $vals = [];
+        for ($s = 0.0; $s <= $bold['D'] + 1e-9; $s += 0.01) {
+            $x = $bold;
+            $x['D'] = $bold['D'] - $s;
+            $vals[] = RelDynTraits::value($x, 'baseline_coord_m');
+        }
+        $this->assertGreaterThanOrEqual($vals[0], $vals[5], 'within 0.05 of Bold it moves with its model');
+        $this->assertLessThan(7.5, $vals[0] - min($vals));
     }
 
     /** Away from every preset (beyond rho) Rule R is the pure model: monotone in each owner. */
@@ -365,7 +439,7 @@ final class RelDynTraitBlendTest extends TestCase
             RelDynAttraction::defaults()['temperament_openness'], RelDynAttraction::defaults()['openness_levels']);
         $this->assertSame(0.9, $open['o']);
         $this->assertSame('high', $open['band']);
-        $this->assertSame([-5.0, 5.0], RelDynTraits::CLAMPS[$cols['bleedout']['unit']]);
+        $this->assertSame([-5.0, 5.0], RelDynTraits::CLAMPS['bleedout'], 'the bleedout passion (RelDynTraits::bleedout)');
         $this->assertSame([0.3, 1.5], RelDynTraits::CLAMPS[$cols['y_maturity_up']['unit']]);
         $this->assertSame([-100.0, 100.0], RelDynTraits::CLAMPS[$cols['baseline_affinity']['unit']], 'core affinity units (RelDynAffinityUnitsTest)');
     }

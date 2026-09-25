@@ -23,7 +23,8 @@ if (PHP_SAPI !== 'cli') {
 
 /** Labels captured: the 13 presets, then null (no temperament), '' (the jealousy consumer's key),
  *  'stoic' (lower case: exact-key tables miss it, validTemperament consumers read Stoic) and
- *  'Volatile' (the MDD 15.4 resistance row that is not a temperament). */
+ *  'Volatile' (the MDD 15.4 resistance row that is not a temperament; deleted in traits phase 3,
+ *  decisions §16 #6, so it now resists nothing). */
 const RELDYN_TRAIT_CAPTURE_LABELS = ['Romantic', 'Anxious', 'Bold', 'Playful', 'Humble', 'Nurturing', 'Gentle',
     'Jealous', 'Proud', 'Defiant', 'Guarded', 'Independent', 'Stoic', null, '', 'stoic', 'Volatile'];
 
@@ -48,7 +49,8 @@ function reldyn_trait_capture_label($t): array
     // After: the engine call each consumer makes now (same default).
     if (class_exists('RelDynTraits')) {
         $r['passion_mult'] = RelDynTraits::param($t, 'passion_mult', 1.0);                    // gainPassion
-        $r['bleedout'] = RelDynTraits::param($t, 'bleedout', -1.5);                            // postrequest bleedout
+        $bd = ['inferred_temperament' => $t];
+        $r['bleedout'] = RelationshipDynamics::bleedoutResponse($bd)['passion'];              // postrequest bleedout (phase 3)
         $r['reunion_mult'] = RelDynTraits::param($t, 'reunion_mult', 1.0);                     // checkReunion
         $r['jealousy_mult'] = floatval(RelDynTraits::param($t ?? '', 'jealousy_mult', 1.0));   // jealousyEventGain
         $r['tier_retention'] = RelDynTraits::param($t, 'tier_retention', -15);                 // checkTierDemotion

@@ -16,7 +16,10 @@ final class RelDynTemperamentMddTest extends TestCase
     /** MDD 1.3: temperament => [passion, reunion, jealousy] multipliers. */
     private const MDD_1_3 = [
         'Romantic'    => [1.3, 1.5, 1.3],
-        'Anxious'     => [1.2, 1.8, 1.5],
+        // traits phase 3 (attachment de-duplication): the Anxious reunion / jealousy anxiety part
+        // is the attachment's (reunion anxious x1.4, jealousy anxious x2.0), not the temperament's;
+        // with the anxious attachment it implies, reunion is back at 1.83 (see below)
+        'Anxious'     => [1.2, 1.31, 1.39],
         'Bold'        => [1.1, 1.0, 0.8],
         'Playful'     => [1.4, 0.8, 0.4],
         'Humble'      => [1.1, 1.0, 0.5],
@@ -67,7 +70,7 @@ final class RelDynTemperamentMddTest extends TestCase
     public function testPassionReunionAndJealousyMultipliersAreTheMddValues(): void
     {
         $passion0 = RelationshipDynamics::calculatePassionGain($this->npc(null), RelationshipDynamics::LL_TIME);
-        $n = $this->npc(null);
+        $n = ['profile_overrides' => ['attachment_style' => 'secure']] + $this->npc(null);
         $reunion0 = RelationshipDynamics::checkReunion($n, 100);   // core affinity 100 (-100..100)
         $jealousy0 = RelationshipDynamics::jealousyEventGain(['profile_overrides' => ['attachment_style' => 'secure']] + $this->npc(null), 1);   // secure: temperament only
         $this->assertGreaterThan(0, $passion0);
@@ -78,12 +81,18 @@ final class RelDynTemperamentMddTest extends TestCase
             $p = RelationshipDynamics::calculatePassionGain($this->npc($temperament), RelationshipDynamics::LL_TIME);
             $this->assertEqualsWithDelta($passion, $p / $passion0, 1e-9, "{$temperament} passion (MDD 1.3)");
 
-            $d = $this->npc($temperament);
+            // secure: temperament only (the attachment's reunion part, traits phase 3, is apart)
+            $d = ['profile_overrides' => ['attachment_style' => 'secure']] + $this->npc($temperament);
             $r = RelationshipDynamics::checkReunion($d, 100);
             $this->assertEqualsWithDelta($reunion, $r / $reunion0, 1e-9, "{$temperament} reunion (MDD 1.3)");
 
             $j = RelationshipDynamics::jealousyEventGain(['profile_overrides' => ['attachment_style' => 'secure']] + $this->npc($temperament), 1);
             $this->assertEqualsWithDelta($jealousy, $j / $jealousy0, 1e-9, "{$temperament} jealousy (MDD 1.3)");
         }
+        // the reunion is measured at each NPC's derived attachment above; secure pins it here
+        $anxious = ['profile_overrides' => ['attachment_style' => 'anxious']] + $this->npc('Anxious');
+        $secure0 = ['profile_overrides' => ['attachment_style' => 'secure']] + $this->npc(null);
+        $this->assertEqualsWithDelta(1.8, RelationshipDynamics::checkReunion($anxious, 100) / RelationshipDynamics::checkReunion($secure0, 100), 0.05,
+            'Anxious with an anxious attachment: the MDD 1.8 reunion');
     }
 }

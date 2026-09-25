@@ -86,30 +86,19 @@ class RelationshipDynamics
         'Stoic'       => 0.5,
     ];
 
-    // Temperament -> bleedout passion drain (negative: how much passion is lost when NPC falls)
-    // Guarded/Stoic NPCs lose more (they see vulnerability as weakness)
-    // Nurturing/Anxious NPCs lose less (they bond through shared danger)
-    const TEMPERAMENT_BLEEDOUT_DRAIN = [
-        'Anxious'     => -3.0,  // Spirals into panic, abandonment terror
-        'Guarded'     => -2.5,  // Walls slam up instantly
-        'Independent' => -2.0,  // Vulnerability is intolerable
-        'Proud'       => -2.0,  // Humiliation of helplessness
-        'Jealous'     => -1.5,  // Fear of being replaced while weak
-        'Gentle'      => -1.5,  // Deeply shaken by violence
-        'Romantic'    => -1.0,  // Scared but trusts their partner
-        'Nurturing'   => -1.0,  // Worried about others, not self
-        'Humble'      => -0.8,  // Accepts it quietly
-        'Playful'     => -0.5,  // Shakes it off with humor
-        'Stoic'       => -0.5,  // Barely registers externally
-        'Bold'        => -0.3,  // Rage fuel, not fear
-        'Defiant'     =>  1.0,  // Fights HARDER when cornered — passion UP
-    ];
+    // A2 bleedout: the temperament drain table (Anxious -3.0 .. Defiant +1.0) is retired in traits
+    // phase 3. The fall is a trait outcome now (RelDynTraits::bleedout, bleedoutResponse()):
+    // passion, valence and arousal from fight = C Pd (1 - D) and fear = L (1 - C).
 
 
-    // Temperament → reunion multiplier: MDD 1.3 Reunion column
+    // Temperament → reunion multiplier: MDD 1.3 Reunion column. Traits phase 3 (design §2.2,
+    // attachment de-duplication): Anxious's MDD 1.8 was its trait model (1.31) plus an anxiety
+    // bump; the bump moved to attachment anxiety (attachment modifiers 'reunion_mult', anxious
+    // x1.4), so the Anxious row is the model value. An Anxious NPC with an anxious attachment
+    // gets 1.31 x 1.4 = 1.83.
     const TEMPERAMENT_REUNION_MULT = [
         'Romantic'    => 1.5,
-        'Anxious'     => 1.8,
+        'Anxious'     => 1.31,
         'Bold'        => 1.0,
         'Playful'     => 0.8,
         'Humble'      => 1.0,
@@ -123,10 +112,12 @@ class RelationshipDynamics
         'Stoic'       => 0.3,
     ];
 
-    // Temperament → jealousy multiplier: MDD 1.3 Jealousy column
+    // Temperament → jealousy multiplier: MDD 1.3 Jealousy column. Traits phase 3 (design §2.1
+    // A4): Anxious's anxiety part (MDD 1.5 = its possessiveness model 1.39 + 0.11) is dropped:
+    // the attachment jealousy_mult (anxious x2.0) already counts it.
     const TEMPERAMENT_JEALOUSY_MULT = [
         'Romantic'    => 1.3,
-        'Anxious'     => 1.5,
+        'Anxious'     => 1.39,
         'Bold'        => 0.8,
         'Playful'     => 0.4,
         'Humble'      => 0.5,
@@ -997,6 +988,17 @@ class RelationshipDynamics
             'passion_absence_grace_game_hours' => 24,
             'passion_absence_fade_per_game_day' => 3.0,
             'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
+            // The fall of bleedout (A2, traits phase 3; design §2.5, MDD 1.3 combat notes): from the
+            // NPC's traits, net = fight C Pd (1 - D) - fear L (1 - C) (unitless, about -0.8..+0.3).
+            //   passion = passion_per_net x net (passion points, clamped -5..+5; |passion| below
+            //             dead_band does nothing): a positive net fights harder (gainPassion, the
+            //             attraction route), a negative one drains (setPassion)
+            //   valence = valence_per_net x net (valence points): the sign of fight - fear
+            //   arousal = arousal_base x (0.5 + L) (arousal points): every fall is a spike
+            // passion_per_net 4.25 keeps the Anxious preset's MDD panic (-3.0 passion points).
+            // No trait vector: passion no_vector_passion, no valence or arousal (today's drain).
+            'bleedout_response' => ['passion_per_net' => 4.25, 'valence_per_net' => 40.0, 'arousal_base' => 20.0,
+                                    'dead_band' => 0.05, 'no_vector_passion' => -1.5],
             // Warmth fades with absence too (decisions §2, rulings §8): after
             // warmth_absence_grace_game_hours x the NPC's neglect grace_mult without contact,
             // warmth (0..100) above its baseline loses warmth_absence_fade_per_game_day x the
@@ -1137,9 +1139,13 @@ class RelationshipDynamics
      *                                  + sum of trait bumps, 0, 1 )
      *       w = codependence_attachment_weight; A: Avoidant 0 .. Secure 0.5 .. Anxious/Toxic 1
      *       at the style corners, blended at the NPC's attachment axes (attachmentBlend);
-     *       T: Independent 0, Anxious/Jealous 1, any other temperament codependence_temperament_default;
-     *       traits: insecure +0.2. Independent/avoidant NPCs barely mind absence, codependent
-     *       ones take it hard.
+     *       T (traits phase 3, design §2.2 A20: the temperament table counted anxiety a second
+     *       time and insecure +0.2 a third): possessiveness Po, the Jealous part,
+     *         T = 0.5 - 0.5 (1 - smoothstep(Po; codependence_possessiveness.low))
+     *                 + 0.5 smoothstep(Po; codependence_possessiveness.high)
+     *       0 at Po <= 0.10 (Independent, Stoic), 0.5 across the middle, 1 at Po >= 0.90
+     *       (Jealous); no trait vector: codependence_temperament_default. Independent/avoidant
+     *       NPCs barely mind absence, codependent ones take it hard.
      *   pride p (0..1) = clamp( P[temperament] + sum of trait bumps, 0, 1 )
      *       Proud 0.5, egocentric +0.5 (Proud is egocentric by default, so a Proud NPC is 1.0).
      *       Being ignored is a slight.
@@ -1167,17 +1173,17 @@ class RelationshipDynamics
      * Defaults: the typical NPC plateaus at 50 (hurt, not withdrawn); independent/avoidant
      * (c = 0) never reaches withdrawal (70) at any maturity or pride; only codependent
      * (c >= 0.7), immature (maturity < 50) NPCs reach the walkaway (90), pride widening the
-     * maturity range (Anxious/anxious walks at maturity <= 12.5, <= 42.5 if also Proud and
-     * egocentric). Fester (open conflict) and jealousy are not neglect: no ceiling.
+     * maturity range (c = 1, e.g. Jealous on an anxious attachment, walks at maturity <= 12.5,
+     * <= 42.5 with full pride). Fester (open conflict) and jealousy are not neglect: no ceiling.
      */
     public static function neglectSeverityDefaults(): array
     {
         return [
             'codependence_attachment' => ['avoidant' => 0.0, 'secure' => 0.5, 'anxious' => 1.0, 'toxic' => 1.0],
             'codependence_attachment_weight' => 0.6,
-            'codependence_temperament' => ['Independent' => 0.0, 'Anxious' => 1.0, 'Jealous' => 1.0],
-            'codependence_temperament_default' => 0.5,
-            'codependence_traits' => ['insecure' => 0.2],
+            // possessiveness (0..1) edges of the two smoothsteps of T (see above)
+            'codependence_possessiveness' => ['low' => [0.10, 0.30], 'high' => [0.55, 0.90]],
+            'codependence_temperament_default' => 0.5,   // T with no trait vector (unitless 0..1)
             'pride_temperament' => ['Proud' => 0.5],
             'pride_traits' => ['egocentric' => 0.5],
             // log2 coefficients: [codependence, maturity, pride]
@@ -3795,17 +3801,51 @@ class RelationshipDynamics
             $spike = 5.0;
         }
 
-        // Temperament modifier (A3, through the trait engine)
+        // Temperament modifier (A3, through the trait engine) x attachment anxiety (the anxiety
+        // part of the MDD 1.3 reunion column, moved there in traits phase 3)
         $temperament = $dynamics['inferred_temperament'] ?? null;
         $tempMult = RelDynTraits::param($temperament, 'reunion_mult', 1.0, $dynamics);
-        $spike *= $tempMult;
+        $attachMult = floatval(self::getAttachmentModifier($dynamics, 'reunion_mult') ?? 1.0);
+        $spike *= $tempMult * $attachMult;
 
         $dynamics['reunion_spike_given'] = true;
         $dynamics['_reunion_hours_apart'] = round($hoursApart, 2);   // game-calendar hours, for context.php
 
-        self::log("Reunion spike for NPC: +{$spike} passion (game_hours_apart={$hoursApart}, temp_mult={$tempMult})");
+        self::log("Reunion spike for NPC: +{$spike} passion (game_hours_apart={$hoursApart}, temp_mult={$tempMult}, attachment_mult={$attachMult})");
 
         return $spike;
+    }
+
+    /**
+     * The fall of bleedout for this NPC (A2 redesign, traits phase 3): config bleedout_response
+     * at the NPC's own trait vector (RelDynTraits::bleedout). With $apply, the arousal spike and
+     * the valence (sign of fight - fear) go through applyDelta (Y overridden to 1: the traits
+     * already scale them, the plasticity table must not again); passion is returned for the
+     * caller's route (gainPassion when positive, a drain when negative, nothing inside the dead
+     * band). No vector: no_vector_passion (today's -1.5 drain), nothing else.
+     *
+     * @return array ['passion' (passion points), 'valence', 'arousal' (points asked),
+     *                'applied' => ['valence' => actual, 'arousal' => actual], 'fight', 'fear', 'net', 'vector' => bool]
+     */
+    public static function bleedoutResponse(array &$dynamics, bool $apply = false): array
+    {
+        $cfg = (array) (self::configValue('bleedout_response') ?? []) + self::defaultConfig()['bleedout_response'];
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $x = RelDynTraits::vectorFor($temperament, $dynamics);
+        if ($x === null) {
+            return ['passion' => floatval($cfg['no_vector_passion']), 'valence' => 0.0, 'arousal' => 0.0,
+                    'applied' => ['valence' => 0.0, 'arousal' => 0.0], 'fight' => null, 'fear' => null, 'net' => null, 'vector' => false];
+        }
+        $r = RelDynTraits::bleedout($x, $cfg);
+        if (abs($r['passion']) < floatval($cfg['dead_band'])) $r['passion'] = 0.0;
+        $r['applied'] = ['valence' => 0.0, 'arousal' => 0.0];
+        if ($apply) {
+            $flat = ['Y_up' => 1.0, 'Y_down' => 1.0];
+            $r['applied']['arousal'] = self::applyDelta('arousal', $dynamics, $r['arousal'], $temperament, $flat);
+            $r['applied']['valence'] = self::applyDelta('valence', $dynamics, $r['valence'], $temperament, $flat);
+        }
+        $r['vector'] = true;
+        return $r;
     }
 
     /**
@@ -3960,14 +4000,15 @@ class RelationshipDynamics
         $w = $clamp01(floatval($cfg['codependence_attachment_weight']));
         // A = the codependence_attachment corners read at the NPC's axes (attachmentBlend)
         $a = self::attachmentBlend($dynamics, (array) $cfg['codependence_attachment'], 0.5);
-        // A20 (Rule I) and A21 (0.5 x egocentric(Pd), Rule R), through the trait engine
-        $t = floatval(RelDynTraits::tableParam($temperament, (array) $cfg['codependence_temperament'],
-            $cfg['codependence_temperament_default'], 'I', null, 'unit01', $dynamics));
+        // A20 from possessiveness (phase 3) and A21 (0.5 x egocentric(Pd), Rule R), through the trait engine
+        $vector = RelDynTraits::vectorFor($temperament, $dynamics);
+        $t = $vector !== null
+            ? self::codependenceFromPossessiveness(floatval($vector['Po']), (array) $cfg['codependence_possessiveness'])
+            : floatval($cfg['codependence_temperament_default']);
         $c = $w * $a + (1.0 - $w) * $t;
         $p = floatval(RelDynTraits::tableParam($temperament, (array) $cfg['pride_temperament'], 0.0, 'R',
             fn(array $x) => 0.5 * RelDynTraits::egocentric($x['Pd']), 'unit01', $dynamics));
         foreach ($traits as $trait) {
-            $c += floatval(((array) $cfg['codependence_traits'])[$trait] ?? 0.0);
             $p += floatval(((array) $cfg['pride_traits'])[$trait] ?? 0.0);
         }
         $c = $clamp01($c);
@@ -3996,6 +4037,19 @@ class RelationshipDynamics
             'rate_mult' => $mult((array) $cfg['rate_log2']),
             'ceiling' => max(0.0, min($rangeMax, $ceiling)),
         ];
+    }
+
+    /**
+     * A20 (traits phase 3): the codependence of a possessiveness Po (0..1), unitless 0..1:
+     * 0.5 - 0.5 (1 - smoothstep(Po; low)) + 0.5 smoothstep(Po; high). $edges: ['low' => [a, b],
+     * 'high' => [a, b]] (codependence_possessiveness).
+     */
+    public static function codependenceFromPossessiveness(float $po, array $edges): float
+    {
+        [$la, $lb] = array_map('floatval', (array) ($edges['low'] ?? [0.10, 0.30]));
+        [$ha, $hb] = array_map('floatval', (array) ($edges['high'] ?? [0.55, 0.90]));
+        $t = 0.5 - 0.5 * (1.0 - RelDynTraits::smoothstep($po, $la, $lb)) + 0.5 * RelDynTraits::smoothstep($po, $ha, $hb);
+        return max(0.0, min(1.0, $t));
     }
 
     /**
@@ -6406,7 +6460,9 @@ class RelationshipDynamics
         // --- Trust: slow gain, fast loss (Y_up=0.7, Y_down=1.5 base) ---
         'trust' => [
             'Romantic'    => ['Y_up' => 0.8,  'Y_down' => 1.3],
-            'Anxious'     => ['Y_up' => 1.5,  'Y_down' => 1.5],   // Volatile -- cross-signal with maturity
+            // Y_up: traits phase 3 drops the anxiety bump (MDD 1.5; the guard model gives 0.84):
+            // attachment anxiety carries it (design §2.2, counted twice)
+            'Anxious'     => ['Y_up' => 0.84, 'Y_down' => 1.5],   // Volatile -- cross-signal with maturity
             'Playful'     => ['Y_up' => 0.8,  'Y_down' => 1.0],
             'Humble'      => ['Y_up' => 0.9,  'Y_down' => 1.2],
             'Nurturing'   => ['Y_up' => 1.1,  'Y_down' => 1.1],
@@ -7839,33 +7895,47 @@ class RelationshipDynamics
     const EVAL_APPLIED_KEEP = 32;
 
     /**
-     * MDD 15.4 stage 1: temperament resistance per signal (unitless multipliers). The MDD lists
-     * a 'Volatile' row (not one of MDD 1.3's 13 temperaments) and no 'Humble' row; a temperament
-     * without a row resists nothing (1.0). Passion has no column there: getSignalResistance()
-     * uses MDD 1.3's passion multiplier (TEMPERAMENT_PASSION_MULT).
+     * MDD 15.4 stage 1: temperament resistance per signal (unitless multipliers). Passion has
+     * no column there: getSignalResistance() uses MDD 1.3's passion multiplier
+     * (TEMPERAMENT_PASSION_MULT). MDD 15.4 edits approved by Ken (decisions §16 #6, traits
+     * phase 3):
+     *   - the maturity column is retired: it double-counted with the MDD 15.6 maturity type,
+     *     which applyEvalSignal already applies as P (R maturity is 1.0 for everyone);
+     *   - the unreachable 'Volatile' row is deleted (no temperament has that name; Volatile is
+     *     a maturity type, MATURITY_PLASTICITY_VALUES);
+     *   - Humble stays without a row: 1.0 on every signal ("modest, steady, low drama").
+     * Traits phase 3 (design §2.1 A16) splits trust and comfort by direction: these rows are the
+     * GAIN resistance; a loss reads RelDynTraits column resist_{signal}_down (the MDD's
+     * slow-gain / fast-loss Y_down columns, RelDynTraits::resistLossTable). Symmetric R made a
+     * Guarded NPC as hard to lose trust with as to win it.
      */
     const TEMPERAMENT_SIGNAL_RESISTANCE = [
-        'Stoic'       => ['affinity' => 0.5, 'trust' => 0.7, 'comfort' => 0.4, 'respect' => 0.8, 'maturity' => 0.5],
-        'Romantic'    => ['affinity' => 1.3, 'trust' => 1.0, 'comfort' => 1.2, 'respect' => 0.8, 'maturity' => 1.0],
-        'Anxious'     => ['affinity' => 1.5, 'trust' => 0.6, 'comfort' => 0.5, 'respect' => 0.7, 'maturity' => 1.3],
-        'Guarded'     => ['affinity' => 0.6, 'trust' => 0.4, 'comfort' => 0.3, 'respect' => 0.7, 'maturity' => 0.8],
-        'Playful'     => ['affinity' => 1.2, 'trust' => 0.9, 'comfort' => 1.4, 'respect' => 0.6, 'maturity' => 0.7],
-        'Bold'        => ['affinity' => 0.9, 'trust' => 1.0, 'comfort' => 1.1, 'respect' => 1.3, 'maturity' => 0.9],
-        'Volatile'    => ['affinity' => 1.5, 'trust' => 0.5, 'comfort' => 0.5, 'respect' => 0.6, 'maturity' => 1.5],
-        'Independent' => ['affinity' => 0.7, 'trust' => 0.8, 'comfort' => 0.5, 'respect' => 1.0, 'maturity' => 0.6],
-        'Nurturing'   => ['affinity' => 1.1, 'trust' => 1.1, 'comfort' => 1.3, 'respect' => 0.7, 'maturity' => 0.8],
-        'Gentle'      => ['affinity' => 1.0, 'trust' => 0.9, 'comfort' => 1.2, 'respect' => 0.5, 'maturity' => 0.9],
-        'Jealous'     => ['affinity' => 1.3, 'trust' => 0.4, 'comfort' => 0.4, 'respect' => 0.9, 'maturity' => 1.2],
-        'Proud'       => ['affinity' => 0.7, 'trust' => 0.6, 'comfort' => 0.3, 'respect' => 1.5, 'maturity' => 0.7],
-        'Defiant'     => ['affinity' => 1.1, 'trust' => 0.7, 'comfort' => 0.8, 'respect' => 1.2, 'maturity' => 1.0],
+        'Stoic'       => ['affinity' => 0.5, 'trust' => 0.7, 'comfort' => 0.4, 'respect' => 0.8],
+        'Romantic'    => ['affinity' => 1.3, 'trust' => 1.0, 'comfort' => 1.2, 'respect' => 0.8],
+        'Anxious'     => ['affinity' => 1.5, 'trust' => 0.6, 'comfort' => 0.5, 'respect' => 0.7],
+        'Guarded'     => ['affinity' => 0.6, 'trust' => 0.4, 'comfort' => 0.3, 'respect' => 0.7],
+        'Playful'     => ['affinity' => 1.2, 'trust' => 0.9, 'comfort' => 1.4, 'respect' => 0.6],
+        'Bold'        => ['affinity' => 0.9, 'trust' => 1.0, 'comfort' => 1.1, 'respect' => 1.3],
+        'Independent' => ['affinity' => 0.7, 'trust' => 0.8, 'comfort' => 0.5, 'respect' => 1.0],
+        'Nurturing'   => ['affinity' => 1.1, 'trust' => 1.1, 'comfort' => 1.3, 'respect' => 0.7],
+        'Gentle'      => ['affinity' => 1.0, 'trust' => 0.9, 'comfort' => 1.2, 'respect' => 0.5],
+        'Jealous'     => ['affinity' => 1.3, 'trust' => 0.4, 'comfort' => 0.4, 'respect' => 0.9],
+        'Proud'       => ['affinity' => 0.7, 'trust' => 0.6, 'comfort' => 0.3, 'respect' => 1.5],
+        'Defiant'     => ['affinity' => 1.1, 'trust' => 0.7, 'comfort' => 0.8, 'respect' => 1.2],
     ];
 
-    /** R_temperament[signal] (MDD 15.4; passion: MDD 1.3). Unitless. */
-    public static function getSignalResistance($temperament, string $signal, ?array $dynamics = null): float
+    /**
+     * R_temperament[signal] (MDD 15.4; passion: MDD 1.3; maturity: retired, 1.0). Unitless.
+     * $loss: the delta is a loss (trust and comfort have a separate loss resistance, phase 3).
+     */
+    public static function getSignalResistance($temperament, string $signal, ?array $dynamics = null, bool $loss = false): float
     {
         // A1 / A16 through the trait engine (a non-preset label keeps today's row lookup)
         if ($signal === 'passion') {
             return (float) RelDynTraits::param($temperament, 'passion_mult', 1.0, $dynamics);
+        }
+        if ($loss && RelDynTraits::hasColumn("resist_{$signal}_down")) {
+            return (float) RelDynTraits::param($temperament, "resist_{$signal}_down", 1.0, $dynamics);
         }
         if (RelDynTraits::hasColumn("resist_{$signal}")) {
             return (float) RelDynTraits::param($temperament, "resist_{$signal}", 1.0, $dynamics);
@@ -8172,7 +8242,7 @@ class RelationshipDynamics
             }
         }
 
-        $R = self::getSignalResistance($temperament, $signal, $dynamics);
+        $R = self::getSignalResistance($temperament, $signal, $dynamics, $raw < 0);
         $type = self::resolveMaturityType($dynamics);
         $dirKey = $raw > 0 ? 'Y_up' : 'Y_down';
         $P = floatval(self::effectiveMaturityY($dynamics)[$dirKey]);
@@ -9335,9 +9405,13 @@ class RelationshipDynamics
      * Temperament decay rates per tick (1 tick = GAMETS_PER_DECAY_TICK).
      * Higher magnitude = faster erosion from absence.
      * UNITS: core affinity points (-100..+100 scale) per tick, not mirror points.
+     * A18, traits phase 3 (design §2.2): the rate is owned by possessiveness (RelDynTraits column
+     * 'absence_decay', Rule R over -(0.17 + 1.61 Po)), and the attachment affinity_absence_mult
+     * applies on top. Anxious's -2.0 counted its anxiety a third time (over that mult and neglect
+     * codependence): its row is the possessiveness model now (Po .60).
      */
     const TEMPERAMENT_DECAY_RATES = [
-        'Anxious'     => -2.0,  // "Haven't talked in 2 days, do you even care?"
+        'Anxious'     => -1.14, // was -2.0: its anxiety is the attachment's (x2.0 when anxious)
         'Jealous'     => -1.8,  // Abandonment + paranoid imagination
         'Romantic'    => -1.5,  // Pines, wilts without contact
         'Playful'     => -1.0,  // Out of sight, out of mind
@@ -9878,7 +9952,7 @@ class RelationshipDynamics
         }
 
         // --- Calculate base decay ---
-        $baseDecayRate = RelDynTraits::param($temperament, 'absence_decay', -0.5, $dynamics); // A18: core points per tick
+        $baseDecayRate = RelDynTraits::param($temperament, 'absence_decay', -0.5, $dynamics); // A18 (possessiveness): core points per tick
 
         // decay_per_tick is already negative; multiply by ticks
         $totalDecay = $baseDecayRate * $typeDecayMult * $ticksElapsed;
@@ -10641,22 +10715,28 @@ class RelationshipDynamics
                     'resentment_gain_mult' => 1.0, 'confrontation_threshold' => 50, 'absence_comfort_delta' => 0.0,
                     'affinity_absence_mult' => 1.0, 'jealousy_mult' => 1.0, 'maturity_floor' => null,
                     'conflict_passion_gain' => 0.0, 'suffocation_threshold' => null,
+                    'reunion_mult' => 1.0,
                 ],
                 'avoidant' => [
                     'resentment_gain_mult' => 1.0, 'confrontation_threshold' => 70, 'absence_comfort_delta' => 0.5,
                     'affinity_absence_mult' => 0.5,   // decisions 2026-09-23 section 2: Avoidant x0.5
                     'jealousy_mult' => 0.5, 'maturity_floor' => null,
                     'conflict_passion_gain' => 0.0, 'suffocation_threshold' => 60,
+                    'reunion_mult' => 1.0,
                 ],
                 'anxious' => [
                     'resentment_gain_mult' => 1.5, 'confrontation_threshold' => 30, 'absence_comfort_delta' => -1.0,
                     'affinity_absence_mult' => 2.0, 'jealousy_mult' => 2.0, 'maturity_floor' => null,
                     'conflict_passion_gain' => 0.0, 'suffocation_threshold' => null,
+                    // traits phase 3: the anxiety part of the MDD 1.3 reunion column (Anxious 1.8 =
+                    // model 1.31 x 1.4), moved here from temperament (reunion multiplier, unitless)
+                    'reunion_mult' => 1.4,
                 ],
                 'toxic' => [
                     'resentment_gain_mult' => 1.3, 'confrontation_threshold' => 50, 'absence_comfort_delta' => 0.0,
                     'affinity_absence_mult' => 1.0, 'jealousy_mult' => 1.5, 'maturity_floor' => 30,
                     'conflict_passion_gain' => 5.0, 'suffocation_threshold' => null,
+                    'reunion_mult' => 1.0,
                 ],
             ],
             // Keys read from the NPC's region (label), never blended: the fearful protocol.

@@ -312,16 +312,18 @@ final class RelDynWalkawayAbsencePostgresTest extends TestCase
         // Mature, secure, independent.
         $this->seed('Mjoll', 85, 'romantic', $dims + ['maturity' => 80.0],
             $spouse + ['inferred_temperament' => 'Independent', 'profile_overrides' => ['attachment_style' => 'secure'], 'traits' => []]);
-        // Immature, anxious, proud, codependent.
+        // Immature, anxious, possessive (codependent), egocentric. (Traits phase 3, A20: neglect
+        // codependence is the attachment's anxiety plus possessiveness; a Proud temperament with the
+        // insecure tag is no longer counted codependent three times.)
         $this->seed('Serana', 85, 'romantic', $dims + ['maturity' => 20.0],
-            $spouse + ['inferred_temperament' => 'Proud', 'profile_overrides' => ['attachment_style' => 'anxious'], 'traits' => ['egocentric', 'insecure']]);
+            $spouse + ['inferred_temperament' => 'Jealous', 'profile_overrides' => ['attachment_style' => 'anxious'], 'traits' => ['egocentric', 'insecure']]);
         $this->seed('Lydia', 0, 'neutral', $dims + ['maturity' => 50.0]);   // someone else to talk to
     }
 
     /**
      * The 45-game-day spouse scenario end to end through the prerequest hook and the calendar
      * scan. The mature, secure, independent spouse is cool but stays. The immature, anxious,
-     * proud, codependent one is furious and walks out on the return greeting; the player's
+     * possessive, codependent one is furious and walks out on the return greeting; the player's
      * greeting and pleas in that conversation are not pursuit, so leaving her alone resolves
      * the boundary test and she comes back, still resentful. Before the ruling, the second
      * line counted as following her and made the walkaway permanent.

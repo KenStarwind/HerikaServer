@@ -16,11 +16,45 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/tools/trait_equivalence
  *   git archive 33392df6 ext/relationship_dynamics lib | tar -x -C /tmp/rd_base
  *   php ext/relationship_dynamics/tools/trait_equivalence_capture.php /tmp/rd_base
  * The test runs the same capture (tools/trait_equivalence_capture.php) against this tree.
+ *
+ * Phase 3 (design §6.1 item 3) changes behaviour on purpose, one fix per commit. Each fix lists
+ * the capture paths it changes in DELIBERATE (fnmatch patterns over "label/consumer/..."); those
+ * paths are asserted by the fix's own test (RelDynTraitPhase3Test), everything else must still be
+ * today's value, and every pattern must match at least one path that really changed.
  */
 final class RelDynTraitEquivalenceTest extends TestCase
 {
     private const PRESETS = ['Romantic', 'Anxious', 'Bold', 'Playful', 'Humble', 'Nurturing', 'Gentle',
         'Jealous', 'Proud', 'Defiant', 'Guarded', 'Independent', 'Stoic'];
+
+    /** Phase-3 deliberate changes: fix => capture-path patterns it changes (see the class doc). */
+    private const DELIBERATE = [
+        // MDD 15.4 edits (decisions §16 #6): R maturity retired, the Volatile row deleted
+        'mdd_15_4_edits' => ['*/resistance/maturity', 'Volatile/resistance/*'],
+        // Attachment de-duplication (design §2.2): the Anxious anxiety residuals of A3 / A4 / A15h
+        // up and A18 absence decay are gone (the attachment carries them: a derived anxiety now
+        // lifts the reunion), A18 is owned by possessiveness, A20 codependence reads possessiveness
+        'attachment_dedup' => ['Anxious/reunion_mult', 'Anxious/jealousy_mult', 'Anxious/plasticity/trust/Y_up',
+            'Anxious/apply_delta/trust/*', 'Anxious/physical/injured/injured/trust', '*/e2e/reunion',
+            'Anxious/e2e/jealousy/*', 'Anxious/absence_decay', '*/neglect/*',
+            'Anxious/column/reunion_mult', 'Anxious/column/jealousy_mult', 'Anxious/column/y_trust_up', 'Anxious/column/absence_decay'],
+        // Bleedout redesign (design §2.5): the fall is fight C Pd (1 - D) - fear L (1 - C) at every
+        // preset (the old drain table is retired); no vector keeps -1.5
+        'bleedout_redesign' => ['*/bleedout'],
+    ];
+
+    /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */
+    private array $changed = [];
+
+    private static function deliberate(string $path): ?string
+    {
+        foreach (self::DELIBERATE as $fix => $patterns) {
+            foreach ($patterns as $pat) {
+                if (fnmatch($pat, $path, FNM_NOESCAPE)) return $fix;
+            }
+        }
+        return null;
+    }
 
     private $savedDb;
     private $savedRequest;
@@ -68,6 +102,10 @@ final class RelDynTraitEquivalenceTest extends TestCase
     /** Recursive compare: numbers within 1e-9 and of the same type, everything else identical. */
     private function assertSameShape($expected, $actual, string $path): void
     {
+        if (self::deliberate($path) !== null) {
+            if (json_encode($expected, JSON_PRESERVE_ZERO_FRACTION) !== json_encode($actual, JSON_PRESERVE_ZERO_FRACTION)) $this->changed[] = $path;
+            return;
+        }
         if (is_array($expected)) {
             $this->assertIsArray($actual, $path);
             $this->assertSame(array_keys($expected), array_keys($actual), "{$path}: keys");
@@ -105,6 +143,19 @@ final class RelDynTraitEquivalenceTest extends TestCase
                 $this->assertSameShape($value, $now[$label][$consumer], "{$label}/{$consumer}");
             }
         }
+        $this->assertEveryDeliberatePatternIsReal(false);
+    }
+
+    /** Every deliberate change is real: each pattern (consumer or column) matches a changed path. */
+    private function assertEveryDeliberatePatternIsReal(bool $columns): void
+    {
+        foreach (self::DELIBERATE as $fix => $patterns) {
+            foreach ($patterns as $pat) {
+                if (str_contains($pat, '/column/') !== $columns) continue;
+                $hit = array_filter($this->changed, fn($p) => fnmatch($pat, $p, FNM_NOESCAPE));
+                $this->assertNotEmpty($hit, "{$fix}: pattern {$pat} changes nothing (stale allow-list entry)");
+            }
+        }
     }
 
     /** Each registered column at each preset POINT (not the label) is the old table value. */
@@ -117,7 +168,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
             $x = $points[$p];
             $b = $base[$p];
             $expect = [
-                'passion_mult' => $b['passion_mult'], 'bleedout' => $b['bleedout'], 'reunion_mult' => $b['reunion_mult'],
+                'passion_mult' => $b['passion_mult'], 'reunion_mult' => $b['reunion_mult'],   // bleedout: no longer a column (phase 3)
                 'jealousy_mult' => $b['jealousy_mult'], 'tier_retention' => $b['tier_retention'], 'absence_decay' => $b['absence_decay'],
             ];
             foreach (RelationshipDynamics::TEMPERAMENT_BASELINES as $dim => $_) {
@@ -127,8 +178,12 @@ final class RelDynTraitEquivalenceTest extends TestCase
                 $expect["y_{$dim}_up"] = $b['plasticity'][$dim]['Y_up'];
                 $expect["y_{$dim}_down"] = $b['plasticity'][$dim]['Y_down'];
             }
-            foreach (['affinity', 'trust', 'comfort', 'respect', 'maturity'] as $sig) {
+            foreach (['affinity', 'trust', 'comfort', 'respect'] as $sig) {   // maturity: retired (phase 3)
                 $expect["resist_{$sig}"] = $b['resistance'][$sig];
+            }
+            // phase 3 (A16 split): the loss side is the MDD's Y_down column; Humble resists nothing (1.0)
+            foreach (['trust', 'comfort'] as $sig) {
+                $expect["resist_{$sig}_down"] = $p === 'Humble' ? 1.0 : $b['plasticity'][$sig]['Y_down'];
             }
             foreach (['half_life', 'decay_rate', 'lambda', 'passion_decay'] as $k) {
                 $expect["warmth_{$k}"] = RelationshipDynamics::CURVE_PARAMS[$b['warmth_curve']][$k];
@@ -137,6 +192,10 @@ final class RelDynTraitEquivalenceTest extends TestCase
             $expect['healer_gate'] = isset($b['physical']['injured']['injured']['trust']) ? 1.0 : 0.0;
             $expect['warrior_gate'] = isset($b['physical']['bloody']['bloody']['respect']) ? 1.0 : 0.0;
             foreach ($expect as $col => $v) {
+                if (self::deliberate("{$p}/column/{$col}") !== null) {   // a phase-3 fix: its own test
+                    if (abs($v - RelDynTraits::value($x, $col)) > 1e-9) $this->changed[] = "{$p}/column/{$col}";
+                    continue;
+                }
                 // (types are the consumers' business: the consumer-level test checks them)
                 $this->assertEqualsWithDelta($v, RelDynTraits::value($x, $col), 1e-9, "{$p} {$col}");
             }
@@ -157,6 +216,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
             $this->assertEqualsWithDelta($b['baseline']['self_confidence'], 100 * $x['C'], 1e-9, "{$p} C = self-confidence / 100");
             $this->assertEqualsWithDelta($b['baseline']['maturity'], $x['maturity_start'], 1e-9, "{$p} maturity_start");
         }
+        $this->assertEveryDeliberatePatternIsReal(true);
     }
 
     /** Design §3.3: rho <= d_min, so a preset's residual never reaches another preset. */

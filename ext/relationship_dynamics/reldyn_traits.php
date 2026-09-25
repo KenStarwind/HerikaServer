@@ -16,6 +16,11 @@
  *          at runtime from today's table, so rounding the coefficients cannot break exactness.
  *   Rule I (low R^2 columns): inverse-distance blend of the table, w_p = |x-p|^-4; a convex
  *          combination, bounded by the table.
+ *   Rule RI (phase 3, the preset-quirk columns where Rule R turned the wrong way):
+ *          clamp( f(x) + sum_p w_p (T[p] - f(p)) / sum_p w_p ), w_p = |x-p|^-4: the trait model
+ *          plus the residuals blended by inverse distance instead of Rule R's short kernel. The
+ *          residual term has zero slope at every preset and moves between presets over their
+ *          whole distance, so near a preset the column follows its model (RI_COLUMNS).
  * At a preset point both rules equal the table value exactly; the engine returns the table
  * value itself there (the same number the formula gives, without floating-point noise).
  * Label-valued surfaces (reunion text, love language, curve names, tags) use the nearest preset.
@@ -111,6 +116,16 @@ final class RelDynTraits
         'Independent' => ['G' => 0.70, 'E' => 0.30, 'C' => 0.75, 'Pd' => 0.50, 'W' => 0.15, 'D' => 0.50, 'Po' => 0.10, 'Pr' => 0.40],
         'Stoic'       => ['G' => 0.65, 'E' => 0.15, 'C' => 0.60, 'Pd' => 0.40, 'W' => 0.20, 'D' => 0.90, 'Po' => 0.10, 'Pr' => 0.70],
     ];
+
+    /**
+     * Phase 3 (design §6.1 item 3, preset quirks): the Rule-R columns whose residual fade turned the
+     * column against its own model by 20% or more of the column's table span inside the reach
+     * (review 2026-09-25: coord_m at Bold along restraint 25%, coord_f at Bold along
+     * expressiveness 22%, tier retention at Independent along resilience 29%, ...). They use
+     * Rule RI; its worst wrong-way excursion over half an axis is at most 18% of the span.
+     */
+    const RI_COLUMNS = ['baseline_coord_m', 'baseline_coord_f', 'y_trust_down', 'resist_comfort', 'resist_respect',
+        'resist_trust_down', 'tier_retention', 'charisma_catalyst'];
 
     /** Rule R reach (trait-space distance, unitless); rho = min(this or config traits.residual_reach, d_min). */
     const RESIDUAL_REACH = 0.317;
@@ -326,6 +341,18 @@ final class RelDynTraits
         $on = self::presetAt($x);
         if ($on !== null) return $table[$on];
         $pts = self::points();
+        if ($rule === 'RI' && $model !== null) {
+            // residual_reach 0 = the pure trait model, as for Rule R (the tuning knob, design §3.3)
+            if (self::residualReach() <= 0.0) return self::clampUnit(self::evalModel($model, $x), $unit);
+            $num = 0.0;
+            $den = 0.0;
+            foreach ($pts as $name => $p) {
+                $w = self::distance($x, $p) ** -4;
+                $num += $w * (floatval($table[$name]) - self::evalModel($model, $p));
+                $den += $w;
+            }
+            return self::clampUnit(self::evalModel($model, $x) + $num / $den, $unit);
+        }
         if ($rule === 'R' && $model !== null) {
             $rho = self::residualReach();
             $v = self::evalModel($model, $x);
@@ -360,6 +387,67 @@ final class RelDynTraits
     {
         $t = max(0.0, min(1.0, ($v - $a) / ($b - $a)));
         return $t * $t * (3.0 - 2.0 * $t);
+    }
+
+    /**
+     * A2 redesign (phase 3; design §2.5, MDD 1.3 combat notes): the fall of bleedout from traits.
+     * fight = C Pd (1 - D) (rage: confident, proud, unrestrained; Bold / Defiant "fight harder"),
+     * fear = L (1 - C) (panic: reactive and unsure; Anxious "abandonment terror"), net = fight -
+     * fear (unitless). passion = passion_per_net x net (passion points, clamp 'bleedout'), valence
+     * = valence_per_net x net (valence points, clamped -100..100; its sign is sign(fight - fear)),
+     * arousal = arousal_base x (0.5 + L) (arousal points, clamped 0..100). $cfg: config
+     * bleedout_response. Pure; the dead band and the routes are the consumer's.
+     */
+    public static function bleedout(array $x, array $cfg): array
+    {
+        $c = floatval($x['C'] ?? 0.5);
+        $fight = $c * floatval($x['Pd'] ?? 0.5) * (1.0 - floatval($x['D'] ?? 0.5));
+        $fear = floatval($x['L'] ?? 0.5) * (1.0 - $c);
+        $net = $fight - $fear;
+        return [
+            'fight' => $fight, 'fear' => $fear, 'net' => $net,
+            'passion' => self::clampUnit(floatval($cfg['passion_per_net']) * $net, 'bleedout'),
+            'valence' => max(-100.0, min(100.0, floatval($cfg['valence_per_net']) * $net)),
+            'arousal' => max(0.0, min(100.0, floatval($cfg['arousal_base']) * (0.5 + floatval($x['L'] ?? 0.5)))),
+        ];
+    }
+
+    /**
+     * D2 (design §2.3, phase 3): how each trait reads in words at its low / high band, for the
+     * eval prompt's state summary (feelings and behaviour, never numbers). A trait between the
+     * band edges (TRAIT_BAND_EDGES, unitless 0..1) is not mentioned.
+     */
+    const TRAIT_BAND_TEXT = [
+        'G'  => ['lets people in quickly', 'guarded, slow to let people in'],
+        'E'  => ['keeps feelings contained', 'wears feelings openly'],
+        'C'  => ['unsure of themself', 'self-assured'],
+        'Pd' => ['modest', 'proud, slights land hard'],
+        'Rs' => ['breaks easily and rebuilds slowly', 'resilient, hard to shake'],
+        'L'  => ['steady, slow to react', 'reactive, big swings'],
+        'W'  => ['cool toward strangers', 'warm toward anyone'],
+        'D'  => ['impulsive', 'duty-first, restrained'],
+        'Po' => ['not possessive', 'possessive'],
+        'Pr' => ['lets others take their own risks', 'protective'],
+    ];
+
+    /** Band edges of TRAIT_BAND_TEXT: at or below low = the low phrase, at or above high = the high one. */
+    const TRAIT_BAND_EDGES = ['low' => 0.35, 'high' => 0.65];
+
+    /**
+     * The personality in words (D2): "<preset>" on a preset point, "<preset>-leaning" in between,
+     * then the phrases of the traits outside the middle band. No numbers (the Jev block has them).
+     */
+    public static function describe(array $x): string
+    {
+        $on = self::presetAt($x);
+        $name = $on ?? (self::nearestPreset($x)['name'] . '-leaning');
+        $parts = [];
+        foreach (self::TRAIT_BAND_TEXT as $code => [$low, $high]) {
+            $v = floatval($x[$code] ?? 0.5);
+            if ($v <= self::TRAIT_BAND_EDGES['low']) $parts[] = $low;
+            elseif ($v >= self::TRAIT_BAND_EDGES['high']) $parts[] = $high;
+        }
+        return $name . ': ' . ($parts ? implode('; ', $parts) : 'nothing about them is extreme');
     }
 
     /** C1: egocentric tag strength from pride (0..1). */
@@ -507,14 +595,14 @@ final class RelDynTraits
         $RD = 'RelationshipDynamics';
         $cols = [];
         $add = function (string $id, string $ref, string $rule, array $owners, $model, string $unit, callable $table, ?callable $legacy = null) use (&$cols) {
+            if ($rule === 'R' && in_array($id, self::RI_COLUMNS, true)) $rule = 'RI';   // phase 3 preset quirks
             $cols[$id] = compact('ref', 'rule', 'owners', 'model', 'unit', 'table', 'legacy');
         };
 
         // A1-A4 (MDD 1.3 multipliers; A2 passion points per bleedout event)
         $add('passion_mult', 'A1', 'R', ['E', 'D', 'G'], [0.80, 'E' => 0.81, 'D' => -0.28, 'G' => -0.28], 'mult',
             fn() => self::fill($RD::TEMPERAMENT_PASSION_MULT, 1.0));
-        $add('bleedout', 'A2', 'I', ['C', 'L', 'Pd'], null, 'bleedout',
-            fn() => self::fill($RD::TEMPERAMENT_BLEEDOUT_DRAIN, -1.5));
+        // A2 bleedout: no longer a column (phase 3): RelDynTraits::bleedout() from the traits
         $add('reunion_mult', 'A3', 'I', ['E', 'D'], null, 'mult',
             fn() => self::fill($RD::TEMPERAMENT_REUNION_MULT, 1.0));
         $add('jealousy_mult', 'A4', 'R', ['Po', 'Pd', 'D'], [0.08, 'Po' => 2.2, 'Pd' => 0.17, 'D' => -0.16], 'mult',
@@ -569,23 +657,40 @@ final class RelDynTraits
             }
         }
 
-        // A16: MDD 15.4 signal resistance (unitless). Humble has no row: 1.0 (decided, Q6).
-        // A label that is not a preset keeps today's lookup (the unreachable 'Volatile' row).
+        // A16: MDD 15.4 signal resistance (unitless). Humble has no row: 1.0 (decided, Q6;
+        // decisions §16 #6 keeps it). Phase 3 retired the maturity column (the MDD 15.6 maturity
+        // type is the only maturity Y) and the unreachable 'Volatile' row; a label that is not a
+        // preset keeps today's lookup (none left: every other label resists nothing, 1.0).
+        // Phase 3 (design §2.1 A16): trust and comfort split by direction. resist_{signal} is the
+        // gain (R_up; trust owned by guard alone, refit over the 13 presets, R^2 .67);
+        // resist_{signal}_down is the loss (resistLossTable). Affinity and respect stay symmetric.
         $resist = [
             'affinity' => [['E', 'L', 'G'], [0.29, 'E' => 0.99, 'L' => 0.42, 'G' => -0.10]],
-            'trust'    => [['G', 'Po'], [1.28, 'G' => -0.79, 'Po' => -0.36]],
+            'trust'    => [['G'], [1.19, 'G' => -0.86]],
             'comfort'  => [['G', 'C'], [1.51, 'G' => -1.78, 'C' => 0.29]],
             'respect'  => [['Pd', 'C'], [0.34, 'Pd' => 0.88, 'C' => 0.41]],
-            'maturity' => [['L', 'Rs'], [0.34, 'L' => 0.71, 'Rs' => 0.32]],
         ];
         foreach ($resist as $signal => [$owners, $model]) {
             $add("resist_{$signal}", 'A16', 'R', $owners, $model, 'mult',
                 fn() => self::fill(array_map(fn($row) => $row[$signal] ?? 1.0, $RD::TEMPERAMENT_SIGNAL_RESISTANCE), 1.0),
                 fn($label) => $RD::TEMPERAMENT_SIGNAL_RESISTANCE[$label][$signal] ?? null);
         }
+        // R_down: trust = betrayal sensitivity (possessiveness, pride; R^2 .73, Rule R);
+        // comfort (R^2 .45 over guard and confidence: Rule I, preset-keyed)
+        $resistDown = [
+            'trust'   => ['R', ['Po', 'Pd'], [0.80, 'Po' => 0.93, 'Pd' => 0.40]],
+            'comfort' => ['I', ['G', 'C'], null],
+        ];
+        foreach ($resistDown as $signal => [$rule, $owners, $model]) {
+            $add("resist_{$signal}_down", 'A16', $rule, $owners, $model, 'mult',
+                fn() => self::resistLossTable($signal));
+        }
 
-        // A18 absence decay (core affinity points per tick; leaves temperament in phase 3), A19 tier retention
-        $add('absence_decay', 'A18', 'I', ['Po', 'W', 'G'], null, 'absence_decay',
+        // A18 absence decay (core affinity points per tick). Phase 3 (design §2.2): owned by
+        // possessiveness, Rule R over -(0.17 + 1.61 Po) (the old table fitted without its
+        // Anxious row, whose anxiety bump is gone: the attachment affinity_absence_mult applies
+        // on top in processAffinityDecay). A19 tier retention.
+        $add('absence_decay', 'A18', 'R', ['Po'], [-0.17, 'Po' => -1.61], 'absence_decay',
             fn() => self::fill($RD::TEMPERAMENT_DECAY_RATES, -0.5));
         $add('tier_retention', 'A19', 'R', ['D', 'Rs', 'Po'], [-11.7, 'D' => -10.8, 'Rs' => -9.1, 'Po' => 16.1], 'retention',
             fn() => self::fill($RD::TEMPERAMENT_TIER_RETENTION, -15));
@@ -627,6 +732,22 @@ final class RelDynTraits
             fn() => array_map(fn($n) => in_array($n, $RD::PHYSICAL_WARRIOR_TEMPERAMENTS, true) ? 1.0 : 0.0, array_combine(array_keys(self::PRESET_TRAITS), array_keys(self::PRESET_TRAITS))));
 
         return $cols;
+    }
+
+    /**
+     * A16 phase 3, the loss side of a direction-split resistance (trust, comfort), per preset:
+     * the MDD's own "slow gain, fast loss" Y_down column (RelationshipDynamics::
+     * PLASTICITY_PROFILES, the loss rate every non-eval delta already reads), except Humble,
+     * who resists nothing either way (1.0, decisions §16 #6). Unitless.
+     */
+    public static function resistLossTable(string $signal): array
+    {
+        $out = [];
+        foreach (self::PRESET_TRAITS as $name => $_) {
+            $out[$name] = $name === 'Humble' ? 1.0
+                : floatval(RelationshipDynamics::PLASTICITY_PROFILES[$signal][$name]['Y_down'] ?? 1.0);
+        }
+        return $out;
     }
 
     public static function hasColumn(string $col): bool

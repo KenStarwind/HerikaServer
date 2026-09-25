@@ -5,6 +5,7 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../lib/core/npc_master.class.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
+require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
 
 /** `sql`-compatible adapter over one pg connection (CHIM conventions: fetchOne returns [] on failure). */
 final class RelDynTraitBedsPgDb
@@ -269,13 +270,24 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         return json_decode($r['plugin_extended_data'], true)['reldyn']['dynamics'] ?? [];
     }
 
-    public function testTheFourTestBedsDivergeThroughTheRealHooks(): void
+    /** The four meet the player at Jorrvaskr: two lines each through the real hooks. */
+    private function meetAll(): void
     {
         pg_query_params($this->db->link, 'INSERT INTO eventlog (type, data, sess, gamets, localts, ts, people, location) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
             ['infoloc', '(Context location: Jorrvaskr ,Hold: Whiterun, Buildings to go:, Current Date in Skyrim World: Morndas, 10:00 AM, 17th of Last Seed, 4E 201, current weather: Pleasant)',
              'pending', (int) $this->gamets, $this->realTs, (int) $this->gamets, '|' . implode('|', array_keys(self::BEDS)) . '|', '']);
         foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'Well met. Have a moment?');
         foreach (array_keys(self::BEDS) as $npc) $this->turn($npc, 'How have you been keeping?');
+    }
+
+    private function npcId(string $npc): int
+    {
+        return intval(pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT id FROM core_npc_master WHERE npc_name = $1', [$npc]))['id']);
+    }
+
+    public function testTheFourTestBedsDivergeThroughTheRealHooks(): void
+    {
+        $this->meetAll();
 
         $seed = RelDynTraitRead::loadSeedFile();
         $d = [];
@@ -374,5 +386,205 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
         arsort($rs);
         $this->assertSame('Lynly Star-Sung', array_key_first($rs), 'Lynly: "remarkable resilience"');
         $this->assertSame('bio', $d['Lynly Star-Sung']['_trait_vector_src']['traits']['resilience']['source']);
+    }
+
+    /**
+     * Phase 3, decisions §16 #5: the stacked romance momentum (attachment x temperament) is
+     * capped at 2.5x, on each bed's own stored state through requiredMomentum. Ashe, the most
+     * guarded, needs the most momentum (her 1.6 from guard x her moderate avoidance); the cap
+     * is what an avoidant Ashe would hit.
+     */
+    public function testPhaseThreeMomentumCapOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $cfg = RelDynRomance::config();
+        $req = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $m = RelDynRomance::momentumMult($d, $cfg);
+            $this->assertLessThanOrEqual(2.5 + 1e-12, $m['mult'], $npc);
+            $req[$npc] = RelDynRomance::requiredMomentum($d, $this->npcId($npc), $cfg);
+            $this->assertEqualsWithDelta(floatval($cfg['momentum_required']) * $m['mult'], $req[$npc], 1e-9, "{$npc}: no step-back");
+        }
+        arsort($req);
+        $this->assertSame('Ashe', array_key_first($req), 'Ashe needs the most momentum');
+        $ashe = $this->dynamics('Ashe');
+        $this->assertEqualsWithDelta(1.6, RelDynRomance::momentumMult($ashe, $cfg)['temperament'], 1e-9);
+        $ashe['profile_overrides']['attachment_style'] = 'avoidant';
+        $m = RelDynRomance::momentumMult($ashe, $cfg);
+        $this->assertEqualsWithDelta(3.2, $m['stacked'], 1e-9, 'an avoidant Ashe: 1.6 x 2.0');
+        $this->assertEqualsWithDelta(2.5, $m['mult'], 1e-9, 'capped');
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Phase 3, MDD 15.4 edits (decisions §16 #6): an eval maturity signal is moved by each bed's
+     * own maturity type alone (R maturity retired), so the four diverge by who they are: Ashe
+     * Resilient (a loss x0.5), Lynly Volatile from her Bard class (x1.5), Aela resisting collapse,
+     * Muiri swinging both ways (her read).
+     */
+    public function testPhaseThreeMaturityMovesByTheMaturityTypeAloneOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $loss = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertSame(1.0, RelationshipDynamics::getSignalResistance($d['inferred_temperament'] ?? null, 'maturity', $d), $npc);
+            $d['dimensions']['maturity']['x'] = $d['dimensions']['maturity']['baseline'];
+            $d['dimensions']['comfort']['x'] = 50;
+            $r = RelationshipDynamics::applyEvalSignal($npc, $d, 'maturity', -4.0, [], 1.0);
+            $this->assertEqualsWithDelta(-4.0 * RelationshipDynamics::effectiveMaturityY($d)['Y_down'], $r['actual'], 1e-3, "{$npc}: raw x P only (applyDelta rounds to 4 places)");
+            $loss[$npc] = -$r['actual'];
+        }
+        $this->assertEqualsWithDelta(2.0, $loss['Ashe'], 1e-3, 'Ashe: Resilient, x0.5');
+        $this->assertEqualsWithDelta(6.0, $loss['Lynly Star-Sung'], 1e-3, 'Lynly: Volatile (Bard), x1.5');
+        $this->assertLessThan(4.0, $loss['Aela the Huntress'], 'Aela resists collapse');
+        $this->assertGreaterThan(4.0, $loss['Muiri'], 'Muiri swings');
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Phase 3, A16 split: trust gains and losses resist separately, through the eval on each
+     * bed's stored state. Ashe (the most guarded) is the slowest to trust; Muiri (the most
+     * possessive, from her priors) loses trust the fastest; each bed loses trust faster than
+     * she gains it.
+     */
+    public function testPhaseThreeTrustGainAndLossResistSeparatelyOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $gain = $loss = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $t = $d['inferred_temperament'] ?? null;
+            $gain[$npc] = RelationshipDynamics::getSignalResistance($t, 'trust', $d, false);
+            $loss[$npc] = RelationshipDynamics::getSignalResistance($t, 'trust', $d, true);
+            $this->assertGreaterThan($gain[$npc], $loss[$npc], "{$npc}: slow gain, fast loss");
+            // through the eval, at the trust baseline: the loss is x R_down x P_down
+            $d['dimensions']['trust']['x'] = $d['dimensions']['trust']['baseline'];
+            $d['dimensions']['maturity']['x'] = max(30.0, floatval($d['dimensions']['maturity']['x']));
+            $r = RelationshipDynamics::applyEvalSignal($npc, $d, 'trust', -4.0, [], 1.0);
+            $this->assertEqualsWithDelta(-4.0 * $loss[$npc] * RelationshipDynamics::effectiveMaturityY($d)['Y_down'], $r['actual'], 1e-3, $npc);
+        }
+        asort($gain);
+        $this->assertSame('Ashe', array_key_first($gain), 'Ashe: the slowest to trust');
+        arsort($loss);
+        $this->assertSame('Muiri', array_key_first($loss), 'Muiri: the most betrayal-sensitive');
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Phase 3, attachment de-duplication: absence decay and neglect codependence read each bed's
+     * possessiveness (not her label or her insecure tag), and anxiety reaches the reunion only
+     * through her attachment. Muiri, the most possessive (her priors), fades fastest; she and
+     * Lynly (anxious-leaning) are the codependent pair; Aela and Ashe (low possessiveness, secure
+     * to avoidant-leaning) fade the slowest and mind absence the least.
+     */
+    public function testPhaseThreeAnxietyCountedOnceOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $decay = $codep = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $x = RelDynTraits::readVector($d);
+            $decay[$npc] = RelDynTraits::param($d['inferred_temperament'], 'absence_decay', -0.5, $d);
+            if (RelDynTraits::nearestPreset($x)['distance'] >= RelDynTraits::residualReach()) {
+                $this->assertEqualsWithDelta(-(0.17 + 1.61 * $x['Po']), $decay[$npc], 1e-9, "{$npc}: the possessiveness model");
+            }
+            $prof = RelationshipDynamics::getNeglectProfile($d);
+            $codep[$npc] = $prof['codependence'];
+            $w = RelationshipDynamics::neglectSeverityDefaults()['codependence_attachment_weight'];
+            $a = RelationshipDynamics::attachmentBlend($d, RelationshipDynamics::neglectSeverityDefaults()['codependence_attachment'], 0.5);
+            $T = RelationshipDynamics::codependenceFromPossessiveness($x['Po'], RelationshipDynamics::neglectSeverityDefaults()['codependence_possessiveness']);
+            $this->assertEqualsWithDelta($w * $a + (1 - $w) * $T, $codep[$npc], 1e-9, "{$npc}: no tag bump");
+            $this->assertEqualsWithDelta(floatval(RelationshipDynamics::getAttachmentModifier($d, 'reunion_mult')),
+                1.0 + 0.4 * RelationshipDynamics::attachmentWeights($d)['anxious'], 1e-9, "{$npc}: the reunion's anxiety is the attachment's");
+        }
+        asort($decay);
+        $this->assertSame('Muiri', array_key_first($decay), 'Muiri fades fastest when left alone');
+        $this->assertEqualsCanonicalizing(['Aela the Huntress', 'Ashe'], array_slice(array_keys($decay), 2),
+            'the two low-possessive warriors fade the slowest');
+        // Muiri and Lynly (the anxious-leaning pair, and the more possessive) sit above the
+        // middle; the two warriors below it
+        arsort($codep);
+        $this->assertEqualsCanonicalizing(['Muiri', 'Lynly Star-Sung'], array_slice(array_keys($codep), 0, 2), json_encode($codep));
+        $this->assertGreaterThan(0.5, $codep['Muiri']);
+        $this->assertLessThan(0.4, $codep['Aela the Huntress']);
+        $this->assertLessThan(0.4, $codep['Ashe']);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Phase 3, bleedout redesign (design §2.5): each bed falls in combat (a core 'bleedout'
+     * event through the real postrequest hook). The fall is who she is: Aela, confident and
+     * proud, fights harder (valence up); Muiri, reactive and unsure, panics (valence and passion
+     * down, the biggest spike); every fall is an arousal spike.
+     */
+    public function testPhaseThreeBleedoutIsWhoSheIsOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $before = $after = $fall = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $before[$npc] = $this->dynamics($npc);
+            $d = $before[$npc];
+            $fall[$npc] = RelationshipDynamics::bleedoutResponse($d);   // what the hook will apply
+            $GLOBALS['gameRequest'] = ['bleedout', (string) $this->realTs, (string) (int) $this->gamets, "{$npc} falls to the ground, badly wounded."];
+            $GLOBALS['RELDYN_NPC_NAME'] = $npc;
+            $GLOBALS['HERIKA_NAME'] = 'The Narrator';
+            $GLOBALS['CACHE_PEOPLE'] = '|' . $npc . '|' . self::PLAYER . '|';
+            $GLOBALS['PLAYER_NAME'] = self::PLAYER;
+            (static function (): void { require __DIR__ . '/../../ext/relationship_dynamics/postrequest.php'; })();
+            RelationshipDynamics::endRequest();
+            $this->clearReldynGlobals();
+            $after[$npc] = $this->dynamics($npc);
+            $this->gamets += 60 * RelationshipDynamics::GAMETS_PER_DAY / 1440;
+            $this->realTs += 60;
+        }
+        $dim = fn(array $d, string $k) => floatval($d['dimensions'][$k]['x'] ?? 0);
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->assertTrue($fall[$npc]['vector'], $npc);
+            $this->assertGreaterThan($dim($before[$npc], 'arousal'), $dim($after[$npc], 'arousal'), "{$npc}: the fall is a spike");
+            $dv = $dim($after[$npc], 'valence') - $dim($before[$npc], 'valence');
+            if (abs($fall[$npc]['net']) > 0.01) {
+                $this->assertSame($fall[$npc]['net'] > 0, $dv > 0, "{$npc}: valence follows fight - fear");
+            }
+            if ($fall[$npc]['passion'] < 0) {
+                $this->assertLessThan(RelationshipDynamics::getPassion($before[$npc]) + 1e-9, RelationshipDynamics::getPassion($after[$npc]) + 1e-9, "{$npc}: drained");
+            }
+        }
+        $this->assertGreaterThan(0.0, $fall['Aela the Huntress']['net'], 'Aela fights harder');
+        $this->assertLessThan(0.0, $fall['Muiri']['net'], 'Muiri panics');
+        $nets = array_map(fn($f) => $f['net'], $fall);
+        asort($nets);
+        $this->assertSame('Muiri', array_key_first($nets), 'the deepest fear');
+        $this->assertSame('Aela the Huntress', array_key_last($nets), 'the most fight');
+        $log = (string) file_get_contents($this->errorLog) . (string) @file_get_contents(sys_get_temp_dir() . '/reldyn_trait_beds_test.log');
+        $this->assertStringContainsString('Bleedout: Muiri fight=', $log);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Phase 3, D2 / D3: the eval prompt describes each bed's own traits in words (no numbers, no
+     * bare label) and Jev gets her trait numbers. The four read as four different people.
+     */
+    public function testPhaseThreeTraitWordingOnTheFourBeds(): void
+    {
+        $this->meetAll();
+        $lines = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $p = array_values(array_filter(RelDynEval::stateSummary($npc, $d), fn($l) => str_starts_with($l, 'Personality: ')));
+            $this->assertCount(1, $p, $npc);
+            $this->assertDoesNotMatchRegularExpression('/\d/', $p[0], "{$npc}: words, not numbers");
+            $this->assertStringContainsString($d['trait_preset']['nearest'], $p[0], $npc);
+            $lines[$npc] = $p[0];
+            $jev = RelationshipDynamics::jevStateBlock($npc);
+            $x = RelDynTraits::readVector($d);
+            foreach (RelDynTraits::TRAITS as $code => $name) $this->assertEqualsWithDelta($x[$code], $jev['traits'][$name], 5e-4, "{$npc} {$name}");
+            $this->assertStringContainsString('traits=G', $jev['text']);
+        }
+        $this->assertCount(4, array_unique($lines), 'four different people: ' . json_encode($lines));
+        $this->assertStringContainsString('guarded, slow to let people in', $lines['Ashe']);
+        $this->assertStringContainsString('self-assured', $lines['Aela the Huntress']);
+        $this->assertSame([], $this->db->failures);
     }
 }

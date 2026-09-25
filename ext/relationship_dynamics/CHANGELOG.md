@@ -3,6 +3,17 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Unreleased — Personality phase 3: the deliberate fixes
+Anxiety now counts once. An anxious NPC's clinginess comes from how she attaches, not a second time from her
+temperament: reunions, jealousy, missing you while you're away and minding neglect no longer stack it two or three
+times, and how much absence hurts follows how possessive she is. Trust is slow to win and quick to lose: a guarded
+NPC no longer loses trust as slowly as she gains it. The maturity column of the resistance table is gone (her
+maturity type already covers it), the unreachable Volatile row is deleted, and Humble still resists nothing.
+Stacked slow-burn romance (guarded and avoidant) needs at most 2.5x the moments, not 4x. Falling in battle is who
+she is: the confident and proud fight harder, the reactive and unsure panic, and every fall is a jolt. A few values
+that turned the wrong way just off a preset (coordinates near Bold, tier retention near Independent) now follow the
+traits. The eval sees her personality in words, Jev sees the trait numbers, and the editor lists all 13 presets.
+
 ## reldyn-v0.12 — Personality read from each NPC's own bio
 Each NPC's personality now comes from her own CHIM bio: one read turns it into the ten traits, each backed by a short
 quote from the bio, blended with small hints from her voice, class, faction, skills and (a little) race. Reads stay
