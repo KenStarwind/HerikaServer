@@ -307,6 +307,13 @@ if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $GLOBALS['RELDYN_ICK_ACTIVE'] = !empty($dynamics['_ick_tracker']['ick_active']);
 }
 
+// ========== RESENTMENT THRESHOLD EVENTS (MDD 15.5, resentment_self, guilt bleed) ==========
+// resentment_self's standing effects (baselines, the self-reflection) and the guilt it bleeds
+// into comfort, then the confrontation at the NPC's threshold (said to the player's face in the
+// context hook), or a mature NPC's repetition opening the values boundary. Before the autonomy
+// evaluation, which reads resentment_self's crisis.
+RelDynResentment::onPrerequest($npcName, $dynamics, RelationshipDynamics::currentGamets());
+
 // ========== AUTONOMY OVERRIDE + WALKAWAY (PR 16) ==========
 if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
     $autoTemperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
@@ -314,10 +321,8 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
     $GLOBALS['RELDYN_AUTONOMY_STATE'] = $autonomyEval['state'];
     $GLOBALS['RELDYN_AUTONOMY_EVAL'] = $autonomyEval;
 
-    // People-pleaser internalization: build resentment_self
-    if ($autonomyEval['people_pleaser'] && $autonomyEval['resentment_self_buildup'] > 0) {
-        RelationshipDynamics::applyDelta('resentment_self', $dynamics, $autonomyEval['resentment_self_buildup'], $autoTemperament);
-    }
+    // People-pleaser internalization: a swallowed refusal builds resentment_self, on the play clock
+    RelDynResentment::peoplePleaserBuildup($npcName, $dynamics, $autonomyEval);
 
     // Action list filtering for refusing/walkaway states
     $deniedActions = $autonomyEval['deny_actions'];
@@ -330,7 +335,7 @@ if (!empty($reldynCfg['autonomy_enabled'] ?? true)) {
 
     // Initiate walkaway if state demands it and not already walking away
     $currentWalkState = $dynamics['_walkaway_state'] ?? 'normal';
-    if ($autonomyEval['state'] === 'walkaway' && $currentWalkState === 'normal') {
+    if ($autonomyEval['state'] === 'walkaway' && $currentWalkState === 'normal' && !empty($reldynCfg['walkaway_enabled'] ?? true)) {
         // Why they leave; 'neglect' when it starts on the return from an absence (rulings §8)
         RelationshipDynamics::initiateWalkaway($dynamics, $npcName, RelationshipDynamics::walkawayReason($dynamics));
     }

@@ -590,6 +590,16 @@ final class RelDynFelt
                 floatval($l['salience']), (string) $l['text'], ['must' => !empty($l['must']), 'intense' => !empty($l['intense'])]);
         }
 
+        // --- Resentment threshold events (MDD 15.5): the confrontation (its relief applied as it
+        // is said) and resentment_self's self-reflection; said to the player's face ---
+        $resent = RelDynResentment::takeFeltLines($dynamics, $npc, $player, $now, !empty($env['player_addressed']));
+        if ($resent['changed']) $changed = true;
+        foreach ($resent['lines'] as $l) {
+            $lines[] = self::line('resentment_' . $l['key'], $l['key'] === 'reflection' ? self::SCOPE_SELF : self::SCOPE_BOND,
+                $l['lane'] === 'turn' ? self::LANE_TURN : self::LANE_CORE, floatval($l['salience']), (string) $l['text'],
+                ['must' => !empty($l['must']), 'intense' => !empty($l['intense'])]);
+        }
+
         // --- Intimacy need (rulings §10) ---
         $intimacy = RelDynIntimacy::feltText($npc, $player, $dynamics, $now);
         if ($intimacy) $lines[] = self::line('intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['intimacy']), $intimacy);

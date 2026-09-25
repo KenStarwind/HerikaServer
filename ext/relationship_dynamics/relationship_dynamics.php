@@ -1036,6 +1036,21 @@ class RelationshipDynamics
             // seeking them out: the boundary test fails. Other walkaways get no window.
             // 60 game minutes = 3 real minutes at the default timescale 20.
             'walkaway_parting_game_minutes' => 60,
+            // MDD 6.5: core affinity (-100..100) at or below walkaway_affinity_at -> walkaway, in a
+            // bond that existed: the NPC's context-tier high-water mark (0 stranger .. 3 bonded)
+            // reached walkaway_affinity_min_tier (Serene: 2, a friend once; a stranger insulted
+            // down to -20 is not a relationship rotting).
+            'walkaway_affinity_at' => -20,
+            'walkaway_affinity_min_tier' => 2,
+            // MDD 6.5 "permanently severs" (PR16 plan: the type snaps to ex-bonded): a permanent
+            // walkaway sets the hard reject_recruitment flag and writes core's Player.type from
+            // the bond type (key) to its severed form (core relationship types; 'ex' = former
+            // romantic partner, 'estranged' = broken familial / platonic bond). Types not listed
+            // are left as they are.
+            'walkaway_sever_types' => [
+                'romantic' => 'ex', 'crush' => 'ex', 'platonic' => 'estranged', 'protective' => 'estranged',
+                'admirer' => 'estranged', 'familial' => 'estranged',
+            ],
             // Reunion: reunion_min_hours is GAME-CALENDAR hours since the last contact; the
             // time apart must also hold this many real minutes of filtered play (no reunion
             // from a wait or sleep alone).
@@ -1204,6 +1219,10 @@ class RelationshipDynamics
             // Risk appraisal, concern gains, repetition counter, routes A/B, felt text
             // (reldyn_concern.php, RelDynConcern::configDefaults()).
             'concern' => RelDynConcern::configDefaults(),
+            // ===== Resentment threshold events (MDD 15.5, dimension design resentment_self) =====
+            // Confrontation at the NPC's threshold, resentment_self's thresholds and recovery,
+            // cross-bond guilt bleed, felt text (reldyn_resentment.php, RelDynResentment::configDefaults()).
+            'resentment_arc' => RelDynResentment::configDefaults(),
             // ===== Intimacy need per NPC (rulings 2026-09-24 §10) =====
             // Physical / emotional axes from a trait combo, fulfillment axes, deprivation text
             // (reldyn_intimacy.php, RelDynIntimacy::configDefaults()).
@@ -8894,43 +8913,41 @@ class RelationshipDynamics
     }
 
     /**
-     * Process a confrontation event where the NPC expresses a grievance.
+     * The NPC got to say it (MDD 15.5 addressed decay, "-10 when the NPC gets to EXPRESS the
+     * grievance"): resentment - confrontation.addressed_relief points, taken as is (through the
+     * inverted rubber band a -10 left about a tenth of itself: saying it barely helped), the
+     * backlog it was about (every open grievance_log entry toward the player) marked addressed
+     * at game time $at (RelDynResentment::isOpenGrievance: an entry that grows after that, such
+     * as an absence that goes on, is open again), and for a calm confrontation ($resolved, not a
+     * blow-up) the ick's confrontation condition (_ick_confrontation_resolved). Called when the
+     * confrontation is said (RelDynResentment::takeFeltLines).
      *
-     * Applies -10 via applyDelta (addressed decay). Clears the oldest grievance
-     * from the log. This is the intended "healthy" way resentment resolves —
-     * the NPC speaks up about what's been bothering them.
-     *
-     * @param array  &$dynamics    NPC dynamics blob (by reference)
-     * @param string|null $temperament Temperament name
-     * @return float Actual decay applied
+     * @return float The resentment change (<= 0, resentment points)
      */
-    public static function processResentmentConfrontation(&$dynamics, $temperament = null)
+    public static function processResentmentConfrontation(&$dynamics, $temperament = null, bool $resolved = true, ?float $at = null)
     {
-        if (!isset($dynamics['dimensions']['resentment'])) {
+        $before = floatval($dynamics['dimensions']['resentment']['x'] ?? 0);   // 0..100
+        if ($before <= 0 || !isset($dynamics['dimensions']['resentment']) || !is_array($dynamics['dimensions']['resentment'])) {
             return 0.0;
         }
-
-        $resentment = &$dynamics['dimensions']['resentment'];
-        $currentX = floatval($resentment['x'] ?? 0);
-
-        // Nothing to confront
-        if ($currentX <= 0) {
-            return 0.0;
+        $relief = max(0.0, floatval(RelDynResentment::config()['confrontation']['addressed_relief']));
+        $after = max(0.0, $before - $relief);
+        $dynamics['dimensions']['resentment']['x'] = round($after, 4);
+        $at = $at ?? self::currentGamets();   // raw gamets
+        $addressed = 0;
+        foreach ((array) ($dynamics['dimensions']['resentment']['grievance_log'] ?? []) as $i => $g) {
+            if (RelDynResentment::isOpenGrievance($g)) {
+                $dynamics['dimensions']['resentment']['grievance_log'][$i]['addressed'] = $at;
+                $addressed++;
+            }
         }
-
-        // Apply -10 through XYZ physics (inverted RB still resists, but -10 is strong)
-        $actual = self::applyDelta('resentment', $dynamics, -10.0, $temperament);
-
-        // Clear oldest grievance from log
-        if (!empty($resentment['grievance_log'])) {
-            array_shift($resentment['grievance_log']);
+        if ($resolved) {
+            $dynamics['_ick_confrontation_resolved'] = true;
         }
-
-        $currentVal = round(floatval($resentment['x'] ?? 0), 2);
         $npcName = $dynamics['_npc_name'] ?? 'unknown';
-        error_log("[RelDyn-RESENTMENT] Confrontation: {$actual} resentment, now at {$currentVal}");
-
-        return $actual;
+        error_log("[RelDyn-RESENTMENT] Confrontation said for {$npcName}: resentment " . round($before, 2) . ' -> ' . round($after, 2)
+            . " ({$addressed} grievance(s) addressed" . ($resolved ? ', resolved' : ', a blow-up') . ')');
+        return round($after - $before, 4);
     }
 
     // ========== END RESENTMENT DIMENSION (PR 7) ==========
@@ -9177,6 +9194,12 @@ class RelationshipDynamics
                 $intensity = max($intensity ?? 0, max(0, min(3, intval($grievance['severity'] ?? 0))));
             } elseif (self::configValue('dimension_engine_enabled')) {
                 $out['grievance'] = self::recordGrievance($dynamics, $grievance, self::powerGapFacts($npcName, $dynamics), $summary);
+                // Wronged again inside the probation of a mature NPC's grievance boundary: the
+                // pattern went on (RelDynConcern::onContact carries out the step-back)
+                if (RelDynConcern::onGrievance($npcName, $dynamics,
+                        floatval($item['gamets'] ?? 0) > 0 ? floatval($item['gamets']) : self::currentGamets())) {
+                    $out['grievance_boundary_failed'] = true;
+                }
             }
         }
 
@@ -9197,6 +9220,11 @@ class RelationshipDynamics
             if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) > 0) {
                 $out['resentment_decay'] = self::applyDelta('resentment', $dynamics,
                     -floatval(self::configValue('resentment_positive_decay')), $temperament);
+            }
+            // resentment_self's recovery path (processResentmentSelfDecay, a confession)
+            $self = RelDynResentment::onPositiveEval($npcName, $dynamics, $tags);
+            if ($self['decay'] + $self['recovery'] > 0) {
+                $out['resentment_self_relief'] = $self['decay'] + $self['recovery'];
             }
             if (!empty($dynamics['in_conflict']) && self::configValue('conflict_enabled')) {
                 $burst = self::recordConflictPositive($dynamics);
@@ -16803,8 +16831,12 @@ class RelationshipDynamics
         // People-pleaser override: low confidence + low maturity = forced compliance
         $isPeoplePleaser = self::isPeoplePleaser($dynamics);
 
+        // swallowed: the override turned a refusal into compliance (what the people-pleaser
+        // internalizes, RelDynResentment::peoplePleaserBuildup)
+        $swallowed = false;
         if ($isPeoplePleaser && ($state === 'refusing' || $state === 'walkaway')) {
             $state = 'compliant';
+            $swallowed = true;
         }
 
         // Ick + low comfort OR high resentment → force walkaway regardless
@@ -16819,6 +16851,15 @@ class RelationshipDynamics
         }
         // MDD 6.5: jealousy (0..100) reaching jealousy_walkaway_at -> walkaway
         if (floatval($dynamics['jealousy_anger'] ?? 0) >= floatval(self::configValue('jealousy_walkaway_at'))) {
+            $state = 'walkaway';
+        }
+        // MDD 6.5: affinity down to walkaway_affinity_at in a bond that existed -> walkaway
+        if (self::affinityWalkawayDue($dynamics)) {
+            $state = 'walkaway';
+        }
+        // resentment_self crisis (dimension design: above 90 the NPC seeks isolation, the autonomy
+        // override self-triggered): a people-pleaser's silence ends here too
+        if (RelDynResentment::selfCrisis($dynamics)) {
             $state = 'walkaway';
         }
 
@@ -16837,6 +16878,7 @@ class RelationshipDynamics
             'refusal_type'    => $refusalType,
             'deny_actions'    => $deniedActions,
             'people_pleaser'  => $isPeoplePleaser,
+            'swallowed'       => $swallowed,
             'resentment_self_buildup' => $isPeoplePleaser ? round($score * self::PEOPLE_PLEASER_RESENTMENT_SELF_RATE, 2) : 0,
         ];
     }
@@ -16948,6 +16990,15 @@ class RelationshipDynamics
 
         // Walkaway
         $walkState = $dynamics['_walkaway_state'] ?? 'pending';
+        $shame = ($dynamics['_walkaway_reason'] ?? self::walkawayReason($dynamics)) === 'shame';
+        if ($shame && ($walkState === 'active' || $walkState === 'boundary_test')) {
+            return "{$npcName} has gone off alone, too ashamed to face anyone. "
+                 . "Seeking them out now would only drive them further away.";
+        }
+        if ($shame && $walkState !== 'recovery' && $walkState !== 'permanent') {
+            return "{$npcName} cannot bear to be seen right now and is pulling away to be alone with it. "
+                 . "Pressing them will only drive them further.";
+        }
         if ($walkState === 'recovery') {
             return "{$npcName} has returned because they chose to, not because they were summoned. "
                  . "The air is fragile. They are watching to see if things have really changed.";
@@ -16999,7 +17050,57 @@ class RelationshipDynamics
         if (floatval($dynamics['jealousy_anger'] ?? 0) >= floatval(self::configValue('jealousy_walkaway_at'))) {
             return 'jealousy';   // MDD 6.5
         }
+        if (self::affinityWalkawayDue($dynamics)) {
+            return 'affinity';   // MDD 6.5
+        }
+        if (RelDynResentment::selfCrisis($dynamics)) {
+            return 'shame';      // resentment_self crisis: the NPC isolates itself
+        }
         return 'autonomy';
+    }
+
+    /**
+     * MDD 6.5 affinity walkaway: core affinity (getCoreAffinity, -100..100) at or below
+     * walkaway_affinity_at, in a bond that existed (context_tier_hwm >= walkaway_affinity_min_tier).
+     * False while core's affinity was never read for this NPC. Pure.
+     */
+    public static function affinityWalkawayDue(array $dynamics): bool
+    {
+        if (!is_numeric($dynamics['_aff_mirror_x'] ?? null)) {
+            return false;
+        }
+        return self::getCoreAffinity($dynamics) <= floatval(self::configValue('walkaway_affinity_at'))
+            && intval($dynamics['context_tier_hwm'] ?? 0) >= intval(self::configValue('walkaway_affinity_min_tier'));
+    }
+
+    /**
+     * A permanent walkaway (MDD 6.5 "the NPC permanently severs"): the hard reject_recruitment
+     * flag (a permanent NPC also stays in the 'walkaway' autonomy state, which denies the
+     * follow / recruit actions), and core's Player.type moved to its severed form
+     * (walkaway_sever_types: romantic -> ex, platonic -> estranged ...) under core's lock. A
+     * type not listed, or a refused write (relationships_locked, core changed it meanwhile), is
+     * left as it is. Returns the core type written, or null.
+     */
+    public static function severBond(string $npcName, array &$dynamics): ?string
+    {
+        $dynamics['_reject_recruitment'] = true;
+        $from = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
+        $to = ((array) self::configValue('walkaway_sever_types'))[$from] ?? null;
+        if (!is_string($to) || $to === '') {
+            self::log("[WALKAWAY] {$npcName}: severed (reject_recruitment); core type '{$from}' left as it is");
+            return null;
+        }
+        if (empty($GLOBALS['db'])) {
+            error_log("[RelDyn-WALKAWAY] {$npcName}: severed (reject_recruitment); no database, core type {$from} not written");
+            return null;
+        }
+        $written = self::changeCoreRelationshipType($npcName, $to,
+            'permanent walkaway: followed during the boundary test, the bond is severed', $from);
+        if ($written) {
+            $dynamics['_core_rel_type'] = $to;
+        }
+        self::log("[WALKAWAY] {$npcName}: severed (reject_recruitment), core type {$from} -> " . ($written ? $to : "{$from} (write refused)"));
+        return $written ? $to : null;
     }
 
     /**
@@ -17170,6 +17271,7 @@ class RelationshipDynamics
                 $dynamics['_walkaway_state'] = 'permanent';
                 self::markGameClock($dynamics, '_walkaway_permanent_calendar_gamets');
                 self::endDecayPause($dynamics);
+                $result['severed_type'] = self::severBond((string) $npcName, $dynamics);
                 self::log("[WALKAWAY] {$npcName} permanent departure — boundary test failed");
                 $result['state'] = 'permanent';
                 $result['changed'] = true;
@@ -17199,6 +17301,11 @@ class RelationshipDynamics
         $dims = $dynamics['dimensions'] ?? [];
         $resentment = floatval($dims['resentment']['x'] ?? 0);
         $comfort = floatval($dims['comfort']['x'] ?? 50);
+        // The feeling behind the walkaway: a shame walkaway (resentment_self crisis) is not over
+        // because resentment toward the player is low
+        if (($dynamics['_walkaway_reason'] ?? null) === 'shame') {
+            $resentment = floatval($dims['resentment_self']['x'] ?? 0);
+        }
 
         // Player followed → failed (MDD 6.4), whatever the resentment behind the walkaway.
         if (!empty($dynamics['_walkaway_player_followed'])) {
@@ -17982,3 +18089,5 @@ require_once __DIR__ . '/reldyn_felt.php';
 require_once __DIR__ . '/reldyn_jev.php';
 // Protective concern and the values path of both channels (traits design §1); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_concern.php';
+// Resentment threshold events: the MDD 15.5 confrontation, resentment_self, guilt bleed; defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_resentment.php';
