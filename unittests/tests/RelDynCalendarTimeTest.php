@@ -37,67 +37,80 @@ final class RelDynCalendarTimeTest extends TestCase
     }
 
     // ------------------------------------------------------------ play clock filter
+    // updatePlayTime() is game time only (play-clock-wallclock): an NPC's credit is the played
+    // game time the global heartbeat saw between its turns (beatPlayClock(), eventlog game
+    // clock, skips excluded), never real seconds. Without a heartbeat it credits a gap only
+    // up to PLAY_GAP_MAX_GAMETS: a longer jump cannot be proven play.
 
     public function testGapOfPlayPlusSleepCreditsOnlyThePlayedTime(): void
     {
         // One real hour of play, then a 24 h sleep, before this NPC's next request. The
-        // average rate (~5100 gamets/s) is under the old wait/sleep threshold, so the old
-        // filter counted the whole sleep as play.
+        // heartbeat saw the hour and dropped the sleep; the NPC is credited what it saw.
         $g0 = 100 * self::DAY;
-        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 3600, '_accumulated_play_gamets' => 1.0e6];
-        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 3600 * self::REAL_SECOND + self::DAY);
+        $d = ['_last_gamets' => $g0, '_accumulated_play_gamets' => 1.0e6, '_last_global_play_gamets' => 4.0e8];
+        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 3600 * self::REAL_SECOND + self::DAY, 4.0e8 + 3600 * self::REAL_SECOND);
 
-        $this->assertEqualsWithDelta(3600 * self::REAL_SECOND, $credited, 2 * self::REAL_SECOND, 'one real hour, not 25 game hours');
-        $this->assertEqualsWithDelta(1.0e6 + $credited, $d['_accumulated_play_gamets'], 0.001);
+        $this->assertSame((float) (3600 * self::REAL_SECOND), $credited, 'one real hour, not 25 game hours');
+        $this->assertSame(1.0e6 + $credited, $d['_accumulated_play_gamets']);
     }
 
-    public function testPureWaitCreditsAtMostTheRealSecondsItTook(): void
+    public function testWithoutAHeartbeatAJumpIsNotPlay(): void
     {
+        // A pure wait or sleep between two turns, no heartbeat: nothing, whatever real time passed.
         $g0 = 100 * self::DAY;
-        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 10, '_accumulated_play_gamets' => 1.0e6];
-        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + self::DAY);
-        $this->assertLessThanOrEqual(11 * self::REAL_SECOND, $credited);
+        $d = ['_last_gamets' => $g0, '_last_real_ts' => 1, '_accumulated_play_gamets' => 1.0e6];
+        $this->assertSame(0.0, RelationshipDynamics::updatePlayTime($d, $g0 + self::DAY));
+        $this->assertSame(1.0e6, $d['_accumulated_play_gamets']);
+        $this->assertArrayNotHasKey('_last_real_ts', $d, 'the real-time stamp of the old clock is dropped');
+        $this->assertSame((float) ($g0 + self::DAY), (float) $d['_last_gamets']);
     }
 
     /**
-     * The per-gap cap (real seconds x GAMETS_PER_REAL_SECOND) cannot tell play from real time
-     * with the game clock stopped (quit overnight, menus). The global play heartbeat (played
-     * gamets across all requests, offline gaps capped) bounds the credit: a sleep after a real
-     * break is not play.
+     * Real time with the game clock stopped (quit overnight, menus) is not play, and the sleep
+     * after it is not either: the heartbeat saw only the minutes played before lying down.
      */
     public function testSleepAfterAnOvernightBreakIsNotPlay(): void
     {
         $g0 = 100 * self::DAY;
         $globalAtLastTurn = 5.0e8;                            // global play gamets at the NPC's last turn
-        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 12 * 3600, '_accumulated_play_gamets' => 1.0e6,
-              '_last_global_play_gamets' => $globalAtLastTurn];
-        // Back after 12 real hours offline: the heartbeat credited one capped gap (300 real s),
-        // then the player slept 9 game hours and talked.
-        $globalNow = $globalAtLastTurn + 300 * self::REAL_SECOND;
+        $d = ['_last_gamets' => $g0, '_accumulated_play_gamets' => 1.0e6, '_last_global_play_gamets' => $globalAtLastTurn];
+        // Back the next evening: two minutes of play, then a 9 game hour sleep, then talk.
+        $globalNow = $globalAtLastTurn + 120 * self::REAL_SECOND;
 
-        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 9 * self::GAME_HOUR, $globalNow);
+        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 120 * self::REAL_SECOND + 9 * self::GAME_HOUR, $globalNow);
 
-        $this->assertEqualsWithDelta(300 * self::REAL_SECOND, $credited, 0.001, 'only what the heartbeat saw as play');
-        $this->assertEqualsWithDelta($globalNow, (float) $d['_last_global_play_gamets'], 0.001);
+        $this->assertSame((float) (120 * self::REAL_SECOND), $credited, 'only what the heartbeat saw as play');
+        $this->assertSame($globalNow, (float) $d['_last_global_play_gamets']);
     }
 
     public function testWithTheHeartbeatNormalPlayIsStillCreditedInFull(): void
     {
         $g0 = 100 * self::DAY;
-        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 600, '_accumulated_play_gamets' => 0.0,
-              '_last_global_play_gamets' => 1.0e6];
+        $d = ['_last_gamets' => $g0, '_accumulated_play_gamets' => 0.0, '_last_global_play_gamets' => 1.0e6];
         $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 600 * 2000, 1.0e6 + 600 * 2000);
-        $this->assertEqualsWithDelta(600 * 2000, $credited, 0.001);
+        $this->assertSame((float) (600 * 2000), $credited);
     }
 
     public function testFirstTurnSeenByTheHeartbeatCreditsNothingUnproven(): void
     {
         // Stored before the heartbeat existed: no global mark, so the gap cannot be proven play.
         $g0 = 100 * self::DAY;
-        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 12 * 3600, '_accumulated_play_gamets' => 1.0e6];
+        $d = ['_last_gamets' => $g0, '_accumulated_play_gamets' => 1.0e6];
         $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 9 * self::GAME_HOUR, 7.0e8);
         $this->assertSame(0.0, $credited);
         $this->assertEqualsWithDelta(7.0e8, (float) $d['_last_global_play_gamets'], 0.001, 'counted from here on');
+    }
+
+    public function testPlaySecondsFollowThePlayClock(): void
+    {
+        // _accumulated_time (diary cooldowns, grief bond length) is play seconds: the play
+        // clock's credit in real-second units at the default timescale, not wall-clock time.
+        $d = ['_accumulated_time' => 100, '_last_interaction_ts' => 1];
+        $this->assertSame(60.0, RelationshipDynamics::updateAccumulatedTime($d, 60 * self::REAL_SECOND));
+        $this->assertSame(160.0, (float) $d['_accumulated_time']);
+        $this->assertArrayNotHasKey('_last_interaction_ts', $d);
+        $this->assertSame(0.0, RelationshipDynamics::updateAccumulatedTime($d, 0.0));
+        $this->assertSame(160.0, (float) $d['_accumulated_time'], 'no play credited, no time added');
     }
 
     /**
@@ -110,7 +123,7 @@ final class RelDynCalendarTimeTest extends TestCase
         $g0 = 100 * self::DAY;
         $rate = (float) RelationshipDynamics::defaultConfig()['jealousy_decay_per_hour'];   // jealousy points per real play hour
         $play = 20 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
-        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 10 * 3600, '_accumulated_play_gamets' => $play,
+        $d = ['_last_gamets' => $g0, '_accumulated_play_gamets' => $play,
               '_last_global_play_gamets' => 1.0e9, 'jealousy_anger' => 60.0, 'jealousy_updated_at' => $play];
 
         // 30 game days and 10 real hours of play elsewhere before the next turn with this NPC
@@ -475,11 +488,13 @@ final class RelDynCalendarTimeTest extends TestCase
         $this->assertSame(0.0, self::resentment($d));
     }
 
-    public function testNormalPlayIsCreditedInFull(): void
+    public function testWithoutAHeartbeatPlayUnderTheGapLimitIsCreditedInFull(): void
     {
         $g0 = 100 * self::DAY;
-        $d = ['_last_gamets' => $g0, '_last_real_ts' => time() - 600, '_accumulated_play_gamets' => 0.0];
-        $credited = RelationshipDynamics::updatePlayTime($d, $g0 + 600 * 2000);   // a little slower than timescale 20
-        $this->assertEqualsWithDelta(600 * 2000, $credited, 0.001);
+        $gap = RelationshipDynamics::PLAY_GAP_MAX_GAMETS;
+        $d = ['_last_gamets' => $g0, '_accumulated_play_gamets' => 0.0];
+        $this->assertSame((float) $gap, RelationshipDynamics::updatePlayTime($d, $g0 + $gap));
+        $this->assertSame(0.0, RelationshipDynamics::updatePlayTime($d, $g0 + 2 * $gap + 1), 'a longer gap is not proven play');
+        $this->assertSame((float) $gap, (float) $d['_accumulated_play_gamets']);
     }
 }

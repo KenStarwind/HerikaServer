@@ -50,9 +50,10 @@
  *         delta written back); core's type re-read; the conflict session starts over.
  *       gold ledger (core_player.reldyn_gold_ledger): FOLLOWS the game, rewound to its newest
  *         checkpoint at or before T.
- *       play clocks (real-time _accumulated_time, the play heartbeat, _accumulated_play_gamets
+ *       play clocks (_accumulated_time play seconds, the play heartbeat, _accumulated_play_gamets
  *         and play-clock timers), static knowledge (facet classifier tables, config) and dead
- *         letters: KEPT.
+ *         letters: KEPT. The init prerequest beats the heartbeat first, so the play in the rows
+ *         core is about to prune is banked; the loaded game's 'init' row restarts its baseline.
  *   - Core writes its 'init' row BEFORE restoreNPC (a soundcache sweep in between), so the row
  *     alone does not prove the restore is done. beforeCoreLoad takes a session advisory lock
  *     (LOCK_KEY_LOADING) that the init request holds until its database session ends, after

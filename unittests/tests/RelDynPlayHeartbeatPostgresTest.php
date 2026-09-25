@@ -47,10 +47,14 @@ final class RelDynHeartbeatPgDb
 }
 
 /**
- * timer-model: the filtered play clock must not count a wait or sleep as play, also when the
- * gap before it holds real time with the game clock stopped (game quit overnight, menus).
- * The global play heartbeat (conf_opts relationship_dynamics_play_clock) counts played gamets
- * across all requests with offline gaps capped, and bounds each NPC's credit.
+ * play-clock-wallclock (decisions 2026-09-23 §2, timer design): the play clock is measured in
+ * game time only. The global play heartbeat (conf_opts relationship_dynamics_play_clock) walks
+ * core's eventlog in rowid order and credits the game time between consecutive rows, except
+ * where the game skipped time: a wait (info_timeforward, the window it names), a sleep
+ * (goodnight / goodmorning), a load ('init', a jump back) and any jump over
+ * PLAY_GAP_MAX_GAMETS between two rows (fast travel, carriage, jail, a wait or sleep with no
+ * marker). Real seconds (localts, time()) never enter it: a break with the game closed adds
+ * nothing, and the same rows always give the same clock. Each NPC's play clock is bounded by it.
  *
  * Opt-in: RELDYN_TEST_PG_DSN pointing at a THROWAWAY database (never dbname=dwemer).
  * Each test works in its own schema and drops it.
@@ -60,6 +64,7 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
     private const DAY = RelationshipDynamics::GAMETS_PER_DAY;             // raw gamets per game day
     private const GAME_HOUR = RelationshipDynamics::GAMETS_PER_DAY / 24;  // raw gamets per game hour
     private const RATE = RelationshipDynamics::GAMETS_PER_REAL_SECOND;    // play gamets per real second
+    private const STEP = 5 * self::RATE;   // core logs the plugin's 'request' poll every ~5 real seconds
     private const T0 = 300 * self::DAY;
 
     private string $dsn;
@@ -168,11 +173,26 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
         pg_close($admin);
     }
 
-    private function heartbeatRow(int $realTs, float $gamets, float $play): void
+    /** One eventlog row as core writes it; localts is noise on purpose (real time must not matter). */
+    private function row(string $type, float $gamets, string $data = ''): void
     {
         pg_query_params($this->db->link,
-            'INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value',
-            [RelationshipDynamics::PLAY_HEARTBEAT_ROW_ID, json_encode(['real_ts' => $realTs, 'gamets' => $gamets, 'play' => $play])]);
+            'INSERT INTO eventlog (ts, gamets, type, data, sess, localts, people) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [(string) random_int(1, 1 << 40), (string) (int) round($gamets), $type, $data, 'web', random_int(1, 2000000000), '']);
+    }
+
+    /** $n core 'request' rows STEP apart after $from; returns the last gamets. */
+    private function play(float $from, int $n): float
+    {
+        for ($i = 1; $i <= $n; $i++) $this->row('request', $from + $i * self::STEP);
+        return $from + $n * self::STEP;
+    }
+
+    /** What core's waitstop handler writes (processor/comm.php): hours = gamets delta * 0.0000024. */
+    private function waitStop(float $start, float $stop): void
+    {
+        $elapsed = ($stop - $start) * 0.0000024;
+        $this->row('info_timeforward', $stop, "$elapsed hours have passed. Current date/time: Sundas, 17th of Last Seed, 4E 201");
     }
 
     private function storedHeartbeat(): array
@@ -182,36 +202,153 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
         return $r ? json_decode($r['value'], true) : [];
     }
 
-    public function testTheHeartbeatCountsPlayButNotOfflineTimeOrWaits(): void
+    /** Anchor the heartbeat at a first row (no credit), as its first beat on a database does. */
+    private function anchor(float $gamets): void
     {
-        $now = time();
-        $this->assertSame(0.0, RelationshipDynamics::beatPlayClock(self::T0, $now - 3600), 'first beat starts the row');
-
-        // 4 real minutes of play between two requests: credited in full
-        $p = RelationshipDynamics::beatPlayClock(self::T0 + 240 * self::RATE, $now - 3360);
-        $this->assertEqualsWithDelta(240 * self::RATE, $p, 0.001);
-
-        // A 24 h sleep that took 8 real seconds: 8 seconds of play
-        $p2 = RelationshipDynamics::beatPlayClock(self::T0 + 240 * self::RATE + self::DAY, $now - 3352);
-        $this->assertEqualsWithDelta($p + 8 * self::RATE, $p2, 0.001);
-
-        // Quit, back 40 real minutes later: one capped gap, whatever the game clock did
-        $p3 = RelationshipDynamics::beatPlayClock(self::T0 + 2 * self::DAY, $now - 592);
-        $this->assertEqualsWithDelta($p2 + RelationshipDynamics::PLAY_HEARTBEAT_GAP_CAP_S * self::RATE, $p3, 0.001);
-
-        // A request 2 real seconds later does not write; its gap is counted by the next one
-        $this->assertEqualsWithDelta($p3, RelationshipDynamics::beatPlayClock(self::T0 + 2 * self::DAY + 2 * self::RATE, $now - 590), 0.001);
-        $this->assertSame($now - 592, (int) $this->storedHeartbeat()['real_ts']);
-        $p4 = RelationshipDynamics::beatPlayClock(self::T0 + 2 * self::DAY + 10 * self::RATE, $now - 582);
-        $this->assertEqualsWithDelta($p3 + 10 * self::RATE, $p4, 0.001);
-
-        // A reload (game clock back) credits nothing
-        $p5 = RelationshipDynamics::beatPlayClock(self::T0, $now - 500);
-        $this->assertEqualsWithDelta($p4, $p5, 0.001);
+        $this->row('request', $gamets);
+        $this->assertSame(0.0, RelationshipDynamics::beatPlayClock(), 'the first beat anchors, credits nothing');
     }
 
+    public function testPlayedGameTimeBetweenRowsIsCreditedAndNothingElse(): void
+    {
+        $this->anchor(self::T0);
+        $this->assertSame((int) pg_fetch_result(pg_query($this->db->link, 'SELECT max(rowid) FROM eventlog'), 0, 0),
+            (int) $this->storedHeartbeat()['rowid']);
+
+        $g = $this->play(self::T0, 48);   // 4 real minutes of play
+        $this->assertEqualsWithDelta(48 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001);
+        // No new rows: the same clock, however much real time passes between the two calls
+        $this->assertEqualsWithDelta(48 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001);
+
+        // Quit, come back hours later: the game clock stood still, so the break adds nothing
+        $this->row('init', $g + 10);
+        $this->row('request', $g + 10 + self::STEP);
+        $this->assertEqualsWithDelta(49 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001,
+            'a real break with the game closed adds nothing');
+    }
+
+    public function testAWaitIsNeverPlay(): void
+    {
+        $this->anchor(self::T0);
+        $g = $this->play(self::T0, 12);                    // one real minute of play
+        $start = $g + 3 * self::RATE;                      // three more seconds, then wait 8 game hours
+        $stop = $start + 8 * self::GAME_HOUR;
+        $this->row('request', $start + 0.2 * self::GAME_HOUR);   // the poll logged just after the wait began
+        $this->row('request', $start + 5 * self::GAME_HOUR);     // and one mid-wait
+        $this->waitStop($start, $stop);
+        $this->play($stop, 6);                             // half a real minute of play after it
+
+        $this->assertEqualsWithDelta(18 * self::STEP + 3 * self::RATE, RelationshipDynamics::beatPlayClock(), 1.0,
+            'play before and after the wait, none of its 8 hours (not even the slice under the gap limit)');
+    }
+
+    public function testAWaitWithNoRowInsideItCreditsOnlyThePlayBeforeIt(): void
+    {
+        $this->anchor(self::T0);
+        $start = self::T0 + 2 * self::RATE;                // two seconds of play, then a 1 h wait
+        $this->waitStop($start, $start + self::GAME_HOUR);
+        $this->assertEqualsWithDelta(2 * self::RATE, RelationshipDynamics::beatPlayClock(), 1.0);
+
+        // A waitstop against a stale last_waitstart names no usable window: the gap is dropped whole
+        $g = $this->play($start + self::GAME_HOUR, 2);
+        $this->row('info_timeforward', $g + 0.25 * self::GAME_HOUR, '900.5 hours have passed. Current date/time: Morndas');
+        $this->assertEqualsWithDelta(2 * self::RATE + 2 * self::STEP, RelationshipDynamics::beatPlayClock(), 1.0);
+    }
+
+    public function testASleepIsNeverPlay(): void
+    {
+        $this->anchor(self::T0);
+        $g = $this->play(self::T0, 12);
+        $this->row('goodnight', $g + self::RATE);          // the player lies down
+        $this->row('request', $g + self::RATE + 0.1 * self::GAME_HOUR);   // a poll inside the sleep, under the gap limit
+        $this->row('goodmorning', $g + self::RATE + 9 * self::GAME_HOUR);
+        $this->play($g + self::RATE + 9 * self::GAME_HOUR, 6);
+        $this->assertEqualsWithDelta(18 * self::STEP + self::RATE, RelationshipDynamics::beatPlayClock(), 1.0);
+    }
+
+    public function testJumpsOverTheGapLimitAreNotPlay(): void
+    {
+        // Fast travel, a carriage ride, jail, or a sleep the game sent no event for: the game
+        // clock leaps between two consecutive rows.
+        $this->anchor(self::T0);
+        $g = $this->play(self::T0, 6);
+        $g2 = $g + RelationshipDynamics::PLAY_GAP_MAX_GAMETS + 1;
+        $this->row('infoloc', $g2);
+        $g3 = $g2 + 3 * self::GAME_HOUR;                   // fast travel to Whiterun
+        $this->row('infoloc', $g3);
+        $this->play($g3, 6);
+        $this->assertEqualsWithDelta(12 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001);
+        // The limit sits between the poll cadence and the shortest wait or sleep the game offers
+        $this->assertGreaterThanOrEqual(60 * self::RATE, RelationshipDynamics::PLAY_GAP_MAX_GAMETS);
+        $this->assertLessThan(self::GAME_HOUR, RelationshipDynamics::PLAY_GAP_MAX_GAMETS);
+    }
+
+    public function testLoadsRestartTheBaselineWithoutCredit(): void
+    {
+        $this->anchor(self::T0);
+        $this->play(self::T0, 6);
+        // Load an earlier save (three game days back): core logs the loaded game, then 'init'
+        $back = self::T0 - 3 * self::DAY;
+        $this->row('infonpc_close', $back);
+        $this->row('init', $back + 1);
+        $g2 = $this->play($back + 1, 6);
+        // Load a later save (two game days ahead)
+        $this->row('init', $g2 + 2 * self::DAY);
+        $this->play($g2 + 2 * self::DAY, 6);
+        $this->assertEqualsWithDelta(18 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001,
+            'only the play inside each timeline');
+    }
+
+    public function testRowsLoggedWithAnOlderGameTimeDoNotCountTwice(): void
+    {
+        // Background writers stamp the last known game time; poll rows land out of order.
+        $this->anchor(self::T0);
+        $this->row('request', self::T0 + self::STEP);
+        $this->row('backgroundaction', self::T0 + 2);
+        $this->row('quest', self::T0 + 3 * self::STEP);
+        $this->row('playerinfo', self::T0 + self::STEP);
+        $this->row('request', self::T0 + 4 * self::STEP);
+        $this->assertEqualsWithDelta(4 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001);
+    }
+
+    public function testManyRowsAreFoldedInOneBeat(): void
+    {
+        $this->anchor(self::T0);
+        // Two real hours of play without talking to anyone: 1440 poll rows, a 24 h jump inside
+        pg_query_params($this->db->link,
+            "INSERT INTO eventlog (ts, gamets, type, data, sess, localts, people)
+             SELECT i, ($1::bigint + i * $2::bigint + CASE WHEN i > 700 THEN $3::bigint ELSE 0 END), 'request', '', 'web', 0, ''
+             FROM generate_series(1, 1440) AS i",
+            [(string) (int) self::T0, (string) (int) self::STEP, (string) (int) self::DAY]);
+        $this->assertEqualsWithDelta(1439 * (int) self::STEP, RelationshipDynamics::beatPlayClock(), 0.001,
+            'every gap but the one holding the day');
+    }
+
+    public function testALegacyRealTimeHeartbeatKeepsItsPlayAndCreditsNoRealTime(): void
+    {
+        pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2)',
+            [RelationshipDynamics::PLAY_HEARTBEAT_ROW_ID, json_encode(['real_ts' => 1700000000, 'gamets' => self::T0, 'play' => 5.0e7])]);
+        $g = $this->play(self::T0, 6);
+        $this->assertEqualsWithDelta(5.0e7, RelationshipDynamics::beatPlayClock(), 0.001, 'migrated: play kept, anchored at the newest row');
+        $this->assertArrayNotHasKey('real_ts', $this->storedHeartbeat());
+        $this->play($g, 2);
+        $this->assertEqualsWithDelta(5.0e7 + 2 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001);
+    }
+
+    public function testThePlayClockFunctionsNeverReadTheWallClock(): void
+    {
+        foreach (['updatePlayTime', 'updateAccumulatedTime', 'beatPlayClock', 'foldPlayRows'] as $fn) {
+            $m = new ReflectionMethod(RelationshipDynamics::class, $fn);
+            $src = implode('', array_slice(file($m->getFileName()), $m->getStartLine() - 1, $m->getEndLine() - $m->getStartLine() + 1));
+            $code = preg_replace('~//[^\n]*|/\*.*?\*/~s', '', $src);
+            $this->assertDoesNotMatchRegularExpression('/\b(time|microtime|hrtime|date|mktime|strtotime)\s*\(|localts|[\'"]real_ts[\'"]/', $code, "{$fn} reads the wall clock");
+        }
+    }
+
+    // ------------------------------------------------------------------ through prerequest
+
     /** An NPC last talked to at T0, whose last turn the heartbeat saw at global play $globalPlay. */
-    private function seedRomantic(string $name, int $lastRealTs, float $globalPlay): void
+    private function seedRomantic(string $name, float $globalPlay): void
     {
         $npcPlay = 50 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;   // this NPC's play clock
         $dynamics = [
@@ -223,8 +360,10 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
             '_last_contact_gamets' => self::T0,
             '_decay_last_game_gamets' => self::T0,
             '_last_gamets' => self::T0,
-            '_last_real_ts' => $lastRealTs,
+            '_last_real_ts' => 1700000000,                        // a stamp from the real-time build: dropped
+            '_last_interaction_ts' => 1700000000,
             '_accumulated_play_gamets' => $npcPlay,
+            '_accumulated_time' => 180000,                        // play seconds
             '_last_contact_play_gamets' => $npcPlay,
             '_last_global_play_gamets' => $globalPlay,
         ];
@@ -235,6 +374,15 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
         $this->ids[$name] = (int) $row['id'];
     }
 
+    /** Heartbeat state as a previous beat left it: anchored at the newest row, $play so far. */
+    private function heartbeatAt(float $play): void
+    {
+        $r = pg_fetch_assoc(pg_query($this->db->link, 'SELECT rowid, gamets FROM eventlog ORDER BY rowid DESC LIMIT 1'));
+        pg_query_params($this->db->link,
+            'INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value',
+            [RelationshipDynamics::PLAY_HEARTBEAT_ROW_ID, json_encode(['rowid' => (int) $r['rowid'], 'gamets' => (float) $r['gamets'], 'play' => $play])]);
+    }
+
     private function dynamics(string $name): array
     {
         $r = pg_fetch_assoc(pg_query_params($this->db->link,
@@ -242,9 +390,11 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
         return json_decode($r['plugin_extended_data'], true)['reldyn']['dynamics'];
     }
 
+    /** The player speaks: main.php logs core's 'user_input' mark, then runs the ext prerequest hooks. */
     private function talkTo(string $name, float $gamets): void
     {
-        $GLOBALS['gameRequest'] = ['inputtext', (string) time(), (string) (int) $gamets, 'Kaida: hello'];
+        $this->row('user_input', $gamets, 'inputtext');
+        $GLOBALS['gameRequest'] = ['inputtext', '1', (string) (int) round($gamets), 'Kaida: hello'];
         $GLOBALS['HERIKA_NAME'] = $name;
         (static function () { require __DIR__ . '/../../ext/relationship_dynamics/prerequest.php'; })();
         RelationshipDynamics::endRequest();
@@ -253,31 +403,110 @@ final class RelDynPlayHeartbeatPostgresTest extends TestCase
     /** Scenario r2/S6b: quit overnight, load, sleep 9 game hours, talk. No reunion from the sleep. */
     public function testASleepAfterAnOvernightBreakEarnsNoReunionThroughPrerequest(): void
     {
-        $overnight = time() - 12 * 3600;
-        $this->heartbeatRow($overnight, self::T0, 1.0e8);        // last request before quitting
-        $this->seedRomantic('Serana', $overnight, 1.0e8);
+        $this->row('request', self::T0);                           // the last poll before quitting
+        $this->heartbeatAt(1.0e8);
+        $this->seedRomantic('Serana', 1.0e8);
+        // The next evening: ten seconds of play, then sleep 9 game hours
+        $g = $this->play(self::T0, 2);
+        $this->row('goodnight', $g);
+        $this->row('goodmorning', $g + 9 * self::GAME_HOUR);
 
-        $this->talkTo('Serana', self::T0 + 9 * self::GAME_HOUR);
+        $this->talkTo('Serana', $g + 9 * self::GAME_HOUR + self::RATE);
 
         $d = $this->dynamics('Serana');
         $gained = (float) $d['_accumulated_play_gamets'] - 50 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
-        $this->assertLessThanOrEqual(RelationshipDynamics::PLAY_HEARTBEAT_GAP_CAP_S * self::RATE + 0.001, $gained,
-            'at most one capped offline gap, not 27 real minutes of sleep');
+        $this->assertEqualsWithDelta(2 * self::STEP + self::RATE, $gained, 1.0, 'the eleven played seconds, not the night or the sleep');
+        $this->assertEqualsWithDelta(180000 + $gained / self::RATE, (float) $d['_accumulated_time'], 0.01, 'play seconds follow the play clock');
         $this->assertEmpty($d['reunion_spike_given'] ?? null, 'a sleep is not time apart played');
+        $this->assertArrayNotHasKey('_last_real_ts', $d);
+        $this->assertArrayNotHasKey('_last_interaction_ts', $d);
     }
 
-    /** Control: the same 9 game hours apart, but 30 real minutes of them played elsewhere. */
+    /** Control: 30 real minutes of play elsewhere (10 game hours at timescale 20) earn the reunion. */
     public function testPlayedTimeApartStillEarnsTheReunion(): void
     {
-        $lastTurn = time() - 31 * 60;
-        // Other requests kept the heartbeat going: 30 real minutes of play since her last turn
-        $this->heartbeatRow(time() - 60, self::T0 + 8 * self::GAME_HOUR, 1.0e8 + 30 * 60 * self::RATE);
-        $this->seedRomantic('Serana', $lastTurn, 1.0e8);
+        $this->row('request', self::T0);
+        $this->heartbeatAt(1.0e8);
+        $this->seedRomantic('Serana', 1.0e8);
+        $g = $this->play(self::T0, 360);
 
-        $this->talkTo('Serana', self::T0 + 9 * self::GAME_HOUR);
+        $this->talkTo('Serana', $g);
 
         $d = $this->dynamics('Serana');
         $this->assertNotEmpty($d['reunion_spike_given'] ?? null, 'real play apart: reunion');
-        $this->assertEqualsWithDelta(9.0, (float) $d['_reunion_hours_apart'], 0.01);
+        $this->assertEqualsWithDelta(360 * self::STEP / self::GAME_HOUR, (float) $d['_reunion_hours_apart'], 0.01);
+        $this->assertEqualsWithDelta(50 * RelationshipDynamics::GAMETS_PER_REAL_HOUR + 360 * self::STEP,
+            (float) $d['_accumulated_play_gamets'], 1.0);
+    }
+
+    /** Waiting a day beside her: the calendar moves, the play clock does not, and no reunion. */
+    public function testWaitingBesideHerIsNeitherPlayNorAReunion(): void
+    {
+        $this->row('request', self::T0);
+        $this->heartbeatAt(1.0e8);
+        $this->seedRomantic('Serana', 1.0e8);
+        $this->waitStop(self::T0 + self::RATE, self::T0 + self::RATE + 24 * self::GAME_HOUR);
+
+        $this->talkTo('Serana', self::T0 + 2 * self::RATE + 24 * self::GAME_HOUR);
+
+        $d = $this->dynamics('Serana');
+        $this->assertEqualsWithDelta(50 * RelationshipDynamics::GAMETS_PER_REAL_HOUR + 2 * self::RATE,
+            (float) $d['_accumulated_play_gamets'], 1.0, 'two played seconds around the wait');
+        $this->assertEmpty($d['reunion_spike_given'] ?? null, 'a wait is not time apart played');
+    }
+
+    /** Core prunes eventlog rows past the loaded time after the init prerequest: their play is kept. */
+    public function testTheInitRequestBanksThePlayCoreIsAboutToPrune(): void
+    {
+        $this->anchor(self::T0);
+        $this->play(self::T0, 24);
+        $GLOBALS['gameRequest'] = ['init', '1', (string) (int) self::T0, ''];
+        $GLOBALS['HERIKA_NAME'] = 'The Narrator';
+        (static function () { require __DIR__ . '/../../ext/relationship_dynamics/prerequest.php'; })();
+        RelationshipDynamics::endRequest();
+        $this->assertEqualsWithDelta(24 * self::STEP, (float) $this->storedHeartbeat()['play'], 0.001);
+
+        // comm.php: delete the rows at or after the loaded time, log 'init', play on
+        pg_query_params($this->db->link, 'DELETE FROM eventlog WHERE gamets >= $1', [(string) (int) self::T0]);
+        $this->row('init', self::T0);
+        $this->play(self::T0, 2);
+        $this->assertEqualsWithDelta(26 * self::STEP, RelationshipDynamics::beatPlayClock(), 0.001);
+    }
+
+    /** The same game, played twice, gives the same clocks: nothing depends on real time. */
+    public function testMultiTurnPlayIsDeterministic(): void
+    {
+        $runs = [];
+        foreach ([1, 2] as $run) {
+            pg_query($this->db->link, 'DELETE FROM core_npc_master');
+            pg_query($this->db->link, 'DELETE FROM eventlog');
+            pg_query($this->db->link, 'DELETE FROM conf_opts');
+            RelationshipDynamics::clearConfigCache();
+            $this->row('request', self::T0);
+            $this->heartbeatAt(1.0e8);
+            $this->seedRomantic('Serana', 1.0e8);
+            $g = self::T0;
+            foreach ([[12, 0], [6, 8], [30, 0], [3, 24]] as [$rows, $waitHours]) {
+                $g = $this->play($g, $rows);
+                if ($waitHours > 0) {
+                    $this->waitStop($g, $g + $waitHours * self::GAME_HOUR);
+                    $g += $waitHours * self::GAME_HOUR;
+                }
+                $g += self::RATE;
+                $this->talkTo('Serana', $g);
+                if ($run === 1) usleep(1100000);   // real time passes between turns in one run only
+            }
+            $d = $this->dynamics('Serana');
+            $dims = [];
+            foreach (($d['dimensions'] ?? []) as $k => $v) $dims[$k] = is_array($v) ? ($v['x'] ?? null) : null;
+            $runs[$run] = [
+                'play' => $d['_accumulated_play_gamets'], 'seconds' => $d['_accumulated_time'],
+                'passion' => RelationshipDynamics::getPassion($d), 'count' => $d['interaction_count'] ?? null,
+                'last_interaction_at' => $d['last_interaction_at'] ?? null, 'dims' => $dims,
+            ];
+        }
+        $this->assertSame($runs[1], $runs[2]);
+        $this->assertEqualsWithDelta(50 * RelationshipDynamics::GAMETS_PER_REAL_HOUR + 51 * self::STEP + 4 * self::RATE,
+            (float) $runs[1]['play'], 2.0);
     }
 }

@@ -3,7 +3,7 @@
  * Relationship Dynamics — Prerequest Hook
  *
  * Runs after other extension prerequest hooks (alphabetical order).
- * Handles: accumulated time tracking, passion decay, jealousy decay, reunion spike,
+ * Handles: play clock (game time), passion decay, jealousy decay, reunion spike,
  * effective disposition calculation, blush multiplier.
  */
 
@@ -25,6 +25,15 @@ if ($reqType === 'maras_sync') {
 if ($reqType === 'init') {
     require_once __DIR__ . '/relationship_dynamics.php';
     RelationshipDynamics::beginRequest();
+    // Bank the play in the rows core is about to prune (gamets at or after the loaded time):
+    // the player did play it, and play clocks are kept across loads.
+    try {
+        if (RelationshipDynamics::isEnabled()) {
+            RelationshipDynamics::beatPlayClock();
+        }
+    } catch (Throwable $e) {
+        RelationshipDynamics::logError('play heartbeat before core restore', $e);
+    }
     try {
         RelDynTimeline::beforeCoreLoad(floatval($GLOBALS['gameRequest'][2] ?? 0));
     } catch (Throwable $e) {
@@ -73,8 +82,9 @@ try {
 }
 
 // ========== GLOBAL PLAY HEARTBEAT ==========
-// Played gamets across every request (waits and offline gaps excluded); bounds each NPC's
-// play-clock credit in updatePlayTime() below.
+// Played game time across the whole game, read from core's eventlog game clock (waits,
+// sleeps, fast travel and loads cut out, no real time); bounds each NPC's play-clock credit
+// in updatePlayTime() below.
 $globalPlayGamets = RelationshipDynamics::beatPlayClock();
 
 // ========== PLAYER GOLD LEDGER (player-stats-pipeline) ==========
@@ -91,23 +101,16 @@ RelationshipDynamics::runCalendarScan($npcName);
 // Load dynamics
 $dynamics = RelationshipDynamics::getDynamics($npcName);
 
-// ========== ACCUMULATED TIME TRACKING ==========
-// Must run FIRST -- before any decay/cooldown logic that depends on accumulated time
-$timeDelta = RelationshipDynamics::updateAccumulatedTime($dynamics);
-$accumulatedTotal = intval($dynamics['_accumulated_time'] ?? 0);
-$accumulatedMinutes = round($accumulatedTotal / 60.0, 1);
-if ($timeDelta > 0) {
-    RelationshipDynamics::log("[RelDyn-TIME] {$npcName}: +{$timeDelta}s, total: {$accumulatedTotal}s ({$accumulatedMinutes}min)");
-}
-
-// ========== GAMETS PLAY TIME TRACKING ==========
-// Must run alongside accumulated time -- before any decay/cooldown logic.
-// Reads gamets from $gameRequest[2] (set by CHIM from Skyrim game clock).
-// Filters out wait/sleep by comparing gamets/real-time ratio.
+// ========== PLAY CLOCK (game time only) ==========
+// Must run FIRST -- before any decay/cooldown logic that reads the play clock.
+// Credits the played game time since this NPC's last turn (bounded by the heartbeat above),
+// then the same credit as play seconds (_accumulated_time, diary cooldowns).
 $gametsDelta = RelationshipDynamics::updatePlayTime($dynamics, null, $globalPlayGamets);
 $playGametsTotal = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
+$timeDelta = RelationshipDynamics::updateAccumulatedTime($dynamics, $gametsDelta);
 if ($gametsDelta > 0) {
-    RelationshipDynamics::log("[RelDyn-GAMETS] {$npcName}: +{$gametsDelta} gamets, total: {$playGametsTotal} play_gamets");
+    $accumulatedTotal = round(floatval($dynamics['_accumulated_time'] ?? 0), 1);
+    RelationshipDynamics::log("[RelDyn-GAMETS] {$npcName}: +{$gametsDelta} play gamets (+" . round($timeDelta, 1) . " play s), total: {$playGametsTotal} play_gamets, {$accumulatedTotal} play s");
 }
 
 // Auto-generate love language if missing

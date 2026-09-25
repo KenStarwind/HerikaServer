@@ -506,8 +506,8 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
             for ($day = 1; $day <= $maxDays; $day++) {
                 $this->gamets += 20 * self::DAY / 24;
                 $this->realTs += 3600;
-                // half an hour of play since the last visit (updatePlayTime credits real
-                // seconds, which a test run does not have)
+                // half an hour of play since the last visit (the play heartbeat reads core's
+                // eventlog poll rows, which this test does not log)
                 $this->editDynamics(function (array &$d): void {
                     $d['_accumulated_play_gamets'] = floatval($d['_accumulated_play_gamets'] ?? 0) + 0.5 * RelationshipDynamics::GAMETS_PER_REAL_HOUR;
                 });
