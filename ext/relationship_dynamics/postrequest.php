@@ -590,12 +590,9 @@ if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
     $GLOBALS['RELDYN_ICK_ACTIVE'] = !empty($dynamics['_ick_tracker']['ick_active']);
 }
 
-if (!empty($reldynCfg['charisma_detection_enabled'] ?? true)) {
-    $evalPending = $rdPendingEval;
-    $romanticIntent = intval($evalPending['romantic_intent'] ?? 0);
-    $affinityDelta = floatval($GLOBALS['RELDYN_AFFINITY_DELTA'] ?? 0);
-    RelationshipDynamics::updateCharismaTracker($dynamics, $romanticIntent, $affinityDelta);
-}
+// Charisma (MDD 5.1) is fed by each applied eval item's romantic_intent and raw affinity
+// (RelationshipDynamics::applyEvalExtraFields), not here: an exchange nobody scored says
+// nothing about the player's style.
 
 // -------------------------------------------------------------------------
 // 7. Track positive interactions + stage advancement
@@ -605,11 +602,9 @@ if ($positiveExchange) {
     RelationshipDynamics::checkStageAdvancement($dynamics);
 }
 
-// ========== MASKING STATE TRACKING (PR 14) ==========
-// Track if masking state changed for mask-drop detection next cycle
-if (isset($GLOBALS['RELDYN_MASKING_ACTIVE'])) {
-    $dynamics['_was_masking'] = !empty($GLOBALS['RELDYN_MASKING_ACTIVE']);
-}
+// Social masking (MDD 11): the context decides and records the mask each turn
+// (RelationshipDynamics::maskingTurn, after core set CACHE_PEOPLE); the eval's masking field
+// pays its cost (applyEvalExtraFields).
 
 // ========== DIARY COMPLETION (PR 14) ==========
 // If diary was triggered and generated this cycle, mark completed
@@ -617,17 +612,8 @@ if (!empty($GLOBALS['RELDYN_DIARY_TRIGGERED'])) {
     RelationshipDynamics::markDiaryCompleted($dynamics);
 }
 
-// ========== DIRECTOR GOAL FULFILLMENT CHECK (PR 39, Step 5) ==========
-$rdCfg = $rdCfg ?? RelationshipDynamics::getConfig();
-if (!empty($rdCfg['director_goals_enabled'] ?? true)) {
-    $activeGoal = RelationshipDynamics::getActiveDirectorGoal($dynamics);
-    if ($activeGoal && !empty($activeGoal['text'])) {
-        $evalData = $rdPendingEval;
-        if (is_array($evalData) && !empty($evalData['goal_addressed'])) {
-            RelationshipDynamics::fulfillDirectorGoal($dynamics, 'eval_confirmed');
-        }
-    }
-}
+// Director goal fulfilment (PR 39, Step 5): an applied eval item's goal_addressed for the goal
+// it was shown (RelationshipDynamics::applyEvalExtraFields), once per item.
 
 // -------------------------------------------------------------------------
 // 8. Save

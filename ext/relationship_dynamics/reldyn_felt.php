@@ -94,6 +94,7 @@ final class RelDynFelt
             // Base salience per source (0..1); passion / jealousy / goal scale by their value.
             'salience' => [
                 'crisis' => 0.95, 'walkaway' => 0.95, 'bleeding_out' => 1.0, 'combat' => 0.9, 'mask' => 0.85,
+                'mask_slip' => 0.8, 'grievances' => 0.8,
                 'probation' => 0.85, 'autonomy' => 0.85, 'reunion' => 0.8, 'blush' => 0.8, 'grief' => 0.8,
                 'hoover' => 0.8, 'ick' => 0.8, 'conflict' => 0.75, 'll_reaction' => 0.7, 'parasite' => 0.7,
                 'emergent' => 0.65, 'place' => 0.6, 'gift' => 0.6, 'intimacy' => 0.6, 'unmet' => 0.6,
@@ -106,6 +107,9 @@ final class RelDynFelt
             'memory_min_tier' => 2,
             'memory_items' => 3,
             'reason_max_chars' => 90,
+            // Grievances (resentment at the MDD 15.5 confrontation threshold, same tier gate as
+            // memories): at most this many of the stored stings.
+            'grievance_items' => 3,
             // The attraction read (RelDynAttraction::feltText) against the bond it sits in:
             // strained = open conflict, an active ick, resentment from strain_resentment_min
             // (points; the 'Frustrated' band: "kind words from them no longer land") or jealousy
@@ -295,7 +299,16 @@ final class RelDynFelt
             'functional' => "The mask mostly holds and cracks under pressure: forced cheer, too-quick subject changes.",
             'unstable'   => "The mask keeps slipping: warm one moment, cold the next.",
             'others'     => "others",
+            'hidden_default' => "more than they show",
+            // The audience is gone (maturity 45+ composed, below deflated)
+            'drop_composed'  => "{NAME} lets the mask fall now that they are alone with the player. The composure dissolves into something more honest. Whatever they show now is real.",
+            'drop_deflated'  => "{NAME} visibly deflates now that the audience is gone. The effort of pretending is written on their face.",
+            // The eval saw the real feeling break through the front (one-shot, next turn)
+            'slip'           => "{NAME}'s front cracked a moment ago and something real showed; {NAME} is aware of it, and either covers it too fast or stops pretending with {PLAYER}.",
         ],
+        // Resentment at the confrontation threshold (MDD 15.5 at 50): the specific grievances
+        // the NPC holds (dimensional memory, getConfrontationFuel), ready to be brought up
+        'grievances' => "Ready to have it out with {PLAYER}; what {NAME} keeps coming back to: {ITEMS}.",
     ];
 
     public static function config(): array
@@ -380,6 +393,7 @@ final class RelDynFelt
         if (RelationshipDynamics::updateContextTierHWM($dynamics)) $changed = true;
         $tier = RelationshipDynamics::getContextTier($dynamics);
         // A stranger-tier NPC does not know the player's name (prompt gating's #PLAYER_REF#).
+        $bond = $player;   // the bond's key (dimensional memory), whatever the NPC calls them
         $player = self::playerRef($player, $tier, $dynamics, $cfg);
         $vars = ['{NAME}' => $npc, '{PLAYER}' => $player];
         $dims = is_array($dynamics['dimensions'] ?? null) ? $dynamics['dimensions'] : [];
@@ -596,14 +610,20 @@ final class RelDynFelt
             if ($text !== '') $lines[] = self::line('emergent', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['emergent']), $text);
         }
 
-        // --- Social masking / mask drop ---
-        if (!empty($env['masking'])) {
-            $performed = is_array($env['performed'] ?? null) ? $env['performed'] : RelationshipDynamics::calculatePerformedState($dynamics);
-            $text = RelationshipDynamics::generateMaskingContext($npc, $dynamics, $performed);
+        // --- Social masking / mask drop / a front that slipped (MDD 11): decided here, where
+        // core's CACHE_PEOPLE (the audience) is set ---
+        $mask = RelationshipDynamics::maskingTurn($npc, $dynamics);
+        if ($mask['changed']) $changed = true;
+        if ($mask['masking']) {
+            $text = RelationshipDynamics::generateMaskingContext($npc, $dynamics, (array) $mask['performed']);
             if ($text !== '') $lines[] = self::line('mask', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['mask']), $text);
-        } else {
+        } elseif ($mask['drop']) {
             $drop = RelationshipDynamics::generateMaskDropContext($npc, $dynamics);
             if ($drop) $lines[] = self::line('mask_drop', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['mask_drop']), $drop);
+        }
+        if ($mask['slip']) {
+            $lines[] = self::line('mask_slip', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['mask_slip']),
+                self::fill((string) $t['mask']['slip'], $vars));
         }
 
         // --- Crisis window (PR 10) ---
@@ -662,7 +682,17 @@ final class RelDynFelt
 
         // --- Memories: the strongest moments of this bond and the last eval reasons (tier 2+) ---
         if ($tier >= intval($cfg['memory_min_tier'])) {
-            $memory = RelationshipDynamics::buildMemoryContext($dynamics, $npc, $player, intval($cfg['memory_items']));
+            // At the confrontation threshold (MDD 15.5, resentment 50) the stings are a list of
+            // grievances she is ready to bring up; the memory line keeps the rest
+            $held = [];
+            if (RelationshipDynamics::getResentmentEffects($dynamics)['confrontation_due']) {
+                $held = array_slice(RelationshipDynamics::getConfrontationFuel($dynamics, $bond), 0, max(1, intval($cfg['grievance_items'])));
+                if ($held !== []) {
+                    $lines[] = self::line('grievances', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['grievances']),
+                        self::fill((string) $t['grievances'], $vars + ['{ITEMS}' => implode('; ', array_map(fn($r) => "'{$r}'", $held))]));
+                }
+            }
+            $memory = RelationshipDynamics::buildMemoryContext($dynamics, $npc, $bond, intval($cfg['memory_items']), $held);
             if ($memory !== null) $lines[] = self::line('memory', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['memory']), $memory);
         }
 
@@ -1216,8 +1246,6 @@ final class RelDynFelt
             'player_addressed' => RelationshipDynamics::isPlayerInputRequest($GLOBALS['gameRequest'] ?? null),
             'last_ll' => $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null,
             'duty_factor' => floatval($GLOBALS['RELDYN_DUTY_FACTOR'] ?? 1.0),
-            'masking' => !empty($GLOBALS['RELDYN_MASKING_ACTIVE']),
-            'performed' => $GLOBALS['RELDYN_PERFORMED_STATE'] ?? null,
             'ick' => !empty($GLOBALS['RELDYN_ICK_ACTIVE']),
             'goal' => !empty($cfg['director_goals_enabled'])
                 ? ($GLOBALS['RELDYN_DIRECTOR_GOAL'] ?? RelationshipDynamics::getActiveDirectorGoal($dynamics)) : null,

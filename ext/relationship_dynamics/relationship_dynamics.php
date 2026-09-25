@@ -930,7 +930,21 @@ class RelationshipDynamics
             'social_masking_enabled' => false,
             'autonomous_diary_enabled' => true,
             'diary_interaction_gap' => 15,           // interactions
-            'mask_maturity_cost' => 0.15,            // maturity points per masked interaction
+            'mask_maturity_cost' => 0.15,            // maturity points per masked interaction (the eval's masking.flag)
+            // Who wears the Mask (MDD 11 "High Status Priority + Toxic/Avoidant"; shouldMask):
+            // maturity (0..100 points) at least maturity_min (a mask needs composure), an attachment
+            // style (getAttachmentStyle, the axes' region) in attachment_styles, the status trait
+            // (RelDynTraits code) at least status_min (0..1; 'Pd' pride: status matters to her;
+            // "high" = above the 0.5 a bio without evidence reads; reads centre, decisions §16 #10),
+            // and someone present whose core affinity (-100..100) with her is below
+            // trusted_affinity_min (or who has no bond row).
+            'social_masking' => [
+                'maturity_min' => 25.0,
+                'attachment_styles' => ['avoidant', 'toxic'],
+                'status_trait' => 'Pd',
+                'status_min' => 0.55,
+                'trusted_affinity_min' => 0.0,
+            ],
             // PR 15: Social Sensitivity + Ick + Charisma
             'social_sensitivity_enabled' => true,
             'ick_system_enabled' => true,
@@ -942,6 +956,15 @@ class RelationshipDynamics
             'hoover_enabled' => true,
             // PR 39: Director-Assigned Goals (the hooks ran them unless switched off)
             'director_goals_enabled' => true,
+            // How long a goal stays active, in PLAY hours on the NPC's play clock
+            // (_accumulated_play_gamets / GAMETS_PER_REAL_HOUR; waits, sleeps and time away never
+            // age it), by source (PR 39 plan: 1 h director, 2 h background life). The prerequest
+            // bridge of core's HERIKA_GOALS keeps its 2 h and background priority (0..1).
+            'director_goals' => [
+                'max_age_play_hours' => ['director' => 1.0, 'bgl' => 2.0],
+                'bridge_max_age_play_hours' => 2.0,
+                'bridge_priority' => 0.4,
+            ],
             // Temperament / maturity-type / trait auto-generation tables
             'temperament_autogen' => self::temperamentAutogenDefaults(),
             // Personality traits (D:\docs\reldyn-personality-traits-design.md): assignment 'read'
@@ -7457,7 +7480,7 @@ class RelationshipDynamics
 
             // ========== CHARISMA EFFECTIVENESS (PR 15) ==========
             // Apply charisma style multiplier to affinity/passion
-            $charismaStyle = $dynamics['_charisma_tracker']['detected_style'] ?? null;
+            $charismaStyle = self::charismaStyle($dynamics);
             if ($charismaStyle !== null && in_array($dimId, ['affinity', 'passion'], true)) {
                 $matForCharisma = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
                 $charismaMult = self::getCharismaEffectiveness($charismaStyle, $temperament, $matForCharisma, $dimId, $dynamics);
@@ -8237,7 +8260,7 @@ class RelationshipDynamics
             $steps .= sprintf(' ick->%+.2f', $raw);
         }
         // Charisma effectiveness (PR 15) on affinity and passion
-        $style = $dynamics['_charisma_tracker']['detected_style'] ?? null;
+        $style = self::charismaStyle($dynamics);
         if ($style !== null && in_array($signal, ['affinity', 'passion'], true)) {
             $mat = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
             $cm = self::getCharismaEffectiveness($style, $temperament, $mat, $signal, $dynamics);
@@ -8457,7 +8480,49 @@ class RelationshipDynamics
             'witnesses' => is_array($item['witnesses'] ?? null)
                 ? array_values(array_filter(array_map(fn($w) => trim((string) $w), array_filter($item['witnesses'], 'is_string')), fn($w) => $w !== ''))
                 : null,
-        ] + (($e = self::normalizeEvalExposure($item['exposure'] ?? null, $npc)) !== null ? ['exposure' => $e] : []);
+        ] + (($e = self::normalizeEvalExposure($item['exposure'] ?? null, $npc)) !== null ? ['exposure' => $e] : [])
+          + self::normalizeEvalExtraFields($item, $npc);
+    }
+
+    /** romantic_intent upper bound of the contract (RelDynEval::ROMANTIC_INTENT_MAX). */
+    const EVAL_ROMANTIC_INTENT_MAX = 3;
+
+    /**
+     * Contract v1 optional fields of decisions §8 (additive): romantic_intent (int 0..3),
+     * goal_addressed + goal_ref (bool + the shown goal's directorGoalRef), masking {flag,
+     * slipped}. Only the fields the item carries, valid, come back; an invalid one is logged
+     * and left out (the item still applies). An older item has none of them: its readers
+     * (charisma, director goal, masking) get nothing from it.
+     */
+    public static function normalizeEvalExtraFields(array $item, string $npc = ''): array
+    {
+        $out = [];
+        if (array_key_exists('romantic_intent', $item)) {
+            if (is_numeric($item['romantic_intent'])) {
+                $out['romantic_intent'] = (int) max(0, min(self::EVAL_ROMANTIC_INTENT_MAX, round(floatval($item['romantic_intent']))));
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: romantic_intent is not a number, ignored");
+            }
+        }
+        if (array_key_exists('goal_addressed', $item)) {
+            if (is_bool($item['goal_addressed']) && is_string($item['goal_ref'] ?? null) && $item['goal_ref'] !== '') {
+                $out['goal_addressed'] = $item['goal_addressed'];
+                $out['goal_ref'] = $item['goal_ref'];
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: goal_addressed needs a boolean and the goal_ref it answers, ignored");
+            }
+        }
+        if (array_key_exists('masking', $item) && $item['masking'] !== null) {
+            $m = $item['masking'];
+            if (is_array($m) && is_bool($m['flag'] ?? null) && is_bool($m['slipped'] ?? false)) {
+                if ($m['flag'] || !empty($m['slipped'])) {
+                    $out['masking'] = ['flag' => true, 'slipped' => !empty($m['slipped'])];
+                }
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: masking is not {flag, slipped} booleans, ignored");
+            }
+        }
+        return $out;
     }
 
     /**
@@ -8536,6 +8601,10 @@ class RelationshipDynamics
         }
 
         $totals = [];
+        $itemGamets = floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets();   // raw game time
+        // The reason anchor (dimensional memory): the summary cleaned of scores and named
+        // feelings once, here, so every reader (context, confrontation, diary) gets only the event
+        $anchor = $n['summary'] !== '' ? RelDynFelt::sanitizeReason($n['summary']) : null;
         foreach (self::EVAL_CONTRACT_SIGNALS as $signal => $_range) {
             $raw = $n['signals'][$signal];
             if (abs($raw) < 0.0001) {
@@ -8545,11 +8614,11 @@ class RelationshipDynamics
             $totals[$signal] = $r['actual'];
             // What the legacy path fed downstream: the reason per moved dimension (context
             // <recent_emotional_shifts>) and the dimensional memory (confrontation / diary fuel)
-            if (abs($r['actual']) >= 0.0001 && $n['summary'] !== '') {
-                $dynamics['dimensions'][$signal]['last_reason'] = $n['summary'];
+            if (abs($r['actual']) >= 0.0001 && $anchor !== null) {
+                $dynamics['dimensions'][$signal]['last_reason'] = $anchor;
                 $dynamics['dimensions'][$signal]['last_delta'] = $r['actual'];
                 $bondName = $GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player';
-                self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $n['summary'], $bondName);
+                self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $anchor, $bondName, $itemGamets);
             }
         }
         // Interaction significance for the diary's defining_moment trigger, on the legacy 1..3
@@ -8588,6 +8657,9 @@ class RelationshipDynamics
                     floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets(), $n['significance'], (string) $npcName);
             }
         }
+        // Decisions §8 fields, each read once per applied item (here, not by a request peeking
+        // at the inbox, which the eval worker has usually emptied by then)
+        self::applyEvalExtraFields((string) $npcName, $n, $dynamics, $itemGamets);
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -8596,6 +8668,41 @@ class RelationshipDynamics
             . ($feelings !== [] ? ' feelings ' . json_encode($feelings) : '')
             . " ({$n['summary']})");
         return $totals;
+    }
+
+    /**
+     * The decisions §8 eval fields of one applied item (normalized), into their readers:
+     *   romantic_intent  -> the charisma tracker (MDD 5.1: the player's style from romantic
+     *                       intent and the affinity raw signal, core points), charisma on;
+     *   goal_addressed   -> fulfils the director goal the eval was shown (goal_ref), when it is
+     *                       still the active one (PR 39), director goals on;
+     *   masking          -> the cost of a performed front (applyMaskingCost), and a slip of
+     *                       the front leaves a one-shot for the next context (MDD 11), social
+     *                       masking on.
+     */
+    public static function applyEvalExtraFields(string $npcName, array $n, array &$dynamics, float $gamets): void
+    {
+        $cfg = self::getConfig();
+        if (isset($n['romantic_intent']) && !empty($cfg['charisma_detection_enabled'] ?? true)) {
+            self::updateCharismaTracker($dynamics, intval($n['romantic_intent']), floatval($n['signals']['affinity'] ?? 0), $gamets);
+        }
+        if (($n['goal_addressed'] ?? false) === true && !empty($cfg['director_goals_enabled'])) {
+            $goal = self::getActiveDirectorGoal($dynamics);
+            if ($goal === null) {
+                self::log("[RelDyn-GOAL] {$npcName}: the eval says the goal was addressed; no goal is active any more");
+            } elseif (self::directorGoalRef($goal) !== $n['goal_ref']) {
+                self::log("[RelDyn-GOAL] {$npcName}: the eval answered for an earlier goal; the current one stays");
+            } else {
+                self::fulfillDirectorGoal($dynamics, 'eval_confirmed');
+            }
+        }
+        if (is_array($n['masking'] ?? null) && !empty($cfg['social_masking_enabled'])) {
+            self::applyMaskingCost($npcName, $dynamics);
+            if (!empty($n['masking']['slipped'])) {
+                $dynamics['_mask_slip_gamets'] = $gamets;
+                self::log("[RelDyn-MASK] {$npcName}: the front slipped (eval)");
+            }
+        }
     }
 
 
@@ -12839,18 +12946,27 @@ class RelationshipDynamics
      * sorted by abs_delta descending. When over limit the smallest/oldest
      * entry is pruned.
      *
+     * The reason is stored cleaned (RelDynFelt::sanitizeReason: the event, never its scores or
+     * named feelings), so every reader (context, confrontation, diary) gets text fit for the
+     * LLM; a reason with no event left is not stored. Stamped with the exchange's game time.
+     *
      * @param array  &$dynamics   NPC dynamics blob (by reference)
      * @param string $dimensionId Dimension ID (e.g. 'trust', 'comfort')
      * @param float  $delta       The actual delta applied (signed)
      * @param string $reason      Human-readable reason string from the eval
      * @param string|null $bondName    Bond target name (default: from GLOBALS)
+     * @param float|null  $gamets      Raw game time of the exchange (default: the current game clock)
      */
-    public static function storeDimensionalMemory(&$dynamics, $dimensionId, $delta, $reason, $bondName = null)
+    public static function storeDimensionalMemory(&$dynamics, $dimensionId, $delta, $reason, $bondName = null, ?float $gamets = null)
     {
         if ($bondName === null) {
             $bondName = trim($GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player');
         }
         if (empty($reason) || !is_string($reason) || abs($delta) < 0.0001) {
+            return;
+        }
+        $reason = RelDynFelt::sanitizeReason($reason);
+        if ($reason === null) {
             return;
         }
 
@@ -12859,7 +12975,6 @@ class RelationshipDynamics
         }
 
         // Cap reason length to prevent blob bloat
-        $reason = trim($reason);
         if (strlen($reason) > 200) {
             $reason = substr($reason, 0, 197) . '...';
         }
@@ -12869,7 +12984,7 @@ class RelationshipDynamics
             'delta'     => round($delta, 2),
             'reason'    => $reason,
             'bond'      => $bondName,
-            'ts'        => date(DATE_ATOM),
+            'gamets'    => $gamets ?? self::currentGamets(),   // raw game time
             'abs_delta' => round(abs($delta), 2),
         ];
 
@@ -12891,11 +13006,11 @@ class RelationshipDynamics
         }
 
         if (count($grouped) > $maxPerDim) {
-            // Sort by abs_delta descending; ties broken by timestamp descending (newest first)
+            // Sort by abs_delta descending; ties broken by game time descending (newest first)
             usort($grouped, function ($a, $b) {
                 $cmp = ($b['abs_delta'] ?? 0) <=> ($a['abs_delta'] ?? 0);
                 if ($cmp !== 0) return $cmp;
-                return strcmp($b['ts'] ?? '', $a['ts'] ?? '');
+                return floatval($b['gamets'] ?? 0) <=> floatval($a['gamets'] ?? 0);
             });
             $grouped = array_slice($grouped, 0, $maxPerDim);
         }
@@ -12937,7 +13052,7 @@ class RelationshipDynamics
         usort($memories, function ($a, $b) {
             $cmp = ($b['abs_delta'] ?? 0) <=> ($a['abs_delta'] ?? 0);
             if ($cmp !== 0) return $cmp;
-            return strcmp($b['ts'] ?? '', $a['ts'] ?? '');
+            return floatval($b['gamets'] ?? 0) <=> floatval($a['gamets'] ?? 0);
         });
 
         return array_slice($memories, 0, $limit);
@@ -12977,19 +13092,26 @@ class RelationshipDynamics
             return [];
         }
 
-        // Sort by abs_delta descending (biggest grievances first)
+        // Sort by abs_delta descending (biggest grievances first), newest first on a tie
         usort($candidates, function ($a, $b) {
-            return ($b['abs_delta'] ?? 0) <=> ($a['abs_delta'] ?? 0);
+            $cmp = ($b['abs_delta'] ?? 0) <=> ($a['abs_delta'] ?? 0);
+            return $cmp !== 0 ? $cmp : (floatval($b['gamets'] ?? 0) <=> floatval($a['gamets'] ?? 0));
         });
 
-        // Take top 5 and extract formatted reason strings
-        $candidates = array_slice($candidates, 0, 5);
+        // Top 5 distinct events (one exchange moves several dimensions under the same reason),
+        // cleaned: only the event reaches the LLM (an entry stored before cleaning is cleaned here)
         $fuel = [];
         foreach ($candidates as $mem) {
-            $fuel[] = $mem['reason'] ?? '';
+            $r = RelDynFelt::sanitizeReason((string) ($mem['reason'] ?? ''));
+            if ($r === null || isset($fuel[strtolower($r)])) {
+                continue;
+            }
+            $fuel[strtolower($r)] = $r;
+            if (count($fuel) >= 5) {
+                break;
+            }
         }
-
-        return array_values(array_filter($fuel, function ($r) { return $r !== ''; }));
+        return array_values($fuel);
     }
 
     /**
@@ -13001,9 +13123,10 @@ class RelationshipDynamics
      * @param string $npcName  NPC display name
      * @param string $bondName Bond target name
      * @param int    $limit    Max memories to include
+     * @param array  $exclude  reasons already in front of the LLM (the grievances line), left out
      * @return string|null  One line of prose, or null if nothing to say
      */
-    public static function buildMemoryContext($dynamics, $npcName, $bondName, $limit = 5)
+    public static function buildMemoryContext($dynamics, $npcName, $bondName, $limit = 5, array $exclude = [])
     {
         // Gate: tier >= 2 required (don't share memories with strangers)
         if (self::getContextTier($dynamics) < 2) {
@@ -13018,10 +13141,11 @@ class RelationshipDynamics
         // delta or a timestamp (felt steering, decisions 2026-09-23 §3). Reasons are the eval
         // LLM's free text: RelDynFelt::sanitizeReason keeps the event, drops scores and feelings.
         $items = [];
-        $push = function (string $reason, float $delta) use (&$items, $t, $maxChars) {
+        $skip = array_flip(array_map(fn($r) => strtolower((string) $r), $exclude));
+        $push = function (string $reason, float $delta) use (&$items, $t, $maxChars, $skip) {
             // The eval's free-text summary: what happened, never its scores or named feelings
             $reason = RelDynFelt::sanitizeReason($reason);
-            if ($reason === null) return;
+            if ($reason === null || isset($skip[strtolower($reason)])) return;
             if (strlen($reason) > $maxChars) {
                 $cut = substr($reason, 0, $maxChars);
                 $reason = rtrim(substr($cut, 0, (int) (strrpos($cut, ' ') ?: $maxChars)), ' ,;.') . '...';
@@ -13860,28 +13984,56 @@ class RelationshipDynamics
 
     // ========== DIRECTOR-ASSIGNED GOALS (PR 39) ==========
 
+    /** config 'director_goals' laid over its defaults (a stored row may lack a key). */
+    public static function directorGoalConfig(): array
+    {
+        $defaults = self::defaultConfig()['director_goals'];
+        $stored = self::configValue('director_goals');
+        return array_replace($defaults, is_array($stored) ? $stored : []);
+    }
+
+    /** Max age of a goal from $source, in play gamets (config max_age_play_hours x GAMETS_PER_REAL_HOUR). */
+    public static function directorGoalMaxAgePlayGamets(string $source, ?float $playHours = null): float
+    {
+        if ($playHours === null) {
+            $ages = (array) self::directorGoalConfig()['max_age_play_hours'];
+            $playHours = floatval($ages[$source] ?? $ages['director'] ?? 1.0);
+        }
+        return max(0.0, $playHours) * self::GAMETS_PER_REAL_HOUR;
+    }
+
+    /**
+     * Identity of one goal (its text, source and play-clock start), which the eval carries back
+     * as goal_ref so the consumer fulfils only the goal the eval was shown.
+     */
+    public static function directorGoalRef(array $goal): string
+    {
+        return substr(sha1(json_encode([trim((string) ($goal['text'] ?? '')), (string) ($goal['source'] ?? ''),
+            round(floatval($goal['created_gamets'] ?? 0), 3)])), 0, 16);
+    }
+
     /**
      * Set an active director-assigned goal for this NPC.
-     * @param array &$dynamics  The dynamics blob
-     * @param string $goalText  What the NPC should try to do
-     * @param string $source    'director' | 'bgl' | 'intrinsic'
-     * @param int $maxAgeGamets Max age in gamets before expiry (3600=~1h director, 7200=~2h bgl)
-     * @param float $priority   0.0-1.0 urgency
+     * @param array &$dynamics          The dynamics blob
+     * @param string $goalText          What the NPC should try to do
+     * @param string $source            'director' | 'bgl' | 'intrinsic'
+     * @param float|null $maxAgePlayHours Play hours on the NPC's play clock before it expires;
+     *                                  null = config director_goals.max_age_play_hours[$source]
+     * @param float $priority           0.0-1.0 urgency
      */
-    public static function setDirectorGoal(&$dynamics, $goalText, $source = 'director', $maxAgeGamets = 3600, $priority = 0.5) {
+    public static function setDirectorGoal(&$dynamics, $goalText, $source = 'director', ?float $maxAgePlayHours = null, $priority = 0.5) {
         // Expire current goal if one exists
         if (!empty($dynamics['_director_goal']) && !empty($dynamics['_director_goal']['active'])) {
             self::expireDirectorGoal($dynamics);
         }
 
         $dynamics['_director_goal'] = [
-            'text'            => trim($goalText),
-            'source'          => $source,
-            'created_at'      => time(),
-            'created_gamets'  => self::getPlayGamets($dynamics),
-            'max_age_gamets'  => $maxAgeGamets,
-            'priority'        => max(0.0, min(1.0, floatval($priority))),
-            'active'          => true,
+            'text'                 => trim($goalText),
+            'source'               => $source,
+            'created_gamets'       => self::getPlayGamets($dynamics),   // play gamets
+            'max_age_play_gamets'  => self::directorGoalMaxAgePlayGamets((string) $source, $maxAgePlayHours),
+            'priority'             => max(0.0, min(1.0, floatval($priority))),
+            'active'               => true,
         ];
 
         self::log("[RelDyn-GOAL] Set director goal ({$source}, pri={$priority}): " . substr($goalText, 0, 80));
@@ -13899,10 +14051,12 @@ class RelationshipDynamics
         $goal = $dynamics['_director_goal'] ?? null;
         if (!$goal || empty($goal['active']) || empty($goal['text'])) return null;
 
-        // Check age
+        // Age on the play clock (play gamets). A goal stored before the play-hour ages (its
+        // max_age_gamets was real seconds read as play gamets) takes its source's age.
         $currentGamets = self::getPlayGamets($dynamics);
         $goalAge = $currentGamets - floatval($goal['created_gamets'] ?? 0);
-        $maxAge = floatval($goal['max_age_gamets'] ?? 3600);
+        $maxAge = is_numeric($goal['max_age_play_gamets'] ?? null) ? floatval($goal['max_age_play_gamets'])
+            : self::directorGoalMaxAgePlayGamets((string) ($goal['source'] ?? 'director'));
 
         if ($goalAge > $maxAge) return null; // Expired but not yet cleaned up
 
@@ -15628,17 +15782,47 @@ class RelationshipDynamics
 
     // ========== SOCIAL MASKING (PR 14) ==========
 
+    /** config 'social_masking' laid over its defaults (a stored row may lack a key). */
+    public static function maskingConfig(): array
+    {
+        $defaults = self::defaultConfig()['social_masking'];
+        $stored = self::configValue('social_masking');
+        return array_replace($defaults, is_array($stored) ? $stored : []);
+    }
+
     /**
-     * Determine if masking should be active.
-     * Masking occurs when non-trusted NPCs are present.
+     * Is this NPC someone who wears the Mask at all (MDD 11: "High Status Priority +
+     * Toxic/Avoidant")? Her attachment style (the region of her two axes) is one of
+     * social_masking.attachment_styles and her status trait reaches status_min. Who is
+     * watching is shouldMask's question.
+     */
+    public static function wearsMask(array $dynamics): bool
+    {
+        $mc = self::maskingConfig();
+        $style = self::getAttachmentStyle($dynamics);
+        if (!in_array($style, array_map('strval', (array) $mc['attachment_styles']), true)) {
+            return false;
+        }
+        $x = RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $dynamics);
+        $trait = (string) $mc['status_trait'];
+        return is_array($x) && isset($x[$trait]) && floatval($x[$trait]) >= floatval($mc['status_min']);
+    }
+
+    /**
+     * Determine if masking should be active: social masking on, an NPC who wears the Mask
+     * (wearsMask), composed enough to hold one (maturity at least social_masking.maturity_min)
+     * and someone present she does not trust (core's CACHE_PEOPLE, set before the context
+     * hooks, never before prerequest).
      */
     public static function shouldMask(string $npcName, array $dynamics): bool
     {
         $config = self::getConfig();
         if (empty($config['social_masking_enabled'])) return false;
+        $mc = self::maskingConfig();
 
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
-        if ($maturity < 25) return false;
+        if ($maturity < floatval($mc['maturity_min'])) return false;
+        if (!self::wearsMask($dynamics)) return false;
 
         $cachePeople = $GLOBALS['CACHE_PEOPLE'] ?? '';
         if (empty(trim($cachePeople))) return false;
@@ -15664,8 +15848,7 @@ class RelationshipDynamics
                 $allTrusted = false;
                 break;
             }
-            $bondAff = ($bond['aff'] + 100) / 2.0;
-            if ($bondAff < 50) {
+            if (floatval($bond['aff']) < floatval($mc['trusted_affinity_min'])) {   // core affinity -100..100
                 $allTrusted = false;
                 break;
             }
@@ -15734,18 +15917,7 @@ class RelationshipDynamics
         // Felt steering (decisions 2026-09-23 §3): what shows and what leaks, never the numbers.
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
         $t = (array) RelDynFelt::config()['text']['mask'];
-
-        // What they are hiding: the true band of whichever of comfort / resentment / warmth sits
-        // furthest from what they perform.
-        $true = [];
-        foreach (['resentment', 'comfort', 'warmth'] as $dim) {
-            $x = floatval($dynamics['dimensions'][$dim]['x'] ?? ($dim === 'resentment' ? 0 : 50));
-            $gap = abs($x - floatval($performedState[$dim] ?? $x));
-            $band = self::getDimensionBand($dim, $x);
-            if ($band !== null && trim((string) $band['keywords']) !== '') $true[$dim] = [$gap, (string) $band['keywords']];
-        }
-        uasort($true, fn($a, $b) => $b[0] <=> $a[0]);
-        $hidden = $true !== [] ? reset($true)[1] : 'more than they show';
+        $hidden = self::maskHiddenText($dynamics, $performedState);
 
         $cachePeople = $GLOBALS['CACHE_PEOPLE'] ?? '';
         $playerName = trim($GLOBALS['PLAYER_NAME'] ?? 'Player');
@@ -15760,23 +15932,62 @@ class RelationshipDynamics
     }
 
     /**
-     * Generate mask-drop context when transitioning from public to private.
+     * What the front hides, in words (felt steering, the eval's state summary): the true band
+     * keywords of whichever of comfort / resentment / warmth sits furthest from what is
+     * performed; the mask text's fallback when none of them has keywords.
+     */
+    public static function maskHiddenText(array $dynamics, array $performedState): string
+    {
+        $true = [];
+        foreach (['resentment', 'comfort', 'warmth'] as $dim) {
+            $x = floatval($dynamics['dimensions'][$dim]['x'] ?? ($dim === 'resentment' ? 0 : 50));
+            $gap = abs($x - floatval($performedState[$dim] ?? $x));
+            $band = self::getDimensionBand($dim, $x);
+            if ($band !== null && trim((string) $band['keywords']) !== '') $true[$dim] = [$gap, (string) $band['keywords']];
+        }
+        uasort($true, fn($a, $b) => $b[0] <=> $a[0]);
+        return $true !== [] ? reset($true)[1] : (string) (RelDynFelt::config()['text']['mask']['hidden_default'] ?? 'more than they show');
+    }
+
+    /**
+     * This turn's mask (the context hook, after core set CACHE_PEOPLE): is she masking now,
+     * did the mask just drop (masking last turn, alone with the player now), and did the eval
+     * see the front slip since (the one-shot applyEvalExtraFields left). Records the turn's
+     * state for the next one and for the eval (_was_masking, _performed_state_cache).
+     *
+     * @return array{masking: bool, performed: ?array, drop: bool, slip: bool, changed: bool}
+     */
+    public static function maskingTurn(string $npcName, array &$dynamics): array
+    {
+        $enabled = !empty(self::getConfig()['social_masking_enabled']);
+        $was = $enabled && !empty($dynamics['_was_masking']);   // switched off: no drop to show
+        $is = self::shouldMask($npcName, $dynamics);
+        $performed = $is ? self::calculatePerformedState($dynamics) : null;
+        $slip = $enabled && is_numeric($dynamics['_mask_slip_gamets'] ?? null);
+        if (!$enabled && (!empty($dynamics['_was_masking']) || isset($dynamics['_mask_slip_gamets']))) {
+            $dynamics['_was_masking'] = false;
+            unset($dynamics['_mask_slip_gamets']);
+            return ['masking' => false, 'performed' => null, 'drop' => false, 'slip' => false, 'changed' => true];
+        }
+        $changed = $was !== $is || ($dynamics['_performed_state_cache'] ?? null) !== $performed || $slip;
+        $dynamics['_was_masking'] = $is;
+        $dynamics['_performed_state_cache'] = $performed;
+        unset($dynamics['_mask_slip_gamets']);
+        if ($was !== $is) {
+            self::log("[RelDyn-MASK] {$npcName}: " . ($is ? 'puts on the mask (an untrusted audience)' : 'the mask drops (no audience)'));
+        }
+        return ['masking' => $is, 'performed' => $performed, 'drop' => $was && !$is, 'slip' => $slip, 'changed' => $changed];
+    }
+
+    /**
+     * Mask-drop context when transitioning from public to private (maskingTurn's drop), from
+     * the felt text: composed (maturity at least 45) or deflated.
      */
     public static function generateMaskDropContext(string $npcName, array $dynamics): ?string
     {
-        $wasMasking = !empty($dynamics['_was_masking']);
-        $isMasking = self::shouldMask($npcName, $dynamics);
-
-        if ($wasMasking && !$isMasking) {
-            $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
-            if ($maturity >= 45) {
-                return "{$npcName} lets the mask fall now that they are alone with the player. The composure dissolves into something more honest. Whatever they show now is real.";
-            } else {
-                return "{$npcName} visibly deflates now that the audience is gone. The effort of pretending is written on their face.";
-            }
-        }
-
-        return null;
+        $t = (array) RelDynFelt::config()['text']['mask'];
+        $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
+        return strtr((string) $t[$maturity >= 45 ? 'drop_composed' : 'drop_deflated'], ['{NAME}' => $npcName]);
     }
 
     // ========== END SOCIAL MASKING (PR 14) ==========
@@ -15943,7 +16154,7 @@ class RelationshipDynamics
         }
 
         // Catalyst archetype lowers threshold by 30% for mature NPCs
-        $charismaStyle = $dynamics['_charisma_tracker']['detected_style'] ?? null;
+        $charismaStyle = self::charismaStyle($dynamics);
         if ($charismaStyle === 'catalyst' && $maturity > 60) {
             $threshold *= 0.7;
             self::log("[ICK] Catalyst style detected + high maturity — threshold reduced 30%");
@@ -16134,24 +16345,31 @@ class RelationshipDynamics
     /**
      * Update the charisma style tracker with latest interaction data.
      *
-     * @param array &$dynamics      NPC dynamics
-     * @param int   $romanticIntent romantic_intent from eval (0-3)
-     * @param float $affinityDelta  affinity_delta from eval
+     * Fed once per applied eval item that carries romantic_intent (applyEvalExtraFields): an
+     * exchange nobody scored says nothing about the player's style.
+     *
+     * @param array      &$dynamics      NPC dynamics
+     * @param int        $romanticIntent romantic_intent from eval (0-3)
+     * @param float      $affinityDelta  the eval's raw affinity signal (core points, -30..30)
+     * @param float|null $gamets         raw game time of the exchange (stamps a detection)
      */
-    public static function updateCharismaTracker(&$dynamics, $romanticIntent, $affinityDelta)
+    public static function updateCharismaTracker(&$dynamics, $romanticIntent, $affinityDelta, ?float $gamets = null)
     {
         $cfg = self::getConfig();
         if (empty($cfg['charisma_detection_enabled'] ?? true)) {
             return;
         }
 
-        if (!isset($dynamics['_charisma_tracker']) || !is_array($dynamics['_charisma_tracker'])) {
+        // A tracker the pre-eval heuristic filled (intent always 0, so every player read as the
+        // Rock) is not evidence: it starts over
+        if (!is_array($dynamics['_charisma_tracker'] ?? null) || ($dynamics['_charisma_tracker']['source'] ?? null) !== 'eval') {
             $dynamics['_charisma_tracker'] = [
+                'source' => 'eval',
                 'recent_intents' => [],
                 'recent_deltas'  => [],
                 'detected_style' => null,
                 'style_confidence' => 0.0,
-                'style_detected_at' => 0,
+                'style_detected_gamets' => 0.0,
             ];
         }
 
@@ -16175,9 +16393,24 @@ class RelationshipDynamics
             if ($detected !== null) {
                 $tracker['detected_style'] = $detected['style'];
                 $tracker['style_confidence'] = $detected['confidence'];
-                $tracker['style_detected_at'] = time();
+                $tracker['style_detected_gamets'] = $gamets ?? self::currentGamets();   // raw game time
+                unset($tracker['style_detected_at']);   // the old wall-clock stamp
             }
         }
+    }
+
+    /**
+     * The player's detected charisma style (rock / catalyst / charmer) with this NPC, or null:
+     * only a tracker fed by eval items counts (updateCharismaTracker).
+     */
+    public static function charismaStyle(array $dynamics): ?string
+    {
+        $t = $dynamics['_charisma_tracker'] ?? null;
+        if (!is_array($t) || ($t['source'] ?? null) !== 'eval') {
+            return null;
+        }
+        $style = $t['detected_style'] ?? null;
+        return is_string($style) && isset(self::CHARISMA_EFFECTIVENESS[$style]) ? $style : null;
     }
 
     /**
@@ -16282,13 +16515,13 @@ class RelationshipDynamics
      */
     public static function getCharismaContext($dynamics, $npcName)
     {
-        $tracker = $dynamics['_charisma_tracker'] ?? null;
-        if (empty($tracker) || empty($tracker['detected_style'])) {
+        $style = self::charismaStyle($dynamics);
+        if ($style === null) {
             return null;
         }
+        $tracker = $dynamics['_charisma_tracker'];
 
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
-        $style = $tracker['detected_style'];
         $confidence = floatval($tracker['style_confidence']);
 
         // Only high-maturity NPCs become aware of the pattern

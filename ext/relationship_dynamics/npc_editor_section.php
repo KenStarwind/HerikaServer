@@ -1385,8 +1385,12 @@ if ($rdUiPos !== false) {
                     <div style="display:flex; gap:16px; flex-wrap:wrap;">
                         <span style="color:#4ade80; font-size:0.72em;">Source: <strong><?= htmlspecialchars($rdDirectorGoal['source'] ?? 'unknown') ?></strong></span>
                         <span style="color:#4ade80; font-size:0.72em;">Priority: <strong><?= number_format(floatval($rdDirectorGoal['priority'] ?? 0.5), 2) ?></strong></span>
-                        <span style="color:#888; font-size:0.72em;">Created: <?= date('Y-m-d H:i', intval($rdDirectorGoal['created_at'] ?? 0)) ?></span>
-                        <span style="color:#888; font-size:0.72em;">Max age: <?= number_format(floatval($rdDirectorGoal['max_age_gamets'] ?? 3600)) ?> gamets</span>
+                        <?php
+                        $rdGoalAgeMin = (RelationshipDynamics::getPlayGamets($rdDynamics) - floatval($rdDirectorGoal['created_gamets'] ?? 0)) / RelationshipDynamics::GAMETS_PER_REAL_SECOND / 60.0;
+                        $rdGoalMaxMin = (is_numeric($rdDirectorGoal['max_age_play_gamets'] ?? null) ? floatval($rdDirectorGoal['max_age_play_gamets'])
+                            : RelationshipDynamics::directorGoalMaxAgePlayGamets((string) ($rdDirectorGoal['source'] ?? 'director'))) / RelationshipDynamics::GAMETS_PER_REAL_SECOND / 60.0;
+                        ?>
+                        <span style="color:#888; font-size:0.72em;">Age: <?= number_format(max(0.0, $rdGoalAgeMin), 1) ?> of <?= number_format($rdGoalMaxMin, 0) ?> play minutes</span>
                     </div>
                 </div>
                 <?php else: ?>

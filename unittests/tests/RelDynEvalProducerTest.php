@@ -135,6 +135,7 @@ final class RelDynEvalProducerTest extends TestCase
             'significance' => 0.5,
             'positive_interaction' => true,
             'summary' => 'Grateful for the pelt; likes being noticed.',
+            'romantic_intent' => 0,   // decisions §8: always asked; absent = none
         ], $item);
     }
 
