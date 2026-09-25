@@ -309,41 +309,74 @@ final class RelDynTraitPhase3Test extends TestCase
         $cfg = RelationshipDynamics::defaultConfig()['bleedout_response'];
         $this->assertFalse(RelDynTraits::hasColumn('bleedout'), 'no longer a preset table');
         $this->assertFalse(defined('RelationshipDynamics::TEMPERAMENT_BLEEDOUT_DRAIN'));
-        $fall = function (string $p) {
-            $d = self::preset($p);
+        $fall = function (string $p, array $extra = []) {
+            $d = self::preset($p, $extra);
             return RelationshipDynamics::bleedoutResponse($d);
         };
-        // the formula at a point
+        // the formula at a point, with the NPC's own attachment axes
         foreach (RelDynTraits::points() as $p => $x) {
-            $r = $fall($p);
-            $fight = $x['C'] * $x['Pd'] * (1 - $x['D']);
-            $fear = $x['L'] * (1 - $x['C']);
-            $this->assertEqualsWithDelta($fight - $fear, $r['net'], 1e-12, $p);
-            $want = max(-5.0, min(5.0, 4.25 * ($fight - $fear)));
+            $d = self::preset($p);
+            $r = RelationshipDynamics::bleedoutResponse($d);
+            $ax = RelationshipDynamics::getAttachmentAxes($d);
+            $rage = $x['C'] * $x['Rs'] * $x['L'] * (1 - $x['D']);
+            $panic = (1 - $x['C']) * max($x['L'], $ax['anxiety']);
+            $hum = RelDynTraits::egocentric($x['Pd']);
+            $shame = RelDynTraits::smoothstep($ax['avoidance'], 0.35, 0.65);
+            $net = 2.0 * $rage - (1.0 * $panic + 0.3 * $hum + 0.4 * $shame);
+            $this->assertEqualsWithDelta($net, $r['net'], 1e-12, $p);
+            $want = max(-5.0, min(5.0, 5.22 * $net));
             $this->assertEqualsWithDelta(abs($want) < 0.05 ? 0.0 : $want, $r['passion'], 1e-12, "{$p} passion");
-            $this->assertEqualsWithDelta(40.0 * ($fight - $fear), $r['valence'], 1e-12, "{$p} valence: the sign of fight - fear");
+            $this->assertEqualsWithDelta(max(-100.0, 80.0 * $net), $r['valence'], 1e-12, "{$p} valence: the sign of fight - fear");
             $this->assertEqualsWithDelta(20.0 * (0.5 + $x['L']), $r['arousal'], 1e-12, "{$p} arousal spike");
         }
-        // MDD 1.3 combat notes: Bold / Defiant fight harder (passion and valence UP; Bold was -0.3),
-        // Anxious panics (the MDD's -3.0 kept by calibration), Guarded / Gentle go negative
-        $this->assertGreaterThan(0.0, $fall('Bold')['passion'], 'Bold: passion goes up (the MDD), not -0.3');
-        $this->assertGreaterThan(0.0, $fall('Defiant')['passion']);
-        $this->assertGreaterThan(0.0, $fall('Defiant')['valence']);
+        $names = array_keys(RelDynTraits::points());
+        $why = json_encode(array_combine($names, array_map(fn($p) => [round($fall($p)['passion'], 2), round($fall($p)['valence'], 1)], $names)));
+        // MDD 1.3 combat notes, one by one:
+        // "Bold / Defiant: Bleedout triggers RAGE, not fear. Arousal valence flips positive. Passion goes UP."
+        foreach (['Bold', 'Defiant'] as $p) {
+            $this->assertGreaterThan(0.3, $fall($p)['passion'], "{$p}: passion goes up: {$why}");
+            $this->assertGreaterThan(5.0, $fall($p)['valence'], "{$p}: valence flips positive: {$why}");
+        }
+        // they are the only ones who fight: every other preset falls (Independent no longer
+        // "fights harder" than Bold and Defiant, Proud no longer gains)
+        foreach (array_diff($names, ['Bold', 'Defiant']) as $p) {
+            $this->assertLessThan(0.0, $fall($p)['net'], "{$p}: not a fighter: {$why}");
+        }
+        // "Guarded / Gentle: Bleedout is existential. Deep negative-valence spike." (as deep as an injury, -20)
+        foreach (['Guarded', 'Gentle'] as $p) $this->assertLessThanOrEqual(-19.5, $fall($p)['valence'], "{$p}: {$why}");
+        // "Anxious: Bleedout triggers abandonment terror. Massive bonding-flavored panic." (the MDD's -3.0 kept)
         $this->assertEqualsWithDelta(-3.0, $fall('Anxious')['passion'], 0.01);
-        $this->assertLessThan(-20.0, $fall('Anxious')['valence'], 'abandonment panic');
-        $this->assertLessThan(0.0, $fall('Guarded')['valence']);
-        $this->assertLessThan(0.0, $fall('Gentle')['valence']);
-        $this->assertEqualsWithDelta(-0.5, $fall('Stoic')['passion'], 0.01, 'Stoic barely registers, as before');
+        $this->assertLessThan(-40.0, $fall('Anxious')['valence'], 'abandonment panic');
+        // "Independent / Stoic: Annoyed at self for being vulnerable. Minimal spike, self-directed."
+        foreach (['Independent', 'Stoic'] as $p) {
+            $this->assertLessThan(0.0, $fall($p)['valence'], "{$p}: self-directed, not rage");
+            $this->assertGreaterThan(-10.0, $fall($p)['valence'], "{$p}: minimal: {$why}");
+            $this->assertLessThan(0.3 * abs($fall('Anxious')['valence']), abs($fall($p)['valence']), $p);
+            $this->assertGreaterThan(abs($fall($p)['valence']) * 2.0, abs($fall('Guarded')['valence']), "{$p} vs Guarded: minimal vs deep");
+        }
+        $this->assertEqualsWithDelta(-0.5, $fall('Stoic')['passion'], 0.1, 'Stoic barely registers, as before');
+        // the old table's Proud: the humiliation of helplessness drains (it was -2.0)
+        $this->assertLessThan(-1.5, $fall('Proud')['passion'], $why);
+        // MDD bleedout section, "Anxious attachment: abandonment terror": the anxiety axis deepens the fall
+        $secure = $fall('Romantic', self::style('secure'));
+        $anxious = $fall('Romantic', self::style('anxious'));
+        $this->assertLessThan($secure['valence'] - 10.0, $anxious['valence'], 'an anxious attachment panics');
+        $this->assertLessThan($secure['passion'], $anxious['passion']);
+        // "Avoidant: pulls away even while down ... ashamed of needing help"
+        $this->assertLessThan($secure['valence'] - 10.0, $fall('Romantic', self::style('avoidant'))['valence'], 'the avoidant fall is shame');
         // arousal: every fall is a spike, the reactive the most
         $this->assertGreaterThan($fall('Stoic')['arousal'], $fall('Anxious')['arousal']);
         $this->assertEqualsWithDelta(10.0, $fall('Independent')['arousal'], 1e-9, 'L 0: the smallest spike');
 
-        // the dead band: a near-balanced fall moves no passion (valence and arousal still move)
-        $d = self::at(['confidence' => 0.5, 'pride' => 0.5, 'restraint' => 0.5, 'reactivity' => 0.25]);   // fight .125, fear .125
+        // the dead band: a near-balanced fall (rage 2 x .5 x .64 x .4 x .8 against panic .5 x .4)
+        // moves no passion; its valence and arousal still move
+        $d = self::at(['confidence' => 0.5, 'pride' => 0.5, 'restraint' => 0.2, 'resilience' => 0.64, 'reactivity' => 0.4],
+            ['profile_overrides' => ['attachment_axes' => ['anxiety' => 0.1, 'avoidance' => 0.1]]]);
         $r = RelationshipDynamics::bleedoutResponse($d);
-        $this->assertEqualsWithDelta(0.0, $r['net'], 1e-12);
+        $this->assertEqualsWithDelta(0.0048, $r['net'], 1e-9);
         $this->assertSame(0.0, $r['passion']);
-        $this->assertGreaterThan(0.0, $r['arousal']);
+        $this->assertGreaterThan(0.0, $r['valence']);
+        $this->assertEqualsWithDelta(18.0, $r['arousal'], 1e-9);
 
         // applied: arousal and valence through applyDelta with Y 1 (no second trait scaling)
         $d = self::preset('Anxious');
@@ -355,11 +388,18 @@ final class RelDynTraitPhase3Test extends TestCase
         $this->assertEqualsWithDelta($r['applied']['arousal'], floatval($d['dimensions']['arousal']['x']) - $a0, 1e-3);
         $this->assertEqualsWithDelta($r['applied']['valence'], floatval($d['dimensions']['valence']['x']) - $v0, 1e-3);
 
-        // Ashe (her own vector): a mild negative fall, no panic
-        $ashe = self::at(self::asheVector());
+        // Ashe (her own vector, her avoidant-leaning axes, decisions §12): MDD "Guarded / Scholar
+        // (Ashe): Bleedout is existential ... Deep negative-valence spike". Not rage, and far below
+        // the Stoic preset she sits nearest to: her avoidance is the shame of needing help
+        $ashe = self::at(self::asheVector(), ['profile_overrides' => ['attachment_axes' => ['anxiety' => 0.3, 'avoidance' => 0.5]]]);
         $ra = RelationshipDynamics::bleedoutResponse($ashe);
         $this->assertLessThan(0.0, $ra['net']);
-        $this->assertGreaterThan(-1.0, $ra['passion']);
+        $this->assertLessThan(-15.0, $ra['valence'], json_encode($ra));
+        $this->assertLessThan($fall('Stoic')['valence'] - 5.0, $ra['valence'], 'deeper than the Stoic preset');
+        $this->assertGreaterThan($fall('Anxious')['valence'], $ra['valence'], 'shame, not abandonment panic');
+        // earned security (decisions §12): as her avoidance comes down, so does the shame
+        $earned = self::at(self::asheVector(), ['profile_overrides' => ['attachment_axes' => ['anxiety' => 0.3, 'avoidance' => 0.3]]]);
+        $this->assertGreaterThan($ra['valence'] + 10.0, RelationshipDynamics::bleedoutResponse($earned)['valence']);
 
         // no vector (inferred_temperament null): today's -1.5 drain, nothing else
         $n = RelationshipDynamics::migrateDimensions(RelationshipDynamics::defaultDynamics());

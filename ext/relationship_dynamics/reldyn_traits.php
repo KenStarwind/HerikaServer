@@ -390,25 +390,48 @@ final class RelDynTraits
     }
 
     /**
-     * A2 redesign (phase 3; design §2.5, MDD 1.3 combat notes): the fall of bleedout from traits.
-     * fight = C Pd (1 - D) (rage: confident, proud, unrestrained; Bold / Defiant "fight harder"),
-     * fear = L (1 - C) (panic: reactive and unsure; Anxious "abandonment terror"), net = fight -
-     * fear (unitless). passion = passion_per_net x net (passion points, clamp 'bleedout'), valence
-     * = valence_per_net x net (valence points, clamped -100..100; its sign is sign(fight - fear)),
-     * arousal = arousal_base x (0.5 + L) (arousal points, clamped 0..100). $cfg: config
-     * bleedout_response. Pure; the dead band and the routes are the consumer's.
+     * A2 redesign (phase 3; design §2.5, MDD 1.3 combat notes and the MDD bleedout section): the
+     * fall of bleedout from traits and attachment. Every fall is an arousal spike; who is falling
+     * decides which way the valence goes (the MDD's horseshoe). Four terms, each an MDD note:
+     *   rage        = C Rs L (1 - D)             Bold / Defiant / "Bold / Warrior (Aela)": RAGE,
+     *                 valence flips positive, passion UP. Confident, not brittle (resists
+     *                 collapse), reactive (the heat of the spike) and unrestrained. A glacier
+     *                 (L 0, Independent) has no heat to turn outward.
+     *   panic       = (1 - C) max(L, anxiety)    Anxious / anxious attachment: abandonment terror;
+     *                 Guarded / Gentle: existential, vulnerability exposed. Unsure, and reactive
+     *                 or anxiously attached (attachment anxiety, decisions §12 axes).
+     *   humiliation = egocentric(Pd)             the proud: the humiliation of helplessness
+     *   shame       = smoothstep(avoidance)      Avoidant: pulls away even while down, ashamed of
+     *                 needing help (falls as avoidance comes down with earned trust).
+     * fight = rage x rage_weight; fear = panic x panic_weight + humiliation x humiliation_weight +
+     * shame x shame_weight; net = fight - fear (unitless). passion = passion_per_net x net
+     * (passion points, clamp 'bleedout'); valence = valence_per_net x net (valence points,
+     * clamped -100..100; its sign is sign(fight - fear)); arousal = arousal_base x (0.5 + L)
+     * (arousal points, clamped 0..100). $attachment: ['anxiety', 'avoidance'] (0..1; absent =
+     * 0). $cfg: config bleedout_response. Pure; the dead band and the routes are the consumer's.
      */
-    public static function bleedout(array $x, array $cfg): array
+    public static function bleedout(array $x, array $cfg, array $attachment = []): array
     {
         $c = floatval($x['C'] ?? 0.5);
-        $fight = $c * floatval($x['Pd'] ?? 0.5) * (1.0 - floatval($x['D'] ?? 0.5));
-        $fear = floatval($x['L'] ?? 0.5) * (1.0 - $c);
+        $l = floatval($x['L'] ?? 0.5);
+        $anxiety = max(0.0, min(1.0, floatval($attachment['anxiety'] ?? 0.0)));
+        $avoidance = max(0.0, min(1.0, floatval($attachment['avoidance'] ?? 0.0)));
+        $band = (array) ($cfg['shame_avoidance'] ?? [0.35, 0.65]);
+        $terms = [
+            'rage'        => $c * floatval($x['Rs'] ?? 0.5) * $l * (1.0 - floatval($x['D'] ?? 0.5)),
+            'panic'       => (1.0 - $c) * max($l, $anxiety),
+            'humiliation' => self::egocentric(floatval($x['Pd'] ?? 0.5)),
+            'shame'       => self::smoothstep($avoidance, floatval($band[0] ?? 0.35), floatval($band[1] ?? 0.65)),
+        ];
+        $fight = floatval($cfg['rage_weight']) * $terms['rage'];
+        $fear = floatval($cfg['panic_weight']) * $terms['panic'] + floatval($cfg['humiliation_weight']) * $terms['humiliation']
+            + floatval($cfg['shame_weight']) * $terms['shame'];
         $net = $fight - $fear;
         return [
-            'fight' => $fight, 'fear' => $fear, 'net' => $net,
+            'fight' => $fight, 'fear' => $fear, 'net' => $net, 'terms' => $terms,
             'passion' => self::clampUnit(floatval($cfg['passion_per_net']) * $net, 'bleedout'),
             'valence' => max(-100.0, min(100.0, floatval($cfg['valence_per_net']) * $net)),
-            'arousal' => max(0.0, min(100.0, floatval($cfg['arousal_base']) * (0.5 + floatval($x['L'] ?? 0.5)))),
+            'arousal' => max(0.0, min(100.0, floatval($cfg['arousal_base']) * (0.5 + $l))),
         ];
     }
 

@@ -989,16 +989,28 @@ class RelationshipDynamics
             'passion_absence_grace_game_hours' => 24,
             'passion_absence_fade_per_game_day' => 3.0,
             'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
-            // The fall of bleedout (A2, traits phase 3; design §2.5, MDD 1.3 combat notes): from the
-            // NPC's traits, net = fight C Pd (1 - D) - fear L (1 - C) (unitless, about -0.8..+0.3).
+            // The fall of bleedout (A2, traits phase 3; design §2.5, MDD 1.3 combat notes and the MDD
+            // bleedout section; RelDynTraits::bleedout): net = fight - fear (unitless), with
+            //   fight = rage_weight x C Rs L (1 - D)                      (Bold / Defiant / Aela: RAGE)
+            //   fear  = panic_weight x (1 - C) max(L, attachment anxiety)  (Anxious terror; Guarded /
+            //           Gentle existential) + humiliation_weight x egocentric(Pd) (the proud) +
+            //           shame_weight x smoothstep(avoidance; shame_avoidance) (avoidant: ashamed of
+            //           needing help)
             //   passion = passion_per_net x net (passion points, clamped -5..+5; |passion| below
             //             dead_band does nothing): a positive net fights harder (gainPassion, the
             //             attraction route), a negative one drains (setPassion)
             //   valence = valence_per_net x net (valence points): the sign of fight - fear
             //   arousal = arousal_base x (0.5 + L) (arousal points): every fall is a spike
-            // passion_per_net 4.25 keeps the Anxious preset's MDD panic (-3.0 passion points).
+            // Calibration (Serene, for the MDD notes): passion_per_net 5.22 keeps the Anxious preset's
+            // MDD panic (-3.0 passion points); valence_per_net 80 puts the Guarded and Gentle presets'
+            // "deep negative-valence spike" at the injured spike (-20 valence points) while the
+            // Independent preset stays minimal (-3); rage_weight 2 makes the Bold and Defiant presets
+            // fight (passion up); humiliation_weight 0.3 keeps the Proud preset's drain near its old
+            // -2.0; shame_weight 0.4 is the avoidant fall.
             // No trait vector: passion no_vector_passion, no valence or arousal (today's drain).
-            'bleedout_response' => ['passion_per_net' => 4.25, 'valence_per_net' => 40.0, 'arousal_base' => 20.0,
+            'bleedout_response' => ['rage_weight' => 2.0, 'panic_weight' => 1.0, 'humiliation_weight' => 0.3,
+                                    'shame_weight' => 0.4, 'shame_avoidance' => [0.35, 0.65],
+                                    'passion_per_net' => 5.22, 'valence_per_net' => 80.0, 'arousal_base' => 20.0,
                                     'dead_band' => 0.05, 'no_vector_passion' => -1.5],
             // Warmth fades with absence too (decisions §2, rulings §8): after
             // warmth_absence_grace_game_hours x the NPC's neglect grace_mult without contact,
@@ -3842,7 +3854,7 @@ class RelationshipDynamics
 
     /**
      * The fall of bleedout for this NPC (A2 redesign, traits phase 3): config bleedout_response
-     * at the NPC's own trait vector (RelDynTraits::bleedout). With $apply, the arousal spike and
+     * at the NPC's own trait vector and attachment axes (RelDynTraits::bleedout). With $apply, the arousal spike and
      * the valence (sign of fight - fear) go through applyDelta (Y overridden to 1: the traits
      * already scale them, the plasticity table must not again); passion is returned for the
      * caller's route (gainPassion when positive, a drain when negative, nothing inside the dead
@@ -3860,7 +3872,7 @@ class RelationshipDynamics
             return ['passion' => floatval($cfg['no_vector_passion']), 'valence' => 0.0, 'arousal' => 0.0,
                     'applied' => ['valence' => 0.0, 'arousal' => 0.0], 'fight' => null, 'fear' => null, 'net' => null, 'vector' => false];
         }
-        $r = RelDynTraits::bleedout($x, $cfg);
+        $r = RelDynTraits::bleedout($x, $cfg, self::getAttachmentAxes($dynamics));
         if (abs($r['passion']) < floatval($cfg['dead_band'])) $r['passion'] = 0.0;
         $r['applied'] = ['valence' => 0.0, 'arousal' => 0.0];
         if ($apply) {

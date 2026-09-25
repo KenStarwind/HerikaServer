@@ -202,6 +202,12 @@ if ($isCombatEvent || empty($npcName) || $npcName === 'The Narrator') {
                 RelationshipDynamics::saveDynamics($combatNpc, $dynamics);
                 $witnessTag = $isWitness ? ' [WITNESS 0.5x]' : '';
                 RelationshipDynamics::log("COMBAT EVENT: {$combatNpc} type={$reqType} LL={$combatLL} gain=" . round($gain, 2) . " passion=" . round($dynamics['passion'], 2) . " source=" . ($combatCtx['source'] ?? 'basic') . $witnessTag);
+            } elseif ($combatLL === 'combat_bleedout' && ($fall['applied']['valence'] != 0.0 || $fall['applied']['arousal'] != 0.0)) {
+                // Inside the dead band the fall moves no passion, but its arousal spike and valence
+                // were applied to $dynamics above: keep them
+                RelationshipDynamics::saveDynamics($combatNpc, $dynamics);
+                RelationshipDynamics::log("COMBAT EVENT: {$combatNpc} type={$reqType} LL={$combatLL} passion unchanged (dead band); valence="
+                    . round($fall['applied']['valence'], 2) . " arousal=" . round($fall['applied']['arousal'], 2));
             }
         }
 

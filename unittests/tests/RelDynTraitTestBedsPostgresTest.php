@@ -514,10 +514,13 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
     }
 
     /**
-     * Phase 3, bleedout redesign (design §2.5): each bed falls in combat (a core 'bleedout'
-     * event through the real postrequest hook). The fall is who she is: Aela, confident and
-     * proud, fights harder (valence up); Muiri, reactive and unsure, panics (valence and passion
-     * down, the biggest spike); every fall is an arousal spike.
+     * Phase 3, bleedout redesign (design §2.5, MDD 1.3 combat notes and the MDD bleedout
+     * section): each bed falls in combat (a core 'bleedout' event through the real postrequest
+     * hook). The fall is who she is: Aela ("Bold / Warrior (Aela): RAGE ... passion goes UP"),
+     * confident and not brittle, fights harder (valence up), the only one who does; Muiri,
+     * reactive and unsure, panics (the largest panic, the biggest spike); Ashe ("Guarded /
+     * Scholar (Ashe) ... Deep negative-valence spike") falls deepest: her avoidance is the
+     * shame of needing help; every fall is an arousal spike.
      */
     public function testPhaseThreeBleedoutIsWhoSheIsOnTheFourBeds(): void
     {
@@ -551,14 +554,63 @@ final class RelDynTraitTestBedsPostgresTest extends TestCase
                 $this->assertLessThan(RelationshipDynamics::getPassion($before[$npc]) + 1e-9, RelationshipDynamics::getPassion($after[$npc]) + 1e-9, "{$npc}: drained");
             }
         }
-        $this->assertGreaterThan(0.0, $fall['Aela the Huntress']['net'], 'Aela fights harder');
-        $this->assertLessThan(0.0, $fall['Muiri']['net'], 'Muiri panics');
+        $why = json_encode(array_map(fn($f) => ['net' => round($f['net'], 3), 'valence' => round($f['valence'], 1)] + array_map(fn($t) => round($t, 3), $f['terms']), $fall));
+        $this->assertGreaterThan(0.0, $fall['Aela the Huntress']['net'], 'Aela fights harder: ' . $why);
+        foreach (['Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) $this->assertLessThan(0.0, $fall[$npc]['net'], "{$npc}: not a fighter: {$why}");
         $nets = array_map(fn($f) => $f['net'], $fall);
         asort($nets);
-        $this->assertSame('Muiri', array_key_first($nets), 'the deepest fear');
+        $this->assertSame('Ashe', array_key_first($nets), 'the deepest fall (existential): ' . $why);
+        $this->assertLessThan(-15.0, $fall['Ashe']['valence'], 'a deep negative-valence spike: ' . $why);
+        $this->assertGreaterThan(0.1, $fall['Ashe']['terms']['shame'], 'hers is the shame of needing help: ' . $why);
         $this->assertSame('Aela the Huntress', array_key_last($nets), 'the most fight');
+        $panic = array_map(fn($f) => $f['terms']['panic'], $fall);
+        arsort($panic);
+        $this->assertSame('Muiri', array_key_first($panic), 'the most panic: ' . $why);
+        $this->assertLessThan(0.0, $fall['Muiri']['valence'], 'Muiri panics');
         $log = (string) file_get_contents($this->errorLog) . (string) @file_get_contents(sys_get_temp_dir() . '/reldyn_trait_beds_test.log');
         $this->assertStringContainsString('Bleedout: Muiri fight=', $log);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * The dead band end to end: a fall that balances (|passion| under dead_band) moves no
+     * passion, but its arousal spike and valence are real and are saved through the real
+     * postrequest hook, for every bed (each moved onto the same balanced point by the editor's
+     * per-trait and attachment overrides, so the bed's own state is otherwise hers).
+     */
+    public function testADeadBandFallStillSavesItsArousalAndValence(): void
+    {
+        $this->meetAll();
+        foreach (array_keys(self::BEDS) as $npc) {
+            $ped = json_decode(pg_fetch_assoc(pg_query_params($this->db->link,
+                'SELECT plugin_extended_data FROM core_npc_master WHERE npc_name = $1', [$npc]))['plugin_extended_data'], true);
+            // rage 2 x .5 x .64 x .4 x .8 against panic .5 x .4: net .0048, passion .025 (< .05)
+            $ped['reldyn']['dynamics']['profile_overrides']['trait_vector'] = ['confidence' => 0.5, 'pride' => 0.5,
+                'restraint' => 0.2, 'resilience' => 0.64, 'reactivity' => 0.4];
+            $ped['reldyn']['dynamics']['profile_overrides']['attachment_axes'] = ['anxiety' => 0.1, 'avoidance' => 0.1];
+            pg_query_params($this->db->link, 'UPDATE core_npc_master SET plugin_extended_data = $2::jsonb WHERE npc_name = $1', [$npc, json_encode($ped)]);
+            $this->turn($npc, 'Stay close.');
+            $before = $this->dynamics($npc);
+            $probe = $before;
+            $fall = RelationshipDynamics::bleedoutResponse($probe);
+            $this->assertEqualsWithDelta(0.0048, $fall['net'], 1e-9, "{$npc}: the balanced point");
+            $this->assertSame(0.0, $fall['passion'], "{$npc}: inside the dead band");
+            $GLOBALS['gameRequest'] = ['bleedout', (string) $this->realTs, (string) (int) $this->gamets, "{$npc} falls to the ground, badly wounded."];
+            $GLOBALS['RELDYN_NPC_NAME'] = $npc;
+            $GLOBALS['HERIKA_NAME'] = 'The Narrator';
+            $GLOBALS['CACHE_PEOPLE'] = '|' . $npc . '|' . self::PLAYER . '|';
+            $GLOBALS['PLAYER_NAME'] = self::PLAYER;
+            (static function (): void { require __DIR__ . '/../../ext/relationship_dynamics/postrequest.php'; })();
+            RelationshipDynamics::endRequest();
+            $this->clearReldynGlobals();
+            $after = $this->dynamics($npc);
+            $dim = fn(array $d, string $k) => floatval($d['dimensions'][$k]['x'] ?? 0);
+            $this->assertGreaterThan($dim($before, 'arousal') + 5.0, $dim($after, 'arousal'), "{$npc}: the spike is saved");
+            $this->assertGreaterThan($dim($before, 'valence'), $dim($after, 'valence'), "{$npc}: the valence is saved");
+            $this->assertEqualsWithDelta(RelationshipDynamics::getPassion($before), RelationshipDynamics::getPassion($after), 1e-9, "{$npc}: no passion moved");
+            $this->gamets += 60 * RelationshipDynamics::GAMETS_PER_DAY / 1440;
+            $this->realTs += 60;
+        }
         $this->assertSame([], $this->db->failures);
     }
 
