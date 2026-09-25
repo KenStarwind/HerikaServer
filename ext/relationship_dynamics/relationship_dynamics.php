@@ -1123,6 +1123,9 @@ class RelationshipDynamics
             // ===== Save load (roadmap save-load-rollback) =====
             // What survives loading an earlier save, ledger checkpoints (reldyn_timeline.php).
             'save_load' => RelDynTimeline::configDefaults(),
+            // ===== Core's request poll (roadmap prerequest-on-poll) =====
+            // What each poll runs: the play heartbeat beat, the save-load reconcile (onPollRequest).
+            'poll' => self::pollConfigDefaults(),
         ];
     }
 
@@ -3818,6 +3821,77 @@ class RelationshipDynamics
     {
         $type = is_array($gameRequest) ? strtolower(trim((string) ($gameRequest[0] ?? ''))) : '';
         return in_array($type, self::RADIANT_REQUEST_TYPES, true);
+    }
+
+    // ========== CORE'S REQUEST POLL (roadmap prerequest-on-poll) ==========
+    // The AIAgent plugin asks main.php for queued responses with a 'request' event every POLINT
+    // real seconds (AIAgent.ini; 1 without one). It carries no NPC profile (HTTPManager::log
+    // with no actor sends no &profile=), so main.php loads no NPC and HERIKA_NAME stays
+    // conf.php's default. main.php runs the ext prerequest hooks, then processor/comm.php
+    // answers it (DataDequeue), logs it to eventlog when time() % 5 == 0 and sets $MUST_END,
+    // and main.php ends the request before context_pre / context / postrequest: of RelDyn's
+    // hooks it reaches prerequest.php only. RelDyn takes it by its type (whatever NPC name core
+    // left in HERIKA_NAME) and runs onPollRequest() only.
+
+    /** $gameRequest[0] of core's poll for queued responses (main.php $fast_commands, comm.php). */
+    const POLL_REQUEST_TYPES = ['request'];
+
+    /** True for core's poll for queued responses ($gameRequest[0] in POLL_REQUEST_TYPES). */
+    public static function isPollRequest($gameRequest): bool
+    {
+        $type = is_array($gameRequest) ? strtolower(trim((string) ($gameRequest[0] ?? ''))) : '';
+        return in_array($type, self::POLL_REQUEST_TYPES, true);
+    }
+
+    /** Defaults for config key 'poll': what RelDyn does on core's poll. */
+    public static function pollConfigDefaults(): array
+    {
+        return [
+            // Beat the global play heartbeat (beatPlayClock), so it is current when the player
+            // speaks: the turn then reads no backlog and is never capped by a lagging beat.
+            'play_clock' => true,
+            // Reconcile a save load (RelDynTimeline::reconcileIfLoaded) on the first poll after
+            // core restored it, instead of on the first dialogue turn.
+            'save_load' => true,
+        ];
+    }
+
+    /**
+     * RelDyn's whole work for one poll: the save-load reconcile, then the play heartbeat beat,
+     * each behind its 'poll' switch. No bond is read or written and no global is published;
+     * while core is still restoring a load, nothing runs (as for a dialogue entry). Its own
+     * request scope, closed on return.
+     *
+     * @return array ['enabled' => bool, 'reconcile' => ?array (reconcileIfLoaded's result),
+     *                'play' => ?float (heartbeat total, play gamets; null = no beat)]
+     */
+    public static function onPollRequest(): array
+    {
+        self::beginRequest();
+        try {
+            $out = ['enabled' => self::isEnabled(), 'reconcile' => null, 'play' => null];
+            if (!$out['enabled']) {
+                return $out;
+            }
+            $stored = self::configValue('poll');
+            $cfg = is_array($stored) ? array_replace(self::pollConfigDefaults(), $stored) : self::pollConfigDefaults();
+            if (!empty($cfg['save_load'])) {
+                try {
+                    $out['reconcile'] = RelDynTimeline::reconcileIfLoaded();
+                } catch (Throwable $e) {
+                    self::logError('save-load reconcile on poll', $e);
+                }
+                if (!empty($out['reconcile']['deferred'])) {
+                    return $out;   // core is still restoring the load: leave RelDyn state alone
+                }
+            }
+            if (!empty($cfg['play_clock'])) {
+                $out['play'] = self::beatPlayClock();
+            }
+            return $out;
+        } finally {
+            self::endRequest();
+        }
     }
 
     /** CHIM request types in which the player speaks to the NPC (core's inputtext family). */
