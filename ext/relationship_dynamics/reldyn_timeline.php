@@ -31,8 +31,9 @@
  * RelDyn follows with the same signal: the eventlog 'init' row core writes after its prune.
  *   - beforeCoreLoad() (init prerequest, before core's restore): stash every NPC's 'reldyn'
  *     namespace in reldyn_load_stash, so the reconcile can keep it or rescue pending evals.
- *   - reconcileIfLoaded() (first RelDyn entry point after the load: prerequest, the eval
- *     worker, and beforeCoreLoad itself for a previous load): once per 'init' row, under an
+ *   - reconcileIfLoaded() (first RelDyn entry point after the load: core's poll
+ *     (RelationshipDynamics::onPollRequest), prerequest, the eval worker, and beforeCoreLoad
+ *     itself for a previous load): once per 'init' row, under an
  *     advisory lock, marked in conf_opts relationship_dynamics_timeline. Per state class:
  *       relationship state (the dynamics blob: dimensions, passion, jealousy, resentment,
  *         conflict, walkaway, fulfillment, romance; the published romance state and the last

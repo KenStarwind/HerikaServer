@@ -17,6 +17,17 @@ if ($reqType === 'maras_sync') {
     return;
 }
 
+// ========== CORE'S REQUEST POLL (prerequest-on-poll) ==========
+// The plugin's poll for queued responses (every POLINT real seconds) reaches this hook only:
+// comm.php ends it before context_pre / context / postrequest. It carries no NPC, whatever
+// HERIKA_NAME conf.php left, so no bond is touched: the save-load reconcile and the play
+// heartbeat beat only (RelationshipDynamics::onPollRequest, config 'poll').
+require_once __DIR__ . '/relationship_dynamics.php';
+if (RelationshipDynamics::isPollRequest($GLOBALS['gameRequest'])) {
+    RelationshipDynamics::onPollRequest();
+    return;
+}
+
 // ========== SAVE LOAD (save-load-rollback) ==========
 // 'init' = the player loaded a save. This hook runs BEFORE core's comm.php prunes the later
 // eventlog and restores every NPC row from its history snapshot, so nothing here may touch
