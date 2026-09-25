@@ -59,6 +59,13 @@ class RelDynConcern
 
     const POSSESSIVE = 'possessive';
     const PROTECTIVE = 'protective';
+    /**
+     * The resentment lane's channel on the values boundary (RelDynResentment, MDD 15.5 at 50):
+     * a mature NPC who already said it calmly and was wronged again. Not a KINDS channel: it
+     * has no incidents, only the boundary (openGrievanceBoundary / onGrievance).
+     */
+    const GRIEVANCE = 'grievance';
+    const GRIEVANCE_KIND = 'grievances';
 
     /** Kind => channel (design §1.1). Order = the order a channel's kind is named in. */
     const KINDS = [
@@ -214,6 +221,8 @@ class RelDynConcern
                 'vice'           => "the drinking",
                 'danger'         => "the risks {PLAYER} keeps taking",
                 'company'        => "the company {PLAYER} keeps",
+                // the resentment lane's channel (GRIEVANCE): a mature NPC wronged again after saying it
+                'grievances'     => "being hurt the same way after already speaking up",
             ],
             'cue_phrases' => [
                 'ale'    => "the drink on {PLAYER}",
@@ -579,6 +588,53 @@ class RelDynConcern
     public static function boundaryActive(array $dynamics): bool
     {
         return in_array($dynamics[self::STATE_KEY]['boundary']['state'] ?? 'none', ['pending', 'probation', 'failed'], true);
+    }
+
+    /**
+     * The resentment lane's repetition (decisions §14: a mature NPC treats repetition as a values
+     * mismatch that feeds the §9 boundary flow; RelDynResentment::tickConfrontation): the values
+     * boundary opens on channel GRIEVANCE, pending its statement to the player's face, then the
+     * probation and a step-back if another grievance lands inside it (onGrievance, onContact).
+     * The values path's eligibility: a step-back target, not walking away, no boundary running
+     * in either lane (one boundary at a time per bond). Returns true when it opened.
+     */
+    public static function openGrievanceBoundary(string $npcName, array &$dynamics, float $now): bool
+    {
+        if ($now <= 0 || !self::enabled() || RelDynFulfillment::stepBackTarget($dynamics) === null
+            || ($dynamics['_walkaway_state'] ?? 'normal') !== 'normal'
+            || self::boundaryActive($dynamics) || RelDynFulfillment::boundaryActive($dynamics)) {
+            return false;
+        }
+        $state = &self::state($dynamics);
+        $state['boundary'] = ['state' => 'pending', 'channel' => self::GRIEVANCE, 'kind' => self::GRIEVANCE_KIND,
+            'kinds' => [self::GRIEVANCE_KIND], 'decided_gamets' => $now];
+        unset($state);
+        RelationshipDynamics::log("[CONCERN] {$npcName}: values boundary due (grievances after the confrontation)");
+        return true;
+    }
+
+    /**
+     * A grievance at game time $at while the GRIEVANCE boundary watches (after its statement):
+     * the pattern went on, the probation fails (onContact carries out the step-back). Returns
+     * true when it failed the probation.
+     */
+    public static function onGrievance(string $npcName, array &$dynamics, float $at): bool
+    {
+        $b = $dynamics[self::STATE_KEY]['boundary'] ?? null;
+        if (!is_array($b) || ($b['state'] ?? 'none') !== 'probation' || ($b['channel'] ?? null) !== self::GRIEVANCE
+            || $at <= floatval($b['started_gamets'] ?? INF)) {
+            return false;
+        }
+        $dynamics[self::STATE_KEY]['boundary']['state'] = 'failed';
+        $dynamics[self::STATE_KEY]['boundary']['failed_gamets'] = $at;
+        RelationshipDynamics::log("[CONCERN] {$npcName}: wronged again during the grievance probation: step-back due");
+        return true;
+    }
+
+    /** A kind as this NPC names it (kind_phrases, {NAME} / {PLAYER} filled): the resentment lane's fuel. */
+    public static function kindPhraseFor(string $kind, string $npcName, string $playerName): string
+    {
+        return self::kindPhrase($kind, self::config(), ['{NAME}' => $npcName, '{PLAYER}' => $playerName]);
     }
 
     /** The kind a channel's incidents are about: the most frequent in the window (KINDS order on ties). */

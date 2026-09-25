@@ -38,6 +38,11 @@
  *                     window (§1.5), 'pattern' => kind => counted nights of that kind,
  *                     'values_boundary' => none|pending|probation|failed]
  *   walkaway         string normal|pending|active|boundary_test|recovery|permanent
+ *   resentment_arc   ['confrontation_threshold' => resentment points, 'confrontations' => int said
+ *                     this episode, 'confrontation_pending' => ?mature|mixed|immature,
+ *                     'self_baseline_offsets' => dimension => baseline points (resentment_self),
+ *                     'self_crisis' => bool, 'guilt_bleed' => comfort points taken (<= 0),
+ *                     'reject_recruitment' => bool] (reldyn_resentment.php)
  *   fulfillment      ['band' => -1..1, 'trend' => band per game day, 'low' => bool, 'known' => bool]
  *   attraction       ['enabled' => bool, 'outcome' => ?string, 'score' => 0..1,
  *                     decisions §13, attraction is an uphill, not a wall:
@@ -84,6 +89,8 @@ final class RelDynJev
         'attachment_avoidance' => 'axis 0..1 (discomfort with closeness once in)',
         'concern.level' => 'concern points 0..100', 'concern.incidents' => 'highest pattern[kind] per channel in the values window (counted nights)',
         'concern.pattern' => 'kind => counted nights in the values window',
+        'resentment_arc.confrontation_threshold' => 'resentment points 0..100',
+        'resentment_arc.self_baseline_offsets' => 'baseline points', 'resentment_arc.guilt_bleed' => 'comfort points',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
     ];
 
@@ -176,6 +183,7 @@ final class RelDynJev
             'boundary' => is_string($boundary) ? $boundary : 'none',
             'concern' => RelDynConcern::jev($dynamics, $now),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
+            'resentment_arc' => RelDynResentment::jev($dynamics),
             'fulfillment' => $fulfillment,
             'attraction' => $attraction,
             'place' => $place,
@@ -219,6 +227,15 @@ final class RelDynJev
             . ($pattern ? ' pattern=' . implode(',', $pattern) : '')
             . ($c['values_boundary'] !== 'none' ? " values_boundary={$c['values_boundary']}" : '');
         $parts[] = "walkaway={$s['walkaway']}";
+        $r = $s['resentment_arc'];
+        $offsets = [];
+        foreach ($r['self_baseline_offsets'] as $dim => $o) $offsets[] = "{$dim}" . $f($o);
+        $parts[] = 'resentment_self=' . $f($s['resentment_self']) . ($offsets ? '(baseline ' . implode(',', $offsets) . ')' : '')
+            . ($r['self_crisis'] ? '(crisis)' : '')
+            . ' confront=' . $r['confrontations'] . '/at ' . $f($r['confrontation_threshold'])
+            . ($r['confrontation_pending'] !== null ? "(due {$r['confrontation_pending']})" : '')
+            . ($r['guilt_bleed'] != 0.0 ? ' guilt=' . $f($r['guilt_bleed']) : '')
+            . ($r['reject_recruitment'] ? ' reject_recruitment' : '');
         $parts[] = 'fulfillment=' . number_format($s['fulfillment']['band'], 2, '.', '') . ($s['fulfillment']['low'] ? '(low)' : '');
         $a = $s['attraction'];
         if ($a['enabled']) {
