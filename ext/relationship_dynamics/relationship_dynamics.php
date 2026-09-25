@@ -3129,20 +3129,24 @@ class RelationshipDynamics
 
     /**
      * The relationship stage's passion floor (STAGE_PARAMS, passion points), through the
-     * Attraction Matrix like every other passion writer (rulings §11): 0 while the attraction
-     * shuts passion (no gate open: friendzone / unattracted, a gate product of 0), so
-     * positive exchanges piling up stages never lift passion the NPC cannot feel. The hard cap
-     * (setPassion) still applies on top.
+     * Attraction Matrix like every other passion writer (decisions §13): a floor within the
+     * spark holds for anyone (the spark is open to anyone); a non-negotiable hard zero holds
+     * none (positive exchanges piling up stages never lift passion the NPC cannot feel at
+     * all); the part of a floor above the spark holds only while the NPC's curve is met
+     * (passion_mult of at least 1: at or past her floors), since above the spark she only
+     * warms as fast as the uphill allows. A summary from before the spark: 0 when its
+     * passion_mult is 0.
      */
     public static function passionStageFloor(array $dynamics): float
     {
         $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
         $floor = floatval(self::STAGE_PARAMS[$stage]['floor'] ?? 0);
         $a = $dynamics['_attraction'] ?? null;
-        if ($floor > 0.0 && is_array($a) && !empty($a['enabled'])
-            && (!(!empty($a['passes']) || !empty($a['prebond'])) || floatval($a['passion_mult'] ?? 1.0) <= 0.0)) {
-            return 0.0;
-        }
+        if ($floor <= 0.0 || !is_array($a)) return $floor;
+        $sparkMult = $a['spark_mult'] ?? ($a['passion_mult'] ?? 1.0);
+        if (is_numeric($sparkMult) && floatval($sparkMult) <= 0.0) return 0.0;
+        $spark = is_numeric($a['spark'] ?? null) ? floatval($a['spark']) : 0.0;
+        if ($floor > $spark && floatval($a['passion_mult'] ?? 1.0) < 1.0) return $spark;
         return $floor;
     }
 
@@ -3162,17 +3166,12 @@ class RelationshipDynamics
     /**
      * The one writer for passion: sets dimensions.passion.x and derives the
      * legacy 'passion' mirror from it. Never assign $dynamics['passion'] directly.
-     * The Attraction Matrix's hard cap (MDD 6.2 friendzone / unattracted, the openness
-     * ceiling; _attraction.passion_cap from the last evaluation) holds here, so every
-     * passion writer (hoover snap, reunion, eval, decay floors) stays under it.
+     * No attraction cap here: decisions §13 retired the MDD 6.2 hard cap of 20 (attraction
+     * scales gains through attractionPassionFactor instead).
      */
     public static function setPassion(&$dynamics, $value)
     {
         $value = floatval($value);
-        $cap = $dynamics['_attraction']['passion_cap'] ?? null;
-        if (is_numeric($cap) && $value > floatval($cap)) {
-            $value = floatval($cap);
-        }
         if (!isset($dynamics['dimensions']) || !is_array($dynamics['dimensions'])) {
             $dynamics['dimensions'] = [];
         }
@@ -3279,11 +3278,6 @@ class RelationshipDynamics
         $ceiling = self::STAGE_PARAMS[$stage]['ceiling'] ?? 100;
         $cfg = self::getConfig();
         $max = min(floatval($cfg['passion_max'] ?? 100.0), $ceiling);
-        // Attraction hard cap (friendzone / unattracted 20, MDD 6.2; tolerated fail, MDD 1.4)
-        $attractionCap = $dynamics['_attraction']['passion_cap'] ?? null;
-        if (is_numeric($attractionCap)) {
-            $max = min($max, floatval($attractionCap));
-        }
 
         self::setPassion($dynamics, min($max, self::getPassion($dynamics) + $amount));
         $dynamics['passion_updated_at'] = self::getPlayGamets($dynamics);
@@ -6559,24 +6553,18 @@ class RelationshipDynamics
      * @param array      $overrides    Optional overrides: Y_up, Y_down, Z, maturity,
      *                                 max_abs (clamp on |actual delta|, physics units),
      *                                 skip_caps (applyCrossSignalCaps rules to skip),
-     *                                 attraction_applied (a passion gain already x the attraction)
+     *                                 attraction_source (label of a passion gain in the
+     *                                 attraction log; default 'dimension engine')
+     * @param float|null &$attractionFactor Out: the attraction factor a passion gain was
+     *                                 scaled by (1.0 when none applied)
      * @return float     The actual delta applied (after all physics)
      */
-    public static function applyDelta($dimensionId, &$dynamics, $rawDelta, $temperament = null, $overrides = [])
+    public static function applyDelta($dimensionId, &$dynamics, $rawDelta, $temperament = null, $overrides = [], &$attractionFactor = null)
     {
+        $attractionFactor = 1.0;
         $rawDelta = floatval($rawDelta);
         if (abs($rawDelta) < 0.0001) {
             return 0.0;
-        }
-        // Rulings §11: a passion GAIN is x the attraction (modifier x required-pillar gates x
-        // attachment; a closed gate leaves exactly 0), from this request's summary (none yet:
-        // not judged, x1). The eval signal applies it itself (attraction_applied).
-        if ($dimensionId === 'passion' && $rawDelta > 0 && empty($overrides['attraction_applied'])
-            && is_numeric($dynamics['_attraction']['passion_mult'] ?? null)) {
-            $rawDelta *= max(0.0, floatval($dynamics['_attraction']['passion_mult']));
-            if ($rawDelta < 0.0001) {
-                return 0.0;
-            }
         }
 
         // Apply cross-signal caps (other dimensions modify this delta)
@@ -6706,6 +6694,19 @@ class RelationshipDynamics
             $actualDelta = self::applyPortionDelta($x, $baseline, $rawDelta, $z, $yUp, $yDown, $invertRubberBand);
         }
 
+        // --- Decisions §13: a passion GAIN is x the attraction factor (the spark below 20, the
+        // curve above it, 0 for a hard zero; RelDynAttraction::gainFactor) from this request's
+        // summary (none yet: not judged, x1). Applied to the physics' move, so the spark splits
+        // where passion itself crosses it (the physics is linear in the delta) ---
+        if ($dimensionId === 'passion' && $actualDelta > 0 && is_array($dynamics['_attraction'] ?? null)) {
+            $attractionFactor = self::loggedPassionFactor($dynamics, $actualDelta,
+                (string) ($overrides['attraction_source'] ?? 'dimension engine'));
+            $actualDelta *= $attractionFactor;
+            if ($actualDelta < 0.0001) {
+                return 0.0;
+            }
+        }
+
         // --- Significance clamp (eval consumer): |delta| <= max_abs, in physics units
         // (dimension points; core affinity points for affinity) ---
         if (isset($overrides['max_abs'])) {
@@ -6715,10 +6716,6 @@ class RelationshipDynamics
 
         // --- Clamp to range ---
         $newX = max($rangeMin, min($rangeMax, $x + $actualDelta));
-        // Attraction hard cap on passion (MDD 6.2): a gain never lifts passion past it
-        if ($dimensionId === 'passion' && $actualDelta > 0 && is_numeric($dynamics['_attraction']['passion_cap'] ?? null)) {
-            $newX = min($newX, max($x, floatval($dynamics['_attraction']['passion_cap'])));
-        }
         $actualDelta = $newX - $x;
 
         // Back to mirror units: callers get the change of dimensions.affinity.x as before
@@ -7645,15 +7642,13 @@ class RelationshipDynamics
                 $raw *= $pm;
                 $steps .= sprintf(' place x%.2f', $pm);
             }
-            // Attraction modifier x gates x attachment (rulings §11, §9): Aela warms to a
-            // warrior, not to a bard; a closed gate leaves exactly 0
-            $am = self::attractionPassionMult((string) $npcName, $dynamics);
-            if (abs($am - 1.0) > 0.001) {
-                $raw *= $am;
-                $steps .= sprintf(' attraction x%.2f', $am);
-            }
-            if ($raw <= 0.0) {
-                $result['line'] = sprintf('%s %+.2f%s%s -> 0 (attraction gate closed)', $signal, $rawIn, $clampNote, $steps);
+            // Attraction (decisions §13): the spark, then the uphill x attachment (rulings §9);
+            // Aela warms to a warrior, a bard climbs a long hill; a hard zero leaves exactly 0.
+            // The dimension engine applies it to the physics' move (applyDelta, attraction_source).
+            self::attractionPassionMult((string) $npcName, $dynamics);   // this request's summary
+            if (RelDynAttraction::gainFactor((array) $dynamics['_attraction'], self::getPassion($dynamics), $raw) <= 0.0) {
+                self::attractionPassionFactor((string) $npcName, $dynamics, $raw, 'eval');   // logged: why
+                $result['line'] = sprintf('%s %+.2f%s%s -> 0 (attraction hard zero)', $signal, $rawIn, $clampNote, $steps);
                 return $result;
             }
         }
@@ -7707,14 +7702,18 @@ class RelationshipDynamics
         $overrides['max_abs'] = $clampPoints * $significance;
 
         if ($signal === 'passion') {
-            $overrides['attraction_applied'] = true;   // x attractionPassionMult above
+            $overrides['attraction_source'] = "{$npcName}: eval";
         }
-        $actual = self::applyDelta($signal, $dynamics, $raw, $temperament, $overrides);
+        $attractionFactor = 1.0;
+        $actual = self::applyDelta($signal, $dynamics, $raw, $temperament, $overrides, $attractionFactor);
         $result['actual'] = $actual;
+        if (abs($attractionFactor - 1.0) > 0.001) {
+            $steps .= sprintf(' attraction x%.2f', $attractionFactor);
+        }
 
         // Physics units: core points for affinity (mirror x2), dimension points otherwise
         $moved = ($signal === 'affinity') ? $actual * 2.0 : $actual;
-        $pre = $raw * $y;
+        $pre = $raw * $y * $attractionFactor;
         $rest = abs($pre) > 1e-9 ? $moved / $pre : 0.0;
         $unit = ($signal === 'affinity') ? ' core' : '';
         $result['line'] = sprintf(
@@ -13274,10 +13273,9 @@ class RelationshipDynamics
     }
 
     /**
-     * Passion gain multiplier (rulings §11: attraction modifier x required-pillar gates x
-     * attachment, rulings §9), for every passion gain: the legacy path, the eval passion
-     * signal, and gainPassion (reunion, combat, conflict repair, hoover, place floor). 0 when a
-     * gate is closed. Uses this request's summary; evaluates first when the NPC has none yet
+     * The above-spark passion gain multiplier (decisions §13: curve x attachment [x prebond];
+     * 0 for a hard zero), for display and logs. Gains use attractionPassionFactor, which also
+     * knows the spark. Uses this request's summary; evaluates first when the NPC has none yet
      * (eval worker / calendar scan on a bond never seen by prerequest).
      */
     public static function attractionPassionMult(string $npcName, array &$dynamics): float
@@ -13290,19 +13288,43 @@ class RelationshipDynamics
     }
 
     /**
-     * A passion GAIN of $raw passion points from $source, through the attraction (rulings §11:
-     * raw x attractionPassionMult; a closed gate adds exactly 0), then addPassion (stage
-     * ceiling, the attraction hard cap). Returns the gain asked of addPassion (points).
+     * The one attraction factor (unitless) every passion GAIN goes through (decisions §13):
+     * the legacy path, the eval passion signal, gainPassion (reunion, combat, conflict repair),
+     * the hoover snap and a place's floor. A gain of $raw passion points at the NPC's current
+     * passion: the part below the spark at spark_mult (attachment; anyone), the rest at
+     * passion_mult (the uphill), 0 for a hard zero (RelDynAttraction::gainFactor). Uses this
+     * request's summary; evaluates first when the NPC has none yet. Logged per gain ($source).
+     */
+    public static function attractionPassionFactor(string $npcName, array &$dynamics, float $raw, string $source): float
+    {
+        if (!is_array($dynamics['_attraction'] ?? null)) {
+            self::updateAttraction($npcName, $dynamics);
+        }
+        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}");
+    }
+
+    /** RelDynAttraction::gainFactor on the stored summary at the current passion, logged ($label: who / which path). */
+    private static function loggedPassionFactor(array $dynamics, float $raw, string $label): float
+    {
+        $passion = self::getPassion($dynamics);
+        $factor = RelDynAttraction::gainFactor((array) ($dynamics['_attraction'] ?? []), $passion, $raw);
+        self::log(sprintf('[ATTRACTION] %s passion +%.4f at %.2f x%.4f%s', $label, $raw, $passion, $factor,
+            ($factor <= 0.0 && $raw > 0.0) ? ' (hard zero: ' . ($dynamics['_attraction']['hard_zero'] ?? 'none') . ')' : ''));
+        return $factor;
+    }
+
+    /**
+     * A passion GAIN of $raw passion points from $source, through the attraction (decisions
+     * §13: raw x attractionPassionFactor; a hard zero adds exactly 0), then addPassion (stage
+     * ceiling). Returns the gain asked of addPassion (points).
      */
     public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source): float
     {
         if ($raw <= 0.0) {
             return 0.0;
         }
-        $mult = self::attractionPassionMult($npcName, $dynamics);
-        $gain = $raw * $mult;
+        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source);
         if ($gain <= 0.0) {
-            self::log("[ATTRACTION] {$npcName}: {$source} passion +" . round($raw, 2) . ' x0 (attraction gate closed): no gain');
             return 0.0;
         }
         self::addPassion($dynamics, $gain, $source);
@@ -16430,13 +16452,14 @@ class RelationshipDynamics
             $current = floatval($dynamics['dimensions'][$dim]['x'] ?? 50);
             $delta = $target - $current;
             if ($dim === 'passion') {
-                // The snap up is a passion gain: x attraction (rulings §11), so a closed gate
-                // leaves passion where it was; never past the target or passion_max
+                // The snap up is a passion gain: x the attraction factor (decisions §13), so a
+                // hard zero leaves passion where it was; never past the target or passion_max
                 $current = self::getPassion($dynamics);
                 $to = $target;
                 if ($target > $current) {
                     $max = floatval(self::getConfig()['passion_max'] ?? 100.0);
-                    $to = min(floatval($target), $max, $current + ($target - $current) * self::attractionPassionMult((string) $npcName, $dynamics));
+                    $raw = floatval($target) - $current;
+                    $to = min(floatval($target), $max, $current + $raw * self::attractionPassionFactor((string) $npcName, $dynamics, $raw, 'hoover'));
                 }
                 self::setPassion($dynamics, $to);
                 $results[$dim] = ['from' => $current, 'to' => self::getPassion($dynamics)];
@@ -16892,7 +16915,7 @@ class RelationshipDynamics
      * Jev picks actions ("if I feel this and my goal is that, then I do x"), so it gets the
      * concrete values for $npcName toward the player: affinity (core units), dimensions, passion,
      * jealousy, resentment, attachment, temperament, weather, open conflict, boundary and
-     * walkaway state, fulfillment band, attraction modifier and gate, place appraisal, goal, and
+     * walkaway state, fulfillment band, attraction curve, spark and hard zero, place appraisal, goal, and
      * a compact text rendering. See RelDynJev::state for the fields and units. Read-only.
      */
     public static function jevStateBlock(string $npcName): array

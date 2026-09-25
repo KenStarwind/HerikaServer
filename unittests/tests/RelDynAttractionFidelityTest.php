@@ -36,12 +36,13 @@ final class RelDynAttractionFidelityRowDb
 }
 
 /**
- * attraction-modifier-and-gate / attraction-matrix review findings (design fidelity): rulings §11
- * ("required pillars multiply in; a zero on a required pillar zeroes the result"), MDD 8.3 (the
- * Matrix decides per NPC which pillars gate which axis), MDD 1.4 (openness: low = hard block,
- * medium / high passion ceiling cut 50% / 20%), MDD 2.6 / 6.2 (a failed visceral bar is no
- * romantic traction; friendzone / unattracted passion capped at 20), plan §7 (balanced: visceral
- * pass OR bonded tier), plan §4 respect rate. NPCs are CHIM 3.4.1 core_npc_master rows run through
+ * attraction-modifier-and-gate / attraction-matrix / attraction-uphill-curve review findings
+ * (design fidelity): rulings §11 as decisions §13 keeps it ("a zero on a required pillar zeroes
+ * the result" for a rigid pillar at 0), MDD 8.3 (the Matrix decides per NPC which pillars gate
+ * which axis), MDD 1.4 (openness: low = hard block on the type axis; on passion the height of
+ * the hill), MDD 2.6 (a failed visceral bar is no romantic traction), decisions §13 (the
+ * friendzone cap of 20 and the tolerated ceiling cut are retired for the uphill), plan §7
+ * (balanced: visceral pass OR bonded tier), plan §4 respect rate. NPCs are CHIM 3.4.1 core_npc_master rows run through
  * the real profile auto-generation; players follow the RelDynPlayer::profile() contract.
  */
 final class RelDynAttractionFidelityTest extends TestCase
@@ -129,7 +130,7 @@ final class RelDynAttractionFidelityTest extends TestCase
 
     // ------------------------------------------------------------------ the gate is the NPC's
 
-    /** MDD 8.2 C / 8.3: Ysolda's passion answers to status; with none, the gate is shut. */
+    /** MDD 8.2 C / 8.3: Ysolda's passion answers to status (rigid); with none at all, 100 x 0 = 0. */
     public function testAMerchantsRequiredStatusGatesHerPassion(): void
     {
         $d = $this->npc('Ysolda');
@@ -139,23 +140,27 @@ final class RelDynAttractionFidelityTest extends TestCase
         $this->assertContains('status', $def['passion_pillars'], 'MDD 8.2 C: status is her passion pillar');
 
         $nobody = RelationshipDynamics::attractionFor('Ysolda', $d, self::player(['strength' => 0.8, 'status' => 0.0, 'competence' => 0.6]));
-        $this->assertSame(0.0, floatval($nobody['passion']['gates']['status']), json_encode($nobody['passion']));
+        $this->assertSame(0.0, $nobody['passion']['units']['status']['m'], json_encode($nobody['passion']));
+        $this->assertSame('rigid:status', $nobody['hard_zero']);
         $this->assertSame(0.0, $nobody['passion_mult'], '100 x 0 is still 0');
+        $this->assertSame(0.0, $nobody['spark_mult'], 'a non-negotiable: no spark either');
         $this->assertFalse($nobody['passes']);
-        $this->assertSame(20.0, floatval($nobody['passion_cap']));
+        $this->assertArrayNotHasKey('passion_cap', $nobody);
 
         $wealthy = RelationshipDynamics::attractionFor('Ysolda', $d, self::player(['strength' => 0.1, 'status' => 0.8, 'competence' => 0.6]));
-        $this->assertSame(1.0, floatval($wealthy['passion']['gates']['status']));
-        $this->assertGreaterThan(0.0, $wealthy['passion_mult'], 'strength is irrelevant to her');
+        $this->assertGreaterThanOrEqual(1.0, $wealthy['passion']['units']['status']['m'], 'past her floor');
+        $this->assertArrayNotHasKey('strength', $wealthy['passion']['units'], 'strength is irrelevant to her');
+        $this->assertGreaterThan(0.0, $wealthy['passion_mult']);
         $this->assertTrue($wealthy['passes']);
     }
 
     /**
      * MDD 2.6 / 1.4: a player who fails the visceral bar gets no romantic traction: not
-     * 'drawn', passion capped, no intimacy hint, at any score between zero and the bar; low
-     * openness is a hard block even for a near miss.
+     * 'drawn', no intimacy hint, at any score between zero and the bar; low openness is a hard
+     * block on the type axis even for a near miss. Passion is not capped (decisions §13): the
+     * rigid pillar far below the floor is the foot of a steep hill (0 only at a score of 0).
      */
-    public function testFailingTheVisceralBarIsNeverDrawnOrUncapped(): void
+    public function testFailingTheVisceralBarIsNeverDrawn(): void
     {
         foreach (['low', 'medium', 'high'] as $openness) {
             $d = $this->uthgerd($openness);
@@ -169,9 +174,11 @@ final class RelDynAttractionFidelityTest extends TestCase
                 $this->assertFalse($a['pillars']['strength']['pass'], $why);
                 $this->assertFalse($a['passes'], $why);
                 $this->assertNotSame('drawn', $a['outcome'], $why);
-                $this->assertSame(20.0, floatval($a['passion_cap']), $why);
+                $this->assertArrayNotHasKey('passion_cap', $a, $why);
                 $this->assertFalse($a['intimacy_allowed'], $why);
-                $this->assertSame(0.0, $a['passion_mult'], $why);
+                $this->assertNull($a['hard_zero'], $why);
+                $this->assertGreaterThan(0.0, $a['passion_mult'], "{$why}: not a wall");
+                $this->assertLessThan(0.2, $a['passion']['curve'], $why);
                 $this->assertTrue($a['friendzoned'], "{$why}: status and competence met: the tolerated state");
             }
         }
@@ -180,24 +187,27 @@ final class RelDynAttractionFidelityTest extends TestCase
         $bar = RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $low, self::player(['strength' => 0.9, 'status' => 0.7, 'competence' => 0.8]))['pillars']['strength']['bar'];
         $near = RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $low, self::player(['strength' => $bar - 0.02, 'status' => 0.7, 'competence' => 0.8]));
         $this->assertFalse($near['passes'], $near['reason']);
-        $this->assertSame(20.0, floatval($near['passion_cap']));
+        $this->assertArrayNotHasKey('passion_cap', $near);
         $this->assertFalse($near['intimacy_allowed']);
     }
 
-    /** MDD 1.4: a tolerated near miss cuts the passion ceiling by 50% (medium) / 20% (high). */
-    public function testANearMissCutsThePassionCeilingByTheMddValues(): void
+    /**
+     * MDD 1.4 on the type axis (a tolerated near miss, twice the effort to advance) stays; its
+     * passion ceiling cut (medium 50%, high 20%) is retired with the friendzone cap (decisions
+     * §13: an uphill, not a wall): the near miss is simply lower on the hill than the bar met.
+     */
+    public function testANearMissIsLowerOnTheHillNotCapped(): void
     {
-        $max = floatval(RelationshipDynamics::getConfig()['passion_max'] ?? 100.0);
-        foreach (['medium' => 0.5, 'high' => 0.2] as $openness => $cut) {
+        $this->assertArrayNotHasKey('openness_passion_ceiling_cut', RelDynAttraction::defaults());
+        foreach (['medium', 'high'] as $openness) {
             $d = $this->uthgerd($openness);
             $bar = RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $d, self::player(['strength' => 0.9, 'status' => 0.7, 'competence' => 0.8]))['pillars']['strength']['bar'];
             $a = RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $d, self::player(['strength' => $bar - 0.03, 'status' => 0.7, 'competence' => 0.8]));
             $this->assertTrue($a['pillars']['strength']['tolerated'], $a['reason']);
-            $this->assertTrue($a['passes'], $a['reason']);
-            $this->assertEqualsWithDelta($max * (1.0 - $cut), floatval($a['passion_cap']), 1e-6, "{$openness}: MDD 1.4 ceiling cut");
-            $this->assertSame(RelDynAttraction::config()['openness_passion_ceiling_cut'][$openness], $cut);
+            $this->assertArrayNotHasKey('passion_cap', $a, "{$openness}: no ceiling cut");
+            $this->assertGreaterThan(0.0, $a['passion_mult']);
             $met = RelationshipDynamics::attractionFor('Uthgerd the Unbroken', $d, self::player(['strength' => $bar + 0.05, 'status' => 0.7, 'competence' => 0.8]));
-            $this->assertNull($met['passion_cap'], "{$openness}: the bar met, no cut");
+            $this->assertGreaterThan($a['passion']['curve'], $met['passion']['curve'], "{$openness}: the bar met is higher on the hill");
         }
     }
 
@@ -218,24 +228,34 @@ final class RelDynAttractionFidelityTest extends TestCase
         $this->assertGreaterThan(0.0, $b['passion_mult']);
     }
 
-    // ------------------------------------------------------------------ the modifier, no invented values
+    // ------------------------------------------------------------------ the curve, no invented values
 
-    public function testTheModifierNeverSpeedsPassionPastItsRawRate(): void
+    /**
+     * Decisions §13 values (Ken: "about 0.1" far below, 1.0 at the floor, "+1% per point",
+     * Aela "high 60s"), and the surplus cap: attraction x the fastest attachment (anxious 1.3)
+     * stays under the MDD 1.1 redline 2.0x.
+     */
+    public function testTheCurveKeepsKensValuesAndACappedSurplus(): void
     {
+        $cc = RelDynAttraction::curveConfig();
+        $this->assertSame(20.0, floatval($cc['spark']));
+        $this->assertSame(0.1, floatval($cc['m_min']));
+        $this->assertSame(0.01, floatval($cc['surplus_per_point']));
+        $this->assertSame(68.0, floatval($cc['floor_by_openness']['medium']));
         $pc = RelDynAttraction::config()['passion'];
-        $this->assertSame(1.0, floatval($pc['modifier_ceiling']), 'the most the attraction multiplier ever was');
-        $this->assertSame(0.1, floatval($pc['modifier_floor']), 'plan §7 unattracted multiplier');
-        foreach (['gate_absent_below', 'gate_open_factor', 'gate_min_span'] as $gone) {
-            $this->assertArrayNotHasKey($gone, $pc, "{$gone}: no source");
+        foreach (['modifier_floor', 'modifier_ceiling', 'modifier_curve', 'friendzone_cap', 'unattracted_cap',
+                     'gate_absent_below', 'gate_open_factor', 'gate_min_span'] as $gone) {
+            $this->assertArrayNotHasKey($gone, $pc, "{$gone}: retired or no source");
         }
-        $this->assertEqualsWithDelta(1.0, RelDynAttraction::attractionModifier(1.0), 1e-9);
-        $this->assertLessThan(RelDynAttraction::attractionModifier(0.6), RelDynAttraction::attractionModifier(0.5), 'strictly increasing');
+        $maxAttachment = max(RelDynAttraction::config()['passion']['attachment_mult']);
+        $this->assertLessThan(2.0, floatval($cc['surplus_max']) * $maxAttachment, 'under the MDD 1.1 redline');
         $d = $this->npc('Aela the Huntress');
         $legend = RelationshipDynamics::attractionFor('Aela the Huntress', $d,
             self::player(['strength' => 1.0, 'status' => 1.0, 'competence' => 1.0], ['warrior' => 1.0, 'hunter' => 1.0],
                 ['stat:the companions quests completed' => 20]));
-        $this->assertLessThanOrEqual(1.0 + 1e-9, $legend['passion']['modifier']);
-        $this->assertLessThanOrEqual($legend['passion']['attachment'] + 1e-9, $legend['passion_mult']);
+        $this->assertLessThanOrEqual(floatval($cc['surplus_max']) + 1e-9, $legend['passion']['curve']);
+        $this->assertGreaterThan(1.0, $legend['passion']['curve'], 'a legend is past her floor');
+        $this->assertLessThanOrEqual(floatval($cc['surplus_max']) * $legend['passion']['attachment'] + 1e-6, $legend['passion_mult']);
     }
 
     // ------------------------------------------------------------------ respect (plan §4)

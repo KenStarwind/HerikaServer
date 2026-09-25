@@ -22,7 +22,8 @@
  * The axes are needs of the fulfillment vector (RelDynFulfillment::needs): an axis whose
  * need reaches axis_min is an axis there, weighted by its need; the physical one only while
  * physical intimacy is in play with the player (a romance core type, or passion at
- * physical_in_play.min_passion, held down to release_passion; never while friendzoned).
+ * physical_in_play.min_passion, held down to release_passion, while the attraction reads as
+ * attracted; never while friendzoned).
  * Deliveries are the fulfillment tag rows (intimacy / touch feed physical; quality time,
  * reassurance, praise, touch, confiding feed emotional) and the intimacy the plugin reports
  * (recordRequest: a Sharmat / OStim scene with the player covers physical in full, a VR touch
@@ -424,9 +425,11 @@ class RelDynIntimacy
     }
 
     /**
-     * Physical intimacy is in play with the player (module doc): not friendzoned, and a
-     * romance core type or passion at min_passion; a latched NPC stays in play down to
-     * release_passion. Pure (the latch is the stored physical_in_play).
+     * Physical intimacy is in play with the player (module doc): never while friendzoned; a
+     * romance core type; else attracted (decisions §13 lets passion climb past 20 on the
+     * uphill, but a curve under the friendzone line is not that kind of pull) with passion at
+     * min_passion; a latched NPC stays in play down to release_passion. Pure (the latch is
+     * the stored physical_in_play).
      */
     public static function physicalInPlay(array $dynamics, ?array $cfg = null): bool
     {
@@ -435,6 +438,7 @@ class RelDynIntimacy
         $p = (array) $cfg['physical_in_play'];
         $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         if ($core !== '' && in_array($core, array_map('strtolower', (array) ($p['core_types'] ?? [])), true)) return true;
+        if (!empty($dynamics['_attraction']['enabled']) && ($dynamics['_attraction']['attracted'] ?? true) === false) return false;
         $passion = RelationshipDynamics::getPassion($dynamics);
         $latched = !empty($dynamics[self::STATE_KEY]['physical_in_play']);
         return $passion >= floatval($p[$latched ? 'release_passion' : 'min_passion'] ?? 30);

@@ -435,14 +435,17 @@ final class RelDynAttractionLoopPostgresTest extends TestCase
     }
 
     /**
-     * The stage's passion floor is a passion writer too: a bard whose gate is shut stays at 0
-     * at a deep stage (floor 15), and no passion line reaches the prompt.
+     * The stage's passion floor is a passion writer too (decisions §13): a non-negotiable (her
+     * orientation against the player's) holds no floor, so at a deep stage (floor 15) passion
+     * stays at 0 and no passion line reaches the prompt; the deep floor sits inside the spark,
+     * so it holds for anyone else, the bard far down her hill as much as the warrior.
      */
-    public function testTheStageFloorDoesNotLiftPassionThroughAClosedGate(): void
+    public function testTheStageFloorHoldsInsideTheSparkButNotThroughAHardZero(): void
     {
         $this->bard();
+        $this->corePlayer('gender', 'female');
         $this->fullTurn('A song for the Huntress?', 'default');
-        $this->editDynamics(function (array &$d): void {
+        $deep = function (array &$d): void {
             $d['stage'] = 'deep';
             $d['total_positive_interactions'] = 200;
             RelationshipDynamics::setPassion($d, 0.0);
@@ -451,14 +454,30 @@ final class RelDynAttractionLoopPostgresTest extends TestCase
             $d['passion_updated_at'] = $at;
             $d['_accumulated_play_gamets'] = $at + 20 * 60 * RelationshipDynamics::GAMETS_PER_REAL_SECOND;
             $d['_last_contact_play_gamets'] = $d['_accumulated_play_gamets'];
-        });
+        };
+        // the editor sets her orientation; the next request reads it (the summary the passion paths use)
+        $this->editDynamics(function (array &$d): void { $d['attraction_overrides'] = ['gender_pref' => 'heterosexual']; });
+        $this->fullTurn('Another verse?', 'default');
+        $this->editDynamics($deep);
         $this->fullTurn('Another verse?', 'default');
         $d = $this->dynamics();
-        $this->assertSame(0.0, floatval($d['_attraction']['passion_mult']), json_encode($d['_attraction']['passion']));
+        $this->assertSame('orientation', $d['_attraction']['hard_zero'], json_encode($d['_attraction']['passion']));
+        $this->assertSame(0.0, floatval($d['_attraction']['passion_mult']));
         $this->assertSame('deep', $d['stage']);
-        $this->assertLessThan(0.001, RelationshipDynamics::getPassion($d), 'the stage floor does not lift a shut gate');
+        $this->assertLessThan(0.001, RelationshipDynamics::getPassion($d), 'the stage floor does not lift a hard zero');
         $this->assertSame(0.0, RelationshipDynamics::passionStageFloor($d));
         $this->assertDoesNotMatchRegularExpression('/unexamined glance|small smile when they come near/', $this->lastPrompt);
+
+        // The bard she could be drawn to, however far down her hill: the floor is inside the spark
+        $this->editDynamics(function (array &$d) use ($deep): void {
+            $deep($d);
+            unset($d['attraction_overrides']);
+        });
+        $this->fullTurn('Another verse?', 'default');
+        $b = $this->dynamics();
+        $this->assertNull($b['_attraction']['hard_zero']);
+        $this->assertLessThan(0.15, $b['_attraction']['passion_mult'], 'far down her hill');
+        $this->assertSame(floatval(RelationshipDynamics::STAGE_PARAMS['deep']['floor']), RelationshipDynamics::passionStageFloor($b));
 
         // The same floor holds for a warrior she is drawn to
         $this->warriorAtStep(4);

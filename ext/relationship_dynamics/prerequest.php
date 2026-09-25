@@ -237,9 +237,9 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
 
 // ========== ATTRACTION MATRIX (MDD §2, decisions §9) ==========
 // Every request: the player profile (skills, deeds, economic footprint) and the NPC's own
-// pillar definitions -> passes / friendzone / tier ceiling / passion gate. Stored in
-// $dynamics['_attraction'] for postrequest, context, the eval consumer and getRelationshipType;
-// passion above its hard cap drops to it here. Off: nothing is gated.
+// pillar definitions -> passes / friendzone label / tier ceiling / passion curve (decisions §13).
+// Stored in $dynamics['_attraction'] for postrequest, context, the eval consumer and
+// getRelationshipType. Off: nothing is gated.
 RelationshipDynamics::updateAttraction($npcName, $dynamics);
 if ($reunionPassion > 0) {
     RelationshipDynamics::gainPassion($npcName, $dynamics, $reunionPassion, 'reunion');

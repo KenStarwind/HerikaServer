@@ -446,12 +446,12 @@ final class RelDynAttractionRomanceTest extends TestCase
         $this->dayTogether(1, 6, 'flirty');
         $this->dayTogether(2, 6, 'flirty');
         $this->assertGreaterThan($passion0 + 5.0, $this->passion(), 'the warrior earns passion');
-        // rulings §11 / §9: passion x attraction modifier x required-pillar gates x attachment
-        // (Aela: secure-leaning since decisions §12, x0.91); a friendzoned player's gate is closed (x0)
+        // decisions §13 / rulings §9: above the spark passion x the curve x attachment (Aela:
+        // secure-leaning since decisions §12, x0.91)
         $att = $this->dynamics()['_attraction'];
         $this->assertGreaterThan(0.0, $att['passion_mult']);
-        $this->assertEqualsWithDelta($att['passion']['modifier'] * $att['passion']['gate_product'] * $att['passion']['attachment'],
-            $att['passion_mult'], 1e-3, 'modifier x gates x attachment');
+        $this->assertEqualsWithDelta($att['passion']['curve'] * $att['passion']['attachment'],
+            $att['passion_mult'], 1e-3, 'curve x attachment');
         $this->assertNotContains('crush', $this->dynamics()['_attraction']['blocked_types'], 'the crush is earned');
 
         $this->gamets = self::T0 + 3 * self::DAY;
@@ -552,8 +552,8 @@ final class RelDynAttractionRomanceTest extends TestCase
         $ctx = $this->turn('Aela. I wrote a verse about the Companions.', 'neutral', self::T0);
         $a = $this->dynamics()['_attraction'];
         $this->assertFalse($a['passes'], json_encode($a));
-        $this->assertTrue($a['friendzoned'], 'tolerated, valued - no pull');
-        $this->assertSame(20.0, floatval($a['passion_cap']), 'MDD 6.2: passion hard-capped at 20');
+        $this->assertTrue($a['friendzoned'], 'tolerated, valued - little pull');
+        $this->assertArrayNotHasKey('passion_cap', $a, 'decisions §13: no cap, an uphill');
         $this->assertStringContainsString('kind deflection', $ctx);
         $aff0 = intval($this->core()['aff']);
 
@@ -571,8 +571,10 @@ final class RelDynAttractionRomanceTest extends TestCase
             'summary' => 'he told her he loves her; she smiled and called him a dear friend']);
         $maxPassion = max($maxPassion, $this->passion());
 
-        $this->assertLessThanOrEqual(20.0, $maxPassion, 'passion never above 20');
-        $this->assertSame(0.0, floatval($this->dynamics()['_attraction']['passion_mult']), 'friendzoned: the gate is closed (rulings §11)');
+        $this->assertLessThan(30.0, $maxPassion, 'past the spark only slowly: the foot of her hill');
+        $mult = floatval($this->dynamics()['_attraction']['passion_mult']);
+        $this->assertGreaterThan(0.0, $mult, 'an uphill, not a wall (decisions §13)');
+        $this->assertLessThan(0.15, $mult);
         // (absence between the days decays her at the secure-leaning rate, decisions §12: x0.86,
         // x0.5 while she was avoidant)
         $this->assertGreaterThanOrEqual($aff0 + 5, intval($this->core()['aff']), 'she still grows fond of him');

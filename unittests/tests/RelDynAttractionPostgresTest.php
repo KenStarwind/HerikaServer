@@ -347,7 +347,12 @@ final class RelDynAttractionPostgresTest extends TestCase
         RelationshipDynamics::clearConfigCache();
     }
 
-    public function testABardIsToleratedButStirsNoPassionWhileAffinityStillGrows(): void
+    /**
+     * Decisions §13: the spark is open to anyone, so the bard warms Aela like anyone to 20;
+     * past it his gains are the foot of her martial hill (about a tenth). No cap: passion an
+     * older save holds stays.
+     */
+    public function testABardIsToleratedAndClimbsHerHillSlowlyWhileAffinityStillGrows(): void
     {
         // A bard: speech / illusion, level 40, no fighting skill
         $this->playerBuild(['speech' => 95, 'illusion' => 75], 40);
@@ -366,20 +371,25 @@ final class RelDynAttractionPostgresTest extends TestCase
         $this->bardEvening();
         $d = $this->dynamics();
         $this->assertFalse($d['_attraction']['passes'], json_encode($d['_attraction']));
-        $this->assertSame(20.0, floatval($d['_attraction']['passion_cap']));
+        $this->assertArrayNotHasKey('passion_cap', $d['_attraction']);
         $gated = RelationshipDynamics::getPassion($d);
-        $this->assertGreaterThan(3.0 * $gated, $ungated, "the same evening, ungated {$ungated} vs gated {$gated}: no passion for a bard");
+        $mult = floatval($d['_attraction']['passion_mult']);
+        $this->assertLessThan(0.15, $mult, 'the foot of her martial hill');
+        $this->assertGreaterThan(20.0, $ungated, 'the evening carries an unjudged passion past the spark: ' . $ungated);
+        $this->assertLessThan($ungated, $gated);
+        // the spark (20) at anyone's rate, the rest about a tenth: never more than the hill allows
+        $this->assertLessThan(20.0 + 0.2 * ($ungated - 20.0) + 1.0, $gated, "the same evening, ungated {$ungated} vs gated {$gated}: the bard climbs slowly");
         $this->assertSame(['crush', 'romantic'], $d['_attraction']['blocked_types']);
         $this->assertGreaterThan($aff0, $this->coreAff(), 'affinity can still grow');
         $this->assertArrayHasKey('attraction', $this->rendered[count($this->contexts) - 1], 'the attraction line speaks');
         $this->assertStringContainsString($this->rendered[count($this->contexts) - 1]['attraction'], end($this->contexts));
         $this->assertStringNotContainsString('eyes keep finding ' . self::PLAYER, end($this->contexts));
 
-        // Passion she had before (the Matrix was off, or an old save) drops to the cap on the next
-        // request, and no eval can push it past (MDD 6.2 hard cap)
+        // Passion she had before (the Matrix was off, or an old save) stays: the MDD 6.2 cap is
+        // retired (decisions §13); evals add at the hill's rate
         $raw = pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT plugin_extended_data FROM core_npc_master WHERE npc_name = $1', [self::AELA]));
         $ped = json_decode($raw['plugin_extended_data'], true);
-        // written raw, as an older save holds it (setPassion itself already respects the cap)
+        // written raw, as an older save holds it
         $ped['reldyn']['dynamics']['dimensions']['passion']['x'] = 60.0;
         $ped['reldyn']['dynamics']['passion'] = 60.0;
         pg_query_params($this->db->link, 'UPDATE core_npc_master SET plugin_extended_data = $2::jsonb WHERE npc_name = $1',
@@ -388,7 +398,9 @@ final class RelDynAttractionPostgresTest extends TestCase
             $this->queueEval(['passion' => 10], 0.8, true);
         }
         $this->turn('Just one more song.');
-        $this->assertLessThanOrEqual(20.0, RelationshipDynamics::getPassion($this->dynamics()));
+        $after = RelationshipDynamics::getPassion($this->dynamics());
+        $this->assertGreaterThan(55.0, $after, 'not dropped to 20');
+        $this->assertLessThan(64.0, $after, 'four passionate evals move her little: the hill');
         $this->assertNoDbFailures();
     }
 }

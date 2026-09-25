@@ -70,8 +70,11 @@ final class RelDynAttractionGatePgDb
 /**
  * Rulings 2026-09-24 §11: "Attraction should be a modifier and a gate. As a player's stats and
  * achievements accumulate it increases the attraction multiplier of passion gains, and the
- * gate where there may be zeros, 100 x 0 is still 0."
- *   passion_gain = raw x attraction_modifier x product(required-pillar gates) x attachment
+ * gate where there may be zeros, 100 x 0 is still 0." Decisions §13 superseded the gate
+ * mechanics with an uphill (RelDynAttractionUphillPostgresTest): the multiplier still grows
+ * with every deed (now the curve toward and past the NPC's floors) and "100 x 0" still holds
+ * for the non-negotiable (a rigid pillar at 0, orientation, a passion-free preference), on
+ * every passion path; soft pillars never zero passion; the friendzone cap of 20 is retired.
  *
  * Real PostgreSQL, CHIM 3.4.1 core-shaped rows only: Aela's core_npc_master row (class,
  * factions, skills; no RelDyn state), the player's core_player rows as the plugin writes them
@@ -350,54 +353,37 @@ final class RelDynAttractionGatePostgresTest extends TestCase
             $a = $this->attractionNow($d);
             $steps[$k] = $a;
             $felt[$k] = (string) RelDynAttraction::feltText(self::AELA, $d['_attraction']);
-            $this->assertTrue($a['passes'], "step {$k}: a warrior's passion gate is open for Aela: " . $a['reason']);
-            $this->assertSame(1.0, floatval($a['passion']['gate_product']), "step {$k}");
-            if ($a['passion']['tolerated']) {
-                // the sellsword's strength is a near miss her (medium) openness forgives: open,
-                // the passion ceiling cut by MDD 1.4's 50%
-                $this->assertSame(0, $k, 'only the green sellsword is a near miss');
-                $this->assertEqualsWithDelta(50.0, floatval($a['passion_cap']), 1e-6, "step {$k}");
-            } else {
-                $this->assertNull($a['passion_cap'], "step {$k}: no friendzone cap for a warrior");
-            }
+            $this->assertNull($a['hard_zero'], "step {$k}: " . $a['reason']);
+            $this->assertArrayNotHasKey('passion_cap', $a, "step {$k}: no attraction cap (decisions §13)");
         }
-        // Strictly increasing, step after step: the score, the modifier and the passion multiplier
+        // Strictly increasing, step after step: the score, the curve and the passion multiplier
         for ($k = 1; $k <= 5; $k++) {
             $why = sprintf('step %d vs %d: %s -> %s', $k - 1, $k, json_encode($steps[$k - 1]['passion']), json_encode($steps[$k]['passion']));
             $this->assertGreaterThan($steps[$k - 1]['score'], $steps[$k]['score'], $why);
-            $this->assertGreaterThan($steps[$k - 1]['passion']['modifier'], $steps[$k]['passion']['modifier'], $why);
+            $this->assertGreaterThan($steps[$k - 1]['passion']['curve'], $steps[$k]['passion']['curve'], $why);
             $this->assertGreaterThan($steps[$k - 1]['passion_mult'], $steps[$k]['passion_mult'], $why);
         }
-        // The level-10 sellsword: a small multiplier, a fraction of what the Companion becomes
-        // (the modifier 0.28 x Aela's near-secure attachment 0.91, decisions §12; 0.7 while she was avoidant)
-        $this->assertLessThan(0.3, $steps[0]['passion_mult'], json_encode($steps[0]['passion']));
-        $this->assertGreaterThan(2.0 * $steps[0]['passion_mult'], $steps[5]['passion_mult']);
-        $this->assertLessThanOrEqual(1.0, $steps[5]['passion']['modifier'], 'attraction never speeds passion past its raw rate');
-        // The modifier is the documented curve on the score (floor + span x S^curve)
-        $pc = RelDynAttraction::config()['passion'];
+        // The level-10 sellsword: far down her martial hill; the Companion is past her floor
+        // (the curve x Aela's near-secure attachment 0.91, decisions §12)
+        $this->assertLessThan(0.15, $steps[0]['passion_mult'], json_encode($steps[0]['passion']));
+        $this->assertFalse($steps[0]['attracted'], 'very low: reads as not attracted (a label, no cap)');
+        $this->assertGreaterThan(5.0 * $steps[0]['passion_mult'], $steps[5]['passion_mult']);
+        $this->assertGreaterThan(1.0, $steps[5]['passion']['curve'], 'past her floor: a surplus');
+        $this->assertLessThanOrEqual(RelDynAttraction::curveConfig()['surplus_max'], $steps[5]['passion']['curve'], 'the surplus is capped');
         foreach ($steps as $k => $a) {
-            $this->assertEqualsWithDelta($pc['modifier_floor'] + ($pc['modifier_ceiling'] - $pc['modifier_floor']) * pow($a['score'], $pc['modifier_curve']),
-                $a['passion']['modifier'], 1e-3, "step {$k}");
-            $this->assertEqualsWithDelta($a['passion']['modifier'] * $a['passion']['gate_product'] * $a['passion']['attachment'],
-                $a['passion_mult'], 1e-3, "step {$k}: passion_mult = modifier x gates x attachment");
+            $this->assertEqualsWithDelta($a['passion']['curve'] * $a['passion']['attachment'], $a['passion_mult'], 1e-3,
+                "step {$k}: passion_mult = curve x attachment");
         }
 
-        // Felt, never numbers (decisions §3): the pull grows in the words too
-        // (as behavior, never a verdict: passing glances for the sellsword, lingering looks and
-        // eager answers for the Companion; the felt lane's wording)
-        $this->assertMatchesRegularExpression('/passing glance|flirts back lightly/', $felt[0]);
-        $this->assertDoesNotMatchRegularExpression('/passing glance|flirts back lightly/', $felt[5]);
-        $this->warriorAtStep(8);                  // a legend of the Companions (read on a copy)
-        $legend = $d;
-        $this->attractionNow($legend);
-        $legendFelt = (string) RelDynAttraction::feltText(self::AELA, $legend['_attraction']);
-        $this->assertMatchesRegularExpression('/linger there|flirts back boldly/', $legendFelt);
-        $this->warriorAtStep(5);
+        // Felt, never numbers (decisions §3): the pull grows in the words too (as behavior, never
+        // a verdict: a polite distance for the sellsword, lingering looks and eager answers for the
+        // Companion; the felt lane's wording)
+        $this->assertMatchesRegularExpression('/polite distance|pass without an answer/', $felt[0]);
+        $this->assertMatchesRegularExpression('/linger there|flirts back boldly/', $felt[5]);
         foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\bis (only faintly |strongly )?drawn to\b/', $text, "step {$k}");
         foreach ($felt as $k => $text) $this->assertDoesNotMatchRegularExpression('/\d/', $text, "step {$k}");
 
         // No bar anywhere: a few more sabre cats move the multiplier a little, never a jump
-        // (one kill moves it by less than the stored 4-decimal rounding: the modifier is linear)
         $this->warriorAtStep(5, 5);
         $plusOne = $this->attractionNow($d);
         $this->assertGreaterThan($steps[5]['passion_mult'], $plusOne['passion_mult'], 'every deed counts');
@@ -407,28 +393,32 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         $this->turn('Skjor says you did well at Dustman\'s Cairn.');
         $stored = $this->dynamics()['_attraction'];
         $this->assertEqualsWithDelta($plusOne['passion_mult'], $stored['passion_mult'], 1e-9);
-        $this->assertEqualsWithDelta($plusOne['passion']['modifier'], $stored['passion']['modifier'], 1e-9);
+        $this->assertEqualsWithDelta($plusOne['passion']['curve'], $stored['passion']['curve'], 1e-9);
         $this->assertNoDbFailures();
     }
 
     // ------------------------------------------------------------------ the gate
 
     /**
-     * A bard: Aela's required (flexible) strength reads as absent (her lens sees no warrior,
-     * hunter or druid in him), so the gate is 0 and every passion path adds exactly 0.
+     * The non-negotiable (decisions §13): Aela's orientation (heterosexual, set in the editor)
+     * and a female player. Whoever the player is otherwise (here the bard), every passion path
+     * adds exactly 0, the spark included.
      */
-    public function testAZeroedRequiredPillarGivesExactlyZeroPassionGainOnEveryPath(): void
+    public function testANonNegotiableGivesExactlyZeroPassionGainOnEveryPath(): void
     {
         $this->bard();
+        $this->corePlayer('gender', 'female');
         $this->setCoreAff(60);                     // a friend: reunion needs core affinity 40+
         $this->turn('A song for the Huntress?');
+        $this->editDynamics(function (array &$d): void { $d['attraction_overrides'] = ['gender_pref' => 'heterosexual']; });
+        $this->turn('Another verse?', 'default');
         $d = $this->dynamics();
         $a = $d['_attraction'];
-        $this->assertSame(0.0, floatval($a['passion']['gates']['flexible']), json_encode($a['passion']));
-        $this->assertSame(0.0, floatval($a['passion_mult']), 'the gate zeroes the product');
-        $this->assertGreaterThan(0.0, $a['passion']['modifier'], 'the modifier alone is not zero: the gate is');
-        $this->assertTrue($a['friendzoned'], 'tolerated: her friend, no passion ' . json_encode(RelationshipDynamics::attractionFor(self::AELA, $d)['pillars']));
-        $this->assertSame(20.0, floatval($a['passion_cap']));
+        $this->assertSame('orientation', $a['hard_zero'], json_encode($a['passion']));
+        $this->assertSame(0.0, floatval($a['passion_mult']), 'nothing above the spark');
+        $this->assertSame(0.0, floatval($a['spark_mult']), 'and no spark');
+        $this->assertGreaterThan(0.0, $a['passion']['curve'], 'the curve alone is not zero: the non-negotiable is');
+        $this->assertTrue($a['friendzoned'], 'her friend, no passion ' . json_encode(RelationshipDynamics::attractionFor(self::AELA, $d)['pillars']));
         $this->assertSame(0.0, RelationshipDynamics::attractionPassionMult(self::AELA, $d));
 
         // Passion she already has, below the cap, so any gain would show
@@ -451,6 +441,7 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         $d = $this->dynamics();
         $line = RelationshipDynamics::applyEvalSignal(self::AELA, $d, 'passion', 20.0, ['rescue'], 0.9);
         $this->assertSame(0.0, $line['actual'], 'eval signal: exactly 0 (' . $line['line'] . ')');
+        $this->assertStringContainsString('attraction hard zero', $line['line']);
 
         // 3. reunion: 30 game hours apart, 25 real minutes of it played (the play clock as a
         // session 50 real hours in holds it at the last contact)
@@ -547,21 +538,25 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         $this->assertSame('bond', $a['gate']);
         $this->assertSame(0.0, $a['pillars']['status']['score'], 'no Companions standing: status is 0 to Aela');
         $this->assertSame('rigid', $a['pillars']['status']['rigidity']);
-        $this->assertSame(1.0, floatval($a['passion']['gates']['flexible']), 'strength fully open');
-        $this->assertSame(0.0, floatval($a['passion']['gates']['status']));
+        $this->assertGreaterThanOrEqual(1.0, $a['passion']['units']['flexible:visceral']['m'], 'strength past her floor');
+        $this->assertSame(0.0, $a['passion']['units']['status']['m']);
+        $this->assertSame('rigid:status', $a['hard_zero']);
         $this->assertSame(0.0, $a['passion_mult'], '100 x 0 is still 0');
+        $this->assertSame(0.0, $a['spark_mult'], 'the spark too');
+        RelationshipDynamics::setPassion($d, 0.0);
         $this->assertSame(0.0, RelationshipDynamics::gainPassion(self::AELA, $d, 25.0, 'reunion'));
 
-        // One Companions quest is still short of her bar: the gate stays shut; her standing
-        // met (three), it opens
+        // One Companions quest is some standing: no longer a zero, the bottom of a steep hill;
+        // three climb it
         $this->corePlayer('The Companions Quests Completed', '1');
         $one = $this->attractionNow($d);
-        $this->assertSame(0.0, floatval($one['passion']['gates']['status']), json_encode($one['pillars']['status']));
-        $this->assertSame(0.0, $one['passion_mult']);
+        $this->assertNull($one['hard_zero'], json_encode($one['pillars']['status']));
+        $this->assertGreaterThan(0.0, $one['passion_mult']);
+        $this->assertLessThan(0.3, $one['passion']['units']['status']['m']);
         $this->corePlayer('The Companions Quests Completed', '3');
         $b = $this->attractionNow($d);
-        $this->assertSame(1.0, floatval($b['passion']['gates']['status']), json_encode($b['pillars']['status']));
-        $this->assertGreaterThan(0.0, $b['passion_mult']);
+        $this->assertGreaterThan($one['passion']['units']['status']['m'], $b['passion']['units']['status']['m'], json_encode($b['pillars']['status']));
+        $this->assertGreaterThan($one['passion_mult'], $b['passion_mult']);
         $this->assertNoDbFailures();
     }
 
@@ -578,40 +573,24 @@ final class RelDynAttractionGatePostgresTest extends TestCase
         $a = $this->attractionNow($d);
         $this->assertLessThanOrEqual(0.1, $a['pillars']['strength']['score'], 'strength as absent as before');
         $this->assertSame(0.0, $a['pillars']['status']['score'], 'status exactly 0');
-        $this->assertSame([], $a['passion']['gates'], 'soft pillars add no gate');
-        $this->assertSame(1.0, floatval($a['passion']['gate_product']));
+        $this->assertNull($a['hard_zero'], 'soft pillars are never a hard zero');
+        $soft = $a['passion']['units']['soft:visceral'];
+        $this->assertSame(['strength'], $soft['pillars'], json_encode($a['passion']['units']));
+        $this->assertGreaterThanOrEqual(RelDynAttraction::curveConfig()['soft_m_min'], $soft['m'], 'a gentle hill: never below half');
         $this->assertGreaterThan(0.0, $a['passion_mult']);
         $this->assertTrue($a['passes']);
-        $this->assertNull($a['passion_cap']);
 
-        // ... and a soft pillar still moves the modifier: Companions standing raises it
-        $this->corePlayer('The Companions Quests Completed', '3');
+        // ... and a soft pillar still moves the curve: a fighter's build raises it
+        $this->playerBuild(['speechcraft' => 95, 'illusion' => 75, 'onehanded' => 60, 'block' => 50], 40,
+            ['Quests Completed' => 200, 'Locations Discovered' => 250, 'Dungeons Cleared' => 90, 'People Killed' => 60,
+             'Creatures Killed' => 80, 'The Companions Quests Completed' => 0]);
         $b = $this->attractionNow($d);
-        $this->assertGreaterThan($a['passion']['modifier'], $b['passion']['modifier']);
+        $this->assertGreaterThan($a['passion']['curve'], $b['passion']['curve']);
         $this->assertNoDbFailures();
     }
 
-    public function testFriendzoneCapStillHoldsOnEveryWriter(): void
-    {
-        $this->bard();
-        $this->turn('A song for the Huntress?');
-        $this->assertTrue($this->dynamics()['_attraction']['friendzoned']);
-        // An older save holds passion 60: the next request drops it to the MDD 6.2 cap
-        $this->editDynamics(function (array &$d): void {
-            $d['dimensions']['passion']['x'] = 60.0;
-            $d['passion'] = 60.0;
-        });
-        $this->queueEval(['passion' => 10], ['quality_time']);
-        $this->turn('Just one more song.');
-        $d = $this->dynamics();
-        $this->assertLessThanOrEqual(20.0, RelationshipDynamics::getPassion($d), 'the friendzone cap');
-        $this->assertGreaterThan(19.0, RelationshipDynamics::getPassion($d), 'dropped to the cap (then the usual decay)');
-        RelationshipDynamics::setPassion($d, 55.0);
-        $this->assertSame(20.0, RelationshipDynamics::getPassion($d), 'setPassion holds the cap');
-        RelationshipDynamics::addPassion($d, 30.0, 'love_match');
-        $this->assertSame(20.0, RelationshipDynamics::getPassion($d));
-        $this->assertNoDbFailures();
-    }
+    // The friendzone cap test moved: the cap of 20 is retired (decisions §13), see
+    // RelDynAttractionUphillPostgresTest::testNoHardCapAtTwentyForAttractionAnywhere.
 
     // ------------------------------------------------------------------ respect_mult (plan §4)
 

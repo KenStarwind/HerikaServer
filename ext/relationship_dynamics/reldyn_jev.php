@@ -32,13 +32,19 @@
  *   walkaway         string normal|pending|active|boundary_test|recovery|permanent
  *   fulfillment      ['band' => -1..1, 'trend' => band per game day, 'low' => bool, 'known' => bool]
  *   attraction       ['enabled' => bool, 'outcome' => ?string, 'score' => 0..1,
- *                     rulings §11, attraction is a modifier AND a gate:
- *                     'modifier' => modifier(S) (continuous in the score),
- *                     'gate_product' => 0 or 1 (product of the required-pillar gates, each met or not),
- *                     'gate' => bool (the passion gate is open),
- *                     'passion_mult' => passion-gain multiplier = modifier x gates x attachment [x prebond],
+ *                     decisions §13, attraction is an uphill, not a wall:
+ *                     'curve' => the passion curve (unitless; < 1 below the NPC's floors, 1 at them,
+ *                                up to the surplus cap above),
+ *                     'spark' => passion points open to anyone at spark_mult,
+ *                     'spark_mult' => gain multiplier below the spark (attachment; 0 for a hard zero),
+ *                     'passion_mult' => gain multiplier from the spark = curve x attachment [x prebond],
+ *                     'hard_zero' => ?string (orientation | preference:<type> | rigid:<pillar>),
+ *                     'attracted' => bool (curve at least the friendzone label line),
+ *                     'relief' => 0..1 (a balanced NPC's bond easing the visceral hill),
+ *                     'units' => [unit => ['score' => pillar points 0..100, 'floor' => pillar points,
+ *                                'm' => multiplier]],
  *                     'respect_mult' => respect-gain multiplier (0.5..2.0, 1 at the neutral pillar score),
- *                     'passion_cap' => ?float points, 'friendzoned' => bool]
+ *                     'friendzoned' => bool (a label; no passion cap)]
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
  *   goal             null | ['text' => string, 'priority' => 0..1]
  *   units            field => unit description
@@ -52,8 +58,11 @@ final class RelDynJev
         'passion' => 'points 0..100', 'jealousy' => 'points 0..100',
         'fulfillment.band' => '-1..1 (below fulfillment low_band = neglected)',
         'fulfillment.trend' => 'band change per game day',
-        'attraction.modifier' => 'modifier(S), multiplier', 'attraction.gate_product' => '0 or 1',
-        'attraction.passion_mult' => 'passion-gain multiplier', 'attraction.respect_mult' => 'respect-gain multiplier',
+        'attraction.curve' => 'passion curve, multiplier (1 at the floors)', 'attraction.spark' => 'passion points',
+        'attraction.spark_mult' => 'passion-gain multiplier below the spark',
+        'attraction.passion_mult' => 'passion-gain multiplier from the spark', 'attraction.respect_mult' => 'respect-gain multiplier',
+        'attraction.units.score' => 'pillar points 0..100', 'attraction.units.floor' => 'pillar points 0..100',
+        'attraction.relief' => '0..1',
         'attraction.score' => '0..1',
         'attachment_anxiety' => 'axis 0..1 (fear of abandonment)',
         'attachment_avoidance' => 'axis 0..1 (discomfort with closeness once in)',
@@ -77,16 +86,25 @@ final class RelDynJev
         }
 
         $a = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
+        $units = [];
+        foreach ((array) ($a['passion']['units'] ?? []) as $key => $u) {
+            $units[(string) $key] = ['score' => round(floatval($u['score'] ?? 0), 2), 'floor' => round(floatval($u['floor'] ?? 0), 2),
+                'm' => round(floatval($u['m'] ?? 1.0), 4)];
+        }
+        $passionMult = round(floatval($a['passion_mult'] ?? $dynamics['_attraction_passion_mult'] ?? 1.0), 4);
         $attraction = [
             'enabled' => !empty($a['enabled']),
             'outcome' => isset($a['outcome']) ? (string) $a['outcome'] : null,
-            'modifier' => round(floatval($a['passion']['modifier'] ?? 1.0), 4),
-            'gate_product' => round(floatval($a['passion']['gate_product'] ?? 1.0), 4),
-            'gate' => empty($a['enabled']) ? true : !empty($a['passes']),
-            'passion_mult' => round(floatval($a['passion_mult'] ?? $dynamics['_attraction_passion_mult'] ?? 1.0), 4),
+            'curve' => round(floatval($a['passion']['curve'] ?? 1.0), 4),
+            'spark' => round(floatval($a['spark'] ?? 0.0), 2),
+            'spark_mult' => round(floatval($a['spark_mult'] ?? $passionMult), 4),
+            'passion_mult' => $passionMult,
+            'hard_zero' => isset($a['hard_zero']) ? (string) $a['hard_zero'] : null,
+            'attracted' => empty($a['enabled']) ? true : !empty($a['attracted']),
+            'relief' => round(floatval($a['passion']['relief'] ?? 0.0), 4),
+            'units' => $units,
             'respect_mult' => round(floatval($a['respect_mult'] ?? 1.0), 4),
             'score' => round(floatval($a['score'] ?? 0), 4),
-            'passion_cap' => is_numeric($a['passion_cap'] ?? null) ? floatval($a['passion_cap']) : null,
             'friendzoned' => !empty($a['friendzoned']),
         ];
 
@@ -163,9 +181,15 @@ final class RelDynJev
         $parts[] = 'fulfillment=' . number_format($s['fulfillment']['band'], 2, '.', '') . ($s['fulfillment']['low'] ? '(low)' : '');
         $a = $s['attraction'];
         if ($a['enabled']) {
-            $parts[] = 'attraction=' . ($a['outcome'] ?? 'unknown') . ' modifier=' . number_format($a['modifier'], 2, '.', '')
-                . ' gate=' . ($a['gate'] ? 'open' : 'closed') . '(' . number_format($a['gate_product'], 2, '.', '') . ')'
-                . ' passion_mult=' . number_format($a['passion_mult'], 2, '.', '');
+            $unitText = [];
+            foreach ($a['units'] as $key => $u) {
+                $unitText[] = $key . ' ' . $f($u['score']) . '/' . $f($u['floor']) . ' x' . number_format($u['m'], 2, '.', '');
+            }
+            $parts[] = 'attraction=' . ($a['outcome'] ?? 'unknown') . ' curve=' . number_format($a['curve'], 2, '.', '')
+                . ($unitText ? '[' . implode(', ', $unitText) . ']' : '')
+                . ' spark=' . $f($a['spark']) . '(x' . number_format($a['spark_mult'], 2, '.', '') . ')'
+                . ' passion_mult=' . number_format($a['passion_mult'], 2, '.', '')
+                . ($a['hard_zero'] !== null ? " hard_zero={$a['hard_zero']}" : '');
         }
         if ($s['place'] !== null) {
             $parts[] = 'place=' . number_format($s['place']['valence'], 2, '.', '') . ($s['place']['dominant'] !== null ? "({$s['place']['dominant']})" : '');

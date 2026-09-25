@@ -213,28 +213,32 @@ final class RelDynAttractionMatrixTest extends TestCase
     }
 
     /**
-     * Rulings §11: a required passion pillar the player does not meet (its bar, or the NPC's
-     * openness margin, MDD 1.4) is a gate at 0, whatever the rest scores; met, it is 1 and the
-     * modifier alone scales passion. The scholar opens Farengar's slow burn; a warrior's and a
-     * bard's strength fall short of his bar; Aela's lens sees no strength in a bard.
+     * Decisions §13 (supersedes the §11 gate): a required passion pillar far below the NPC's
+     * floor is the foot of a steep hill, not a zero. The scholar is on Farengar's hill; a
+     * warrior's and a bard's strength, as a mage reads it, are far down it; Aela's lens sees
+     * next to no strength in a bard. Only a non-negotiable is a zero (testPreferenceFilter,
+     * testGenderPreference).
      */
-    public function testAFailedRequiredPillarZeroes(): void
+    public function testAFarOffRequiredPillarIsTheFootOfTheHillNotAZero(): void
     {
         $at = fn(string $kind) => RelationshipDynamics::attractionFor('Farengar Secret-Fire', $this->npc('Farengar Secret-Fire'), self::player($kind));
         $scholar = $at('scholar');
-        $this->assertSame(1.0, floatval($scholar['passion']['gate_product']));
+        $this->assertNull($scholar['hard_zero']);
         $this->assertGreaterThan(0.0, $scholar['passion_mult']);
         foreach (['warrior', 'bard'] as $kind) {
             $r = $at($kind);
-            $this->assertFalse($r['pillars']['strength']['pass'], "{$kind}: short of his bar");
-            $this->assertFalse($r['pillars']['strength']['tolerated'], "{$kind}: not a near miss");
-            $this->assertSame(0.0, floatval($r['passion']['gates']['flexible']), $kind);
-            $this->assertSame(0.0, $r['passion_mult'], "{$kind}: 100 x 0 is still 0");
-            $this->assertGreaterThan(0.0, $r['passion']['modifier'], "{$kind}: the modifier alone is not zero: the gate is");
+            $this->assertFalse($r['pillars']['strength']['pass'], "{$kind}: short of his bar (the type filter)");
+            $this->assertNull($r['hard_zero'], "{$kind}: not a non-negotiable");
+            $this->assertGreaterThan(0.0, $r['passion_mult'], "{$kind}: an uphill, not a wall");
+            $this->assertLessThan($scholar['passion']['curve'], $r['passion']['curve'], "{$kind}: further down his hill than the scholar");
+            $this->assertLessThan(0.2, $r['passion']['curve'], "{$kind}: far below his floor");
         }
         $b = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA), self::player('bard'));
-        $this->assertSame(0.0, $b['passion']['gates']['flexible']);
-        $this->assertSame(0.0, $b['passion_mult']);
+        $unit = $b['passion']['units']['flexible:visceral'];
+        $this->assertSame(68.0, $unit['floor'], 'her martial floor');
+        $this->assertLessThan(0.15, $unit['m']);
+        $this->assertGreaterThanOrEqual(RelDynAttraction::curveConfig()['m_min'], $unit['m'], 'never below m_min for a flexible pillar');
+        $this->assertGreaterThan(0.0, $b['passion_mult']);
     }
 
     public function testPillarsAreNpcSubjectiveThroughTheArchetypeLens(): void
@@ -305,9 +309,10 @@ final class RelDynAttractionMatrixTest extends TestCase
     }
 
     /**
-     * MDD 1.4 openness (tolerance of a failed pillar): low = hard block, medium / high tolerate
-     * a near miss: the passion gate opens, with the passion ceiling cut 50% / 20%, and advancing
-     * takes 2x the effort. Far off the mark closes the gate at any openness.
+     * MDD 1.4 openness (tolerance of a failed pillar): on the type / tier axis, low = hard
+     * block, medium / high tolerate a near miss and advancing takes 2x the effort. On passion
+     * (decisions §13) openness sets the height of the hill: the pickier the NPC, the higher her
+     * floor and the lower the curve for the same player; no passion ceiling cut any more.
      */
     public function testOpennessTolerance(): void
     {
@@ -333,23 +338,22 @@ final class RelDynAttractionMatrixTest extends TestCase
         $high = $at('high', $near);
         $this->assertTrue($high['pillars']['strength']['tolerated']);
 
-        // Passion: low openness is a hard block (MDD 1.4), capped like the unattracted
-        $this->assertFalse($low['passes'], $low['reason']);
-        $this->assertSame(0.0, floatval($low['passion']['gates']['strength']));
-        $this->assertSame(20.0, floatval($low['passion_cap']));
-        // medium / high: open, the passion ceiling cut by the MDD 1.4 fraction
-        $max = floatval(RelationshipDynamics::getConfig()['passion_max'] ?? 100.0);
-        foreach (['medium' => [$medium, 0.5], 'high' => [$high, 0.2]] as $band => [$r, $cut]) {
-            $this->assertTrue($r['passes'], "{$band}: {$r['reason']}");
-            $this->assertSame(1.0, floatval($r['passion']['gates']['strength']), $band);
-            $this->assertEqualsWithDelta($max * (1.0 - $cut), floatval($r['passion_cap']), 1e-6, "{$band}: MDD 1.4 ceiling cut");
+        // Passion: openness sets the floor (curve.floor_by_openness), so the same near miss is
+        // further down a low-openness NPC's hill; no cap at any band
+        $floors = RelDynAttraction::curveConfig()['floor_by_openness'];
+        foreach (['low' => $low, 'medium' => $medium, 'high' => $high] as $band => $r) {
+            $this->assertSame(floatval($floors[$band]), $r['passion']['units']['strength']['floor'], $band);
+            $this->assertNull($r['hard_zero'], "{$band}: {$r['reason']}");
+            $this->assertGreaterThan(0.0, $r['passion_mult'], $band);
+            $this->assertArrayNotHasKey('passion_cap', $r, "{$band}: the MDD 1.4 ceiling cut is retired with the cap");
         }
-        $this->assertGreaterThan(0.0, $medium['passion_mult']);
+        $this->assertLessThan($medium['passion']['curve'], $low['passion']['curve']);
+        $this->assertLessThan($high['passion']['curve'], $medium['passion']['curve']);
 
         $farHigh = $at('high', $far);
-        $this->assertSame(0.0, $farHigh['passion']['gates']['strength'], 'far off the mark: absent to her, even at high openness');
-        $this->assertFalse($farHigh['passes']);
-        $this->assertSame(0.0, $farHigh['passion_mult']);
+        $this->assertLessThan($high['passion']['curve'], $farHigh['passion']['curve'], 'far off the mark: further down, even at high openness');
+        $this->assertFalse($farHigh['passes'], 'very low: not attracted');
+        $this->assertGreaterThan(0.0, $farHigh['passion_mult'], 'but not a wall');
 
         // 2x the significant interactions to advance with a tolerated fail
         $plain = RelDynAttraction::interactionsNeeded($d, $medium['gate'], 'medium', false);
@@ -380,14 +384,21 @@ final class RelDynAttractionMatrixTest extends TestCase
         $aro = $pref('aromantic');
         $this->assertFalse($aro['passes']);
         $this->assertTrue($aro['friendzoned'], 'aromantic: deep friendship, no romance');
-        $this->assertSame(20.0, $aro['passion_cap']);
+        $this->assertSame('preference:aromantic', $aro['hard_zero'], 'decisions §13: a non-negotiable, no spark either');
+        $this->assertSame(0.0, $aro['passion_mult']);
+        $this->assertSame(0.0, $aro['spark_mult']);
         $this->assertSame(['crush', 'romantic'], $aro['blocked_types']);
 
         $this->assertFalse($pref('not_interested')['passes']);
+        $this->assertSame('preference:not_interested', $pref('not_interested')['hard_zero']);
 
         $ace = $pref('asexual');
         $this->assertTrue($ace['passes'], 'asexual: romance possible');
         $this->assertFalse($ace['intimacy_allowed'], 'asexual: no handoff to Sharmat');
+        $this->assertSame('preference:asexual', $ace['hard_zero'], 'asexual: no passion (decisions §13)');
+        $this->assertSame(0.0, $ace['passion_mult']);
+        $this->assertSame(0.0, $ace['spark_mult']);
+        $this->assertNull($pref('monogamous')['hard_zero']);
 
         $unc = $pref('uncommitted');
         $this->assertSame(1, $unc['romance']['allowed'], 'uncommitted: crush, never commitment');
@@ -457,7 +468,10 @@ final class RelDynAttractionMatrixTest extends TestCase
         $unknown['known'] = false;
         $a = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA), $unknown);
         $this->assertTrue($a['passes']);
-        $this->assertNull($a['passion_cap']);
+        $this->assertArrayNotHasKey('passion_cap', $a);
+        $this->assertSame(1.0, $a['passion_mult'], 'not judged: x1 above the spark');
+        $this->assertSame(1.0, $a['spark_mult'], 'and below it');
+        $this->assertNull($a['hard_zero']);
         $this->assertSame([], $a['blocked_types']);
 
         $this->storeConfig(['attraction_matrix_enabled' => false]);
@@ -476,12 +490,16 @@ final class RelDynAttractionMatrixTest extends TestCase
         $aro = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA, ['relationship_preference' => 'aromantic']), $unknown);
         $this->assertSame(['crush', 'romantic'], $aro['blocked_types']);
         $this->assertFalse($aro['intimacy_allowed']);
-        $this->assertSame(20.0, $aro['passion_cap'], 'no romance: capped like a friendzone');
+        $this->assertSame('preference:aromantic', $aro['hard_zero'], 'no romance: no passion at all (decisions §13)');
+        $this->assertSame(0.0, $aro['passion_mult']);
+        $this->assertSame(0.0, $aro['spark_mult']);
+        $this->assertFalse($aro['attracted']);
         $this->assertSame('aromantic', $aro['preference']);
 
         $unc = RelationshipDynamics::attractionFor(self::AELA, $this->npc(self::AELA, ['relationship_preference' => 'uncommitted']), $unknown);
         $this->assertSame(['romantic'], $unc['blocked_types'], 'uncommitted: a crush, never commitment');
-        $this->assertNull($unc['passion_cap']);
+        $this->assertNull($unc['hard_zero']);
+        $this->assertSame(1.0, $unc['passion_mult']);
 
         $demi = fn(float $aff) => RelationshipDynamics::attractionFor(self::AELA,
             $this->npc(self::AELA, ['relationship_preference' => 'demisexual'], $aff), $unknown)['blocked_types'];
@@ -544,13 +562,20 @@ final class RelDynAttractionMatrixTest extends TestCase
         $mw = RelationshipDynamics::attractionPassionMult(self::AELA, $warrior);
         $mb = RelationshipDynamics::attractionPassionMult(self::AELA, $bard);
         $this->assertGreaterThan(0.3, $mw, 'the warrior stirs Aela');
-        $this->assertSame(0.0, $mb, 'the bard: her required strength is absent, 100 x 0 = 0 (rulings §11)');
+        $this->assertGreaterThan(0.0, $mb, 'the bard: the foot of her hill, not a wall (decisions §13)');
+        $this->assertLessThan(0.15, $mb);
+        // Below the spark both warm her at the same rate (attachment only)
+        RelationshipDynamics::setPassion($warrior, 5.0);
+        RelationshipDynamics::setPassion($bard, 5.0);
+        $this->assertEqualsWithDelta(RelationshipDynamics::attractionPassionFactor(self::AELA, $warrior, 1.0, 'love_match'),
+            RelationshipDynamics::attractionPassionFactor(self::AELA, $bard, 1.0, 'love_match'), 1e-9, 'the spark is open to anyone');
         $a = $warrior['_attraction']['passion'];
         // Decisions §12: Aela is secure-leaning (preset anxiety 0.15, avoidance 0.35), so her
         // attachment factor is attachment_mult read at her axes, near the secure 1.0
         $att = RelationshipDynamics::attachmentBlend($warrior, RelDynAttraction::config()['passion']['attachment_mult'], 1.0);
         $this->assertEqualsWithDelta(1.0 - (0.2 / 0.7) * 0.3, $att, 1e-9, 'secure 1.0 x 5/7 + avoidant 0.7 x 2/7');
-        $this->assertEqualsWithDelta($a['modifier'] * $a['gate_product'] * $att, $mw, 1e-3, 'modifier x gates x attachment');
+        $this->assertEqualsWithDelta($a['curve'] * $att, $mw, 1e-3, 'curve x attachment');
+        $this->assertEqualsWithDelta($att, $warrior['_attraction']['spark_mult'], 1e-4, 'the spark: attachment only');
     }
 
     public function testAttachmentStyleSetsThePace(): void
@@ -564,14 +589,14 @@ final class RelDynAttractionMatrixTest extends TestCase
         $this->assertLessThan($m($sec), $m($avo));
     }
 
-    public function testEvalPassionSignalIsGatedAndFriendzoneCappedWhileAffinityStillGrows(): void
+    public function testEvalPassionSignalClimbsTheHillWhileAffinityStillGrows(): void
     {
         $this->storeConfig(['log_enabled' => true]);
         $warrior = $this->aelaFor('warrior');
         $bard = $this->aelaFor('bard');
         $this->assertTrue($bard['_attraction']['friendzoned']);
         RelationshipDynamics::setPassion($warrior, 15.0);
-        RelationshipDynamics::setPassion($bard, 19.5);   // just under the cap
+        RelationshipDynamics::setPassion($bard, 19.5);   // just under the spark
         $affBefore = RelationshipDynamics::getCoreAffinity($bard);
         $t = 1000;
         $bardGains = [];
@@ -585,31 +610,32 @@ final class RelDynAttractionMatrixTest extends TestCase
         $pw = RelationshipDynamics::getPassion($warrior);
         $pb = RelationshipDynamics::getPassion($bard);
         $this->assertGreaterThan(20.0, $pw, 'the warrior: passion builds');
-        $this->assertLessThanOrEqual(20.0, $pb, 'the bard: friendzone hard cap (MDD 6.2)');
-        $this->assertSame(0.0, max($bardGains), 'the bard: the gate is closed, not one eval adds passion (rulings §11)');
-        $this->assertGreaterThan($pb, $pw);
+        $this->assertGreaterThan(20.0, $pb, 'the bard: no cap at 20 (decisions §13)');
+        $this->assertGreaterThan(0.0, min(array_slice($bardGains, 1)), 'the bard: every eval adds a little (an uphill, not a wall)');
+        $this->assertGreaterThan(3.0 * ($pb - 19.5), $pw - 15.0, 'the bard climbs a far steeper hill than the warrior');
         $this->assertGreaterThan($affBefore, RelationshipDynamics::getCoreAffinity($bard), 'friendzone: affinity can still grow');
         $log = (string) file_get_contents($this->errorLog);
-        $this->assertStringContainsString('attraction x', $log, 'the gate shows in the eval math line');
+        $this->assertStringContainsString('attraction x', $log, 'the curve shows in the eval math line');
     }
 
-    public function testHardCapHoldsForEveryPassionWriter(): void
+    /** Decisions §13 retired the MDD 6.2 hard cap of 20: no passion writer holds a friendzoned NPC at it. */
+    public function testNoAttractionCapOnAnyPassionWriter(): void
     {
         $d = $this->aelaFor('bard');
+        $this->assertTrue($d['_attraction']['friendzoned']);
         RelationshipDynamics::addPassion($d, 50.0, 'love_match');
-        $this->assertSame(20.0, RelationshipDynamics::getPassion($d), 'addPassion');
-        RelationshipDynamics::applyDelta('passion', $d, 30.0, $d['inferred_temperament']);
-        $this->assertSame(20.0, RelationshipDynamics::getPassion($d), 'applyDelta');
-        // Friendzone begins while passion runs high: it drops to the cap
+        $this->assertSame(50.0, RelationshipDynamics::getPassion($d), 'addPassion (the writer after the factor)');
+        $this->assertGreaterThan(0.0, RelationshipDynamics::applyDelta('passion', $d, 30.0, $d['inferred_temperament']), 'applyDelta');
+        $this->assertGreaterThan(50.0, RelationshipDynamics::getPassion($d));
+        // The label begins while passion runs high: passion stays
         $e = $this->aelaFor('warrior');
         RelationshipDynamics::setPassion($e, 70.0);
         RelationshipDynamics::updateAttraction(self::AELA, $e, self::player('bard'));
-        $this->assertSame(20.0, RelationshipDynamics::getPassion($e));
-        // ...and the friendzone breaks when the visceral checks are met later
+        $this->assertTrue($e['_attraction']['friendzoned']);
+        $this->assertSame(70.0, RelationshipDynamics::getPassion($e));
+        // ...and ends when the player climbs her hill
         RelationshipDynamics::updateAttraction(self::AELA, $e, self::player('warrior'));
         $this->assertFalse($e['_attraction']['friendzoned']);
-        RelationshipDynamics::addPassion($e, 30.0, 'love_match');
-        $this->assertGreaterThan(20.0, RelationshipDynamics::getPassion($e));
     }
 
     // ------------------------------------------------------------------ tier ceiling + significant interactions
