@@ -7054,8 +7054,9 @@ class RelationshipDynamics
         if ($dimensionId === 'resentment' && $rawDelta > 0) {
             $modifiedDelta *= floatval(self::getAttachmentModifier($dynamics, 'resentment_gain_mult') ?? 1.0);
         }
-        // Trust gains: the anxiety part of A15h (traits phase 3, design §2.2), blended by the axes
-        if ($dimensionId === 'trust' && $rawDelta > 0) {
+        // Trust gains: the anxiety part of A15h (traits phase 3, design §2.2), blended by the axes.
+        // Only where A15h's temperament Y applies: the eval pipeline (R x maturity-type Y) skips it
+        if ($dimensionId === 'trust' && $rawDelta > 0 && !in_array('attachment_trust_gain', $skip, true)) {
             $modifiedDelta *= floatval(self::getAttachmentModifier($dynamics, 'trust_gain_mult') ?? 1.0);
         }
 
@@ -8320,6 +8321,8 @@ class RelationshipDynamics
         }
 
         $y = $R * $P * $M;
+        // A15h's attachment part rides with the temperament Y it replaced, which this path never read
+        $overrides['skip_caps'] = array_merge((array) ($overrides['skip_caps'] ?? []), ['attachment_trust_gain']);
         $overrides['Y_up'] = $y;
         $overrides['Y_down'] = $y;
         $significance = max(0.0, min(1.0, $significance));
