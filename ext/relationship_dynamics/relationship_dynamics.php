@@ -159,16 +159,11 @@ class RelationshipDynamics
 
     // ========== GAMETS PLAY TIME TRACKING ==========
     //
-    // Normal gameplay at 20:1 time compression: ~2315 gamets per real second.
-    // Wait/sleep produces enormous spikes (100K+ gamets/sec).
-    // Threshold of 10,000 = ~4.3x normal -- filters wait/sleep while tolerating
-    // minor fluctuations (timescale changes, brief pauses, etc.).
-    //
+    // The play clock counts played GAME time (raw gamets, waits/sleeps/travel/loads cut out:
+    // beatPlayClock). Normal gameplay at 20:1 time compression is ~2315 gamets per real
+    // second, so durations written as "real minutes of play" are that many play gamets:
     // GAMETS_PER_DECAY_TICK = 10 real minutes of normal gameplay:
     //   600 real seconds * 2315 gamets/sec = 1,389,000 gamets.
-
-    /** Gamets/real-second ratio above which a gap is logged as containing a wait/sleep. */
-    const GAMETS_WAIT_SLEEP_THRESHOLD = 10000;
 
     /** Accumulated play gamets per decay tick (~10 real minutes at 20:1 game speed). */
     const GAMETS_PER_DECAY_TICK = 1389000;
@@ -1763,16 +1758,14 @@ class RelationshipDynamics
             '_diary_snapshots'       => [],
 
             // ========== ACCUMULATED TIME TRACKING ==========
-            '_accumulated_time'       => 0,    // total seconds of actual play time with this NPC
-            '_last_interaction_ts'    => 0,    // real timestamp of last interaction (for delta calc)
+            '_accumulated_time'       => 0,    // play seconds with this NPC: play clock credit / GAMETS_PER_REAL_SECOND
             '_decay_last_accumulated' => 0,    // accumulated time at last affinity decay
             '_resentment_last_accumulated' => 0, // accumulated time at last resentment decay
             '_diary_last_accumulated' => 0,    // accumulated time at last diary reflection
 
             // ========== GAMETS PLAY TIME TRACKING ==========
-            '_last_gamets'              => 0,     // last seen gamets value from game clock
-            '_last_real_ts'             => 0,     // real timestamp at last gamets sample
-            '_accumulated_play_gamets'  => 0,     // filtered game time (excludes wait/sleep)
+            '_last_gamets'              => 0,     // game-calendar gamets at this NPC's last turn
+            '_accumulated_play_gamets'  => 0,     // play clock: played game time (waits, sleeps, travel, loads excluded)
             '_decay_last_game_gamets'   => 0,     // game-calendar gamets at the last absence-decay check
             '_resentment_last_play_gamets' => 0,  // accumulated play gamets at last resentment decay
 
@@ -1840,69 +1833,54 @@ class RelationshipDynamics
         ];
     }
 
-    // ========== ACCUMULATED TIME TRACKING ==========
+    // ========== PLAY SECONDS (_accumulated_time) ==========
 
     /**
-     * Update accumulated play time for this NPC.
+     * Advance this NPC's play seconds (_accumulated_time) by the play clock's credit for this
+     * turn (updatePlayTime()), in real-second units at the default timescale
+     * (GAMETS_PER_REAL_SECOND). Game time only: a wait, a sleep or a break with the game closed
+     * adds nothing, because the play clock credited nothing for it. Used by the diary
+     * reflection cooldowns, the grief bond length and the resentment-decay debounce fallback.
      *
-     * Called at the start of every prerequest cycle. Measures real wall-clock
-     * delta since the last interaction, caps it at 300 seconds (5 min) to
-     * prevent AFK/session-break inflation, and adds the capped delta to the
-     * running total.
-     *
-     * First interaction (last_ts = 0) initializes the timestamp without
-     * adding any time.
-     *
-     * @param array &$dynamics  NPC dynamics blob (modified in place)
-     * @return int  The capped delta (seconds) that was added this call
+     * @param array &$dynamics            NPC dynamics blob (modified in place)
+     * @param float $playGametsCredited   play gamets updatePlayTime() credited this turn
+     * @return float  play seconds added
      */
-    public static function updateAccumulatedTime(&$dynamics)
+    public static function updateAccumulatedTime(&$dynamics, float $playGametsCredited = 0.0): float
     {
-        $now = time();
-        $last = intval($dynamics['_last_interaction_ts'] ?? 0);
-
-        if ($last === 0) {
-            // First interaction -- initialize, don't add time
-            $dynamics['_last_interaction_ts'] = $now;
-            return 0;
+        unset($dynamics['_last_interaction_ts']);   // the real-time stamp of the old clock
+        if ($playGametsCredited <= 0) {
+            return 0.0;
         }
-
-        $delta = max(0, $now - $last);
-        $capped = min($delta, 300); // 5-minute cap per gap
-
-        $dynamics['_accumulated_time'] = intval($dynamics['_accumulated_time'] ?? 0) + $capped;
-        $dynamics['_last_interaction_ts'] = $now;
-
-        return $capped;
+        $seconds = $playGametsCredited / self::GAMETS_PER_REAL_SECOND;
+        $dynamics['_accumulated_time'] = floatval($dynamics['_accumulated_time'] ?? 0) + $seconds;
+        return $seconds;
     }
 
     // ========== GAMETS PLAY TIME TRACKING ==========
 
     /**
-     * Update filtered play time using gamets (Skyrim internal game clock).
+     * Advance this NPC's play clock (_accumulated_play_gamets) at its turn, in game time only.
      *
-     * Compares gamets delta against real-time delta to drop wait/sleep.
-     * Normal gameplay at 20:1 time compression produces ~2315 gamets/real-sec.
-     * Wait/sleep produces 100K+ gamets/real-sec. The credit is capped at
-     * real seconds x GAMETS_PER_REAL_SECOND, so a wait or sleep anywhere in the
-     * gap adds nothing beyond the real seconds that passed.
+     * The credit is the played game time between this NPC's previous turn and now: the global
+     * play heartbeat's advance since that turn (beatPlayClock(): the eventlog's game clock with
+     * waits, sleeps, fast travel and loads cut out), never more than the game calendar moved
+     * for this NPC. A turn with no heartbeat mark (stored before it existed, or from a reset
+     * heartbeat) credits nothing: that gap cannot be proven play. Without a heartbeat at all
+     * (no database) a gap is credited only up to PLAY_GAP_MAX_GAMETS; a longer jump is not
+     * proven play. Real time is never read: the same game gives the same clock.
      *
-     * First call (last_gamets = 0) initializes without adding time.
+     * First call (no _last_gamets) initializes without adding time.
      *
-     * The per-gap cap cannot tell play from real time with the game clock stopped (quit
-     * overnight, menus, alt-tab): after a real break, a wait or sleep fits under it. With
-     * $globalPlayGamets (the global play heartbeat, beatPlayClock(): played gamets across
-     * all requests, offline gaps capped) the credit is also bounded by the play the
-     * heartbeat saw since this NPC's last turn (_last_global_play_gamets). A gap with no
-     * heartbeat mark (stored before it existed) credits nothing: it cannot be proven play.
-     *
-     * @param array &$dynamics       NPC dynamics blob (modified in place)
-     * @param float|null $currentGamets  Current gamets value (from $gameRequest[2] or DB fallback)
-     * @param float|null $globalPlayGamets  Global play heartbeat now (play gamets), null = unavailable
-     * @return float  The gamets delta that was actually counted (0 if filtered or first call)
+     * @param array &$dynamics            NPC dynamics blob (modified in place)
+     * @param float|null $currentGamets   game calendar now (raw gamets; default currentGamets())
+     * @param float|null $globalPlayGamets  global play heartbeat now (play gamets), null = unavailable
+     * @return float  play gamets credited this turn
      */
     public static function updatePlayTime(&$dynamics, $currentGamets = null, ?float $globalPlayGamets = null)
     {
+        unset($dynamics['_last_real_ts']);   // the real-time stamp of the old clock
+
         // Heartbeat bound for this gap (play gamets), read before the mark moves to now.
         $globalBound = null;
         if ($globalPlayGamets !== null) {
@@ -1913,52 +1891,29 @@ class RelationshipDynamics
             $dynamics['_last_global_play_gamets'] = $globalPlayGamets;
         }
 
-        // Resolve current gamets: parameter > gameRequest > DB fallback
-        if ($currentGamets === null) {
-            $currentGamets = self::currentGamets();
-        } else {
-            $currentGamets = floatval($currentGamets);
-        }
-
+        $currentGamets = $currentGamets === null ? self::currentGamets() : floatval($currentGamets);
         if ($currentGamets <= 0) {
             return 0.0;
         }
 
-        $now = time();
         $lastGamets = floatval($dynamics['_last_gamets'] ?? 0);
-        $lastRealTs = intval($dynamics['_last_real_ts'] ?? 0);
-
-        // First call -- initialize, don't add time
-        if ($lastGamets <= 0 || $lastRealTs <= 0) {
-            $dynamics['_last_gamets'] = $currentGamets;
-            $dynamics['_last_real_ts'] = $now;
-            return 0.0;
+        $dynamics['_last_gamets'] = $currentGamets;
+        if ($lastGamets <= 0) {
+            return 0.0;   // first turn: start the clock
         }
 
         $gametsDelta = $currentGamets - $lastGamets;
-        $realDelta = $now - $lastRealTs;
-
-        // Update tracking timestamps
-        $dynamics['_last_gamets'] = $currentGamets;
-        $dynamics['_last_real_ts'] = $now;
-
-        // Skip: same request, clock issue, or gamets went backward (reload)
-        if ($realDelta <= 0 || $gametsDelta <= 0) {
-            return 0.0;
+        if ($gametsDelta <= 0) {
+            return 0.0;   // same moment, or an earlier save loaded
         }
 
-        // Credit at most what normal play (timescale 20, GAMETS_PER_REAL_SECOND) produces in
-        // the real seconds that passed. A gap can mix play with a wait or sleep (1 h of play
-        // + a 24 h sleep averages ~5100 gamets/s, under GAMETS_WAIT_SLEEP_THRESHOLD), so a
-        // ratio test over the whole gap cannot drop the sleep; the cap drops it. A pure wait
-        // or sleep is credited only the few real seconds it took.
-        $credited = min($gametsDelta, $realDelta * self::GAMETS_PER_REAL_SECOND);
-        if ($credited < $gametsDelta && ($gametsDelta / $realDelta) > self::GAMETS_WAIT_SLEEP_THRESHOLD) {
-            self::log("[RelDyn-GAMETS] wait/sleep in gap: delta={$gametsDelta} gamets in {$realDelta}s, credited {$credited}");
-        }
-        if ($globalBound !== null && $globalBound < $credited) {
-            self::log("[RelDyn-GAMETS] heartbeat saw {$globalBound} play gamets in the gap; credited {$globalBound} of {$credited}");
-            $credited = $globalBound;
+        if ($globalBound !== null) {
+            $credited = min($gametsDelta, $globalBound);
+            if ($credited < $gametsDelta) {
+                self::log("[RelDyn-GAMETS] {$gametsDelta} game gamets since the last turn, {$globalBound} of them played: credited {$credited}");
+            }
+        } else {
+            $credited = $gametsDelta <= self::PLAY_GAP_MAX_GAMETS ? $gametsDelta : 0.0;
         }
 
         $dynamics['_accumulated_play_gamets'] = floatval($dynamics['_accumulated_play_gamets'] ?? 0) + $credited;
@@ -1967,81 +1922,221 @@ class RelationshipDynamics
     }
 
     /**
-     * Get accumulated play time in minutes.
+     * Play seconds in minutes.
      *
      * @param array $dynamics  NPC dynamics blob
      * @return float  Accumulated minutes
      */
     public static function getAccumulatedMinutes($dynamics)
     {
-        return intval($dynamics['_accumulated_time'] ?? 0) / 60.0;
+        return floatval($dynamics['_accumulated_time'] ?? 0) / 60.0;
     }
 
-    // ---------- Global play heartbeat ----------
-    // One conf_opts row counts played gamets across every request RelDyn's prerequest sees,
-    // whatever NPC it is for. Each gap between two requests credits
-    // min(game gamets passed, min(real seconds, PLAY_HEARTBEAT_GAP_CAP_S) x GAMETS_PER_REAL_SECOND):
-    // a wait or sleep adds only the real seconds it took, and an offline gap (quit, menus,
-    // alt-tab) adds at most the cap. updatePlayTime() bounds each NPC's play credit by it.
+    // ---------- Global play heartbeat (game time only) ----------
+    // One conf_opts row counts played game time across the whole game, whoever the player talks
+    // to. Its source is core's eventlog, the densest game clock CHIM 3.4.1 keeps: every event
+    // carries the game time it happened at (gamets), and while the game runs core logs the
+    // plugin's 'request' poll about every 5 real seconds (processor/comm.php, time() % 5), plus
+    // infoloc/infonpc/combat/dialogue rows. Each beat walks the rows logged since the last one,
+    // in rowid order, and credits the game time between consecutive rows (foldPlayRows), except
+    // where the game skipped time instead of playing it:
+    //   - a wait: core's waitstop handler logs 'info_timeforward' "<h> hours have passed" at
+    //     the end of the wait (from conf_opts last_waitstart); the h-hour window before it is
+    //     cut out of every gap it overlaps (a row naming no usable window: the gap ending at
+    //     it is not play);
+    //   - a sleep: the gap after 'goodnight' (core logs it as the player lies down) and the gap
+    //     ending at 'goodmorning' are not play;
+    //   - a load: an 'init' row restarts the baseline at the loaded game time, as does any jump
+    //     back of more than PLAY_GAP_MAX_GAMETS (an earlier save); a smaller step back is a row
+    //     stamped with an older game time (background writers) and changes nothing;
+    //   - any jump forward over PLAY_GAP_MAX_GAMETS between two rows: fast travel, a carriage,
+    //     jail, a later save, or a wait or sleep the game sent no event for. The shortest wait
+    //     or sleep Skyrim offers is one game hour, above the limit.
+    // Real time never enters it: time with the game closed, paused or in a menu leaves the
+    // game clock where it was, so it adds nothing, and the same rows always give the same clock.
+    // updatePlayTime() bounds each NPC's play credit by it.
 
     const PLAY_HEARTBEAT_ROW_ID = 'relationship_dynamics_play_clock';
-    /** Real seconds: the longest gap between two requests still counted as play (clock 3's cap). */
-    const PLAY_HEARTBEAT_GAP_CAP_S = 300;
-    /** Real seconds: requests closer than this do not write (the gap is counted by the next write). */
-    const PLAY_HEARTBEAT_MIN_WRITE_S = 5;
+    /**
+     * Raw gamets: the longest step between two consecutive eventlog rows still counted as play.
+     * One real minute of play at timescale 20 (60 x GAMETS_PER_REAL_SECOND = 20 game minutes):
+     * twelve poll intervals, or a 5 s poll gap at a timescale up to 240; under the one game hour
+     * (GAMETS_PER_DAY / 24 = 416,667) of the shortest wait or sleep.
+     */
+    const PLAY_GAP_MAX_GAMETS = 138900;
+    /** Game hours: the longest wait or sleep Skyrim offers; an info_timeforward naming more is not trusted as a window. */
+    const PLAY_WAIT_MAX_HOURS = 24.0;
+    /** A gap ENDING at one of these rows is not play (the game skipped to it). */
+    const PLAY_SKIP_TO_TYPES = ['info_timeforward', 'goodmorning', 'waitstop'];
+    /** The gap STARTING at one of these rows is not play (the game skips from it). */
+    const PLAY_SKIP_FROM_TYPES = ['goodnight', 'waitstart'];
+    /** Eventlog rows read per query, and queries per beat (the rest is read by the next beat). */
+    const PLAY_SCAN_CHUNK = 500;
+    const PLAY_SCAN_MAX_CHUNKS = 40;
 
     /**
-     * Advance the global play heartbeat to now and return its total (play gamets), or null
-     * when there is no database or no game clock. Compare-and-set: of two concurrent requests
-     * one writes; the other returns the stored total (its gap is counted by the next beat).
+     * Fold eventlog rows (rowid order) into heartbeat state {rowid, gamets, play}: gamets is the
+     * game time the next gap starts from (0 = none yet), play the played gamets so far. Pure
+     * game time: see the heartbeat notes above. Wait windows are taken from the
+     * info_timeforward rows among $rows (a wait split across two beats can leak at most one
+     * PLAY_GAP_MAX_GAMETS slice).
+     *
+     * @param array $state  ['rowid' => int, 'gamets' => float, 'play' => float, 'sleep' => bool]
+     * @param array $rows   [['rowid', 'gamets', 'type', 'data' (info_timeforward only)], ...]
      */
-    public static function beatPlayClock(?float $gamets = null, ?int $nowReal = null): ?float
+    public static function foldPlayRows(array $state, array $rows): array
+    {
+        $rowid = intval($state['rowid'] ?? 0);
+        $base = floatval($state['gamets'] ?? 0);
+        $play = floatval($state['play'] ?? 0);
+        $sleep = !empty($state['sleep']);   // a goodnight whose gap is still ahead
+
+        $hour = self::GAMETS_PER_DAY / 24.0;   // core: hours = gamets * 0.0000024
+        $windows = [];
+        foreach ($rows as $r) {
+            if (strtolower((string) ($r['type'] ?? '')) === 'info_timeforward'
+                && preg_match('/^\s*([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s+hours? have passed/', (string) ($r['data'] ?? ''), $m)) {
+                $h = floatval($m[1]);
+                $end = floatval($r['gamets'] ?? 0);
+                if ($h > 0 && $h <= self::PLAY_WAIT_MAX_HOURS && $end > 0) {
+                    $windows[intval($r['rowid'] ?? 0)] = [$end - $h * $hour, $end];
+                }
+            }
+        }
+
+        foreach ($rows as $r) {
+            $rowid = max($rowid, intval($r['rowid'] ?? 0));
+            $g = floatval($r['gamets'] ?? 0);
+            $type = strtolower((string) ($r['type'] ?? ''));
+            if ($g <= 0) {
+                continue;
+            }
+            if ($base <= 0 || $type === 'init') {
+                $base = $g;   // first row, or a load: game time restarts here
+                $sleep = in_array($type, self::PLAY_SKIP_FROM_TYPES, true);
+                continue;
+            }
+            $delta = $g - $base;
+            if ($delta <= 0) {
+                if (-$delta > self::PLAY_GAP_MAX_GAMETS) {   // an earlier save: restart here
+                    $base = $g;
+                    $sleep = false;
+                }
+                if (in_array($type, self::PLAY_SKIP_FROM_TYPES, true)) {
+                    $sleep = true;
+                }
+                continue;   // else a row stamped with an older game time
+            }
+            $from = $base;
+            $base = $g;
+            // A wait row whose window is known is cut precisely below; any other skip row ends a gap that is not play
+            $skipped = $sleep || (in_array($type, self::PLAY_SKIP_TO_TYPES, true) && !isset($windows[intval($r['rowid'] ?? 0)]));
+            $sleep = in_array($type, self::PLAY_SKIP_FROM_TYPES, true);
+            if ($skipped) {
+                continue;
+            }
+            $credit = $delta;
+            foreach ($windows as [$ws, $we]) {
+                $credit -= max(0.0, min($g, $we) - max($from, $ws));
+            }
+            if ($credit > 0 && $credit <= self::PLAY_GAP_MAX_GAMETS) {
+                $play += $credit;
+            }
+        }
+
+        return ['rowid' => $rowid, 'gamets' => $base, 'play' => $play, 'sleep' => $sleep];
+    }
+
+    /**
+     * Advance the global play heartbeat over the eventlog rows logged since its last beat and
+     * return its total (play gamets), or null when there is no database. Compare-and-set: of
+     * two concurrent beats one writes; the other returns the stored total (its rows are read
+     * again by the next beat). The first beat on a database, or on a row from the real-time
+     * build ({real_ts, gamets, play}), anchors at the newest eventlog row and keeps the play
+     * total: nothing before it is credited.
+     */
+    public static function beatPlayClock(): ?float
     {
         $db = $GLOBALS['db'] ?? null;
-        $gamets = $gamets ?? self::currentGamets();       // raw game-calendar gamets
-        $nowReal = $nowReal ?? time();                     // real seconds (unix)
-        if (!$db || $gamets <= 0) {
+        if (!$db) {
             return null;
         }
         try {
             $row = $db->fetchOne('SELECT value FROM conf_opts WHERE id = $1', [self::PLAY_HEARTBEAT_ROW_ID]);
             $raw = is_array($row) ? ($row['value'] ?? null) : null;
             $cur = is_string($raw) ? json_decode($raw, true) : null;
-            if (!is_array($cur) || !is_numeric($cur['real_ts'] ?? null) || !is_numeric($cur['gamets'] ?? null)
-                || !is_numeric($cur['play'] ?? null)) {
-                $fresh = json_encode(['real_ts' => $nowReal, 'gamets' => $gamets, 'play' => 0.0]);
-                if ($raw === null) {
-                    $db->fetchOne('INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING id',
-                        [self::PLAY_HEARTBEAT_ROW_ID, $fresh]);
-                } else {
+            $valid = is_array($cur) && is_numeric($cur['rowid'] ?? null) && is_numeric($cur['gamets'] ?? null)
+                && is_numeric($cur['play'] ?? null);
+
+            if (!$valid) {
+                $play = is_array($cur) && is_numeric($cur['play'] ?? null) ? floatval($cur['play']) : 0.0;
+                if ($raw !== null && !is_array($cur)) {
                     error_log("[RelDyn] ERROR beatPlayClock: conf_opts " . self::PLAY_HEARTBEAT_ROW_ID . " unreadable; restarting it");
-                    $db->fetchOne('UPDATE conf_opts SET value = $2 WHERE id = $1 AND value = $3 RETURNING id',
-                        [self::PLAY_HEARTBEAT_ROW_ID, $fresh, $raw]);
+                    $play = 0.0;
                 }
-                return 0.0;
+                $state = self::anchorPlayClock($db, $play);
+                return self::writePlayClock($db, $raw, $state);
             }
-            $play = floatval($cur['play']);
-            $realDelta = $nowReal - intval($cur['real_ts']);
-            if ($realDelta < self::PLAY_HEARTBEAT_MIN_WRITE_S) {
-                return $play;   // also a clock that went backwards: nothing to credit
+
+            $state = ['rowid' => intval($cur['rowid']), 'gamets' => floatval($cur['gamets']),
+                      'play' => floatval($cur['play']), 'sleep' => !empty($cur['sleep'])];
+            $startRowid = $state['rowid'];
+            for ($i = 0; $i < self::PLAY_SCAN_MAX_CHUNKS; $i++) {
+                $rows = $db->fetchAll('SELECT rowid, gamets, type, CASE WHEN type = \'info_timeforward\' THEN data END AS data'
+                    . ' FROM eventlog WHERE rowid > ' . intval($state['rowid']) . ' ORDER BY rowid LIMIT ' . self::PLAY_SCAN_CHUNK);
+                $rows = is_array($rows) ? array_values(array_filter($rows, static function ($r) use ($state) {
+                    return is_array($r) && is_numeric($r['rowid'] ?? null) && intval($r['rowid']) > $state['rowid']
+                        && is_numeric($r['gamets'] ?? null);
+                })) : [];
+                if (!$rows) {
+                    break;
+                }
+                $state = self::foldPlayRows($state, $rows);
+                if (count($rows) < self::PLAY_SCAN_CHUNK) {
+                    break;
+                }
             }
-            $gametsDelta = $gamets - floatval($cur['gamets']);   // negative after a reload: no credit
-            $credit = $gametsDelta > 0
-                ? min($gametsDelta, min($realDelta, self::PLAY_HEARTBEAT_GAP_CAP_S) * self::GAMETS_PER_REAL_SECOND)
-                : 0.0;
-            $next = json_encode(['real_ts' => $nowReal, 'gamets' => $gamets, 'play' => $play + $credit]);
-            $won = $db->fetchOne('UPDATE conf_opts SET value = $2 WHERE id = $1 AND value = $3 RETURNING id',
-                [self::PLAY_HEARTBEAT_ROW_ID, $next, $raw]);
-            if (isset($won['id'])) {
-                return $play + $credit;
+
+            if ($state['rowid'] === $startRowid) {
+                // Nothing new. An eventlog whose newest rowid is below ours was rebuilt: re-anchor.
+                $newest = $db->fetchOne('SELECT rowid FROM eventlog ORDER BY rowid DESC LIMIT 1');
+                if (is_array($newest) && is_numeric($newest['rowid'] ?? null) && intval($newest['rowid']) < $startRowid) {
+                    return self::writePlayClock($db, $raw, self::anchorPlayClock($db, $state['play']));
+                }
+                return $state['play'];
             }
-            $again = $db->fetchOne('SELECT value FROM conf_opts WHERE id = $1', [self::PLAY_HEARTBEAT_ROW_ID]);
-            $other = json_decode((string)($again['value'] ?? ''), true);
-            return is_array($other) && is_numeric($other['play'] ?? null) ? floatval($other['play']) : $play;
+            return self::writePlayClock($db, $raw, $state);
         } catch (Throwable $e) {
             self::logError('beatPlayClock', $e);
             return null;
         }
+    }
+
+    /** Heartbeat state anchored at the newest eventlog row, keeping $play. */
+    private static function anchorPlayClock($db, float $play): array
+    {
+        $newest = $db->fetchOne('SELECT rowid, gamets FROM eventlog ORDER BY rowid DESC LIMIT 1');
+        $newest = is_array($newest) ? $newest : [];
+        return ['rowid' => intval($newest['rowid'] ?? 0), 'gamets' => max(0.0, floatval($newest['gamets'] ?? 0)),
+                'play' => $play, 'sleep' => false];
+    }
+
+    /** Compare-and-set the heartbeat row from $raw (null = absent) to $state; returns the stored play total. */
+    private static function writePlayClock($db, ?string $raw, array $state): float
+    {
+        $next = json_encode(['rowid' => $state['rowid'], 'gamets' => $state['gamets'], 'play' => $state['play'],
+                             'sleep' => !empty($state['sleep'])]);
+        $won = $raw === null
+            ? $db->fetchOne('INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING id',
+                [self::PLAY_HEARTBEAT_ROW_ID, $next])
+            : $db->fetchOne('UPDATE conf_opts SET value = $2 WHERE id = $1 AND value = $3 RETURNING id',
+                [self::PLAY_HEARTBEAT_ROW_ID, $next, $raw]);
+        if (isset($won['id'])) {
+            return (float) $state['play'];
+        }
+        $again = $db->fetchOne('SELECT value FROM conf_opts WHERE id = $1', [self::PLAY_HEARTBEAT_ROW_ID]);
+        $other = json_decode((string) ($again['value'] ?? ''), true);
+        return is_array($other) && is_numeric($other['play'] ?? null) ? floatval($other['play']) : (float) $state['play'];
     }
 
     /**
@@ -2106,18 +2201,20 @@ class RelationshipDynamics
     //    Rule: negative states never go DOWN on this clock (time does not heal); they
     //    only go down through positive contact. Positive states fade on it.
     // 2. FILTERED PLAY CLOCK: _accumulated_play_gamets, per NPC, advanced by
-    //    updatePlayTime() on that NPC's requests and capped at real seconds x
-    //    GAMETS_PER_REAL_SECOND, so waits and sleeps add nothing. Unit: play gamets;
-    //    GAMETS_PER_REAL_HOUR = one real hour of play. Used for what happens WHILE the
-    //    player is playing: in-contact passion and jealousy decay, the diminishing-
-    //    returns session multiplier, cooldowns (resentment -1 debounce, ick, divine
-    //    intervention, ambient trickle), the hoover's 48 h after-glow context, and
-    //    reunion's check that the time apart held real play (no reunion from a wait).
-    //    A wait or sleep must never be able to trigger or clear these.
-    // 3. ACCUMULATED REAL SECONDS: _accumulated_time, capped at 300 s per gap. Only for
-    //    positive cooldowns that must not be farmable (diary reflection). Legacy users
-    //    still on it: attachment drift (18000 s) and grief bond duration, and the
-    //    resentment-decay debounce fallback before the play clock has a value.
+    //    updatePlayTime() on that NPC's requests by the played game time the global
+    //    heartbeat (beatPlayClock: core's eventlog game clock, waits, sleeps, fast travel
+    //    and loads cut out) saw since its last turn. Game time only: no real seconds, so
+    //    time with the game closed or paused adds nothing and waits and sleeps add nothing.
+    //    Unit: play gamets; GAMETS_PER_REAL_HOUR = one real hour of play at timescale 20.
+    //    Used for what happens WHILE the player is playing: in-contact passion and
+    //    jealousy decay, the diminishing-returns session multiplier, cooldowns (resentment
+    //    -1 debounce, ick, divine intervention, ambient trickle), the hoover's 48 h
+    //    after-glow context, and reunion's check that the time apart held real play (no
+    //    reunion from a wait). A wait or sleep must never be able to trigger or clear these.
+    // 3. PLAY SECONDS: _accumulated_time, the play clock's credit in real-second units
+    //    (updateAccumulatedTime). For positive cooldowns that must not be farmable (diary
+    //    reflection), grief bond duration, and the resentment-decay debounce fallback
+    //    before the play clock has a value. Values stored by the real-time build carry over.
     //
     // A checkpoint that is unset, or ahead of its clock (a value from another clock or
     // an older build, or an earlier save loaded), reads as null so callers can re-arm
@@ -8044,7 +8141,7 @@ class RelationshipDynamics
         }
 
         // Rate limit: cooldown using gamets-based filtered play time (~15 real min)
-        // Falls back to IRL accumulated time if gamets data not yet available
+        // Falls back to play seconds (_accumulated_time) if the play clock has no value yet
         $playGamets = floatval($dynamics['_accumulated_play_gamets'] ?? 0);
         $lastPlayGamets = floatval($dynamics['_resentment_last_play_gamets'] ?? 0);
         if ($playGamets > 0 || $lastPlayGamets > 0) {
@@ -8053,7 +8150,7 @@ class RelationshipDynamics
                 return 0.0; // Debounce: ~15 real min of gameplay between decays
             }
         } else {
-            // Fallback: IRL accumulated time (backward compat until gamets populates)
+            // Fallback: play seconds (backward compat until the play clock populates)
             $accumulated = intval($dynamics['_accumulated_time'] ?? 0);
             $lastAccumulated = intval($dynamics['_resentment_last_accumulated'] ?? 0);
             if (($accumulated - $lastAccumulated) < 900) {
@@ -9832,7 +9929,7 @@ class RelationshipDynamics
             return;
         }
 
-        // Bond duration proxy: use deceased's accumulated time
+        // Bond duration proxy: the deceased's play seconds with the player (_accumulated_time)
         $deceasedDynamics = self::getDynamics($deceasedName);
         $bondDurationHours = floatval($deceasedDynamics['_accumulated_time'] ?? 0) / 3600.0;
 
@@ -12997,7 +13094,8 @@ class RelationshipDynamics
                 " (reflection score: {$reflectionScore})");
         }
 
-        // Update reflection timestamp (both wall-clock and accumulated)
+        // Reflection stamps: the cooldown reads play seconds (_diary_last_accumulated); the unix
+        // stamp is a record only (never read as a duration)
         $dynamics['_last_diary_reflection'] = time();
         $dynamics['_diary_last_accumulated'] = intval($dynamics['_accumulated_time'] ?? 0);
 
