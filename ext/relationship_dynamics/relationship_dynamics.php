@@ -188,6 +188,9 @@ class RelationshipDynamics
     /** A fight is still on if its newest core combat row is this recent: 1 min of real play. */
     const COMBAT_ACTIVE_WINDOW_GAMETS = 138900; // 60 * GAMETS_PER_REAL_SECOND
 
+    /** The glow after a fight (MDD §3.3 post-combat context): 5 min of real play on the game clock. */
+    const POST_COMBAT_GLOW_GAMETS = self::COMBAT_KILL_STREAK_WINDOW_GAMETS;
+
     /** Recent gift/consume window on the eventlog game clock: 30 s of real play. */
     const ITEM_EVENT_WINDOW_GAMETS = 69450; // 30 * GAMETS_PER_REAL_SECOND
 
@@ -1184,6 +1187,9 @@ class RelationshipDynamics
             // April values: danger = the dungeon arousal (+15), dark = the night row
             // (arousal +5, comfort -3), dawn / dusk rows as April TIME_MODIFIERS.
             'environment_modifiers_enabled' => true,
+            // Physical-state bridges (detectPhysicalStates): the player's live HP ratio under which
+            // the scene reads as 'injured' (April's vitals rule).
+            'physical_states' => ['injured_health_ratio' => 0.3],
             'environment_facet_effects' => [
                 'danger' => ['arousal' => 15],
                 'dark'   => ['arousal' => 5, 'comfort' => -3],
@@ -1221,6 +1227,10 @@ class RelationshipDynamics
             // Detection, Skyrim's moon cycle, the night / day / moon rows, the return from
             // beast form, felt text (reldyn_creatures.php, RelDynCreatures::configDefaults()).
             'creatures' => RelDynCreatures::configDefaults(),
+            // ===== Combat passion (MDD §3.3, roadmap combat-passion) =====
+            // Witness / shared / danger multipliers, kill streak, core's death / bleedout rows
+            // read from the eventlog (reldyn_combat.php, RelDynCombat::configDefaults()).
+            'combat' => RelDynCombat::configDefaults(),
             // ===== Romance promotion + Sharmat handoff (rulings 2026-09-24 §9) =====
             // Ladder, moment thresholds, momentum per NPC (reldyn_romance.php).
             'romance_promotion' => RelDynRomance::configDefaults(),
@@ -5325,11 +5335,11 @@ class RelationshipDynamics
             $db = $GLOBALS['db'] ?? null;
             if (!$db) return null;
 
-            // Core 3.4.1 combat events (coreCombatState). Health is not reported by core for
-            // NPCs: null = unknown (never assumed healthy or hurt).
+            // Core 3.4.1 combat events (coreCombatState). Health: the plugin's live stats report
+            // (RelDynCombat::npcHealth), read only while she is fighting now; no report = null
+            // (unknown, never assumed healthy or hurt).
             $state = self::coreCombatState($npcName);
             $inCombat = $state['in_combat'];
-            $healthPct = null;
             $bleedingOut = $state['bleeding_out'];
             $recentKills = 0;
             $source = $state['source'];
@@ -5355,6 +5365,7 @@ class RelationshipDynamics
             }
 
             if (!$inCombat && $recentKills === 0 && !$bleedingOut) return null;
+            $healthPct = $inCombat ? RelDynCombat::npcHealth($npcName) : null;
 
             return [
                 'in_combat' => $inCombat,
@@ -5369,18 +5380,28 @@ class RelationshipDynamics
         }
     }
 
+    /**
+     * The glow after a fight (MDD §3.3): a short summary when this NPC was in a core combat row
+     * (death / bleedout / combat end, by the row's people) within POST_COMBAT_GLOW_GAMETS (5 min
+     * of play) before now on the game clock; null otherwise, and null when the clock is unknown.
+     * April read the last 10 combat rows with no time window, so one fight glowed forever.
+     */
     public static function getRecentCombatSummary($npcName)
     {
         try {
             $db = $GLOBALS['db'] ?? null;
             if (!$db) return null;
+            $now = self::currentGamets();
+            if ($now <= 0) return null;
 
             $player = $GLOBALS['PLAYER_NAME'] ?? 'the player';
             $combatTypes = "'death','bleedout','combatend','combatendmighty'";
+            $since = intval($now - self::POST_COMBAT_GLOW_GAMETS);
+            $until = intval($now);
 
-            // Check last 10 combat events, filter to recent ones
             $rows = $db->fetchAll(
-                "SELECT type, data, people FROM eventlog WHERE type IN ({$combatTypes}) ORDER BY rowid DESC LIMIT 10"
+                "SELECT type, data, people FROM eventlog WHERE type IN ({$combatTypes}) AND gamets > {$since} AND gamets <= {$until}"
+                . " ORDER BY rowid DESC LIMIT 10"
             );
 
             if (empty($rows)) return null;
@@ -12073,21 +12094,30 @@ class RelationshipDynamics
      * Currently active physical states from CHIM core data.
      *
      * Returns a flat array of state name strings (keys from PHYSICAL_STATE_MODIFIERS).
+     *   injured  the player's live health (the plugin's gamedata.php 'stats' report, core_player.stats,
+     *            RelDynCombat::playerHealth) under physical_states.injured_health_ratio of max
+     *            (April's MinAI vitals rule, 0.3), indoors or out; no report = unknown, not injured.
      * Weather states come from the core place (RelDynFacets::currentPlaceContext: the weather
      * the plugin reports and whether the player is inside) and apply only outside:
      *   rain -> raining; snow -> snowing + cold; night with known clear/pleasant weather ->
      *   clear_night.
-     * CHIM 3.4.1 core reports no health, stamina, dirt or blood, so injured / exhausted /
-     * well_rested / dirty / bloody (April: MinAI vitals, Dirt and Blood) are unknown and
-     * never detected; warm_fire has no core source either.
+     * Not detected (no CHIM 3.4.1 core source): hunger, dirty / bloody (April: Dirt and Blood),
+     * warm_fire; exhausted / well_rested were April's player-stamina proxy (stamina is a combat
+     * resource that refills in seconds, not rest), left unknown pending a rest signal.
      *
      * @param string $npcName    The NPC being spoken to
-     * @param string $playerName The player character name (unused: the place is the scene's)
+     * @param string $playerName The player character name (the injured read is the player's)
      * @return string[] Active state names, e.g. ['snowing', 'cold']
      */
     public static function detectPhysicalStates($npcName, $playerName)
     {
         $states = [];
+        $cfg = (array) (self::configValue('physical_states') ?? []) + self::defaultConfig()['physical_states'];
+        $hp = RelDynCombat::playerHealth();
+        if ($hp !== null && $hp < floatval($cfg['injured_health_ratio'])) {
+            $states[] = 'injured';
+        }
+
         $place = RelDynFacets::currentPlaceContext((string) $npcName);
         if (empty($place['known']) || $place['is_interior'] !== false) {
             return $states;   // indoors (or unknown): the weather outside does not reach the NPC
@@ -18028,3 +18058,5 @@ require_once __DIR__ . '/reldyn_concern.php';
 require_once __DIR__ . '/reldyn_resentment.php';
 // Creature moodifications (vampires, werewolves; Skyrim's moon cycle)
 require_once __DIR__ . '/reldyn_creatures.php';
+// Combat passion routing (core combat requests + core's death / bleedout eventlog rows)
+require_once __DIR__ . '/reldyn_combat.php';

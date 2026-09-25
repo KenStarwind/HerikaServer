@@ -93,6 +93,16 @@ final class RelDynCoreSensorsPostgresTest extends TestCase
             factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,
             updated_at timestamp, world text, chim_added integer)");
         pg_query($admin, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
+        // CHIM 3.4.1 core tables every install has (lib/core/database_schema/core_npc_master.sql, core_player):
+        // no rows here, so the plugin's live stats read as unknown.
+        pg_query($admin, "CREATE TABLE core_npc_master (id serial PRIMARY KEY, npc_name text NOT NULL, npc_favorite integer DEFAULT 0,
+            lock_profile integer DEFAULT 0, prompt_head text, npc_static_bio text, oghma_knowledge_tags text, emote_moods text,
+            personality text, relationships text, occupation text, appearance text, skills text, speechstyle text, goals text,
+            voiceid text, metadata jsonb, gender text, race text, refid character varying(16), profile_id integer,
+            dynamic_profile integer, extended_data jsonb,
+            plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'),
+            md5 text, gamets_last_updated numeric, core text, base text, tags text)");
+        pg_query($admin, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
         // oghma with core 3.4.1's text columns (no vector384: pgvector is not needed here).
         pg_query($admin, "CREATE TABLE oghma (topic character varying NOT NULL, topic_desc character varying,
             knowledge_class text, topic_desc_basic text, knowledge_class_basic text, tags text, category text, aliases text,

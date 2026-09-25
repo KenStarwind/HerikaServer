@@ -158,6 +158,16 @@ final class RelDynCodeHealthTest extends TestCase
         pg_query($this->link, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL DEFAULT 0, ts bigint, rowid bigserial NOT NULL, people text, location text)");
         pg_query($this->link, "CREATE TABLE conf_opts (id text PRIMARY KEY, value text)");
+        // CHIM 3.4.1 core tables every install has (lib/core/database_schema/core_npc_master.sql, core_player):
+        // no rows here, so the plugin's live stats read as unknown.
+        pg_query($this->link, "CREATE TABLE core_npc_master (id serial PRIMARY KEY, npc_name text NOT NULL, npc_favorite integer DEFAULT 0,
+            lock_profile integer DEFAULT 0, prompt_head text, npc_static_bio text, oghma_knowledge_tags text, emote_moods text,
+            personality text, relationships text, occupation text, appearance text, skills text, speechstyle text, goals text,
+            voiceid text, metadata jsonb, gender text, race text, refid character varying(16), profile_id integer,
+            dynamic_profile integer, extended_data jsonb,
+            plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'),
+            md5 text, gamets_last_updated numeric, core text, base text, tags text)");
+        pg_query($this->link, "CREATE TABLE core_player (id text PRIMARY KEY, value text)");
         $GLOBALS['db'] = new class($this->link) {
             public $link;
             public function __construct($link) { $this->link = $link; }

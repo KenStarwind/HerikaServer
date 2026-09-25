@@ -109,6 +109,16 @@ RelDynPlayer::recordGoldSnapshot();
 // before its dynamics load and before contact is marked below, so its own absence counts.
 RelationshipDynamics::runCalendarScan($npcName);
 
+// ========== CORE'S COMBAT ROWS (combat-passion) ==========
+// main.php logs 'death' and 'bleedout' and ends those requests before any ext hook runs, so the
+// fights since RelDyn last ran are routed here, once each (an eventlog watermark), before this
+// NPC's dynamics load: a kill she saw or a fall of her own is already in them.
+try {
+    RelDynCombat::consumeEventlog(trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')));
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('combat eventlog rows', $e);
+}
+
 // Load dynamics
 $dynamics = RelationshipDynamics::getDynamics($npcName);
 
