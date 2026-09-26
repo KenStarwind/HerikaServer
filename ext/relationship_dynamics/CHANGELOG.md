@@ -21,8 +21,8 @@ that eases it without feeding it. While she depends on it she does not grow up, 
 stop; once she knows she needs to stop she can set herself to stay clean, is ashamed when she slips, and is steadier
 for the days she stays clean. The player's own drinking still reaches her only as worry.
 A scene the game reports is followed by its context, not by the act: a partner who trusts you deepens, a newer romance
-warms, a woman who wants closeness and fears it goes quiet and watchful, one who backs away from closeness does, a
-casual night stays light, and if she has a partner who is not you it is guilt. The glow lasts a little while and is
+warms, one who backs away from closeness does (reading a woman who wants closeness and fears it as the draft's
+"manipulated" night is opt-in until Ken rules on it), a casual night stays light, and if she has a partner who is not you it is guilt. The glow lasts a little while and is
 then gone exactly. Every scene makes her pulse race; the context decides whether that reads as warmth or unease, and
 the evaluator is shown it, never asked to score it. Her pulse and her mood now settle with time instead of staying
 where the last event left them. How she carries herself toward you (steady and protective, cold, yielding, bitter)
@@ -31,17 +31,21 @@ around the shape her personality gives her. A gift counts by her second love lan
 she knows was someone else's first, is no gift at all.
 What she did drunk waits for her sober self. The morning judges a drunken night, and her first diary page after it
 looks back at what she let happen: whatever she would not have done sober is regretted, the more so the more she
-expects of herself, and a shallow mind never looks back. However many ways her sober self looks back on one night, it
-is one shame: the heavier verdict counts, never both, and each keeps the rest of what it says. Drink still in her is
-drunk, even when the moment of the mug has long passed.
+expects of herself, and a shallow mind never looks back. However many ways her sober self looks back on one night, and
+however many scenes it held, it is one verdict: for her shame, her ease and her trust alike the heavier counts, never
+both, and a second scene while she is still drunk never brings the morning early. Drink still in her is drunk, even
+when the moment of the mug has long passed; and a drink is dated when she had it, so last night's mead is not this
+morning's drunk. A drink or two of an evening is a habit, not a dependence; getting drunk every night is.
+Gold, ammunition, a mead or a potion are never "someone else's first": only a thing she could recognize is.
 Before an exchange becomes memory, who she was in it is written around it in words: how the moment landed on her by
 her own measure, what she carries, how she attaches, her mood, and how she carries herself toward you as she does now.
 One hurtful word said to four women is four different memories (opt-in: it writes into CHIM's own memory, right after
-the exchange). Some firsts are kept for good with the place they happened, and coming back there brings them back to
+the exchange, at the exchange's own place, so CHIM packs it with the exchange). Some firsts are kept for good with the place they happened, and coming back there brings them back to
 her for a while, or an ache while the bond is strained, with a small moment of passion her own size.
 The player now has a profile of their own, built only from what the evaluators saw them do: maturity, trust, warmth,
 respect, how comfortable people are around them and self-confidence; where they look for validation; their charisma;
-their attachment pattern; the love language they show. Mirror mode reads play alone; Character mode holds an authored
+their attachment pattern (read from how often they come back, visit by visit, never from the next line of one
+conversation); the love language they show. Mirror mode reads play alone; Character mode holds an authored
 role that play moves slowly. A trust record travels: strangers meet a reliable player with a little more trust, a liar
 with less. Whether NPCs sense the rest is opt-in; it follows the game back on a load, and a read API feeds the spider
 graph.
