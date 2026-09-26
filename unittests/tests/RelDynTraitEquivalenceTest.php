@@ -42,6 +42,10 @@ final class RelDynTraitEquivalenceTest extends TestCase
         // Bleedout redesign (design §2.5): the fall is fight C Pd (1 - D) - fear L (1 - C) at every
         // preset (the old drain table is retired); no vector keeps -1.5
         'bleedout_redesign' => ['*/bleedout'],
+        // Batch P review (charisma, MDD 5.2 "Low Maturity ... Friendzones the Charmer"): at
+        // maturity <= 40 the Charmer's passion multiplier is charmer_friendzone_passion_mult,
+        // whatever the temperament (RelDynBatchPReviewFixesTest)
+        'charmer_friendzone' => ['*/charisma/charmer/*/passion'],
     ];
 
     /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */

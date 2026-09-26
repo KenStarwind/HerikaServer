@@ -26,6 +26,23 @@ if (!function_exists('chimRelationshipAffinityOwned')) {
     }
 }
 
+// CHIM fork hook (RelDyn): what does $npcName know of the player? Each ext/*/player_knowledge.php may set
+// $GLOBALS['CHIM_PLAYER_KNOWLEDGE_GATES'][name] = fn(string $npcName): ?array. The first array returned decides:
+// 'bio' => bool (the player's bio in the nearby actors), 'relationship' => bool (the player's line in buildContext),
+// 'note' => ?string (replaces core's familiarity hint on the player's nearby entry). No answer: core's behaviour.
+if (!function_exists('chimPlayerKnowledgeFor')) {
+    function chimPlayerKnowledgeFor($npcName) {
+        foreach (glob(($GLOBALS['ENGINE_PATH'] ?? dirname(__DIR__) . '/') . 'ext/*/player_knowledge.php') ?: [] as $gateFile) {
+            require_once $gateFile;
+        }
+        foreach ($GLOBALS['CHIM_PLAYER_KNOWLEDGE_GATES'] ?? [] as $gate) {
+            $known = $gate((string)$npcName);
+            if (is_array($known)) return $known;
+        }
+        return null;
+    }
+}
+
 class RelationshipManager {
 
     // Valid relationship types (the "flavor" of the relationship)
@@ -806,11 +823,14 @@ class RelationshipManager {
             // Token-efficient: tier, type/relation, and events
             $playerLine = sprintf("%s: %s (%s)", $playerDisplayName, $playerTier, $typeStr);
             $playerLine .= self::formatEventNotes($playerWorst, $playerBest, $playerNote);
-            $lines[] = $playerLine;
         } else {
             // Include numbers for #REL: command system
             $playerLine = sprintf("%s: %+d (%s, %s)", $playerDisplayName, $playerAff, $playerTier, $typeStr);
             $playerLine .= self::formatEventNotes($playerWorst, $playerBest, $playerNote);
+        }
+        // CHIM fork hook (RelDyn): no player line for an NPC an extension says does not know the player
+        $playerKnowledge = chimPlayerKnowledgeFor($npcName);
+        if ($playerKnowledge === null || !empty($playerKnowledge['relationship'])) {
             $lines[] = $playerLine;
         }
 

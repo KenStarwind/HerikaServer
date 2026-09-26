@@ -1055,6 +1055,16 @@ function DataLastInfoFor($actorBeingCalled, $lastNelements = -2,$addNPCDescripti
                     $playerBio = chimNormalizePlayerProfileBio(ResolvePlayerBackstory($player), $actor);
                     $bioKnownByAll = filter_var((string)($player->get('bio_known_by_all') ?? ''), FILTER_VALIDATE_BOOLEAN);
                     $isNarrator = isset($GLOBALS["HERIKA_NAME"]) && strcasecmp((string)$GLOBALS["HERIKA_NAME"], "The Narrator") === 0;
+                    // CHIM fork hook (RelDyn): an extension may decide what this NPC knows of the player
+                    // (chimPlayerKnowledgeFor, lib/relationship_manager.php): the bio, and the familiarity note
+                    require_once(__DIR__ . DIRECTORY_SEPARATOR . "relationship_manager.php");
+                    $playerKnowledge = chimPlayerKnowledgeFor($GLOBALS["HERIKA_NAME"] ?? "");
+                    if ($playerKnowledge !== null) {
+                        $bioKnownByAll = !empty($playerKnowledge['bio']);
+                        if (isset($playerKnowledge['note'])) {
+                            $interactionContext = $playerKnowledge['note'] !== '' ? " ({$playerKnowledge['note']})" : '';
+                        }
+                    }
                     if ($nearbyActorsIncludeBasicSummary && $playerBio !== "" && ($bioKnownByAll || $isNarrator)) {
                         $profileString .= ": " . trim($playerBio);
                         $hasProfileBody = true;

@@ -10,11 +10,13 @@
  * Adds to HERIKA_PERS (config felt_steering.position: after the character's bio by default):
  *   <knowledge_of_player>  what this NPC knows of the player, by context tier (a stranger knows
  *                          only what can be seen and not the name, unless core's relationship
- *                          block names the player anyway; acquaintance, friend, bonded,
- *                          a lapsed friendship held by the high-water mark), plus one tension
- *                          bridge. Skipped when another plugin already wrote one (the P3
- *                          prompt-gating port is the consolidation point).
+ *                          block names the player anyway; a renowned player's deeds without the
+ *                          name; one met but never warm; acquaintance, friend, bonded, a lapsed
+ *                          bond held by the tier floor),
+ *                          plus one tension bridge and the rumours heard where she is (prompt
+ *                          gating, reldyn_gating.php). Skipped when another plugin already wrote one.
  *   <emotional_core>       the most salient enduring felt lines (RelDynFelt::splitCore).
+ * Adds to COMMAND_PROMPT, for an NPC who does not know the player's name: not to use it.
  * The rest of the lines go to context.php's <subtext> (recency). Toggle: context_pre_enabled.
  * NPC-to-NPC exchanges (a radiant round, or a rechat / continue answering another NPC:
  * RelationshipDynamics::isNpcExchange) get none of it (the player is not in the exchange).
@@ -44,3 +46,6 @@ if (!RelationshipDynamics::isEnabled()) {
 }
 
 RelDynFelt::contextPre($npcName, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'));
+
+// Prompt gating (reldyn_gating.php): an NPC who does not know the player's name is told not to use it
+RelDynGating::contextPre($npcName, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player'));

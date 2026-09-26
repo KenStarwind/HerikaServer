@@ -134,6 +134,10 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE core_npc_master_history (history_id serial PRIMARY KEY, npc_id integer NOT NULL,
             created timestamp without time zone DEFAULT now(), " . str_replace('npc_name text NOT NULL', 'npc_name text', $columns) . ")");
         pg_query($admin, "CREATE TABLE conf_opts (id text NOT NULL, value text, CONSTRAINT pid PRIMARY KEY (id))");
+        // core's speech table (data/database_default.sql): prompt gating reads who has talked with the player
+        pg_query($admin, "CREATE TABLE speech (sess varchar(1024), speaker text, speech text, location text, listener text,
+            topic text, localts bigint NOT NULL, gamets bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY,
+            companions text, audios text, utterance_id text)");
         // data/database_default.sql eventlog / responselog.
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,
@@ -233,6 +237,14 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
              json_encode(['class' => ['name' => $class, 'formid' => '0x0001317f'], 'factions' => $f,
                  'relationships' => ['Player' => ['aff' => $aff, 'type' => $type]]]),
              json_encode($dynamics === [] ? new stdClass() : ['reldyn' => ['dynamics' => $dynamics]])]);
+    }
+
+    /** RelDyn's config row the way the config page stores it (shipped defaults, then $overrides). */
+    private function storeConfig(array $overrides): void
+    {
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1',
+            [RelationshipDynamics::CONFIG_ROW_ID, json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true], $overrides))]);
+        RelationshipDynamics::clearConfigCache();
     }
 
     private function dynamics(string $name): array
@@ -503,8 +515,11 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
 
     /**
      * Core's relationship_system (enabled live, tier-only or full) appends a block that names
-     * the player to every NPC, a stranger included. RelDyn's stranger line must not claim the
-     * name is unknown then, and both name the same person.
+     * the player to every NPC. With prompt gating (the CHIM fork hook, decisions §18 #6) core
+     * leaves the player's line out for an NPC who has never met them, and RelDyn's stranger line
+     * says the name is unknown: both agree, one referent. With prompt gating off, core names the
+     * player to a stranger too; RelDyn's stranger line must not claim the name is unknown then,
+     * and both name the same person.
      */
     public function testWithCoreRelationshipsOnTheStrangerLineAgreesWithCore(): void
     {
@@ -513,6 +528,15 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
         $GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'] = true;
         $t = $this->turn('Brelyna Maryon', 'Is this the College?');
         $this->assertSame(0, RelationshipDynamics::getContextTier($this->dynamics('Brelyna Maryon')));
+        $this->assertStringContainsString("[Brelyna Maryon's RELATIONSHIPS]", $t['pers'], "core's block is there");
+        $this->assertStringNotContainsString(self::PLAYER, $t['pers'], "neither core nor RelDyn names a stranger:\n{$t['pers']}");
+        // a stranger (or, where his deeds are heard, one who knows the stories and not the name)
+        $this->assertMatchesRegularExpression('/knows nothing of their name|has never met this stranger, only heard the stories/', $t['pers']);
+        $this->assertDoesNotMatchRegularExpression('/' . self::PLAYER . '/', self::text($t), 'one referent for the player');
+
+        // Prompt gating off: core names the player to everyone, and RelDyn agrees
+        $this->storeConfig(['prompt_gating' => ['enabled' => false]]);
+        $t = $this->turn('Brelyna Maryon', 'Is this the Arcanaeum?');
         $this->assertStringContainsString(self::PLAYER, $t['pers'], "core names the player:\n{$t['pers']}");
         $this->assertStringContainsString('<knowledge_of_player>', $t['pers']);
         $know = substr($t['pers'], strpos($t['pers'], '<knowledge_of_player>'));
@@ -520,12 +544,13 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
         $this->assertStringNotContainsString('knows nothing of their name', $know, "contradicts core's block:\n{$t['pers']}");
         $this->assertStringContainsString(self::PLAYER, $know, 'RelDyn names the same person core names');
         $this->assertDoesNotMatchRegularExpression('/this stranger/', self::text($t), 'one referent for the player');
+        $this->storeConfig([]);
 
         // Core off: the stranger stays unnamed in RelDyn's text
         $GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'] = false;
         $off = $this->turn('Brelyna Maryon', 'Sorry, one more thing.');
         $this->assertStringNotContainsString(self::PLAYER, $off['pers']);
-        $this->assertStringContainsString('knows nothing of their name', $off['pers']);
+        $this->assertMatchesRegularExpression('/knows nothing of their name|has never met this stranger, only heard the stories/', $off['pers']);
         $this->assertNoDbFailures();
     }
 }

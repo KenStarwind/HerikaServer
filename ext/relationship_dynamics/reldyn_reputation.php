@@ -36,8 +36,10 @@
  * Not in CHIM 3.4.1 core, so not here: thane titles, faction ranks, rumours (the cascade
  * network would carry them).
  *
- * The prompt-gating port (who knows the player) reads scores() for its fame axis; RelDyn gives
- * the tone (a felt 'reputation' line while the weight holds), never who the player is.
+ * The prompt-gating port (who knows the player, reldyn_gating.php) reads fameScores() for its fame
+ * axis: the 'fames' table (renown and notoriety from the fame / infamy tables above, and the
+ * questline fames), each with the hold it spreads from and how far. This layer gives the tone (a
+ * felt 'reputation' line while the weight holds); prompt gating decides who knows the player.
  */
 
 require_once __DIR__ . '/relationship_dynamics.php';
@@ -76,6 +78,45 @@ final class RelDynReputation
                 'infamy' => '{NAME} has heard dark things said about {PLAYER} and keeps a careful, watchful distance until they show otherwise',
                 'both' => '{NAME} has heard stories about {PLAYER}, some admiring and some dark, and has not made up their mind',
             ],
+            // What the player is known for, and where (prompt gating's fame axis, reldyn_gating.php;
+            // the April fame keys on core data). key => evidence: a table in the RelDynPlayer
+            // evidence format, or 'fame' / 'infamy' (this layer's own tables); min_score: the score
+            // (0..1) from which it is talked about at all (the April plugin read faction membership,
+            // yes or no; core 3.4.1 keeps no player factions, so a fame is its evidence score and
+            // min_score stands in for membership: Serene's pick); home: core's canonical hold it
+            // spreads from (null: everywhere) and reach: hold steps it travels (the April design's
+            // fame_location_gating home_hold / max_distance); text: the rumour ({NAME} the NPC,
+            // {PLAYER} the player's name, or a stranger's description when she does not know it;
+            // a fame never tells her the name).
+            // Nothing in CHIM 3.4.1 core tells thane titles, faction ranks or the civil-war side.
+            'fames' => [
+                'dragonborn' => ['evidence' => ['dragons' => [2, 1.0], 'stat:Shouts Learned' => [3, 0.5], 'stat:Words Of Power Learned' => [6, 0.4]],
+                    'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    // the design's fragment: tales of a Dragonborn, not of the player
+                    'text' => '{NAME} has heard tales of a Dragonborn, one who devours the souls of dragons and Shouts with the Voice of the Dovah.'],
+                'renown' => ['evidence' => 'fame', 'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'text' => '{NAME} has heard tavern stories about {PLAYER}: the kind of deeds people retell.'],
+                'notoriety' => ['evidence' => 'infamy', 'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'text' => '{NAME} has heard ugly stories about {PLAYER}, the kind people lower their voices for.'],
+                'companions' => ['evidence' => ['stat:The Companions Quests Completed' => [3, 1.0], 'questline:companions' => [3, 0.6]],
+                    'min_score' => 0.3, 'home' => 'Whiterun Hold', 'reach' => 2,
+                    'text' => '{NAME} has heard that {PLAYER} runs with the Companions of Jorrvaskr.'],
+                'college' => ['evidence' => ['stat:College of Winterhold Quests Completed' => [3, 1.0], 'questline:college' => [3, 0.6]],
+                    'min_score' => 0.3, 'home' => 'Winterhold', 'reach' => 2,
+                    'text' => '{NAME} has heard that {PLAYER} studies at the College of Winterhold.'],
+                'thieves_guild' => ['evidence' => ["stat:Thieves' Guild Quests Completed" => [3, 1.0], 'questline:thieves_guild' => [3, 0.6]],
+                    'min_score' => 0.3, 'home' => 'The Rift', 'reach' => 3,
+                    'text' => '{NAME} has heard whispers that {PLAYER} has dealings with the Thieves Guild in Riften.'],
+                'dark_brotherhood' => ['evidence' => ['stat:The Dark Brotherhood Quests Completed' => [3, 1.0], 'questline:dark_brotherhood' => [3, 0.6]],
+                    'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'text' => '{NAME} has heard dark rumours tying {PLAYER} to the Dark Brotherhood.'],
+                'civil_war' => ['evidence' => ['stat:Civil War Quests Completed' => [4, 1.0], 'questline:civil_war' => [4, 0.6]],
+                    'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'text' => '{NAME} has heard that {PLAYER} has fought in the war between the Legion and the Stormcloaks.'],
+                'dawnguard' => ['evidence' => ['stat:Dawnguard Quests Completed' => [3, 1.0], 'questline:dawnguard' => [3, 0.6]],
+                    'min_score' => 0.3, 'home' => 'The Rift', 'reach' => 3,
+                    'text' => '{NAME} has heard that {PLAYER} hunts vampires with the Dawnguard.'],
+            ],
         ];
     }
 
@@ -85,11 +126,33 @@ final class RelDynReputation
         return array_replace(self::configDefaults(), is_array($stored) ? $stored : []);
     }
 
-    /** The evidence tables (RelDynPlayer reads the tracked stats they name). */
+    /** The evidence tables, the fames' own included (RelDynPlayer reads the tracked stats they name). */
     public static function evidenceTables(): array
     {
         $cfg = self::config();
-        return [(array) $cfg['fame'], (array) $cfg['infamy']];
+        $tables = [(array) $cfg['fame'], (array) $cfg['infamy']];
+        foreach ((array) $cfg['fames'] as $spec) {
+            if (is_array($spec['evidence'] ?? null)) $tables[] = $spec['evidence'];
+        }
+        return $tables;
+    }
+
+    /**
+     * What the player is known for (prompt gating's fame axis, RelDynGating::heardFames): fame key
+     * => score 0..1, the soft-or of its evidence over the player profile; null when none of it is known.
+     */
+    public static function fameScores(?array $profile = null): array
+    {
+        $cfg = self::config();
+        $profile = $profile ?? RelDynPlayer::profile();
+        $out = [];
+        foreach ((array) $cfg['fames'] as $key => $spec) {
+            $evidence = $spec['evidence'] ?? [];
+            $table = is_string($evidence) ? (array) ($cfg[$evidence] ?? []) : (array) $evidence;
+            $score = RelDynPlayer::evidenceScore($profile, $table);
+            $out[(string) $key] = $score === null ? null : round($score, 4);
+        }
+        return $out;
     }
 
     /**

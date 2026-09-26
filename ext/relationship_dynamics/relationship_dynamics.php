@@ -694,8 +694,24 @@ class RelationshipDynamics
      * were saved by the settings page before 2026-09-23, which stored every checkbox with
      * isset() next to its hidden "" twin, so every toggle in them is true whatever was
      * ticked. loadStoredConfig() drops those toggles so the current defaults apply.
+     * Schema 3 (rulings 2026-09-25 §18 #10): rows older than it were written before the eval's
+     * 'confessing' / 'forgiveness' tags existed, so the tag lists they store lack them;
+     * loadStoredConfig() adds them (CONFIG_TAGS_ADDED_V3). A row stamped 3 or later is a choice.
      */
-    const CONFIG_SCHEMA = 2;
+    const CONFIG_SCHEMA = 3;
+
+    /**
+     * Tag lists rulings 2026-09-25 §18 #10 extended ('confessing' split from 'confiding', the
+     * player's 'forgiveness'): stored-config path => the tags added. A list of tags gains the
+     * missing ones; a table keyed by tag (fulfillment.tag_delivery) gains their default rows. A
+     * path the stored row does not hold is left to the section's default.
+     */
+    const CONFIG_TAGS_ADDED_V3 = [
+        'protocols.parasite.genuine_tags'        => ['confessing', 'forgiveness'],
+        'intrinsic_goals.eval_tags.bond_seeking' => ['confessing'],
+        'attraction.emotional_passion.tags'      => ['confessing'],
+        'fulfillment.tag_delivery'               => ['confessing', 'forgiveness'],
+    ];
 
     /** The stored conf_opts row as saved ([] when absent or unreadable). */
     public static function loadStoredConfig(): array
@@ -714,9 +730,46 @@ class RelationshipDynamics
             error_log("[RelDyn] ERROR loadStoredConfig: conf_opts " . self::CONFIG_ROW_ID . " is not a JSON object; using defaults");
             return [];
         }
-        if (intval($stored['config_schema'] ?? 1) < self::CONFIG_SCHEMA) {
+        $schema = intval($stored['config_schema'] ?? 1);
+        if ($schema < 2) {
             // Pre-fix row: its toggles are all true by the isset() bug, not by choice.
             $stored = array_diff_key($stored, array_flip(self::CONFIG_FORM_TOGGLES));
+        }
+        if ($schema < 3) {
+            $stored = self::addRulingTags($stored);
+        }
+        // Migrated in memory: a settings-page save stores it with the current stamp
+        if ($schema < self::CONFIG_SCHEMA) $stored['config_schema'] = self::CONFIG_SCHEMA;
+        return $stored;
+    }
+
+    /**
+     * A row written before rulings 2026-09-25 §18 #10 (config_schema < 3): add the rulings' tags to
+     * the tag lists it stores (CONFIG_TAGS_ADDED_V3), without touching anything it chose.
+     */
+    private static function addRulingTags(array $stored): array
+    {
+        $defaults = self::defaultConfig();
+        foreach (self::CONFIG_TAGS_ADDED_V3 as $path => $tags) {
+            $keys = explode('.', $path);
+            $list = $stored;
+            $default = $defaults;
+            foreach ($keys as $k) {
+                $list = is_array($list) && array_key_exists($k, $list) ? $list[$k] : null;
+                $default = is_array($default) && array_key_exists($k, $default) ? $default[$k] : null;
+            }
+            if (!is_array($list)) continue;
+            foreach ($tags as $tag) {
+                if (array_is_list($list)) {
+                    if ($list !== [] && !in_array($tag, $list, true)) $list[] = $tag;
+                } elseif (!array_key_exists($tag, $list) && is_array($default) && array_key_exists($tag, $default)) {
+                    $list[$tag] = $default[$tag];
+                }
+            }
+            $ref = &$stored;
+            foreach ($keys as $k) $ref = &$ref[$k];
+            $ref = $list;
+            unset($ref);
         }
         return $stored;
     }
@@ -909,6 +962,8 @@ class RelationshipDynamics
             'intrinsic_goals' => RelDynGoals::configDefaults(),
             // Reputation: the pre-contact offset from fame / infamy / status (reldyn_reputation.php)
             'reputation' => RelDynReputation::configDefaults(),
+            // Prompt gating: who knows the player (name, story, rumours by hold; reldyn_gating.php)
+            'prompt_gating' => RelDynGating::configDefaults(),
             // Item modifiers (PR 8, item-modifiers): appraised dimensions, eventlog rows per request
             'item_modifiers' => self::ITEM_MODIFIER_DEFAULTS,
             'parasite_detection_enabled' => true,
@@ -16172,6 +16227,11 @@ class RelationshipDynamics
             $threshold *= 0.7;
             self::log("[ICK] Catalyst style detected + high maturity — threshold reduced 30%");
         }
+        // MDD 5.1: the Charmer "triggers Ick if overused"
+        if (self::charmerOverused($dynamics)) {
+            $threshold *= floatval(self::charismaConfig()['charmer_overuse_ick_mult']);
+            self::log('[ICK] the Charmer overused: threshold x ' . self::charismaConfig()['charmer_overuse_ick_mult']);
+        }
 
         // Attachment (dimension design, avoidant: "suffocation threshold (ick) lowered"): the
         // avoidance axis lowers it, continuously (RelDynProtocols::ickAvoidanceMult)
@@ -16349,8 +16409,18 @@ class RelationshipDynamics
      *   min_samples  graded exchanges in the window before any style is read
      *   min_share    share (0..1) of the window one style needs to be the player's style; that
      *                share is its confidence (getCharismaContext's awareness needs 0.5)
+     *   charmer_overuse_share     the Charmer graded in at least this share of the window is
+     *                             overuse (MDD 5.1: "triggers Ick if overused"; charmerOverused)
+     *   charmer_overuse_ick_mult  the Ick's threshold while he is overused (the Catalyst's cut for a
+     *                             mature NPC, checkIckTrigger)
+     *   charmer_friendzone_maturity_at_most, charmer_friendzone_passion_mult  MDD 5.2 "Low
+     *                             Maturity ... Friendzones the Charmer": at or below this maturity
+     *                             (the immature line of the tier gates) his passion multiplier is
+     *                             this, whatever her temperament; affinity is untouched
      */
-    const CHARISMA_DEFAULTS = ['window' => 10, 'min_samples' => 5, 'min_share' => 0.5];
+    const CHARISMA_DEFAULTS = ['window' => 10, 'min_samples' => 5, 'min_share' => 0.5,
+        'charmer_overuse_share' => 0.7, 'charmer_overuse_ick_mult' => 0.7,
+        'charmer_friendzone_maturity_at_most' => 40.0, 'charmer_friendzone_passion_mult' => 0.5];
 
     /** Source of a tracker fed by the eval's charisma grades; any other tracker starts over. */
     const CHARISMA_TRACKER_SOURCE = 'eval_charisma';
@@ -16459,6 +16529,17 @@ class RelationshipDynamics
     }
 
     /**
+     * The Charmer overused (MDD 5.1): his detected style, graded in at least
+     * charisma.charmer_overuse_share of the window (the tracker's confidence).
+     */
+    public static function charmerOverused(array $dynamics): bool
+    {
+        if (self::charismaStyle($dynamics) !== 'charmer') return false;
+        return floatval($dynamics['_charisma_tracker']['style_confidence'] ?? 0.0)
+            >= floatval(self::charismaConfig()['charmer_overuse_share']);
+    }
+
+    /**
      * The style a window of charisma grades reads as: the style graded most often, when the
      * window holds at least charisma.min_samples grades, that style is at least
      * charisma.min_share of them and no other style is graded as often (a tie is mixed).
@@ -16530,8 +16611,12 @@ class RelationshipDynamics
             $isIneffective = false;
         }
 
-        // Charmer special: diminishing returns — after many interactions becomes less effective
-        // (handled externally via overuse counter)
+        // Charmer special (MDD 5.2): low maturity friendzones him; his passion barely moves her,
+        // whatever her temperament (overuse is the Ick's: charmerOverused, checkIckTrigger)
+        $c = self::charismaConfig();
+        if ($style === 'charmer' && $dimensionId === 'passion' && floatval($maturity) <= floatval($c['charmer_friendzone_maturity_at_most'])) {
+            return floatval($c['charmer_friendzone_passion_mult']);
+        }
 
         // Select multiplier based on dimension
         if ($dimensionId === 'affinity' && $style === 'rock') {
@@ -18177,6 +18262,9 @@ require_once __DIR__ . '/reldyn_goals.php';
 
 // Reputation: the pre-contact baseline (reputation-layer)
 require_once __DIR__ . '/reldyn_reputation.php';
+
+// Prompt gating: who knows the player (prompt-gating-*; the CHIM fork hook registers in player_knowledge.php)
+require_once __DIR__ . '/reldyn_gating.php';
 
 // Self-reflection on core's diary entries (baseline math / trajectory LLM); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_diary.php';

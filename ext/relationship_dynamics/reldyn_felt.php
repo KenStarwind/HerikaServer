@@ -186,6 +186,12 @@ final class RelDynFelt
             // core's relationship block names the player to every NPC (coreNamesPlayer): the
             // name is known, nothing behind it
             'stranger_named' => "{NAME} has barely met {PLAYER}: a name and what can be seen, their bearing, gear and manner; nothing of their past or deeds unless told, and {NAME} does not act familiar.",
+            // prompt gating (reldyn_gating.php): never met, but the deeds travel (a renowned
+            // player where she is: the stories, not the name), a history that never grew warm
+            // (met), and the tier floor (met once, the bond fell away since)
+            'renowned'     => "{NAME} has never met {PLAYER}, only heard the stories told about someone of their description; the person behind them is a stranger, and {NAME} does not act familiar.",
+            'met'          => "{NAME} has crossed paths with {PLAYER} before and knows the name, little more: no warmth has grown between them, and {NAME} does not act familiar.",
+            'lapsed_acquaintance' => "{NAME} has met {PLAYER} before and remembers the name; whatever goodwill there was has worn off, and {NAME} does not act familiar.",
             'acquaintance' => "{NAME} knows {PLAYER} by name and a few shared words, not by heart: polite familiarity, nothing personal assumed.",
             'friend'       => "{NAME} knows {PLAYER} well: their habits, their humour, what they have shared on the road.",
             'lapsed'       => "{NAME} knows {PLAYER} well, which is exactly why it cuts: the familiarity is all still there, the old warmth is not.",
@@ -382,7 +388,8 @@ final class RelDynFelt
      *   goal ?array             the active director goal
      *   audience string[]       people present besides the NPC and the player
      *
-     * @return array ['lines' => list, 'changed' => bool, 'tier' => int]
+     * @return array ['lines' => list, 'changed' => bool, 'tier' => int, 'player_ref' => string,
+     *   'knowledge' => ?array (RelDynGating::knowledge; null with prompt gating off)]
      */
     public static function compose(string $npc, string $player, array &$dynamics, float $now, array $env = []): array
     {
@@ -394,10 +401,14 @@ final class RelDynFelt
         $changed = false;
 
         if (RelationshipDynamics::updateContextTierHWM($dynamics)) $changed = true;
+        // Prompt gating's tier floor: the highest affinity she held keeps what she learned
+        if (RelDynGating::notePeak($dynamics)) $changed = true;
         $tier = RelationshipDynamics::getContextTier($dynamics);
-        // A stranger-tier NPC does not know the player's name (prompt gating's #PLAYER_REF#).
+        // Who knows the player (prompt gating): only one who has met the player knows the name
+        // (#PLAYER_REF#); a renowned player's deeds travel without it.
+        $knowledge = RelDynGating::enabled() ? RelDynGating::knowledge($npc, $dynamics) : null;
         $bond = $player;   // the bond's key (dimensional memory), whatever the NPC calls them
-        $player = self::playerRef($player, $tier, $dynamics, $cfg);
+        $player = self::playerRef($player, $tier, $dynamics, $cfg, $knowledge);
         $vars = ['{NAME}' => $npc, '{PLAYER}' => $player];
         $dims = is_array($dynamics['dimensions'] ?? null) ? $dynamics['dimensions'] : [];
 
@@ -740,7 +751,7 @@ final class RelDynFelt
             $l['text'] = self::nameThePlayer($l['text'], $player);
             return $l;
         }, $lines), fn($l) => $l['text'] !== ''));
-        return ['lines' => $lines, 'changed' => $changed, 'tier' => $tier, 'player_ref' => $player];
+        return ['lines' => $lines, 'changed' => $changed, 'tier' => $tier, 'player_ref' => $player, 'knowledge' => $knowledge];
     }
 
     /** "the player" / "The player" in a felt line -> the player reference (name or 'this stranger'). */
@@ -759,13 +770,20 @@ final class RelDynFelt
      */
     public static function coreNamesPlayer(): bool
     {
-        return filter_var($GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        // With the CHIM fork hook, core's relationship block shows the player only to an NPC who
+        // has met them (prompt gating, RelDynGating::gatesCore)
+        return filter_var($GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            && !RelDynGating::gatesCore();
     }
 
-    /** RelDyn's name for the player at this tier (see coreNamesPlayer). */
-    public static function playerRef(string $player, int $tier, array $dynamics, ?array $cfg = null): string
+    /**
+     * RelDyn's name for the player at this tier (see coreNamesPlayer). $knowledge
+     * (RelDynGating::knowledge, prompt gating on): the name when she knows it, from any tier.
+     */
+    public static function playerRef(string $player, int $tier, array $dynamics, ?array $cfg = null, ?array $knowledge = null): string
     {
-        if ($tier >= 1 || self::coreNamesPlayer()) return $player;
+        $named = $knowledge !== null ? !empty($knowledge['name']) : $tier >= 1;
+        if ($named || self::coreNamesPlayer()) return $player;
         $t = (array) (($cfg ?? self::config())['text']);
         return RelationshipDynamics::getCurrentTier(RelationshipDynamics::getCoreAffinity($dynamics)) === 'hostile'
             ? (string) $t['player_ref_hostile'] : (string) $t['player_ref_stranger'];
@@ -994,19 +1012,30 @@ final class RelDynFelt
      * the player anyway: coreNamesPlayer), an acquaintance a little, a friend
      * well, a bonded NPC deeply; a tier-2 floor held by the high-water mark while affinity has
      * fallen reads "lapsed". One tension bridge (e.g. devoted but closed) from tier 1 up.
+     * With prompt gating ($knowledge, RelDynGating::knowledge): a stranger who has heard of the
+     * player's deeds, not the name (renowned), one with a history that never grew warm (met), one
+     * who met them before the bond fell below acquaintance (the tier floor: lapsed_acquaintance),
+     * and the rumours heard where she is (RelDynGating::withRumours).
      */
-    public static function knowledgeOfPlayer(string $npc, string $player, array $dynamics, ?array $cfg = null): string
+    public static function knowledgeOfPlayer(string $npc, string $player, array $dynamics, ?array $cfg = null, ?array $knowledge = null): string
     {
         $cfg = $cfg ?? self::config();
         $t = (array) $cfg['text'];
         $tier = RelationshipDynamics::getContextTier($dynamics);
-        // the player's name only where RelDyn names them (playerRef: tier 1 up, or core names them)
-        $vars = ['{NAME}' => $npc, '{PLAYER}' => self::playerRef($player, $tier, $dynamics, $cfg)];
+        // the player's name only where RelDyn names them (playerRef: she knows it, or core names them)
+        $vars = ['{NAME}' => $npc, '{PLAYER}' => self::playerRef($player, $tier, $dynamics, $cfg, $knowledge)];
         $core = RelationshipDynamics::getCoreAffinity($dynamics);
         $current = RelationshipDynamics::getAffinityContextTier($dynamics);
-        if ($tier <= 0) {
+        $level = $knowledge['level'] ?? null;
+        if ($tier <= 0 || ($tier === 1 && $current < 1)) {
+            // a stranger, or an acquaintance the high-water mark (the tier floor) holds while the
+            // bond itself has fallen away: she remembers him, not fondly
             $key = RelationshipDynamics::getCurrentTier($core) === 'hostile' ? 'hostile'
-                : (self::coreNamesPlayer() ? 'stranger_named' : 'stranger');
+                : ($level === 'lapsed' || $tier === 1 ? 'lapsed_acquaintance'
+                : ($level === 'personal' ? 'acquaintance'
+                : ($level === 'met' ? 'met'
+                : ($level === 'renowned' ? 'renowned'
+                : (self::coreNamesPlayer() ? 'stranger_named' : 'stranger')))));
         } elseif ($tier === 1) {
             $key = 'acquaintance';
         } elseif ($tier === 2) {
@@ -1018,6 +1047,9 @@ final class RelDynFelt
         if ($tier >= 1) {
             $bridge = self::bridge($dynamics, $tier, $current, $cfg);
             if ($bridge !== null) $text .= ' ' . strtr((string) $t['bridge'][$bridge], $vars);
+        }
+        if ($knowledge !== null) {
+            $text = RelDynGating::withRumours($text, $npc, $vars['{PLAYER}'] === $player ? $player : null, $knowledge);
         }
         return $text;
     }
@@ -1321,7 +1353,8 @@ final class RelDynFelt
         foreach ($selected as $l) self::$lastRendered[$l['key']] = $l['text'];
         RelationshipDynamics::log("[FELT] {$npc}: tier {$composed['tier']}, " . count($composed['lines']) . ' candidates, '
             . count($selected) . ' kept (' . implode(', ', array_map(fn($l) => $l['key'], $selected)) . ')');
-        return ['dynamics' => $dynamics, 'lines' => $selected, 'tier' => $composed['tier'], 'cfg' => $cfg, 'player_ref' => $player];
+        return ['dynamics' => $dynamics, 'lines' => $selected, 'tier' => $composed['tier'], 'cfg' => $cfg, 'player_ref' => $player,
+            'knowledge' => $composed['knowledge']];
     }
 
     /**
@@ -1341,7 +1374,7 @@ final class RelDynFelt
             $built['tier'] >= intval($cfg['core_min_tier']) ? intval($cfg['core_lines']) : 0);
         $pers = (string) ($GLOBALS['HERIKA_PERS'] ?? '');
         $knowledgePresent = stripos($pers, '<knowledge_of_player>') !== false;
-        $knowledge = self::knowledgeOfPlayer($npc, $player, $built['dynamics'], $cfg);
+        $knowledge = self::knowledgeOfPlayer($npc, $player, $built['dynamics'], $cfg, $built['knowledge']);
         $block = self::renderCharacterBlock($npc, $built['player_ref'], $knowledge, $core, $knowledgePresent, $cfg);
         if ($block !== '') {
             $GLOBALS['HERIKA_PERS'] = ($cfg['position'] === 'prepend')

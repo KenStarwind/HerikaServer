@@ -341,6 +341,7 @@ final class RelDynCrossLaneV016TestBedsPostgresTest extends TestCase
      * The eval LLM at the connector boundary, by the player's line in THIS EXCHANGE:
      *   "I dare you" (he challenges her to be more than she is): graded catalyst;
      *   "kiss me" (open romantic pursuit, romantic_intent 3), with "I dare you" graded catalyst too;
+     *   "most beautiful" / "wonderful way with words" (smooth, accommodating flattery): graded charmer;
      *   anything else: small talk, no particular approach.
      */
     private function evalLlm(): callable
@@ -352,6 +353,7 @@ final class RelDynCrossLaneV016TestBedsPostgresTest extends TestCase
             $exchange = substr($content, $from, max(0, (int) strpos($content, "\nTASK:", $from) - $from));
             $dare = str_contains($exchange, 'I dare you');
             $kiss = str_contains($exchange, 'kiss me');
+            $charm = str_contains($exchange, 'most beautiful') || str_contains($exchange, 'wonderful way with words');
             return json_encode([
                 'signals' => ['affinity' => 0, 'trust' => 0, 'comfort' => 0, 'respect' => $dare ? 1 : 0, 'passion' => $kiss ? 3 : 0, 'maturity' => 0],
                 'tags' => [],
@@ -361,7 +363,7 @@ final class RelDynCrossLaneV016TestBedsPostgresTest extends TestCase
                 'significance' => $kiss ? 0.3 : 0.1,
                 'summary' => $kiss ? 'The player pressed for a kiss.' : ($dare ? 'The player challenged her.' : 'Small talk.'),
                 'romantic_intent' => $kiss ? 3 : 0,
-                'charisma' => $dare ? 'catalyst' : 'none',
+                'charisma' => $dare ? 'catalyst' : ($charm ? 'charmer' : 'none'),
             ]);
         };
     }
@@ -496,6 +498,67 @@ final class RelDynCrossLaneV016TestBedsPostgresTest extends TestCase
         $this->assertFeelingsNotNumbers();
         $this->assertSame(0, $this->llmCalls, 'no trait read');
         $this->assertGreaterThan(0, $this->evalCalls);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * Batch P review (charisma, MDD 5.1: the Charmer "triggers Ick if overused"). The same four
+     * cold partners, the same pressing as the Catalyst's evening (two exchanges without courting,
+     * then four kisses asked for: four of seven courting), but every word of it the Charmer's
+     * flattery, graded charmer by the eval: six of seven graded exchanges, overuse. Overuse lowers
+     * every partner's Ick threshold (not only the mature one's, as the Catalyst does), so the Ick
+     * comes to each partner whose own threshold, cut, is at or under that share, and to no one
+     * whose threshold even cut is above it; the share is under every partner's own threshold, so
+     * the overuse is what reaches them. The next evening the LLM hears it from each of those only,
+     * as a feeling.
+     */
+    public function testTheCharmerOverusedReachesTheIck(): void
+    {
+        $t = $this->hello();
+        $this->coldPartners();
+        $t = $this->play($t + 600, 20.0);
+        for ($k = 0; $k < 2; $k++) $t = $this->round('You have a wonderful way with words, truly.', $t + 600, "praise{$k}");
+        $all = array_keys(self::BEDS);
+        $firstAt = [];
+        for ($k = 0; $k < 4; $k++) {
+            $t = $this->round('You are the most beautiful woman in Skyrim. Come here and kiss me.', $t + 600, "flatter{$k}");
+            foreach ($all as $npc) {
+                $tr = $this->dynamics($npc)['_ick_tracker'] ?? [];
+                if (!empty($tr['ick_active']) && !isset($firstAt[$npc])) {
+                    $firstAt[$npc] = intval($tr['romantic_count']) / max(1, intval($tr['total_count']));
+                }
+            }
+        }
+        $cut = floatval(RelationshipDynamics::charismaConfig()['charmer_overuse_ick_mult']);
+        $share = 4 / 7;
+        $active = [];
+        $plain = [];
+        foreach ($all as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertSame('charmer', RelationshipDynamics::charismaStyle($d), "{$npc}: " . json_encode($d['_charisma_tracker'] ?? null));
+            $this->assertTrue(RelationshipDynamics::charmerOverused($d), "{$npc}: six of seven graded exchanges");
+            $this->assertSame([4, 7], [intval($d['_ick_tracker']['romantic_count'] ?? 0), intval($d['_ick_tracker']['total_count'] ?? 0)], $npc);
+            $plain[$npc] = self::ickThreshold($d, false);
+            $active[$npc] = !empty($d['_ick_tracker']['ick_active']);
+        }
+        $why = json_encode(['plain' => $plain, 'active' => $active, 'first' => $firstAt]);
+        foreach ($all as $npc) {
+            $this->assertLessThan($plain[$npc], $share, "{$npc}: the pressing alone is under her own threshold {$why}");
+            $this->assertSame($plain[$npc] * $cut <= $share + 1e-9, $active[$npc], "{$npc}: the overuse cut decides {$why}");
+        }
+        $this->assertContains(true, $active, "the overused Charmer reaches someone {$why}");
+        $this->assertTrue($active['Ashe'], "Ashe: as with the Catalyst {$why}");
+
+        $this->round('Good evening.', $t + self::DAY, 'evening');
+        foreach ($all as $npc) {
+            if ($active[$npc]) {
+                $this->assertStringContainsString('steps back when Kaida leans in', (string) ($this->felt[$npc]['evening']['ick'] ?? ''), "{$npc} {$why}");
+            } else {
+                $this->assertArrayNotHasKey('ick', $this->felt[$npc]['evening'], $npc);
+            }
+        }
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls, 'no trait read');
         $this->assertSame([], $this->db->failures);
     }
 
