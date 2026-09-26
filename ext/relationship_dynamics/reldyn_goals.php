@@ -18,6 +18,9 @@
  *                       above where it stood, sustain days) -> her maturity baseline rises and the
  *                       goal becomes keeping it; slipping below -> the goal lapses and the shame
  *                       adds resentment_self.
+ *   recovery            'I need to stop' / 'Stay clean' (roadmap addiction): formed, phased, progressed
+ *                       and ended by RelDynSubstances (her dependence, her own maturity, clean game
+ *                       days); never decays or progresses here.
  * Progress (0..1): experiences whose facets carry the goal's facets (the place she is in with the
  * player, a topic, a gift; once per thing per game day), positive eval items with the goal's
  * tags, and quest stages whose name or objective carries the goal's keywords (the quest event
@@ -40,7 +43,9 @@ final class RelDynGoals
     const KEY = '_intrinsic_goals';
     const META_KEY = '_intrinsic_goals_meta';
     const HISTORY_KEY = '_intrinsic_goals_history';
-    const TYPES = ['bond_seeking', 'purpose', 'mastery', 'safety', 'independence', 'revenge', 'self_worth_recovery'];
+    const TYPES = ['bond_seeking', 'purpose', 'mastery', 'safety', 'independence', 'revenge', 'self_worth_recovery', 'recovery'];
+    /** Goal types another module holds (no priority decay, no progress from experiences here). */
+    const HELD_TYPES = ['self_worth_recovery', 'recovery'];
 
     /**
      * Defaults for config 'intrinsic_goals' (a stored key replaces that key whole).
@@ -114,6 +119,8 @@ final class RelDynGoals
                 'revenge' => '{NAME} has an old score to settle{SUBJECT}; it hardens them whenever it comes near',
                 'self_worth_recovery' => '{NAME} knows they need to change and is trying; small setbacks sting more than they let on',
                 'self_worth_maintain' => '{NAME} has found firmer ground in themselves lately and means to keep it',
+                'recovery' => '{NAME} knows {SUBSTANCE} has too strong a hold and wants to stop; the craving argues back',
+                'recovery_clean' => '{NAME} is staying away from {SUBSTANCE} and guards it; an offer is refused, if not easily',
             ],
         ];
     }
@@ -233,7 +240,7 @@ final class RelDynGoals
         $i = self::find($dynamics, $id);
         if ($i === null) return false;
         $g = &$dynamics[self::KEY][$i];
-        if (($g['type'] ?? '') === 'self_worth_recovery') return false;   // held, not progressed (draft)
+        if (in_array($g['type'] ?? '', self::HELD_TYPES, true)) return false;   // held, not progressed (draft; RelDynSubstances)
         $g['progress'] = round(min(1.0, floatval($g['progress'] ?? 0) + $amount), 4);
         $g['last_progress_day'] = self::day($now);
         $done = $g['progress'] >= 1.0;
@@ -426,6 +433,7 @@ final class RelDynGoals
                 self::tickSelfWorth($npcName, $dynamics, $i, $days, $today, $cfg);
                 continue;
             }
+            if (in_array($g['type'] ?? '', self::HELD_TYPES, true)) continue;   // recovery: RelDynSubstances
             $idle = max(0, $today - max($last, intval($g['last_progress_day'] ?? $last)));
             $floor = self::isBackstory($g) ? min(floatval($cfg['backstory_priority_floor']), floatval($g['priority'])) : 0.0;
             $p = floatval($g['priority']) - floatval($cfg['priority_decay_per_game_day']) * min($days, $idle);
@@ -433,7 +441,7 @@ final class RelDynGoals
         }
         foreach (array_reverse(array_keys((array) ($dynamics[self::KEY] ?? []))) as $i) {
             $g = $dynamics[self::KEY][$i];
-            if (is_array($g) && !empty($g['active']) && ($g['type'] ?? '') !== 'self_worth_recovery' && !self::isBackstory($g)
+            if (is_array($g) && !empty($g['active']) && !in_array($g['type'] ?? '', self::HELD_TYPES, true) && !self::isBackstory($g)
                 && floatval($g['priority']) < floatval($cfg['drop_below_priority'])) {
                 self::end($dynamics, $i, 'faded', $today);
             }
@@ -466,6 +474,27 @@ final class RelDynGoals
             RelationshipDynamics::log("[RelDyn-GOALS] {$npcName}: 'I need to change' held: maturity baseline "
                 . round($base, 1) . ' -> ' . round($dynamics['dimensions']['maturity']['baseline'], 1));
         }
+    }
+
+    /** Set fields of the active goal $id (a module holding it: RelDynSubstances). False when not active. */
+    public static function setFields(array &$dynamics, string $id, array $fields): bool
+    {
+        $i = self::find($dynamics, $id);
+        if ($i === null) return false;
+        foreach ($fields as $k => $v) {
+            if (in_array($k, ['id', 'type', 'active'], true)) continue;
+            $dynamics[self::KEY][$i][$k] = $v;
+        }
+        return true;
+    }
+
+    /** End the active goal $id with $outcome (achieved | lapsed | ...) at $now. False when not active. */
+    public static function endGoal(array &$dynamics, string $id, string $outcome, float $now): bool
+    {
+        $i = self::find($dynamics, $id);
+        if ($i === null) return false;
+        self::end($dynamics, $i, $outcome, self::day($now));
+        return true;
     }
 
     // =====================================================================
@@ -551,6 +580,7 @@ final class RelDynGoals
         if ($top === null || floatval($top['priority']) < floatval($cfg['felt_min_priority'])) return null;
         $type = (string) $top['type'];
         if ($type === 'self_worth_recovery' && ($top['phase'] ?? 'change') === 'maintain') $type = 'self_worth_maintain';
+        if ($type === 'recovery' && ($top['phase'] ?? 'stop') === 'clean') $type = 'recovery_clean';
         $text = $cfg['felt_text'][$type] ?? null;
         if (!is_string($text) || trim($text) === '') return null;
         return strtr($text, ['{NAME}' => $npcName, '{PLAYER}' => $playerRef] + self::phraseVars($top, $cfg));
@@ -569,7 +599,8 @@ final class RelDynGoals
         }
         $pursuit = $facet !== null ? (string) ($cfg['pursuit'][$facet] ?? str_replace('_', ' ', $facet)) : 'what matters to them';
         $keywords = array_values(array_filter((array) ($goal['keywords'] ?? []), 'is_string'));
-        return ['{PURSUIT}' => $pursuit, '{SUBJECT}' => $keywords !== [] ? ' tied to ' . $keywords[0] : ''];
+        return ['{PURSUIT}' => $pursuit, '{SUBJECT}' => $keywords !== [] ? ' tied to ' . $keywords[0] : '',
+            '{SUBSTANCE}' => (string) ($goal['substance_word'] ?? 'it')];
     }
 
     /** Jev: the active goals (numbers). */

@@ -1319,6 +1319,10 @@ class RelationshipDynamics
             // Window and fork thresholds, grief phases and felt text, ick tuning, the transactional
             // ledger (reldyn_protocols.php, RelDynProtocols::configDefaults()).
             'protocols' => RelDynProtocols::configDefaults(),
+            // ===== Her own drinking and addiction (roadmap drunk-state, addiction) =====
+            // The drunk level and its stages, the sober diary's correction, dependence, tolerance,
+            // craving, withdrawal, harm reduction, the recovery goal (reldyn_substances.php).
+            'substances' => RelDynSubstances::configDefaults(),
         ];
     }
 
@@ -7447,6 +7451,18 @@ class RelationshipDynamics
             }
         }
 
+        // Maturity ceiling while addicted (audit Step 18, RelDynSubstances): her own maturity (held
+        // offsets aside) grows no higher than the ceiling; an intervention passes it
+        $addictionCeiling = $dimensionId === 'maturity' && $modifiedDelta > 0 ? RelDynSubstances::maturityCeiling($dynamics) : null;
+        if ($addictionCeiling !== null) {
+            $ownMaturity = self::driftSampleValue($dynamics, 'maturity') ?? 50.0;
+            $before = $modifiedDelta;
+            $modifiedDelta = max(0.0, min($modifiedDelta, $addictionCeiling - $ownMaturity));
+            if ($modifiedDelta < $before) {
+                error_log("[RelDyn-CAP] Addicted: maturity gain stops at the ceiling {$addictionCeiling} (own " . round($ownMaturity, 2) . ')');
+            }
+        }
+
         // Toxic conflict passion (fearful region): resentment gains queue passion
         $conflictPassion = $dimensionId === 'resentment' && $rawDelta > 0
             ? floatval(self::getAttachmentModifier($dynamics, 'conflict_passion_gain') ?? 0.0) : 0.0;
@@ -9055,6 +9071,8 @@ class RelationshipDynamics
         // The reason anchor (dimensional memory): the summary cleaned of scores and named
         // feelings once, here, so every reader (context, confrontation, diary) gets only the event
         $anchor = $n['summary'] !== '' ? RelDynFelt::sanitizeReason($n['summary']) : null;
+        // An intervention about her addiction passes its maturity ceiling (RelDynSubstances)
+        RelDynSubstances::beforeEvalItem((string) $npcName, $n, $dynamics, $itemGamets);
         foreach (self::EVAL_CONTRACT_SIGNALS as $signal => $_range) {
             $raw = $n['signals'][$signal];
             if (abs($raw) < 0.0001) {
@@ -9077,6 +9095,8 @@ class RelationshipDynamics
                 self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $anchor, $bondName, $itemGamets);
             }
         }
+        // The drunk self's gains go to the night's ledger for the sober diary (RelDynSubstances)
+        RelDynSubstances::afterEvalItem((string) $npcName, $n, $totals, $dynamics, $itemGamets);
         // The player's first exchange after her fall, answered with care or not (MDD 3.3 rescue
         // response): before the moment, which does not pay the same care twice
         $rescued = !empty(RelDynCombat::onEvalItem((string) $npcName, $n, $dynamics)['caring']);
@@ -12435,15 +12455,17 @@ class RelationshipDynamics
         // A22 through the trait engine: the preset curves (with the Proud / Jealous exceptions)
         // read pointwise at the NPC's vector; a per-NPC curve override or a non-preset label
         // keeps the curve path below.
+        // Drunk (roadmap drunk-state): the curve shifts toward Uniform, "everyone's my packmate
+        // tonight" (RelDynSubstances::sensitivityShift)
         $vector = empty($dynamics['social_sensitivity_curve']) ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
         if ($vector !== null) {
-            return RelDynTraits::sensitivityAt($vector, $dimensionId, $bondLevel, $isNegative);
+            return RelDynSubstances::sensitivityShift($dynamics, RelDynTraits::sensitivityAt($vector, $dimensionId, $bondLevel, $isNegative));
         }
 
         // The Proud (respect) and Jealous (passion, comfort) open_heart exceptions are preset
         // curves now (RelDynTraits::presetCurve); a per-NPC override curve never had them.
         $curve = self::getSocialSensitivityCurve($temperament, $dynamics);
-        return self::calculateSocialSensitivity($curve, $bondLevel, $isNegative);
+        return RelDynSubstances::sensitivityShift($dynamics, self::calculateSocialSensitivity($curve, $bondLevel, $isNegative));
     }
 
     /**
@@ -13037,6 +13059,9 @@ class RelationshipDynamics
         $entry = $classified['entry'];
         $results = [];
         $now = self::currentGamets();
+        // Her drinking and dependence (roadmap drunk-state, addiction): the tolerance before this use
+        // scales the high; the use, the drink and a substitute's relief are counted (RelDynSubstances)
+        $substance = RelDynSubstances::onConsume((string) $npcName, $dynamics, (string) $key, $now);
         $appraisal = self::itemAppraisal($dynamics, $npcName, (string) $itemName);
         if ($appraisal['appraisal'] !== null && $npcName !== '') {
             // her own drink is shared with the player pair only on a turn of that pair (rulings §11)
@@ -13047,7 +13072,8 @@ class RelationshipDynamics
 
         // --- Apply immediate effects through XYZ engine ---
         $appliedImmediate = [];
-        foreach (self::appraisedEffects((array) ($entry['immediate'] ?? []), $appraisal['m']) as $dimId => $delta) {
+        $immediate = array_map(fn($v) => floatval($v) * $substance['spike_mult'], (array) ($entry['immediate'] ?? []));
+        foreach (self::appraisedEffects($immediate, $appraisal['m']) as $dimId => $delta) {
             $actual = self::applyDelta($dimId, $dynamics, floatval($delta), $temperament);
             if (abs($actual) > 0.001) {
                 $appliedImmediate[$dimId] = $actual;
@@ -15416,6 +15442,8 @@ class RelationshipDynamics
         $out[] = $num($dynamics[RelDynProtocols::GRIEF_HELD_KEY] ?? null);
         // The weather's pull on a mood dimension (applyWeatherGravity)
         $out[] = $num($dynamics['_weather_gravity']['applied'] ?? null);
+        // Her drink (maturity) and her withdrawal (comfort) (RelDynSubstances)
+        $out[] = $num($dynamics[RelDynSubstances::KEY]['held'] ?? null);
         return array_values(array_filter($out, fn(array $m) => $m !== []));
     }
 
@@ -16522,11 +16550,13 @@ class RelationshipDynamics
         // Calculate romantic ratio
         $ratio = $tracker['romantic_count'] / max(1, $tracker['total_count']);
 
-        // Maturity-gated threshold
+        // Maturity-gated threshold. Drunk (roadmap drunk-state): her sober maturity, raised once
+        // disinhibited: the drink cannot tell desperation (RelDynSubstances::ickShift)
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);
         $cfg = self::getConfig();
         $baseThreshold = floatval($cfg['ick_base_threshold'] ?? self::ICK_BASE_THRESHOLD);
-        $threshold = $baseThreshold * (1 + $maturity / 100.0);
+        $drunkIck = RelDynSubstances::ickShift(is_array($dynamics) ? $dynamics : []);
+        $threshold = $baseThreshold * (1 + ($drunkIck['maturity'] ?? $maturity) / 100.0) * ($drunkIck['mult'] ?? 1.0);
 
         // MDD 1.4: the player pushing past a failed attraction check reaches the Ick sooner
         // with a low-openness NPC, later with a high-openness one
@@ -18593,3 +18623,5 @@ require_once __DIR__ . '/reldyn_protocols.php';
 require_once __DIR__ . '/reldyn_absence.php';
 // Passion floor + spike, the desire loop, derived warmth; its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_passion.php';
+// Her own drinking and addiction (drunk-state, addiction); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_substances.php';

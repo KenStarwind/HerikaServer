@@ -687,6 +687,21 @@ class RelDynAttraction
             }
         }
 
+        // Drunk (roadmap drunk-state, dimension draft "Drunken One-Night Stand"): once disinhibited,
+        // openness + openness_bonus and every floor lowered by attraction_floor_drop, on top of her
+        // sober definition (the standards floor above reads her sober openness). The sober band is
+        // what the traits' hysteresis keeps (openness_sober).
+        $soberBand = $band;
+        $drunk = RelDynSubstances::shifts($dynamics);
+        if ($drunk !== null && ($drunk['openness_bonus'] > 0.0 || $drunk['floor_drop'] > 0.0)) {
+            $oValue = max(0.0, min(1.0, floatval($oValue) + $drunk['openness_bonus']));
+            $drunkBand = self::opennessBand($oValue, $cfg) ?? $band;
+            // never a tighter band than her sober one (a hysteresis-held band sits past its value)
+            if (array_search($drunkBand, self::OPENNESS_BANDS, true) > array_search($band, self::OPENNESS_BANDS, true)) $band = $drunkBand;
+            foreach ($floors as $p => $fl) $floors[$p] = max(1.0, $fl - $drunk['floor_drop']);
+            $sources['drunk'] = round($drunk['effective'], 2);
+        }
+
         $genderPref = 'bisexual';
         foreach ([$preset['gender_pref'] ?? null, $editor['gender_pref'] ?? null, $over['gender_pref'] ?? null] as $g) {
             if (in_array($g, ['heterosexual', 'homosexual', 'bisexual'], true)) $genderPref = $g;
@@ -729,6 +744,8 @@ class RelDynAttraction
             'lens'       => $lens,
             'lens_share' => $lensShare,
             'openness'   => $band,
+            // her sober band (the drink's shift aside): the hysteresis keeps this one
+            'openness_sober' => $soberBand,
             // the openness value (0..1) and whether the band is the traits' (hysteresis state)
             'openness_o' => round(floatval($oValue), 4),
             'openness_from_traits' => $fromTraits,
@@ -1855,10 +1872,11 @@ class RelDynAttraction
         $state['won_over'] = !empty($r['won_over']);
         // The band read from the traits, held against flips at its boundary (opennessBandHeld)
         if (!empty($def['openness_from_traits'])) {
-            if (($state['openness_band'] ?? null) !== $def['openness']) {
-                RelationshipDynamics::log("[ATTRACTION] {$npcName}: openness band {$def['openness']} (o " . round($def['openness_o'], 3) . ')');
+            $soberBand = $def['openness_sober'] ?? $def['openness'];
+            if (($state['openness_band'] ?? null) !== $soberBand) {
+                RelationshipDynamics::log("[ATTRACTION] {$npcName}: openness band {$soberBand} (o " . round($def['openness_o'], 3) . ')');
             }
-            $state['openness_band'] = $def['openness'];
+            $state['openness_band'] = $soberBand;
         } else {
             unset($state['openness_band']);
         }

@@ -644,6 +644,11 @@ final class RelDynFelt
         $intimacy = RelDynIntimacy::feltText($npc, $player, $dynamics, $now);
         if ($intimacy) $lines[] = self::line('intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['intimacy']), $intimacy);
 
+        // --- Her own drinking and dependence (roadmap drunk-state, addiction): feelings only ---
+        foreach (RelDynSubstances::feltLines($npc, $dynamics, $vars) as $l) {
+            $lines[] = self::line('substance_' . $l['key'], self::SCOPE_SELF, self::LANE_TURN, floatval($l['salience']), (string) $l['text']);
+        }
+
         // --- Creature state (night / day / Skyrim's moon; the shame after the change) ---
         $creature = RelDynCreatures::feltText($npc, $dynamics, $vars, $now > 0 ? $now : null);
         if ($creature !== null) {

@@ -721,6 +721,11 @@ final class RelDynTimeline
         foreach (array_keys(is_array($d['_grief_bonds'] ?? null) ? $d['_grief_bonds'] : []) as $deceased) {
             self::clampIn($d, ['_grief_bonds', $deceased, 'death_gamets'], $T);
         }
+        // Her drinks, uses and drunk nights the loaded game never lived (RelDynSubstances); the held
+        // offsets are re-held from what is left on her next update
+        if (is_array($d[RelDynSubstances::KEY] ?? null)) {
+            $d[RelDynSubstances::KEY] = RelDynSubstances::rebaseline($d[RelDynSubstances::KEY], $T);
+        }
         // Pending romance moments from exchanges the load discarded
         if (is_array($d['_romance']['pending'] ?? null)) {
             $pending = array_values(array_filter($d['_romance']['pending'], static fn($m) =>
