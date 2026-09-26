@@ -62,6 +62,8 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
     private string $schema;
     private RelDynMemoryMirrorPgDb $db;
     private array $saved = [];
+    private string $errorLog;
+    private $prevErrorLog = null;
 
     protected function setUp(): void
     {
@@ -86,6 +88,14 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,
             utterance_id text, delivery_state text)");
+        // lib/core/database_schema/core_npc_master.sql (the save-load reconcile walks it)
+        pg_query($admin, "CREATE TABLE core_npc_master (id serial PRIMARY KEY, npc_name text NOT NULL, npc_favorite integer DEFAULT 0,
+            lock_profile integer DEFAULT 0, prompt_head text, npc_static_bio text, oghma_knowledge_tags text, emote_moods text,
+            personality text, relationships text, occupation text, appearance text, skills text, speechstyle text, goals text,
+            voiceid text, metadata jsonb, gender text, race text, refid character varying(16), profile_id integer,
+            dynamic_profile integer, extended_data jsonb,
+            plugin_extended_data jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object'),
+            md5 text, gamets_last_updated numeric, core text, base text, tags text)");
         pg_query($admin, "CREATE TABLE locations (name text, formid bigint, region text, hold text, tags text,
             factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,
             updated_at timestamp, world text, chim_added integer)");
@@ -109,6 +119,8 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
         $GLOBALS['db'] = $this->db;
         $GLOBALS['PLAYER_NAME'] = 'Kaida';
         $GLOBALS['gameRequest'] = ['inputtext', '1727000000', (string) self::T0, 'Kaida: hi'];
+        $this->errorLog = tempnam(sys_get_temp_dir(), 'rdmemmir');
+        $this->prevErrorLog = ini_set('error_log', $this->errorLog);
         pg_query_params($this->db->link, 'INSERT INTO locations (name, hold, tags, is_interior, world) VALUES ($1, $2, $3, 1, $4)',
             ['Breezehome', 'Whiterun', 'House,Player House,', 'WhiterunWorld']);
         RelationshipDynamics::clearConfigCache();
@@ -117,6 +129,8 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
     protected function tearDown(): void
     {
         if (!isset($this->schema)) return;
+        ini_set('error_log', $this->prevErrorLog === false ? '' : (string) $this->prevErrorLog);
+        @unlink($this->errorLog);
         foreach ($this->saved as $k => $v) {
             if ($v === null) unset($GLOBALS[$k]); else $GLOBALS[$k] = $v[0];
         }
@@ -199,6 +213,27 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
         // After the load the next observation takes the next sequence number
         RelDynMirror::observe('Aela the Huntress', self::item('Aela the Huntress', self::T0 + 3 * self::DAY, []), $ctx, self::T0 + 3 * self::DAY, 'after');
         $this->assertSame(3, $this->mirrorRow()['obs'][2]['q']);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /** The same through RelDynTimeline's reconcile, as core's load signal (the eventlog 'init' row) drives it. */
+    public function testTheSaveLoadReconcileRewindsTheMirror(): void
+    {
+        $init = function (int $gamets): void {
+            pg_query_params($this->db->link, "INSERT INTO eventlog (type, data, sess, gamets, localts, ts) VALUES ('init', '', 'x', $1, $2, $1)",
+                [$gamets, time()]);
+        };
+        $init(self::T0 - self::DAY);
+        $this->assertSame(['adopted' => true], RelDynTimeline::reconcileIfLoaded(), 'the first load RelDyn sees is adopted');
+        $ctx = ['cf' => false, 'cm' => false, 'pa' => false, 'b' => 0];
+        foreach ([0, 2, 4] as $d) {
+            $g = self::T0 + $d * self::DAY;
+            RelDynMirror::observe('Muiri', self::item('Muiri', $g, ['trust' => -3.0]), $ctx, $g, "d{$d}");
+        }
+        $init(self::T0 + 3 * self::DAY);
+        $summary = RelDynTimeline::reconcileIfLoaded();
+        $this->assertSame('rewound', $summary['player_mirror'] ?? null, json_encode($summary));
+        $this->assertSame(['d0', 'd2'], array_column($this->mirrorRow()['obs'], 'fp'));
         $this->assertSame([], $this->db->failures);
     }
 
