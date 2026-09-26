@@ -746,6 +746,28 @@ PHP;
         }
     }
 
+    public function testALegacyEvalResultDryRunsThroughProcessEvalDeltasAndBadItemsAreRefused(): void
+    {
+        $before = $this->snapshot();
+        $dry = RelDynDryRun::run('Muiri', ['trust_delta' => 2, 'trust_reason' => 'The player kept a promise.', 'significance' => 1],
+            ['now' => self::$lastGamets]);
+        $this->assertTrue($dry['ok'], json_encode($dry['error']));
+        $this->assertSame('legacy', $dry['kind']);
+        $this->assertGreaterThan(0.0, $dry['totals']['trust'] ?? 0.0);
+        $this->assertSame('The player kept a promise.', $dry['changes']['dimensions.trust.last_reason'][1] ?? null);
+        $this->assertNull($dry['mirror_observation'], 'the legacy path records no observation');
+        $this->assertEquals($before, $this->snapshot());
+
+        $this->assertSame('Unknown NPC.', RelDynDryRun::run('Nobody', self::item('Nobody', 1, 'kind'))['error']);
+        $this->assertStringStartsWith('Neither a contract item', (string) RelDynDryRun::run('Muiri', ['hello' => 1])['error']);
+        $bad = self::item('Muiri', 1, 'kind');
+        $bad['v'] = 99;
+        $r = RelDynDryRun::run('Muiri', $bad);
+        $this->assertStringStartsWith('The item does not pass the eval contract', (string) $r['error']);
+        $this->assertNotEmpty($r['log'], 'why, from the contract check');
+        $this->assertEquals($before, $this->snapshot());
+    }
+
     public function testTheStateDumpShowsTheCurrentEngineForEachBed(): void
     {
         foreach (array_keys(self::BEDS) as $npc) {

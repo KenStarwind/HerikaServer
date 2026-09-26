@@ -154,6 +154,7 @@ final class RelDynDryRun
             $out['log'] = $log;
             if ($out['fingerprint'] !== null) $observation = self::mirrorObservation($db, $out['fingerprint']);
         } catch (\Throwable $e) {
+            RelationshipDynamics::logError("pipeline dry run for {$npcName} (rolled back)", $e);
             $error = get_class($e) . ': ' . $e->getMessage();
         } finally {
             $tx1 = self::txId($db);
@@ -208,6 +209,7 @@ final class RelDynDryRun
                 $out['headline'][$path] = [$b, $a];
             }
         } catch (\Throwable $e) {
+            RelationshipDynamics::logError("pipeline dry run summary for {$npcName}", $e);
             $out['warnings'][] = 'The before / after summary could not be read: ' . $e->getMessage();
         }
         return $out;
@@ -219,6 +221,7 @@ final class RelDynDryRun
         try {
             $row = $db->fetchOne('SELECT txid_current()::text AS x, pg_backend_pid()::text AS p');
         } catch (\Throwable $e) {
+            RelationshipDynamics::logError('pipeline dry run transaction id', $e);
             return null;
         }
         return is_array($row) && isset($row['x'], $row['p']) ? $row['x'] . '@' . $row['p'] : null;
@@ -230,6 +233,7 @@ final class RelDynDryRun
         try {
             $row = $db->fetchOne('SELECT value FROM core_player WHERE id = $1', [RelDynMirror::ROW_ID]);
         } catch (\Throwable $e) {
+            RelationshipDynamics::logError('pipeline dry run mirror observation', $e);
             return null;
         }
         $s = is_string($row['value'] ?? null) ? json_decode($row['value'], true) : null;
