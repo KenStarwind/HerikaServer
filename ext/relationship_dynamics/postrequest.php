@@ -140,6 +140,10 @@ $GLOBALS['RELDYN_LAST_INTERACTION_LL'] = $interactionLL;
 $reldynIntimate = RelDynIntimacy::requestKind($GLOBALS['gameRequest'], (string) ($GLOBALS['PLAYER_NAME'] ?? '')) !== null;
 if ($reldynIntimate) {
     RelDynIntimacy::recordRequest($dynamics, $GLOBALS['gameRequest'], (string) ($GLOBALS['PLAYER_NAME'] ?? ''), RelationshipDynamics::currentGamets());
+    // What follows the scene (roadmap post-intimacy): the outcome its context decides, the
+    // afterglow, the sober self later (RelDynPostIntimacy; Sharmat's state is never touched)
+    RelDynPostIntimacy::onIntimateRequest($npcName, $dynamics, $GLOBALS['gameRequest'], (string) ($GLOBALS['PLAYER_NAME'] ?? ''),
+        RelationshipDynamics::currentGamets());
 }
 // The exchange as a love-language delivery to fulfillment (rulings §9; a hug or a kiss also
 // feeds the intimacy axes, rulings §10, unless the request fed them itself above), unless the

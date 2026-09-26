@@ -1323,6 +1323,15 @@ class RelationshipDynamics
             // The drunk level and its stages, the sober diary's correction, dependence, tolerance,
             // craving, withdrawal, harm reduction, the recovery goal (reldyn_substances.php).
             'substances' => RelDynSubstances::configDefaults(),
+            // ===== M/F envelope and arousal / valence as live state (MDD 3.1-3.2) =====
+            // Derived coordinates, settling, the social feed, the eval's input (reldyn_mood_axes.php).
+            'mood_axes' => RelDynMoodAxes::configDefaults(),
+            // ===== Post-intimacy states (dimension design "Post-Intimacy State") =====
+            // Encounter, outcome rows, afterglow, the sober correction, felt text (reldyn_post_intimacy.php).
+            'post_intimacy' => RelDynPostIntimacy::configDefaults(),
+            // ===== Gift delta formula (dimension design "Gifted items") =====
+            // Base, love language, stolen / re-gift inversions (reldyn_gifts.php).
+            'gift_delta' => RelDynGifts::configDefaults(),
         ];
     }
 
@@ -6470,7 +6479,9 @@ class RelationshipDynamics
                     continue;
                 }
 
-                $band = self::getMFQuadrantBand($mData['x'], $fData['x']);
+                // the coordinates as they read now (RelDynMoodAxes: the live state moves the anchor)
+                $band = self::getMFQuadrantBand(RelDynMoodAxes::derivedCoord($dynamics, 'coord_m') ?? $mData['x'],
+                    RelDynMoodAxes::derivedCoord($dynamics, 'coord_f') ?? $fData['x']);
                 $lines[] = "Behavioral Mode: {$band['label']} — {$band['keywords']}";
                 continue;
             }
@@ -9159,6 +9170,11 @@ class RelationshipDynamics
         // Betrayal by a bonded partner (Divine Intervention) and the exchange's kind in the
         // parasite ledger (reldyn_protocols.php)
         RelDynProtocols::onEvalItem((string) $npcName, $n, $dynamics);
+        // The exchange as an arousal spike whose valence its context decides (MDD 3.2, the social
+        // feed of RelDynMoodAxes; off by default): the eval classified it, code sizes it
+        foreach (RelDynMoodAxes::onEvalItem($dynamics, $n, $dynamics['inferred_temperament'] ?? null) as $dim => $v) {
+            $totals[$dim] = ($totals[$dim] ?? 0.0) + $v;
+        }
 
         $applied[] = $fingerprint;
         $dynamics['_eval_applied'] = array_slice($applied, -self::EVAL_APPLIED_KEEP);
@@ -13248,14 +13264,19 @@ class RelationshipDynamics
     /**
      * Process a gift being given to the NPC.
      *
-     * Gift formula: gift_delta = base_value * love_language_match * interest_match * context_mult
+     * Gift formula (roadmap gift-delta-formula, RelDynGifts): gift_delta = base_value *
+     * love_language_match * interest_match * context_mult
      *
-     * Base value is 5 (one gift = ~5 affinity/comfort delta before multipliers).
-     * Love language match (gifts primary) = 2.0x.
+     * Base value: gift_delta.base_points (5: one gift = ~5 affinity/comfort delta before
+     * multipliers), from the handover's gold value when gift_delta.value_base is on.
+     * Love language match: gifts primary = 2.0x, secondary = 1.5x (MDD 1.2).
      * Interest match = the NPC's appraisal of the item's facets, 0.5x (hates it) .. 2.0x
      * (loves it) (MDD 1.2; RelDynFacetClassifier::giftAppraisal).
      * Item with no facets at all = 0.5x (feels transactional).
      * Gift during active resentment = 0.3x.
+     * Inversions: a stolen gift she detects ($event['stolen']) or a re-gift she recognizes
+     * (RelDynGifts::previousGiver + knows) is no gift at all: trust and respect fall instead
+     * (the stolen one a grievance too), and nothing of the gift formula applies.
      *
      * Gated behind dimension_engine_enabled config toggle.
      *
@@ -13264,24 +13285,28 @@ class RelationshipDynamics
      * @param string      $giverName    Who gave the gift (usually the player)
      * @param string|null $temperament  NPC temperament name
      * @param string|null $npcName      NPC receiving the gift (for logging)
+     * @param array       $event        the detected handover (detectItemEvents): 'value' (gold,
+     *                                  or null), 'stolen' (bool), 'rowid' (eventlog row, or null)
      * @return array  Map of dimension => actual_delta applied
      */
-    public static function processGift(&$dynamics, $itemName, $giverName, $temperament = null, $npcName = null)
+    public static function processGift(&$dynamics, $itemName, $giverName, $temperament = null, $npcName = null, array $event = [])
     {
         $config = self::getConfig();
         if (empty($config['dimension_engine_enabled'])) {
             return [];
         }
 
-        $baseValue = 5.0;
+        $giftCfg = RelDynGifts::config();
+        $inverted = self::invertedGift($dynamics, (string) $itemName, (string) $giverName, $temperament, (string) ($npcName ?? ''), $event, $giftCfg);
+        if ($inverted !== null) {
+            return $inverted;
+        }
+
+        $baseValue = RelDynGifts::base(isset($event['value']) && is_numeric($event['value']) ? intval($event['value']) : null, $giftCfg);
         $results = [];
 
-        // --- Love language match ---
-        $llMult = 1.0;
-        $primaryLL = $dynamics['love_language_primary'] ?? null;
-        if ($primaryLL === self::LL_GIFTS) {
-            $llMult = 2.0;
-        }
+        // --- Love language match (MDD 1.2: primary 2.0x, secondary 1.5x) ---
+        $llMult = RelDynGifts::loveLanguageMult($dynamics, $giftCfg);
 
         // --- Interest match (decisions §6): the item's facets appraised by this NPC's signed
         // preferences, mapped into MDD 1.2's 0.5x..2.0x; an item with no facets at all stays
@@ -13340,6 +13365,52 @@ class RelationshipDynamics
             . " | " . implode(', ', $effectStr)
             . ($itemInterest ? " (interest={$itemInterest})" : ' (no interest match)'));
 
+        return $results;
+    }
+
+    /**
+     * The inversions of the gift formula (RelDynGifts): a stolen gift she detects (trust,
+     * respect and a grievance) or a re-gift she recognizes (trust, respect). Returns the
+     * dimension => actual deltas applied, or null for an ordinary gift.
+     */
+    private static function invertedGift(array &$dynamics, string $itemName, string $giverName, ?string $temperament, string $npcName, array $event, array $giftCfg): ?array
+    {
+        $kind = null;
+        $row = [];
+        $stolen = (array) ($giftCfg['stolen'] ?? []);
+        $regift = (array) ($giftCfg['regift'] ?? []);
+        if (!empty($event['stolen']) && !empty($stolen['enabled'])) {
+            $kind = 'stolen';
+            $row = $stolen;
+        } elseif (!empty($regift['enabled']) && $npcName !== '') {
+            try {
+                $from = RelDynGifts::previousGiver($npcName, $itemName, $giverName,
+                    isset($event['rowid']) && is_numeric($event['rowid']) ? intval($event['rowid']) : null, self::currentGamets(), $giftCfg);
+                if ($from !== null && RelDynGifts::knows($npcName, $from)) {
+                    $kind = 'regift';
+                    $row = $regift + ['from' => $from];
+                }
+            } catch (\Throwable $e) {
+                self::logError("re-gift lookup for {$npcName}", $e);
+            }
+        }
+        if ($kind === null) {
+            return null;
+        }
+        $results = [];
+        foreach (['trust', 'respect'] as $dim) {
+            if (!is_numeric($row[$dim] ?? null) || abs(floatval($row[$dim])) < 1e-6) continue;
+            $actual = self::applyDelta($dim, $dynamics, floatval($row[$dim]), $temperament);
+            if (abs($actual) > 0.001) $results[$dim] = $actual;
+        }
+        if ($kind === 'stolen' && intval($row['grievance_severity'] ?? 0) > 0) {
+            $g = self::recordGrievance($dynamics, ['flag' => true, 'kind' => 'stolen_gift', 'severity' => intval($row['grievance_severity'])],
+                self::powerGapFacts($npcName, $dynamics), "offered a stolen {$itemName} as a gift");
+            if (abs($g['amount']) > 0.001) $results[$g['target']] = $g['amount'];
+        }
+        $dynamics['_last_gift_felt'] = RelDynGifts::feltText($kind, $npcName, $itemName);
+        error_log("[RelDyn-ITEM] Gift to {$npcName} from {$giverName}: {$itemName} is a {$kind}"
+            . (isset($row['from']) ? " (it was {$row['from']}'s)" : '') . ' | ' . json_encode(array_map(fn($v) => round($v, 2), $results)));
         return $results;
     }
 
@@ -13446,13 +13517,16 @@ class RelationshipDynamics
             );
             foreach ((array) $rows as $row) {
                 if (isset($row['rowid'])) $scanned['gift'] = max(intval($scanned['gift'] ?? 0), intval($row['rowid']));
-                if (!preg_match('/^\s*(.+?)\s+gave\s+(?:(\d+)\s+)?(.+?)\s+to\s+(.+?)\s*(?:,\s*\(value\s+(\d+)\s+gold\))?\s*$/i', (string) ($row['data'] ?? ''), $gm)) continue;
+                // a theft marker on the line (RelDynGifts stolen_markers) is the stolen flag, not the item's name
+                [$giftLine, $stolen] = RelDynGifts::stripStolenMarker((string) ($row['data'] ?? ''));
+                if (!preg_match('/^\s*(.+?)\s+gave\s+(?:(\d+)\s+)?(.+?)\s+to\s+(.+?)\s*(?:,\s*\(value\s+(\d+)\s+gold\))?\s*$/i', $giftLine, $gm)) continue;
                 if (strcasecmp(trim($gm[1]), trim((string) $playerName)) !== 0 || strcasecmp(trim($gm[4]), trim((string) $npcName)) !== 0) continue;
                 $events[] = [
                     'action' => 'gift',
                     'item'   => trim($gm[3]),
                     'giver'  => $playerName,
                     'value'  => isset($gm[5]) && $gm[5] !== '' ? intval($gm[5]) : null,
+                    'stolen' => $stolen,
                     'rowid'  => isset($row['rowid']) ? intval($row['rowid']) : null,
                 ];
             }
@@ -13598,7 +13672,8 @@ class RelationshipDynamics
                         $event['item'],
                         $event['giver'] ?? $playerName,
                         $temperament,
-                        $npcName
+                        $npcName,
+                        $event
                     );
                     if (!empty($results)) {
                         $allResults['gift'][] = ['item' => $event['item'], 'deltas' => $results];
@@ -15402,7 +15477,8 @@ class RelationshipDynamics
      * exactly when its state ends: the creature row (RelDynCreatures, _creature.applied), the
      * physical states (_applied_physical_deltas per state), the place and hour
      * (_env_applied_effects), on comfort the guilt bleed (RelDynResentment, guilt.applied), and
-     * acute grief on comfort / warmth (RelDynProtocols, _grief_held), and the weather's pull on a
+     * acute grief on comfort / warmth (RelDynProtocols, _grief_held), an encounter's afterglow
+     * (RelDynPostIntimacy, _post_intimacy.held), and the weather's pull on a
      * mood dimension (applyWeatherGravity, _weather_gravity.applied). Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
      * per-bond display read the value without them.
      */
@@ -15440,6 +15516,8 @@ class RelationshipDynamics
         }
         // Acute grief toward every other bond (RelDynProtocols::tickGrief)
         $out[] = $num($dynamics[RelDynProtocols::GRIEF_HELD_KEY] ?? null);
+        // The afterglow of an encounter until it ends (RelDynPostIntimacy::tick)
+        $out[] = $num($dynamics[RelDynPostIntimacy::KEY]['held'] ?? null);
         // The weather's pull on a mood dimension (applyWeatherGravity)
         $out[] = $num($dynamics['_weather_gravity']['applied'] ?? null);
         // Her drink (maturity) and her withdrawal (comfort) (RelDynSubstances)
@@ -18625,3 +18703,9 @@ require_once __DIR__ . '/reldyn_absence.php';
 require_once __DIR__ . '/reldyn_passion.php';
 // Her own drinking and addiction (drunk-state, addiction); its defaults are part of defaultConfig().
 require_once __DIR__ . '/reldyn_substances.php';
+// The M/F envelope derived at display time, arousal / valence settling (mf-coordinates, arousal-valence).
+require_once __DIR__ . '/reldyn_mood_axes.php';
+// What follows a scene the plugin reports (post-intimacy); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_post_intimacy.php';
+// The gift delta formula's base, love language and inversions (gift-delta-formula).
+require_once __DIR__ . '/reldyn_gifts.php';

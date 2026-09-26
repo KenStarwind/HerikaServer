@@ -17,6 +17,12 @@
  *                    float  dimension points 0..100 (warmth derived: sqrt(effective passion x comfort)
  *                           + the states held on it, roadmap derived-warmth)
  *   arousal          float  0..100      valence  float -100..100
+ *   mf               ['m', 'f' => coordinate points -100..100 as they read now (derived: the anchor
+ *                    moved by respect / self-confidence and trust / comfort, RelDynMoodAxes),
+ *                    'anchor_m', 'anchor_f' => the personality anchors]
+ *   post_intimacy    null | ['outcome' => RelDynPostIntimacy outcome, 'held' => dimension => points held
+ *                    now, 'held_ends_in_game_hours', 'correction_in_game_hours' (null = none pending),
+ *                    'correction' / 'lasting' => dimension => points applied]
  *   passion          float  0..100 the floor: passion earned through play (the Attraction Matrix's uphill)
  *   passion_spike    float  0..100 the moment on top of it (roadmap passion-floor-spike: fades per exchange)
  *   passion_effective float 0..100 floor + spike + the weather's pull (what she feels right now)
@@ -155,6 +161,10 @@ final class RelDynJev
         'impulse.motivations.weight' => '0..1', 'impulse.conflict.weight' => '0..1', 'impulse.conflict.alignment' => '-1..1',
         'reputation.fame' => '0..1', 'reputation.infamy' => '0..1', 'reputation.weight' => '0..1',
         'reputation.offsets' => 'dimension points held now', 'duty.factor' => 'multiplier on negative eval signals',
+        'mf' => 'coordinate points -100..100 (derived now; anchors stored)',
+        'post_intimacy.held' => 'dimension points held now', 'post_intimacy.held_ends_in_game_hours' => 'game hours',
+        'post_intimacy.correction_in_game_hours' => 'game hours', 'post_intimacy.correction' => 'dimension points',
+        'post_intimacy.lasting' => 'dimension points',
         'autonomy.score' => '0..100',
         'absence.bond_break.absent_game_days' => 'game days', 'absence.bond_break.resentment' => 'resentment points added',
         'absence.bond_break.comfort_delta' => 'comfort points', 'absence.bond_break.trust_delta' => 'trust points',
@@ -237,6 +247,8 @@ final class RelDynJev
             'warmth' => round(RelDynPassion::warmth($dynamics, false) ?? 50.0, 2), 'maturity' => $num('maturity', 50.0), 'resentment' => $num('resentment', 0.0),
             'resentment_self' => $num('resentment_self', 0.0), 'self_confidence' => $num('self_confidence', 50.0),
             'arousal' => $num('arousal', 10.0), 'valence' => $num('valence', 0.0),
+            'mf' => RelDynMoodAxes::jev($dynamics),
+            'post_intimacy' => RelDynPostIntimacy::jev($dynamics, $now),
             'passion' => round(RelationshipDynamics::getPassion($dynamics), 2),
             'passion_spike' => round(RelDynPassion::spike($dynamics), 2),
             'passion_effective' => round(RelationshipDynamics::getEffectivePassion($dynamics), 2),
@@ -305,6 +317,14 @@ final class RelDynJev
         $parts[] = 'jealousy=' . $f($s['jealousy']) . ($s['jealousy_rival'] !== null ? "(rival {$s['jealousy_rival']})" : '');
         $parts[] = 'resentment=' . $f($s['resentment']);
         $parts[] = 'mood=' . $f($s['arousal']) . '/' . $f($s['valence']);
+        if (($s['mf']['m'] ?? null) !== null && ($s['mf']['f'] ?? null) !== null) {
+            $parts[] = 'mf=' . $f($s['mf']['m']) . '/' . $f($s['mf']['f']) . '(anchor ' . $f($s['mf']['anchor_m']) . '/' . $f($s['mf']['anchor_f']) . ')';
+        }
+        if (($s['post_intimacy'] ?? null) !== null) {
+            $pi = $s['post_intimacy'];
+            $parts[] = "post_intimacy={$pi['outcome']}" . ($pi['held_ends_in_game_hours'] !== null ? ' glow ' . $f($pi['held_ends_in_game_hours']) . 'h' : '')
+                . ($pi['correction_in_game_hours'] !== null ? ' morning ' . $f($pi['correction_in_game_hours']) . 'h' : '');
+        }
         $parts[] = "attachment={$s['attachment']}(anxiety " . number_format($s['attachment_anxiety'], 2, '.', '')
             . ' avoidance ' . number_format($s['attachment_avoidance'], 2, '.', '') . ')';
         if ($s['temperament'] !== null) $parts[] = "temperament={$s['temperament']}";

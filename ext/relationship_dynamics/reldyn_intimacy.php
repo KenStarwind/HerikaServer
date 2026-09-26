@@ -618,8 +618,9 @@ class RelDynIntimacy
         $felt = (array) $cfg['felt_text'];
         $dims = $dynamics['dimensions'] ?? [];
         if ($axis === self::PHYSICAL) {
-            $m = floatval($dims['coord_m']['x'] ?? 50);
-            $f = floatval($dims['coord_f']['x'] ?? 50);
+            // the coordinates as they read now (RelDynMoodAxes)
+            $m = RelDynMoodAxes::derivedCoord($dynamics, 'coord_m') ?? 50.0;
+            $f = RelDynMoodAxes::derivedCoord($dynamics, 'coord_f') ?? 50.0;
             $at = floatval($cfg['m_f_dominant_at']);
             if (floatval($dims['maturity']['x'] ?? 50) < floatval($cfg['low_maturity_below'])) $key = 'low_maturity';
             elseif ($m > $at && $m > $f) $key = 'high_m';

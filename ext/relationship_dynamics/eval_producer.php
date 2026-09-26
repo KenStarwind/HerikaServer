@@ -1096,6 +1096,11 @@ final class RelDynEval
             'Jealousy: ' . $jealousyBand . ($jealousyBand !== 'none' && $rival ? " (about {$rival})" : ''),
             'Resentment: ' . $band('resentment', floatval($dynamics['dimensions']['resentment']['x'] ?? 0)),
         ];
+        // MDD 3.2: arousal / valence are inputs to the eval, never scored by it (while she is not settled)
+        $nervous = RelDynMoodAxes::evalLine($dynamics);
+        if ($nervous !== null) {
+            $lines[] = $nervous;
+        }
         // MDD 11: the eval sees the front and the truth under it, and scores the truth
         if (!empty($dynamics['_was_masking'])) {
             $performed = is_array($dynamics['_performed_state_cache'] ?? null)

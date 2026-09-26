@@ -98,6 +98,7 @@ final class RelDynFelt
                 'probation' => 0.85, 'autonomy' => 0.85, 'reunion' => 0.8, 'blush' => 0.8, 'grief' => 0.8,
                 'hoover' => 0.8, 'ick' => 0.8, 'conflict' => 0.75, 'll_reaction' => 0.7, 'parasite' => 0.7,
                 'emergent' => 0.65, 'place' => 0.6, 'gift' => 0.6, 'intimacy' => 0.6, 'unmet' => 0.6,
+                'post_intimacy' => 0.75,
                 'creature' => 0.6, 'mask_drop' => 0.6, 'topic' => 0.55, 'attraction' => 0.5,
                 'post_combat' => 0.5, 'rescue' => 0.8, 'duty' => 0.9, 'charisma' => 0.45, 'memory' => 0.45, 'weather' => 0.4,
                 'intrinsic_goal' => 1.0, 'reputation' => 0.9,   // x the goal's priority (as the director goal) / x the first impression's weight
@@ -649,6 +650,13 @@ final class RelDynFelt
             $lines[] = self::line('substance_' . $l['key'], self::SCOPE_SELF, self::LANE_TURN, floatval($l['salience']), (string) $l['text']);
         }
 
+        // --- After an encounter (post-intimacy): the afterglow, or the sober self's feeling ---
+        $after = RelDynPostIntimacy::feltText($dynamics, $now);
+        if ($after !== null) {
+            $lines[] = self::line('post_intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['post_intimacy'] ?? 0.75), $after['text'],
+                ['intense' => $after['phase'] === 'glow']);
+        }
+
         // --- Creature state (night / day / Skyrim's moon; the shame after the change) ---
         $creature = RelDynCreatures::feltText($npc, $dynamics, $vars, $now > 0 ? $now : null);
         if ($creature !== null) {
@@ -872,9 +880,10 @@ final class RelDynFelt
         $out = [];
         $x = fn(string $d) => (isset($dims[$d]['x']) && is_numeric($dims[$d]['x'])) ? floatval($dims[$d]['x']) : null;
 
-        // M/F quadrant
-        $m = $x('coord_m');
-        $f = $x('coord_f');
+        // M/F quadrant: the coordinates as they read now (RelDynMoodAxes: the live state moves
+        // the personality anchor), away from that anchor
+        $m = RelDynMoodAxes::derivedCoord($dynamics, 'coord_m');
+        $f = RelDynMoodAxes::derivedCoord($dynamics, 'coord_f');
         if ($m !== null && $f !== null) {
             $dist = max(abs($m - floatval($dims['coord_m']['baseline'] ?? 0)), abs($f - floatval($dims['coord_f']['baseline'] ?? 0)));
             if ($dist > $dead) {
