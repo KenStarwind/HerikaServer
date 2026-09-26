@@ -713,7 +713,11 @@ final class RelDynCombat
     /**
      * processEvalContractItem, one applied item ($n normalized): the item of the player's first
      * exchange after her fall (the claimed one; or, unclaimed, the first item after the fall
-     * within the window) decides: caring = a positive interaction tagged with a caring tag.
+     * within the window) decides: caring = a positive interaction tagged with a caring tag. An
+     * item of her own line (its request_type is no player input and no intimacy the game
+     * reported: core voicing her bleedout comment, a radiant remark to the player) is not the
+     * player's answer and decides nothing; an item without request_type (an older producer) is
+     * read as before.
      */
     public static function onEvalItem(string $npc, array $n, array &$dynamics): ?array
     {
@@ -721,6 +725,7 @@ final class RelDynCombat
         if (empty($cfg['enabled'])) return null;
         $at = floatval($n['gamets'] ?? 0);
         if ($at <= 0) return null;
+        if (!self::isPlayersExchange($n)) return null;
         $changed = false;
         $p = self::pendingFall($npc, $dynamics, $at, $cfg, $changed);
         if ($p === null || $at < floatval($p['fall_gamets'])) return null;
@@ -728,6 +733,19 @@ final class RelDynCombat
         $tags = array_values(array_map('strval', (array) ($n['tags'] ?? [])));
         $caring = !empty($n['positive_interaction']) && array_intersect($tags, array_map('strval', (array) $cfg['caring_tags'])) !== [];
         return self::resolve($npc, $dynamics, $caring, $tags, $at, 'eval:' . ($tags ? implode(',', $tags) : 'none'), $cfg);
+    }
+
+    /**
+     * Is the eval item ($n normalized) an exchange of the player pair (the player's input, or
+     * intimacy the game reported: RelationshipDynamics::isPairInteraction's rule), as far as it
+     * says? No request_type (an older producer): yes, as before.
+     */
+    private static function isPlayersExchange(array $n): bool
+    {
+        $type = $n['request_type'] ?? null;
+        if (!is_string($type) || $type === '') return true;
+        return RelationshipDynamics::isPlayerInputRequest([$type])
+            || (is_string($n['reported_intimacy'] ?? null) && $n['reported_intimacy'] !== '');
     }
 
     /**

@@ -52,6 +52,10 @@
  *    reported_intimacy: additive to v1, written by code (never the LLM) when the request was
  *               intimacy the game or Sharmat reports (RelDynIntimacy::requestKind: 'scene',
  *               'intimate_touch'); inside a romance the Ick never counts that exchange as pressure.
+ *    request_type: additive to v1, written by code (never the LLM): the CHIM request type the
+ *               exchange came from (the job's, lowercased: 'inputtext' when the player spoke, an
+ *               NPC's own line otherwise, e.g. core's bleedout 'instruction'). The rescue response
+ *               reads it: only the player's own exchange answers her fall. Absent: unknown.
  *    goal_addressed + goal_ref: additive to v1 (decisions §8), only when the eval was shown the
  *               NPC's active director goal: goal_addressed bool (the exchange served or settled
  *               it), goal_ref = RelationshipDynamics::directorGoalRef of the goal shown, so the
@@ -1341,6 +1345,7 @@ PROMPT;
           + ($charisma !== null ? ['charisma' => $charisma] : [])
           + (is_string($job['reply_mood'] ?? null) && trim($job['reply_mood']) !== '' ? ['reply_mood' => strtolower(trim($job['reply_mood']))] : [])
           + (is_string($job['reported_intimacy'] ?? null) && $job['reported_intimacy'] !== '' ? ['reported_intimacy' => $job['reported_intimacy']] : [])
+          + (is_string($job['request_type'] ?? null) && trim($job['request_type']) !== '' ? ['request_type' => strtolower(trim($job['request_type']))] : [])
           + (is_numeric($job['duty_factor'] ?? null) ? ['duty_factor' => max(0.0, min(1.0, floatval($job['duty_factor'])))] : [])
           + $goal
           + ($masking !== null ? ['masking' => $masking] : [])

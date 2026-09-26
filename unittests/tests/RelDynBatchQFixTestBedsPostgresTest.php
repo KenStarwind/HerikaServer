@@ -8,7 +8,7 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.p
 require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
 
 /** `sql`-compatible adapter over one pg connection (CHIM conventions: fetchOne returns [] on failure). */
-final class RelDynCrossLaneV017PgDb
+final class RelDynBatchQFixPgDb
 {
     public $link;
     public array $failures = [];
@@ -59,28 +59,24 @@ final class RelDynCrossLaneV017PgDb
 }
 
 /**
- * Integration v0.17: where the Phase 4 lanes meet (absence, combat, passion, impulse), end to end
- * with the four test beds (standing rule feedback_reldyn_testbeds): Aela the Huntress, Ashe
- * (Serene's hand-set vector, never read: nothing of her story anywhere), Muiri (toxic, nudged
- * fearful) and Lynly Star-Sung (the shy bard), on CHIM 3.4.1 core-shaped rows and the committed
- * seed's reads, through the real hooks as main.php runs them (prerequest -> core's action list
- * with the ext functions.php -> context_pre -> context -> postrequest), the real eval producer and
- * worker (LLM stubbed at the connector boundary). No LLM call; feelings, never numbers, in front
- * of the LLM; Jev gets the numbers.
- *   the rescue      combat x passion x impulse: the player answering her fall with care is both
- *                   a floor (the rescue bonus, who she is by attachment) and a moment (the spike,
- *                   who she is by temperament); alone with him afterwards her urge reads the two
- *                   together.
- *   the ex          combat x passion: the tier's governor holds an ex's passion where it is, and
- *                   the moment is no way around it: the same embrace that races her partners'
- *                   hearts gives the ex none, and no urge from it.
- *   the absence     absence x passion x impulse: two weeks without a word; the moment is long
- *                   gone for everyone; a bond that broke costs her comfort and so how open she is
- *                   with him (derived warmth); a strained return reaches for nothing.
+ * Batch-Q review fixes end to end with the four test beds (standing rule feedback_reldyn_testbeds):
+ * Aela the Huntress, Ashe (Serene's hand-set vector, never read: nothing of her story anywhere),
+ * Muiri (toxic, nudged fearful) and Lynly Star-Sung (the shy bard), on CHIM 3.4.1 core-shaped rows
+ * and the committed seed's reads, through the real hooks as main.php runs them (prerequest ->
+ * core's action list with the ext functions.php -> context_pre -> context -> postrequest), the real
+ * eval producer and worker (LLM stubbed at the connector boundary). No LLM call; feelings, never
+ * numbers, in front of the LLM; Jev gets the numbers.
+ *   the fresh break   bond-break-resentment: a few days away break only the partners for whom the
+ *                     absence already feels intentional (who she is, how long); a bond that broke
+ *                     this absence is strained on the return (no social reach, no smile toward
+ *                     him next to her own hurt), a bond that held reaches for him.
+ *   her own line      rescue-bonus: core voicing her bleedout comment (Papyrus RecoverFromCombat's
+ *                     'instruction') is not the player's answer to her fall; his caring word after
+ *                     it still is, and the rescue is paid once (no rescue spike on top).
  *
  * Opt-in: RELDYN_TEST_PG_DSN must point at a THROWAWAY database (never dbname=dwemer).
  */
-final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
+final class RelDynBatchQFixTestBedsPostgresTest extends TestCase
 {
     private const PLAYER = 'Kaida';
     private const SUITOR = 'Mikael';
@@ -105,7 +101,7 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
 
     private string $dsn;
     private string $schema;
-    private RelDynCrossLaneV017PgDb $db;
+    private RelDynBatchQFixPgDb $db;
     private array $savedGlobals = [];
     private string $errorLog;
     private $prevErrorLog = null;
@@ -118,6 +114,8 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
     private array $subtext = [];
     /** CACHE_PEOPLE for the next requests (home, everyone, by default) */
     private ?string $people = null;
+    /** The mood core records for the NPC's reply (moods_issued) */
+    private string $mood = 'default';
 
     protected function setUp(): void
     {
@@ -125,7 +123,7 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
         if (!$dsn || !function_exists('pg_connect')) $this->markTestSkipped('RELDYN_TEST_PG_DSN not set (opt-in test against a throwaway PostgreSQL)');
         if (preg_match('/dbname\s*=\s*dwemer\b/', $dsn)) $this->fail('refusing to run against the live dwemer database');
         $this->dsn = $dsn;
-        $this->schema = 'reldyn_x17_' . getmypid() . '_' . bin2hex(random_bytes(3));
+        $this->schema = 'reldyn_qfx_' . getmypid() . '_' . bin2hex(random_bytes(3));
         $admin = pg_connect($dsn, PGSQL_CONNECT_FORCE_NEW);
         pg_query($admin, "CREATE SCHEMA {$this->schema}");
         pg_query($admin, "SET search_path TO {$this->schema}");
@@ -174,7 +172,7 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
             melotts_voiceid varchar, xtts_voiceid varchar, xvasynth_voiceid varchar)");
         pg_close($admin);
 
-        $this->db = new RelDynCrossLaneV017PgDb($dsn, $this->schema);
+        $this->db = new RelDynBatchQFixPgDb($dsn, $this->schema);
         foreach (['db', 'PLAYER_NAME', 'gameRequest', 'HERIKA_NAME', 'RELLLM_CONNECTOR', 'CACHE_PEOPLE', 'CACHE_PARTY',
                      'CACHE_LOCATION', 'contextDataFull', 'OGHMA_PARITY_RESULT', 'SCRIPTLINE_LISTENER_ATOMIC',
                      'SCRIPTLINE_LISTENER', 'LAST_LLM_RESPONSE', 'HERIKA_PERS', 'ENABLED_FUNCTIONS',
@@ -186,9 +184,9 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
         $GLOBALS['db'] = $this->db;
         $GLOBALS['PLAYER_NAME'] = self::PLAYER;
         $GLOBALS['RELLLM_CONNECTOR'] = 5;   // an eval connector is configured; the call itself is stubbed
-        $this->errorLog = tempnam(sys_get_temp_dir(), 'rdx17beds');
+        $this->errorLog = tempnam(sys_get_temp_dir(), 'rdqfxbeds');
         $this->prevErrorLog = ini_set('error_log', $this->errorLog);
-        Logger::setCustomLog(sys_get_temp_dir() . '/reldyn_x17_beds_test.log');
+        Logger::setCustomLog(sys_get_temp_dir() . '/reldyn_qfx_beds_test.log');
         RelDynTraits::$assignmentOverride = null;
         RelDynTraitRead::reset();
         RelDynTraitRead::$launcher = function () {};
@@ -298,7 +296,7 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
             if ($hook === 'postrequest.php') {
                 $this->event('chat', "{$npc}: Hm. (talking to {$listener})", (int) $request[2], 'emitted');
                 pg_query_params($this->db->link, 'INSERT INTO moods_issued (sess, speaker, mood, listener, localts, gamets, ts) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-                    ['pending', $npc, 'default', $listener, $this->realTs, (int) $request[2], (int) $request[2]]);
+                    ['pending', $npc, $this->mood, $listener, $this->realTs, (int) $request[2], (int) $request[2]]);
             }
             $GLOBALS['gameRequest'] = $request;
             $GLOBALS['HERIKA_NAME'] = $npc;
@@ -341,6 +339,17 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
         foreach (array_keys(self::BEDS) as $i => $npc) $this->turn($npc, $line, $t + 600 * $i, $label);
         $this->worker();
         return $t + 600 * count(self::BEDS);
+    }
+
+    /**
+     * Core voicing $npc's own line addressed to the player, no player input: Papyrus
+     * RecoverFromCombat's bleedout 'instruction' (main.php lets it reach the LLM when RPG_COMMENTS
+     * includes bleedout), through the same hooks.
+     */
+    private function ownLine(string $npc, string $data, int $gamets, string $label): void
+    {
+        $this->event('instruction', $data, $gamets);
+        $this->request($npc, ['instruction', (string) $this->realTs, (string) $gamets, $data], self::PLAYER, $label);
     }
 
     /** $line to each of the four alone with the player (no one else around), then the eval worker. */
@@ -485,216 +494,204 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures);
     }
 
-    // ------------------------------------------------------------------ the rescue
+
+    // ------------------------------------------------------------------ the fresh break
 
     /**
-     * combat x passion x impulse. Four partners with the same earned passion go down in a fight;
-     * the player's next word to each is care ("take my hand"), scored by the eval. The rescue
-     * response lands on the floor (MDD 3.3, by attachment: Aela, who does not need saving, least)
-     * and is paid once: the care that answered her fall is no moment on top of it (batch-Q
-     * review). He holds each of them after: that is the moment, on top of the floor (a spike by
-     * temperament and arousal). The floor keeps exactly what the rescue gave it; the moment is not
-     * floor. Alone with him right after, her romantic urge (MDD 13.1, passion x privacy) reads the
-     * two together, the effective passion, not the floor alone.
+     * absence x impulse x attraction. Four partners at core affinity 60 (a few points above a
+     * partner's threshold, 56) spend a meaningful evening with the player, who then stays away
+     * about a game week. Whether that breaks the bond is who she is and how long he was gone:
+     * the absence has to feel intentional to her (past her own neglect grace x
+     * break_after_grace_mult), not merely carry the number across the line. The codependent,
+     * fearful Muiri and the shy bard Lynly take a week as intentional; Aela (secure, independent)
+     * and Ashe (mature) do not, though the week carried the number across the line for them too.
+     * On the return:
+     *   - a bond that broke this absence is strained: her hurt is said (the break's line), and
+     *     next to it no social reach toward him and no attraction line;
+     *   - a bond that held reaches for him (the loneliness timer ran all week).
+     * One warm exchange after the break lifts the strain (her resentment stays hers).
      */
-    public function testTheRescueIsAFloorAndAMomentAndTheUrgeReadsBoth(): void
+    public function testAFreshBreakStrainsTheReturnAndOnlyWhereTheAbsenceFeltIntentional(): void
+    {
+        $this->seed(60);
+        $t = $this->hello();
+        $this->floors(30.0);
+        $t = $this->play($t + 600, 10.0);
+        $this->round('I missed you today. Tell me about your evening.', $t + 600, 'evening');
+        $beds = array_keys(self::BEDS);
+        $mult = floatval(RelDynAbsence::breakConfig()['break_after_grace_mult']);
+
+        // ---- a game week later he walks back in
+        $t = $this->play(self::at(self::N0 + 7, 22.0), 10.0);
+        $back = $this->round('I missed you today. Tell me about your evening.', $t, 'return');
+        $d = $broke = $info = $grace = [];
+        foreach ($beds as $npc) {
+            $d[$npc] = $this->dynamics($npc);
+            // the neglect grace the absence ran under (game days; the band the evening left behind)
+            $grace[$npc] = RelationshipDynamics::neglectGraceGameDays($d[$npc], true);
+            $broke[$npc] = is_array($d[$npc][RelDynAbsence::BREAK_KEY] ?? null);
+            $info[$npc] = ['grace' => round($grace[$npc], 3), 'aff' => RelationshipDynamics::getCoreAffinity($d[$npc]),
+                'break' => $d[$npc][RelDynAbsence::BREAK_KEY] ?? null, 'conflict' => !empty($d[$npc]['in_conflict']),
+                'resentment' => self::x($d[$npc], 'resentment'), 'impulse' => $d[$npc][RelDynImpulse::KEY] ?? null,
+                'felt' => array_keys($this->felt[$npc]['return'] ?? [])];
+        }
+        $this->probe('fresh break', $info);
+        $why = json_encode($info);
+        $this->assertSame([self::AELA => false, 'Ashe' => false, 'Muiri' => true, self::LYNLY => true], $broke, $why);
+        foreach (['Muiri', self::LYNLY] as $npc) {
+            $b = $d[$npc][RelDynAbsence::BREAK_KEY];
+            $this->assertGreaterThan($mult * $grace[$npc], $b['absent_game_days'], "{$npc}: intentional to her {$why}");
+            $this->assertTrue(RelDynAbsence::strains($d[$npc]), "{$npc}: the fresh break strains the bond {$why}");
+            $this->assertArrayHasKey('bond_break_' . $b['mode'], $this->felt[$npc]['return'], "{$npc}: her hurt is said {$why}");
+            $this->assertArrayNotHasKey('attraction', $this->felt[$npc]['return'], "{$npc}: no pull shown next to it {$why}");
+            $this->assertNotContains('social', (array) ($d[$npc][RelDynImpulse::KEY]['firing'] ?? []), "{$npc}: no reach toward him {$why}");
+            $this->assertStringNotContainsString('a pull to talk with', $this->subtext[$npc]['return'], "{$npc} {$why}");
+        }
+        foreach ([self::AELA, 'Ashe'] as $npc) {
+            $this->assertLessThan(56.0, $info[$npc]['aff'], "{$npc}: the week took the number across the line as well {$why}");
+            $this->assertGreaterThan(7.0, $mult * $grace[$npc], "{$npc}: a week is not yet intentional to her {$why}");
+            $this->assertFalse(RelDynAbsence::strains($d[$npc]), $npc);
+            $this->assertContains('social', (array) ($d[$npc][RelDynImpulse::KEY]['firing'] ?? []), "{$npc}: the bond held; she missed him {$why}");
+        }
+
+        // One warm exchange after the break lifts the strain (her resentment stays hers); said once
+        $t = $this->round('I am sorry I was gone. I missed you.', $back + 600, 'after');
+        $this->round('Stay with me a while.', $t + 600, 'later');
+        foreach (['Muiri', self::LYNLY] as $npc) {
+            $later = $this->dynamics($npc);
+            $this->assertFalse(RelDynAbsence::strains($later), "{$npc}: he has been warm to her since the break");
+            $this->assertGreaterThan(0.0, self::x($later, 'resentment'), "{$npc}: her resentment stays hers");
+            foreach (['after', 'later'] as $label) {
+                foreach (array_keys($this->felt[$npc][$label]) as $key) $this->assertStringStartsNotWith('bond_break_', (string) $key, "{$npc}: said once");
+            }
+        }
+        $this->assertClean();
+    }
+
+    /**
+     * absence x impulse, the strain alone. With break_after_grace_mult at 1 (the grace alone, as
+     * a config may set it), about four game days away break the fearful, codependent Muiri
+     * (grace about three days) with a small decay: no fight opens, her resentment stays low. It is
+     * the break alone that strains her return: her hurt is said, and next to it she does not reach
+     * for him, where a partner whose bond held (Ashe: four days are inside her grace) does.
+     */
+    public function testABreakWithNoFightStillStrainsHerReturn(): void
+    {
+        $this->seed(60);
+        $cfg = json_decode((string) pg_fetch_result(pg_query_params($this->db->link, 'SELECT value FROM conf_opts WHERE id = $1',
+            [RelationshipDynamics::CONFIG_ROW_ID]), 0, 0), true);
+        $cfg['bond_break'] = ['break_after_grace_mult' => 1.0];
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID, json_encode($cfg)]);
+        RelationshipDynamics::clearConfigCache();
+        $t = $this->hello();
+        $this->floors(30.0);
+        $t = $this->play($t + 600, 10.0);
+        $this->round('I missed you today. Tell me about your evening.', $t + 600, 'evening');
+
+        $t = $this->play(self::at(self::N0 + 4, 18.0), 10.0);
+        $this->round('I missed you today. Tell me about your evening.', $t, 'return');
+        $d = $info = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d[$npc] = $this->dynamics($npc);
+            $info[$npc] = ['grace' => RelationshipDynamics::neglectGraceGameDays($d[$npc], true), 'aff' => RelationshipDynamics::getCoreAffinity($d[$npc]),
+                'break' => $d[$npc][RelDynAbsence::BREAK_KEY] ?? null, 'conflict' => !empty($d[$npc]['in_conflict']),
+                'resentment' => self::x($d[$npc], 'resentment'), 'firing' => $d[$npc][RelDynImpulse::KEY]['firing'] ?? null,
+                'felt' => array_keys($this->felt[$npc]['return'] ?? [])];
+        }
+        $this->probe('break alone', $info);
+        $why = json_encode($info);
+        $b = $d['Muiri'][RelDynAbsence::BREAK_KEY] ?? null;
+        $this->assertIsArray($b, "Muiri: four days are past her grace {$why}");
+        $this->assertEmpty($d['Muiri']['in_conflict'] ?? false, "Muiri: a small decay, no fight {$why}");
+        $this->assertLessThan(51.0, self::x($d['Muiri'], 'resentment'), "Muiri: below the frustrated band {$why}");
+        $this->assertTrue(RelDynAbsence::strains($d['Muiri']), $why);
+        $this->assertArrayHasKey('bond_break_' . $b['mode'], $this->felt['Muiri']['return'], "Muiri: her hurt is said {$why}");
+        $this->assertNotContains('social', (array) ($d['Muiri'][RelDynImpulse::KEY]['firing'] ?? []), "Muiri: no reach toward him next to it {$why}");
+        $this->assertStringNotContainsString('a pull to talk with', $this->subtext['Muiri']['return'], "Muiri {$why}");
+        $this->assertArrayNotHasKey('attraction', $this->felt['Muiri']['return'], "Muiri {$why}");
+        $this->assertNull($d['Ashe'][RelDynAbsence::BREAK_KEY] ?? null, "Ashe: inside her grace {$why}");
+        $this->assertContains('social', (array) ($d['Ashe'][RelDynImpulse::KEY]['firing'] ?? []), "Ashe: the bond held; she reaches for him {$why}");
+        $this->assertClean();
+    }
+
+    // ------------------------------------------------------------------ her own line
+
+    /**
+     * combat x the pair. Lynly goes down; core voices her own bleedout comment (the 'instruction'
+     * request, her line to the player) before the player says anything; no eval scores anything
+     * (no connector). Her own line is not the player's answer to her fall: it neither spends nor
+     * decides the rescue. The player's next word, care, answered grateful, is the answer (MDD 3.3).
+     */
+    public function testHerOwnBleedoutLineIsNotThePlayersAnswerToHerFall(): void
+    {
+        $this->seed(60);
+        $t = $this->hello();
+        unset($GLOBALS['RELLLM_CONNECTOR']);
+        $t1 = $t + 600;
+        $this->event('bleedout', self::LYNLY . ' falls to the ground almost unconscious', $t1);
+        $this->ownLine(self::LYNLY, self::LYNLY . ' has lost combat and is wounded bleedingout.', $t1 + 200, 'own');
+        $own = $this->dynamics(self::LYNLY);
+        $this->assertIsArray($own[RelDynCombat::RESCUE_PENDING_KEY] ?? null, 'her own line leaves the fall waiting for the player');
+        $this->assertArrayNotHasKey(RelDynCombat::RESCUE_LAST_KEY, $own);
+        $this->mood = 'grateful';
+        $this->turn(self::LYNLY, 'Are you hurt? Here, take my hand.', $t1 + self::MINUTE, 'rescue');
+        $this->mood = 'default';
+        $after = $this->dynamics(self::LYNLY);
+        $this->assertArrayNotHasKey(RelDynCombat::RESCUE_PENDING_KEY, $after);
+        $this->assertIsArray($after[RelDynCombat::RESCUE_LAST_KEY] ?? null, 'the player answered her fall with care');
+        $this->assertStringStartsWith('local:', $after[RelDynCombat::RESCUE_LAST_KEY]['via']);
+        $this->assertStringEndsWith('/grateful', $after[RelDynCombat::RESCUE_LAST_KEY]['via']);
+        $this->assertSame([], $this->db->failures);
+        $this->assertSame(0, $this->llmCalls);
+    }
+
+    /**
+     * combat x passion x eval. All four partners with an earned floor go down; core voices each
+     * one's own bleedout comment (the eval scores it: it addressed the player), then the player's
+     * word to each is care, scored as a rescue. The eval of her own line decides nothing; the
+     * player's does. The rescue is paid once: the MDD 3.3 response on the floor (by attachment,
+     * Aela least), and no 'rescue' moment on top of it, so what moved is MDD 3.3's response.
+     */
+    public function testTheRescueIsPaidOnceAndHerOwnLineDecidesNothing(): void
     {
         $this->seed(60);
         $t = $this->hello();
         $this->floors(30.0);
         $t = $this->play($t + 600, 10.0);
         $beds = array_keys(self::BEDS);
-
-        // All four go down (core logs the falls; RelDyn routes them on its next turn)
         $t1 = $t + 600;
         foreach ($beds as $i => $npc) $this->event('bleedout', "{$npc} falls to the ground almost unconscious", $t1 + 1000 * $i);
-        // The player's next exchange with each: care; the eval scores it (and claims the fall)
-        $t2 = $t1 + 2 * self::MINUTE;
-        foreach ($beds as $i => $npc) $this->turn($npc, 'Are you hurt? Here, take my hand.', $t2 + 600 * $i, 'rescue');
+        foreach ($beds as $i => $npc) $this->ownLine($npc, "{$npc} has lost combat and is wounded bleedingout.", $t1 + 1000 * $i + 200, 'own');
+        $this->worker();
         $pre = [];
         foreach ($beds as $npc) {
             $d = $this->dynamics($npc);
-            $this->assertIsArray($d[RelDynCombat::RESCUE_PENDING_KEY] ?? null, "{$npc}: her fall waits for the eval of the exchange");
-            $pre[$npc] = RelationshipDynamics::getPassion($d);
+            $this->assertIsArray($d[RelDynCombat::RESCUE_PENDING_KEY] ?? null, "{$npc}: her own line decided nothing");
+            $this->assertArrayNotHasKey(RelDynCombat::RESCUE_LAST_KEY, $d, $npc);
+            $pre[$npc] = RelationshipDynamics::getEffectivePassion($d);
         }
+        $t2 = $t1 + 2 * self::MINUTE;
+        foreach ($beds as $i => $npc) $this->turn($npc, 'Are you hurt? Here, take my hand.', $t2 + 600 * $i, 'rescue');
         $this->worker();
-        $t = $t2 + 600 * count($beds);
-
-        $bonus = $gain = $spike = $floor = $rescued = [];
+        $bonus = $gain = $spike = $moved = [];
         foreach ($beds as $npc) {
             $d = $this->dynamics($npc);
             $last = $d[RelDynCombat::RESCUE_LAST_KEY] ?? null;
-            $this->assertIsArray($last, "{$npc}: the rescue was answered with care");
+            $this->assertIsArray($last, "{$npc}: the player's care answered the fall");
+            $this->assertStringStartsWith('eval:', $last['via']);
             $bonus[$npc] = floatval($last['bonus']);
             $gain[$npc] = floatval($last['gain']);
-            $rescued[$npc] = RelDynPassion::spike($d);
-            // The floor is the rescue's: the eval asked no passion of its own
-            $this->assertEqualsWithDelta($pre[$npc] + $gain[$npc], RelationshipDynamics::getPassion($d), 0.05, "{$npc}: the floor keeps what the rescue gave it");
-        }
-        // He holds each of them: the moment, on top of the floor the rescue left
-        $t = $this->round('Come here, let me hold you.', $t + 600, 'hug');
-        foreach ($beds as $npc) {
-            $d = $this->dynamics($npc);
             $spike[$npc] = RelDynPassion::spike($d);
-            $floor[$npc] = RelationshipDynamics::getPassion($d);
+            $moved[$npc] = RelationshipDynamics::getEffectivePassion($d) - $pre[$npc];
         }
-        $why = json_encode(compact('bonus', 'gain', 'rescued', 'spike', 'floor', 'pre'));
-        $this->probe('rescue', compact('bonus', 'gain', 'rescued', 'spike', 'floor', 'pre'));
+        $why = json_encode(compact('bonus', 'gain', 'spike', 'moved', 'pre'));
+        $this->probe('rescue once', compact('bonus', 'gain', 'spike', 'moved', 'pre'));
         foreach ($beds as $npc) {
-            $this->assertGreaterThan(0.0, $gain[$npc], "{$npc}: the rescue lands on the floor {$why}");
-            $this->assertSame(0.0, $rescued[$npc], "{$npc}: paid once, no moment on top of the care {$why}");
-            $this->assertGreaterThan(0.0, $spike[$npc], "{$npc}: the embrace is the moment {$why}");
+            $this->assertSame(0.0, $spike[$npc], "{$npc}: no rescue moment on top of the rescue {$why}");
+            $this->assertEqualsWithDelta($gain[$npc], $moved[$npc], 0.05, "{$npc}: what moved is the rescue response {$why}");
         }
-        // Two different measures of who she is: the floor by attachment (Aela least, MDD 3.3), the moment by temperament
-        foreach (['Ashe', 'Muiri', self::LYNLY] as $npc) $this->assertGreaterThan($bonus[self::AELA], $bonus[$npc], "{$npc} {$why}");
-        $this->assertCount(4, array_unique(array_map(fn($v) => round($v, 3), $spike)), "four women, four moments {$why}");
-
-        // Alone with him a minute later: the urge is the moment's (effective passion x full privacy)
-        $expect = $floorOnly = [];
-        foreach ($beds as $npc) {
-            $d = $this->dynamics($npc);
-            $expect[$npc] = RelationshipDynamics::getEffectivePassion($d) * floatval(RelDynImpulse::config()['romantic']['passion_weight']);
-            $floorOnly[$npc] = RelationshipDynamics::getPassion($d) * floatval(RelDynImpulse::config()['romantic']['passion_weight']);
-        }
-        $this->alone('Just us now. Rest a moment.', $t + self::MINUTE, 'alone');
-        $urge = [];
-        foreach ($beds as $npc) {
-            $d = $this->dynamics($npc);
-            $urge[$npc] = self::urge($d);
-            $this->assertGreaterThanOrEqual($expect[$npc] - 0.02, $urge[$npc], "{$npc}: the urge reads floor + moment " . json_encode($d[RelDynImpulse::KEY] ?? null));
-            $this->assertGreaterThan($floorOnly[$npc] + 0.5 * ($expect[$npc] - $floorOnly[$npc]), $urge[$npc], "{$npc}: more than the floor alone");
-            $jev = RelationshipDynamics::jevStateBlock($npc);
-            $this->assertEqualsWithDelta(RelationshipDynamics::getEffectivePassion($d), $jev['passion_effective'], 0.01, $npc);
-            $this->assertArrayHasKey('rescue', $jev, "{$npc}: Jev gets the rescue's numbers");
-        }
-        $this->probe('alone', compact('urge', 'expect', 'floorOnly'));
-        // The rescue is felt in words on the turn after it, never as a number
-        foreach ($beds as $npc) $this->assertIsString($this->felt[$npc]['alone']['rescue'] ?? null, "{$npc}: " . json_encode(array_keys($this->felt[$npc]['alone'])));
-        $this->assertClean();
-    }
-
-    // ------------------------------------------------------------------ the ex
-
-    /**
-     * combat x passion (x impulse). Core moves on: Muiri is now the player's ex (the Divorced /
-     * Hostile row of MDD 8: nothing grows, no floor), the other three are still his partners, all
-     * four with the same earned passion. He holds each of them. The partners' hearts race (a spike
-     * each, bounded by their tier's ceiling); the ex's does not: the governor holds her where she
-     * is and the moment is no way around it (the spike goes through the same passion factor as
-     * every gain). Nothing is cut: her floor stays where it was. Alone with him afterwards, the
-     * partners' urge carries the moment; the ex's carries none.
-     */
-    public function testAnExsHeartDoesNotRaceWhereTheTierHoldsIt(): void
-    {
-        $this->seed(60);
-        $t = $this->hello();
-        $this->setCore('Muiri', 40, 'ex');
-        $this->floors(30.0);
-        $t = $this->play($t + 600, 10.0);
-        $t = $this->round('Good evening.', $t + 600, 'evening');
-        $this->assertSame('hostile', RelDynGovernors::governor($this->dynamics('Muiri'))['tier'], 'core ex: the Divorced / Hostile row');
-        foreach ([self::AELA, 'Ashe', self::LYNLY] as $npc) {
-            $this->assertSame('committed', RelDynGovernors::governor($this->dynamics($npc))['tier'], $npc);
-        }
-        $this->floors(30.0);
-
-        $t = $this->round('Come here, let me hold you.', $t + 600, 'hug');
-        $spike = $floor = [];
-        foreach (array_keys(self::BEDS) as $npc) {
-            $d = $this->dynamics($npc);
-            $spike[$npc] = RelDynPassion::spike($d);
-            $floor[$npc] = RelationshipDynamics::getPassion($d);
-            $ceiling = floatval(RelDynGovernors::governor($d)['ceiling']);
-            $this->assertLessThanOrEqual(max($ceiling, 30.0) + 1e-6, RelationshipDynamics::getEffectivePassion($d), "{$npc}: never past her tier's ceiling");
-        }
-        $why = json_encode(compact('spike', 'floor'));
-        $this->probe('hug', compact('spike', 'floor'));
-        foreach ([self::AELA, 'Ashe', self::LYNLY] as $npc) $this->assertGreaterThan(0.0, $spike[$npc], "{$npc}: her heart races {$why}");
-        $this->assertSame(0.0, $spike['Muiri'], "the ex: the tier holds her {$why}");
-        $this->assertEqualsWithDelta(30.0, $floor['Muiri'], 0.01, "the ex: nothing is cut {$why}");
-        $this->assertLessThanOrEqual(30.0, $floor['Muiri'], "the ex: nothing grows {$why}");
-        $this->assertMatchesRegularExpression("/\[ATTRACTION\] Muiri: spike:[a-z_]+ passion .* \((bounded by|at) the hostile tier's passion ceiling 0\)/", file_get_contents($this->errorLog));
-
-        $this->alone('Stay a while.', $t + self::MINUTE, 'alone');
-        $w = floatval(RelDynImpulse::config()['romantic']['passion_weight']);
-        foreach ([self::AELA, 'Ashe', self::LYNLY] as $npc) {
-            $this->assertGreaterThan($floor[$npc] * $w + 0.5 * $spike[$npc] * $w, self::urge($this->dynamics($npc)), "{$npc}: the moment is in her urge {$why}");
-        }
-        $this->assertLessThanOrEqual($floor['Muiri'] * $w + 1e-6, self::urge($this->dynamics('Muiri')), "the ex: no moment in it {$why}");
-        $this->assertClean();
-    }
-
-    // ------------------------------------------------------------------ the absence
-
-    /**
-     * absence x passion x impulse. Four partners (core affinity 80) with the same earned passion;
-     * the player holds each of them, spends a meaningful evening with them, and leaves without a
-     * word for two game weeks. On the return: the moment is long gone for everyone (the spike
-     * fades with absence); a bond the absence broke took comfort with it (bond-break-resentment),
-     * so how open she is with him (derived warmth, sqrt(passion x comfort)) falls further than for
-     * a partner whose bond held. And every return is strained (the absence decay opens a conflict,
-     * see below): the loneliness timer ran since the meaningful evening, but no one reaches for
-     * him (the social urge stays quiet while a bond is strained).
-     */
-    public function testTheBondThatBrokeWhileHeWasAwayClosesHerWarmth(): void
-    {
-        $this->seed(80);
-        $t = $this->hello();
-        // A cool romance: enough of a floor for a moment (10), below the cold-romance line (20)
-        $this->floors(12.0);
-        $t = $this->play($t + 600, 10.0);
-        $t = $this->round('Come here, let me hold you.', $t + 600, 'hug');
-        $t = $this->round('I missed you today. Tell me about your evening.', $t + 600, 'evening');
-        $beds = array_keys(self::BEDS);
-        $warm0 = $spike0 = [];
-        foreach ($beds as $npc) {
-            $d = $this->dynamics($npc);
-            $warm0[$npc] = RelDynPassion::warmth($d);
-            $spike0[$npc] = RelDynPassion::spike($d);
-            $this->assertGreaterThan(0.0, $spike0[$npc], "{$npc}: a moment on the floor when he leaves");
-            $this->assertIsNumeric($d[RelDynImpulse::KEY]['last_meaningful_gamets'] ?? null, "{$npc}: the evening was meaningful");
-        }
-
-        // ---- two game weeks later the player walks back in and greets each of them
-        $t = $this->play(self::at(self::N0 + 14, 18.0), 20.0);
-        $this->round('I am back.', $t, 'return');
-        $d = $warm1 = $broke = $strained = $social = [];
-        foreach ($beds as $npc) {
-            $d[$npc] = $this->dynamics($npc);
-            $warm1[$npc] = RelDynPassion::warmth($d[$npc]);
-            $broke[$npc] = is_array($d[$npc][RelDynAbsence::BREAK_KEY] ?? null);
-            $strained[$npc] = !empty($d[$npc]['in_conflict']) || self::x($d[$npc], 'resentment') >= 51.0;
-            $social[$npc] = [self::urge($d[$npc], 'social'), $d[$npc][RelDynImpulse::KEY]['sources']['social'] ?? null];
-        }
-        $info = ['warm0' => $warm0, 'warm1' => $warm1, 'spike0' => $spike0, 'broke' => $broke, 'strained' => $strained, 'social' => $social,
-            'break' => array_map(fn($x) => $x[RelDynAbsence::BREAK_KEY] ?? null, $d), 'resentment' => array_map(fn($x) => self::x($x, 'resentment'), $d),
-            'comfort' => array_map(fn($x) => self::x($x, 'comfort'), $d), 'aff' => array_map(fn($x) => RelationshipDynamics::getCoreAffinity($x), $d)];
-        $this->probe('return', $info);
-        $why = json_encode($info);
-        foreach ($beds as $npc) $this->assertLessThan(0.01, RelDynPassion::spike($d[$npc]), "{$npc}: the moment did not wait two weeks {$why}");
-
-        // Who broke is the absence lane's (Muiri and Lynly break, Aela and Ashe hold)
-        $this->assertSame([self::AELA => false, 'Ashe' => false, 'Muiri' => true, self::LYNLY => true], $broke, $why);
-        // A broken bond cost her comfort, and so warmth: her openness fell further than a held bond's
-        foreach (['Muiri', self::LYNLY] as $npc) {
-            $this->assertLessThan(0.0, $d[$npc][RelDynAbsence::BREAK_KEY]['comfort_delta'], $npc);
-            $restored = $d[$npc];
-            $restored['dimensions']['comfort']['x'] = self::x($restored, 'comfort') - floatval($d[$npc][RelDynAbsence::BREAK_KEY]['comfort_delta']);
-            $this->assertLessThan(RelDynPassion::warmth($restored), $warm1[$npc], "{$npc}: the break's comfort is warmth she no longer shows {$why}");
-            foreach ([self::AELA, 'Ashe'] as $held) {
-                $this->assertLessThan($warm1[$held] / $warm0[$held], $warm1[$npc] / $warm0[$npc], "{$npc} vs {$held} {$why}");
-            }
-        }
-        // The return itself: the absence decay's drop in core affinity opens a conflict for every
-        // partner (observeCoreAffinity: a drop of ten or more in one session), held bond or broken
-        // (an open question of integration v0.17 for the conflict lane). A strained bond reaches
-        // for nothing: no social urge toward him, however long the loneliness timer ran
-        $this->assertSame(array_fill_keys($beds, true), array_map(fn($x) => !empty($x['in_conflict']), $d), $why);
-        foreach ($beds as $npc) {
-            $this->assertTrue($strained[$npc], $npc);
-            $this->assertSame(0.0, $social[$npc][0], "{$npc}: strained, no social urge toward him {$why}");
-            $this->assertIsNumeric($d[$npc][RelDynImpulse::KEY]['last_meaningful_gamets'] ?? null, "{$npc}: the timer ran all the while");
-        }
+        $this->assertDoesNotMatchRegularExpression('/spike:rescue/', (string) file_get_contents($this->errorLog), 'the rescue is paid once');
+        foreach (['Ashe', 'Muiri', self::LYNLY] as $npc) $this->assertGreaterThan($bonus[self::AELA], $bonus[$npc], "MDD 3.3: {$npc} above Aela {$why}");
         $this->assertClean();
     }
 }

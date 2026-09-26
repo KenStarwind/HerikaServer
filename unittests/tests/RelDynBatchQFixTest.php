@@ -20,7 +20,7 @@ final class RelDynBatchQFixTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['db', 'gameRequest'] as $k) {
+        foreach (['db', 'gameRequest', 'PLAYER_NAME'] as $k) {
             $this->saved[$k] = array_key_exists($k, $GLOBALS) ? [$GLOBALS[$k]] : null;
             unset($GLOBALS[$k]);
         }
@@ -153,4 +153,71 @@ final class RelDynBatchQFixTest extends TestCase
             $this->assertSame($strains, RelDynAbsence::strains($e), $mode);
         }
     }
+
+    // ================================================================ rescue-bonus
+
+    /** An NPC for the combat entry points (the Matrix does not judge: no attraction factor, no raise). */
+    private static function fighter(string $temperament, float $anxiety, float $avoidance, float $passion = 30.0): array
+    {
+        return [
+            'inferred_temperament' => $temperament, 'love_language_primary' => RelationshipDynamics::LL_TIME,
+            'profile_overrides' => ['attachment_axes' => ['anxiety' => $anxiety, 'avoidance' => $avoidance]],
+            '_aff_mirror_x' => 70.0, 'dimensions' => ['affinity' => ['x' => 70.0], 'passion' => ['x' => $passion, 'baseline' => 0]],
+            'passion' => $passion, '_core_rel_type' => 'romantic',
+            '_attraction' => ['enabled' => false, 'attracted' => true, 'spark' => 20.0, 'passion_mult' => 1.0, 'spark_mult' => 1.0],
+        ];
+    }
+
+    /**
+     * Only the player's exchange answers her fall. An eval item of her own line (request_type
+     * 'instruction': core voicing her bleedout comment to the player) neither claims nor decides
+     * it; the player's item after it does. An item without request_type (an older producer) is
+     * read as before.
+     */
+    public function testHerOwnLinesItemDoesNotAnswerHerFall(): void
+    {
+        $GLOBALS['PLAYER_NAME'] = 'Kaida';
+        $fall = 5_000_000_000.0;
+        $minute = 60 * RelationshipDynamics::GAMETS_PER_REAL_SECOND;
+        $d = self::fighter('Guarded', 0.15, 0.15);
+        RelDynCombat::noteFall($d, $fall);
+        $own = ['gamets' => (int) ($fall + 200), 'tags' => [], 'positive_interaction' => false, 'request_type' => 'instruction'];
+        $this->assertNull(RelDynCombat::onEvalItem('Ashe', $own, $d), 'her own line decides nothing');
+        $this->assertIsArray($d[RelDynCombat::RESCUE_PENDING_KEY] ?? null, 'the fall still waits for the player');
+        $this->assertNull($d[RelDynCombat::RESCUE_PENDING_KEY]['claimed_gamets']);
+        $player = ['gamets' => (int) ($fall + $minute), 'tags' => ['rescue', 'reassurance'], 'positive_interaction' => true, 'request_type' => 'inputtext'];
+        $r = RelDynCombat::onEvalItem('Ashe', $player, $d);
+        $this->assertTrue($r['caring'], 'the player answered it');
+        $this->assertEqualsWithDelta(4.0, $r['bonus'], 1e-4, 'Guarded: walls crack');
+
+        $old = self::fighter('Guarded', 0.15, 0.15);
+        RelDynCombat::noteFall($old, $fall);
+        $this->assertTrue(RelDynCombat::onEvalItem('Ashe', ['gamets' => (int) ($fall + $minute), 'tags' => ['rescue'], 'positive_interaction' => true], $old)['caring'],
+            'no request_type: read as before');
+
+        // the field is code-written by the producer and normalized on the way in
+        $this->assertSame('instruction', RelationshipDynamics::normalizeEvalExtraFields(['request_type' => ' Instruction '], 'Ashe')['request_type']);
+        $this->assertArrayNotHasKey('request_type', RelationshipDynamics::normalizeEvalExtraFields(['request_type' => 'not a type!'], 'Ashe'));
+    }
+
+    /**
+     * One care, paid once: when the eval item is the player's caring answer to her fall, the MDD
+     * 3.3 response is that care, and the tags that made it caring (the rescue, the reassurance)
+     * trigger no moment on top of it. What else the exchange was still does (time together, her
+     * love language here); a rescue that answered no fall of hers is a moment as before.
+     */
+    public function testTheCareThatAnsweredHerFallIsNotAlsoAMoment(): void
+    {
+        $n = ['gamets' => 5_000_000_000, 'tags' => ['rescue', 'reassurance'], 'positive_interaction' => true, 'signals' => ['passion' => 0.0]];
+        $d = self::fighter('Guarded', 0.15, 0.15);
+        $this->assertSame([], RelDynPassion::onEvalItem('Ashe', $n, $d, true), 'the rescue response is the whole of it');
+        $this->assertSame(0.0, RelDynPassion::spike($d));
+        $e = self::fighter('Guarded', 0.15, 0.15);
+        $this->assertGreaterThan(0.0, RelDynPassion::onEvalItem('Ashe', $n, $e, false)['rescue'] ?? 0.0, 'a rescue that answered no fall of hers');
+        $f = self::fighter('Guarded', 0.15, 0.15);
+        $m = RelDynPassion::onEvalItem('Ashe', ['tags' => ['rescue', 'quality_time']] + $n, $f, true);
+        $this->assertArrayNotHasKey('rescue', $m);
+        $this->assertGreaterThan(0.0, $m['love_language_primary'] ?? 0.0, 'time together is her love language, not the rescue');
+    }
 }
+

@@ -291,9 +291,13 @@ final class RelDynPassion
      * The spikes of one applied eval item ($n normalized): the love language its tags stand for
      * when it is hers (primary / secondary), touch or intimacy (unless the game reported that
      * intimacy: the postrequest spiked it already), a rescue, and its positive passion signal x
-     * spike.eval_passion_scale. Returns trigger => spike points added.
+     * spike.eval_passion_scale. $rescued: the item was the player's caring answer to her fall
+     * (RelDynCombat::onEvalItem paid the MDD 3.3 rescue response for it): the tags that made it
+     * caring (combat.rescue caring_tags: the rescue, the help, the reassurance, the touch) are that
+     * response and trigger no moment on top of it (one care, paid once); its other tags and its
+     * passion signal still do. Returns trigger => spike points added.
      */
-    public static function onEvalItem(string $npcName, array $n, array &$dynamics): array
+    public static function onEvalItem(string $npcName, array $n, array &$dynamics, bool $rescued = false): array
     {
         $cfg = self::config();
         $out = [];
@@ -303,9 +307,12 @@ final class RelDynPassion
             if ($g > 0.0) $out[$trigger] = round(($out[$trigger] ?? 0.0) + $g, 4);
         };
         $triggers = (array) $cfg['spike']['triggers'];
+        // the tags that trigger a moment (the caring ones of a rescue already paid: none of them)
+        $moment = $rescued ? array_values(array_diff($tags, array_map(fn($t) => strtolower((string) $t),
+            (array) (RelDynCombat::rescueConfig()['caring_tags'] ?? [])))) : $tags;
         $tagLL = (array) RelationshipDynamics::configValue('affinity_tag_love_language');
         $lls = [];
-        foreach ($tags as $t) {
+        foreach ($moment as $t) {
             if (isset($tagLL[$t])) $lls[(string) $tagLL[$t]] = true;
         }
         if (isset($lls[(string) ($dynamics['love_language_primary'] ?? '')])) {
@@ -314,8 +321,8 @@ final class RelDynPassion
             $add('love_language_secondary', floatval($triggers['love_language_secondary'] ?? 0));
         }
         $reported = is_string($n['reported_intimacy'] ?? null) && $n['reported_intimacy'] !== '';
-        if (!$reported && array_intersect($tags, ['touch', 'intimacy']) !== []) $add('touch', floatval($triggers['touch'] ?? 0));
-        if (in_array('rescue', $tags, true)) $add('rescue', floatval($triggers['rescue'] ?? 0));
+        if (!$reported && array_intersect($moment, ['touch', 'intimacy']) !== []) $add('touch', floatval($triggers['touch'] ?? 0));
+        if (in_array('rescue', $moment, true)) $add('rescue', floatval($triggers['rescue'] ?? 0));
         $p = floatval($n['signals']['passion'] ?? 0);
         if ($p > 0.0) $add('eval', $p * floatval($cfg['spike']['eval_passion_scale']));
         return $out;

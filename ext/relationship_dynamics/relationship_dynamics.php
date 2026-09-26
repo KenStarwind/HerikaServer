@@ -8879,8 +8879,9 @@ class RelationshipDynamics
      * Contract v1 optional fields of decisions §8 (additive): romantic_intent (int 0..3),
      * goal_addressed + goal_ref (bool + the shown goal's directorGoalRef), masking {flag,
      * slipped}; charisma (rulings §18 #11: one of EVAL_CHARISMA_GRADES); reply_mood
-     * (lowercased; written by code from core's moods_issued, never by the LLM); and
-     * reported_intimacy (a RelDynIntimacy request kind, written by code from the request). Only
+     * (lowercased; written by code from core's moods_issued, never by the LLM);
+     * reported_intimacy (a RelDynIntimacy request kind, written by code from the request); and
+     * request_type (the CHIM request type, lowercased, written by code from the job). Only
      * the fields the item carries, valid, come back; an invalid one is logged and left out (the
      * item still applies). An older item has none of them: its readers (charisma, the Ick,
      * director goal, masking) get nothing from it.
@@ -8929,6 +8930,16 @@ class RelationshipDynamics
                 $out['reported_intimacy'] = $kind;
             } else {
                 error_log("[RelDyn-EVAL] eval item for {$npc}: reported_intimacy is not a reported intimacy kind, ignored");
+            }
+        }
+        if (array_key_exists('request_type', $item)) {
+            // the CHIM request type of that exchange (code-written, RelDynEval job): whose exchange
+            // it was (the player's input, or an NPC's own line), for the rescue response
+            $type = is_string($item['request_type']) ? strtolower(trim($item['request_type'])) : '';
+            if ($type !== '' && mb_strlen($type) <= 64 && preg_match('/^[a-z0-9_]+$/', $type)) {
+                $out['request_type'] = $type;
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: request_type is not a request type name, ignored");
             }
         }
         if (array_key_exists('masking', $item) && $item['masking'] !== null) {
@@ -9058,9 +9069,13 @@ class RelationshipDynamics
                 self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $anchor, $bondName, $itemGamets);
             }
         }
+        // The player's first exchange after her fall, answered with care or not (MDD 3.3 rescue
+        // response): before the moment, which does not pay the same care twice
+        $rescued = !empty(RelDynCombat::onEvalItem((string) $npcName, $n, $dynamics)['caring']);
         // The moment on top of the floor (passion spike, RelDynPassion): her love language, a touch,
-        // a rescue, the exchange's passion; after the signals, so it stacks on the floor they left
-        $spikes = RelDynPassion::onEvalItem((string) $npcName, $n, $dynamics);
+        // a rescue, the exchange's passion; after the signals, so it stacks on the floor they left.
+        // The care that answered her fall is the rescue response, not a moment on top of it.
+        $spikes = RelDynPassion::onEvalItem((string) $npcName, $n, $dynamics, $rescued);
         if ($spikes !== []) {
             // the blush reads the moment (reldyn_felt.php)
             $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($spikes), 2));
@@ -9097,8 +9112,6 @@ class RelationshipDynamics
             floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
         // A romantic moment or a setback, for the romance promotion after the inbox (rulings §9)
         RelDynRomance::noteMoment($dynamics, $n);
-        // The player's first exchange after her fall, answered with care or not (MDD 3.3 rescue response)
-        RelDynCombat::onEvalItem((string) $npcName, $n, $dynamics);
         // Betrayal / a lie are attachment experiences (decisions §12), x the exchange's significance
         foreach ((array) (self::getAttachmentConfig()['drift']['tag_events'] ?? []) as $tag => $event) {
             if (in_array($tag, $n['tags'], true)) {

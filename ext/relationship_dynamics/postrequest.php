@@ -247,9 +247,12 @@ if ($evalOwnsExchange) {
 // -------------------------------------------------------------------------
 // 2b. Rescue response (MDD 3.3): the player's first exchange with her after her fall. An
 // exchange the eval scores is claimed and its item decides (RelDynCombat::onEvalItem); one it
-// does not score is caring when she answered in a caring mood or the player hugged her.
+// does not score is caring when she answered in a caring mood or the player hugged her. Only an
+// interaction of the player pair answers her fall: her own line (core voicing her bleedout
+// comment, a radiant remark) neither claims nor decides it.
 // -------------------------------------------------------------------------
-if ($reldynCfg['combat_enabled'] ?? true) {
+if (($reldynCfg['combat_enabled'] ?? true)
+    && RelationshipDynamics::isPairInteraction($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')))) {
     RelDynCombat::onExchange($npcName, $dynamics, $evalOwnsExchange, $interactionLL, is_string($lastMood) ? $lastMood : null,
         floatval($GLOBALS['gameRequest'][2] ?? 0) > 0 ? floatval($GLOBALS['gameRequest'][2]) : RelationshipDynamics::currentGamets());
 }
