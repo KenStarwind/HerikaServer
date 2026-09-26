@@ -688,6 +688,10 @@ final class RelDynTimeline
         }
         self::clampIn($d, ['_ick_tracker', 'ick_triggered_gamets'], $T);
         self::clampIn($d, [RelDynProtocols::PARASITE_CLOCK_KEY], $T);
+        // The short band (impulses) starts over; the loneliness timer and places seen come back to it
+        if (is_array($d[RelDynImpulse::KEY] ?? null)) {
+            RelDynImpulse::rebaseline($d[RelDynImpulse::KEY], $T);
+        }
         foreach (array_keys(is_array($d['_grief_bonds'] ?? null) ? $d['_grief_bonds'] : []) as $deceased) {
             self::clampIn($d, ['_grief_bonds', $deceased, 'death_gamets'], $T);
         }

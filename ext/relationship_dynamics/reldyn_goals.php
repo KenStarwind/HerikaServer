@@ -553,14 +553,23 @@ final class RelDynGoals
         if ($type === 'self_worth_recovery' && ($top['phase'] ?? 'change') === 'maintain') $type = 'self_worth_maintain';
         $text = $cfg['felt_text'][$type] ?? null;
         if (!is_string($text) || trim($text) === '') return null;
+        return strtr($text, ['{NAME}' => $npcName, '{PLAYER}' => $playerRef] + self::phraseVars($top, $cfg));
+    }
+
+    /**
+     * A goal's {PURSUIT} (its strongest facet as a pursuit) and {SUBJECT} (' tied to ' its first
+     * keyword, or '') for felt text: the goal's own line, and the impulse layer's inner conflict.
+     */
+    public static function phraseVars(array $goal, ?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
         $facet = null;
-        foreach ((array) ($top['facets'] ?? []) as $f => $w) {
-            if ($facet === null || floatval($w) > floatval($top['facets'][$facet])) $facet = (string) $f;
+        foreach ((array) ($goal['facets'] ?? []) as $f => $w) {
+            if ($facet === null || floatval($w) > floatval($goal['facets'][$facet])) $facet = (string) $f;
         }
         $pursuit = $facet !== null ? (string) ($cfg['pursuit'][$facet] ?? str_replace('_', ' ', $facet)) : 'what matters to them';
-        $keywords = array_values(array_filter((array) ($top['keywords'] ?? []), 'is_string'));
-        $subject = $keywords !== [] ? ' tied to ' . $keywords[0] : '';
-        return strtr($text, ['{NAME}' => $npcName, '{PLAYER}' => $playerRef, '{PURSUIT}' => $pursuit, '{SUBJECT}' => $subject]);
+        $keywords = array_values(array_filter((array) ($goal['keywords'] ?? []), 'is_string'));
+        return ['{PURSUIT}' => $pursuit, '{SUBJECT}' => $keywords !== [] ? ' tied to ' . $keywords[0] : ''];
     }
 
     /** Jev: the active goals (numbers). */
