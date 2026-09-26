@@ -262,6 +262,12 @@ if (($reldynCfg['passion_enabled'] ?? true)
         $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($reldynSpikes), 2));
         RelationshipDynamics::log("[SPIKE] {$npcName} exchange: " . json_encode($reldynSpikes) . ' spike=' . round(RelDynPassion::spike($dynamics), 2));
     }
+    // The desire loop's valence back-filter (roadmap desire-loop): a touch the local classifier
+    // read, when no eval scores the exchange (its romantic_intent does then); a scene the plugin
+    // reports is the romance's own
+    if (!$evalOwnsExchange && $interactionLL === RelationshipDynamics::LL_TOUCH && !$reldynIntimate) {
+        RelDynPassion::flirtValence($npcName, $dynamics, floatval(RelDynPassion::config()['desire']['legacy_touch_intent']));
+    }
 }
 
 // Store the topic read for the next context.php cycle (<topic_resonance>): the felt text

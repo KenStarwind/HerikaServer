@@ -3799,7 +3799,10 @@ class RelationshipDynamics
             $repairMult = floatval($cfg2['conflict_repair_passion_mult'] ?? 1.5);
         }
 
-        $gain = $baseGain * $llMult * $sessionMult * $stageMult * $tempMult * $interestMult * $repairMult;
+        // The desire loop (roadmap desire-loop): arousal amplifies the gain, 1.0x..1.8x
+        $arousalMult = RelDynPassion::arousalAmp($dynamics);
+
+        $gain = $baseGain * $llMult * $sessionMult * $stageMult * $tempMult * $interestMult * $repairMult * $arousalMult;
 
         return max(0.0, $gain);
     }
@@ -5328,16 +5331,20 @@ class RelationshipDynamics
     // =========================================================================
 
     /**
-     * Calculate effective sex_disposal with passion and jealousy overlay. Passion that only the
-     * emotional channels move (asexual, decisions §15) is no sexual arousal: it adds nothing.
+     * Calculate effective sex_disposal (desire) with passion and jealousy overlay. Passion that
+     * only the emotional channels move (asexual, decisions §15) is no sexual arousal: it adds
+     * nothing. The desire loop (roadmap desire-loop): the passion is the effective passion
+     * (floor + the moment), and the mood adds or takes up to desire.valence_max points
+     * (RelDynPassion::desireValenceTerm).
      */
     public static function getEffectiveDisposition($baseDisposal, $dynamics)
     {
-        $passion = floatval($dynamics['passion'] ?? 0);
+        $dynamics = is_array($dynamics) ? $dynamics : [];
+        $passion = self::getEffectivePassion($dynamics);
         if (($dynamics['_attraction']['passion_channel'] ?? null) === 'emotional') $passion = 0.0;
         $jealousy = floatval($dynamics['jealousy_anger'] ?? 0);
 
-        $effective = $baseDisposal + ($passion * 0.3) - ($jealousy * 0.3);
+        $effective = $baseDisposal + ($passion * 0.3) - ($jealousy * 0.3) + RelDynPassion::desireValenceTerm($dynamics);
         return max(0, min(30, intval(round($effective))));
     }
 
@@ -8564,6 +8571,12 @@ class RelationshipDynamics
                 $raw *= $pm;
                 $steps .= sprintf(' place x%.2f', $pm);
             }
+            // The desire loop (roadmap desire-loop): arousal amplifies passion gain, 1.0x..1.8x
+            $am = RelDynPassion::arousalAmp($dynamics);
+            if (abs($am - 1.0) > 0.001) {
+                $raw *= $am;
+                $steps .= sprintf(' arousal x%.2f', $am);
+            }
             // Attraction (decisions §13): the spark, then the uphill x attachment (rulings §9);
             // Aela warms to a warrior, a bard climbs a long hill; a hard zero leaves exactly 0.
             // The dimension engine applies it to the physics' move (applyDelta, attraction_source).
@@ -9043,6 +9056,11 @@ class RelationshipDynamics
         }
         if (isset($n['romantic_intent']) && !empty($cfg['ick_system_enabled'] ?? true)) {
             self::recordIckEvalAttempt($npcName, $n, $dynamics);
+        }
+        // The desire loop's valence back-filter (roadmap desire-loop): the bond decides how the
+        // player's romantic move feels (a crush warms to it, a stranger's reads "eww")
+        if (floatval($n['romantic_intent'] ?? 0) > 0) {
+            RelDynPassion::flirtValence($npcName, $dynamics, floatval($n['romantic_intent']));
         }
         if (($n['goal_addressed'] ?? false) === true && !empty($cfg['director_goals_enabled'])) {
             $goal = self::getActiveDirectorGoal($dynamics);

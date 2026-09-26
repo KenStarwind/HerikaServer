@@ -98,8 +98,6 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
     private int $evalCalls = 0;
     /** npc => label => key => felt text the context hook put in front of the LLM */
     private array $felt = [];
-    /** npc => core Player.type / affinity for the seed */
-    private array $bond = [];
 
     protected function setUp(): void
     {
@@ -208,8 +206,8 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
         }
     }
 
-    /** Core rows ($type / $aff: each bed's Player entry), voice types, placeholder templates and the seed's reads. */
-    private function seed(string $type, int $aff): void
+    /** Core rows ($type / $aff: each bed's Player entry, $per: npc => [type, aff] instead), voice types, placeholder templates and the seed's reads. */
+    private function seed(string $type, int $aff, array $per = []): void
     {
         $seed = RelDynTraitRead::loadSeedFile();
         RelDynTraitRead::ensureTable();
@@ -219,7 +217,8 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
         foreach (self::BEDS as $name => [$key, $race, $class, $factions, $skills, $voice]) {
             $f = [];
             foreach ($factions as $i => $faction) $f[] = ['formid' => sprintf('0x%08x', 0x72834 + $i), 'rank' => 0, 'name' => $faction];
-            $rel = $type === 'none' ? [] : [self::PLAYER => ['aff' => $aff, 'type' => $type]];
+            [$bt, $ba] = $per[$name] ?? [$type, $aff];
+            $rel = $bt === 'none' ? [] : [self::PLAYER => ['aff' => $ba, 'type' => $bt]];
             pg_query_params($this->db->link,
                 'INSERT INTO core_npc_master (npc_name, gender, race, voiceid, core, npc_static_bio, metadata, extended_data)
                  VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)',
@@ -351,9 +350,9 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
     }
 
     /** Evening at Breezehome: everyone with the player. */
-    private function hello(string $type = 'romantic', int $aff = 60): int
+    private function hello(string $type = 'romantic', int $aff = 60, array $per = []): int
     {
-        $this->seed($type, $aff);
+        $this->seed($type, $aff, $per);
         $this->event('infoloc', self::HOME, self::at(self::N0, 18.0));
         $t = $this->round('Well met, love.', self::at(self::N0, 18.0), 'hello');
         foreach (array_keys(self::BEDS) as $npc) {
@@ -366,6 +365,15 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
     {
         $r = pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT plugin_extended_data FROM core_npc_master WHERE npc_name = $1', [$npc]));
         return json_decode($r['plugin_extended_data'], true)['reldyn']['dynamics'] ?? [];
+    }
+
+    /** Merge $patch into the stored RelDyn config row (as the settings page would). */
+    private function patchConfig(array $patch): void
+    {
+        $r = pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT value FROM conf_opts WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID]));
+        $cfg = array_replace(json_decode($r['value'], true), $patch);
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID, json_encode($cfg)]);
+        RelationshipDynamics::clearConfigCache();
     }
 
     /** Edit $npc's stored RelDyn state (as the NPC editor would). */
@@ -456,8 +464,8 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
         $t = $this->round('Good evening.', $t + 600, 'after');
         foreach ([self::AELA, 'Ashe', 'Muiri'] as $npc) {
             $d = $this->dynamics($npc);
-            $this->assertEqualsWithDelta(RelationshipDynamics::getPassion($d) + RelDynPassion::spike($d),
-                RelationshipDynamics::getEffectivePassion($d), 1e-6, $npc);
+            $this->assertEqualsWithDelta(RelationshipDynamics::getPassion($d) + RelDynPassion::spike($d)
+                + RelationshipDynamics::weatherGravityOffset($d, 'passion'), RelationshipDynamics::getEffectivePassion($d), 1e-6, $npc);
         }
         for ($k = 0; $k < 5; $k++) $t = $this->round('Nice weather.', $t + 600, "quiet{$k}");
         foreach ([self::AELA, 'Ashe', 'Muiri'] as $npc) {
@@ -468,6 +476,55 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
         $this->assertFeelingsNotNumbers();
         $this->assertSame(0, $this->llmCalls, 'no trait read');
         $this->assertGreaterThan(0, $this->evalCalls);
+        $this->assertSame([], $this->db->failures);
+    }
+
+    // ------------------------------------------------------------------ the desire loop
+
+    /**
+     * The same kiss asked of four women in four bonds (the eval: open romantic pursuit, intent 3):
+     * Aela is the player's partner, Ashe has a crush, Lynly is an acquaintance, Muiri has never
+     * met him. The bond filters how it feels (the valence back-filter): partner and crush warm to
+     * it, the acquaintance shrugs it off, the stranger's mood sours ("eww"). The mood is left to
+     * the kiss alone (no weather, hour, place or moon moving it), and measured against a round of
+     * small talk. Desire (the effective disposition) follows: the moment and the mood lift the
+     * partner's; the stranger's mood takes from hers.
+     */
+    public function testTheSameKissFeelsDifferentByTheBond(): void
+    {
+        // The mood alone: no weather's pull and no hour of the day moving it between the rounds
+        $this->patchConfig(['internal_weather_enabled' => false, 'environment_modifiers_enabled' => false, 'creature_moodifications_enabled' => false,
+            'facet_appraisal' => array_replace(RelDynFacets::appraisalDefaults(), ['mood_per_game_hour' => 0.0])]);
+        $t = $this->hello('romantic', 60, ['Ashe' => ['crush', 40], 'Muiri' => ['none', 0], self::LYNLY => ['professional', 20]]);
+        $all = array_keys(self::BEDS);
+        $type = [];
+        foreach ($all as $npc) $type[$npc] = RelationshipDynamics::getRelationshipType($npc, $this->dynamics($npc));
+        $this->assertSame([self::AELA => 'bonded', 'Ashe' => 'crush', 'Muiri' => 'stranger', self::LYNLY => 'acquaintance'], $type);
+        $t = $this->play($t + 600, 10.0);
+        $valence = fn(string $npc) => floatval($this->dynamics($npc)['dimensions']['valence']['x'] ?? 0);
+        $desire = fn(string $npc) => RelationshipDynamics::getEffectiveDisposition(0, $this->dynamics($npc));
+        $v0 = $d0 = [];
+        foreach ($all as $npc) { $v0[$npc] = $valence($npc); $d0[$npc] = $desire($npc); }
+        $t = $this->round('Nice weather today.', $t + 600, 'control');
+        $v1 = [];
+        foreach ($all as $npc) $v1[$npc] = $valence($npc);
+        $t = $this->round('Come here and kiss me.', $t + 600, 'kiss');
+        $felt = [];
+        foreach ($all as $npc) {
+            $v2 = $valence($npc);
+            $felt[$npc] = round(($v2 - $v1[$npc]) - ($v1[$npc] - $v0[$npc]), 3);
+        }
+        $why = json_encode(['felt' => $felt, 'v0' => $v0, 'v1' => $v1, 'type' => $type]);
+        $this->assertGreaterThan(1.0, $felt[self::AELA], "the partner warms to it {$why}");
+        $this->assertGreaterThan(1.0, $felt['Ashe'], "the crush warms to it {$why}");
+        $this->assertLessThan(-1.0, $felt['Muiri'], "the stranger: eww {$why}");
+        $this->assertEqualsWithDelta(0.0, $felt[self::LYNLY], 1.0, "the acquaintance shrugs it off {$why}");
+        // Desire follows the mood (and the partner's moment); the stranger's is no higher for it
+        $this->assertGreaterThan($d0[self::AELA], $desire(self::AELA), $why);
+        $this->assertLessThan(0.0, RelDynPassion::desireValenceTerm($this->dynamics('Muiri')), "the stranger's mood takes from desire {$why}");
+        $this->assertGreaterThan(0.0, RelDynPassion::desireValenceTerm($this->dynamics(self::AELA)), $why);
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls, 'no trait read');
         $this->assertSame([], $this->db->failures);
     }
 
