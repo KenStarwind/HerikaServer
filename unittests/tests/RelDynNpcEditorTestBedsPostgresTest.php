@@ -939,6 +939,11 @@ PHP);
             $this->post(['npc' => 'Muiri'] + $post);
             $this->assertSame($before, $this->rawBlob('Muiri'), json_encode($post));
         }
+        // the redirect carries a known section anchor only, never posted text
+        $r = $this->post(['npc' => 'Muiri', 'op' => 'save', 'section' => "x\r\nSet-Cookie: a=b", 'f' => []]);
+        $this->assertSame('npc.php?npc=Muiri', $r['location']);
+        $r = $this->post(['npc' => 'Muiri', 'op' => 'save', 'section' => 'jealousy', 'f' => []]);
+        $this->assertSame('npc.php?npc=Muiri#sec-jealousy', $r['location']);
         $this->assertSame([], $this->db->failures);
     }
 }

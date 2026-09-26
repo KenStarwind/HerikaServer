@@ -1382,7 +1382,8 @@ final class RelDynEditor
             $r = self::apply($npc, $post);
             $session[self::FLASH_SESSION_KEY] = ['ok' => $r['ok'], 'message' => $r['message']];
             $name = self::canonicalName($npc);
-            return ['status' => 303, 'location' => self::pageUrl($name ?? ($npc !== '' ? $npc : null), $r['section'] !== null ? 'sec-' . $r['section'] : null),
+            $anchor = is_string($r['section']) && isset(self::SECTIONS[$r['section']]) ? 'sec-' . $r['section'] : null;   // a known section only
+            return ['status' => 303, 'location' => self::pageUrl($name ?? ($npc !== '' ? $npc : null), $anchor),
                 'title' => 'Relationship Dynamics', 'body' => ''];
         }
         if ($method !== 'GET' && $method !== 'HEAD') {
