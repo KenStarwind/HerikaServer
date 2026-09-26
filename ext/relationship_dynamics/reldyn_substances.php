@@ -724,8 +724,12 @@ final class RelDynSubstances
             $out[$key] = ['endorsed' => round($E, 4), 'asked' => $asked, 'applied' => $applied];
             RelationshipDynamics::log(sprintf('[RelDyn-SUBSTANCE] %s: sober, the night of %s (endorsed %.2f): %s', $npcName, $key, $E, json_encode($applied)));
         }
+        $state = self::state($dynamics);   // (applyDelta above never touches it; re-read for clarity)
         $state['nights'] = $nights;
         if ($nights === []) unset($state['nights']);
+        $lastKey = array_key_last($out);
+        $state['last_sober'] = ['night' => (string) $lastKey, 'endorsed' => $out[$lastKey]['endorsed'],
+            'depth' => $depth, 'gamets' => RelationshipDynamics::currentGamets()];
         $dynamics[self::KEY] = $state;
         return $out;
     }
@@ -763,13 +767,15 @@ final class RelDynSubstances
         if ($goal === null) {
             if ($addictedNow && $own > floatval($a['goal_generation_min'])) {
                 $word = (string) (((array) $a['word'])[$strong['substance']] ?? $strong['substance']);
-                $id = RelDynGoals::form($dynamics, 'recovery', floatval($a['goal_priority']['stop'] ?? 0.6), 'addiction', $now,
-                    ['phase' => 'stop', 'substance' => $strong['substance'], 'substance_word' => $word]);
+                $phase = $own >= floatval($a['self_governance_min']) ? 'clean' : 'stop';
+                $id = RelDynGoals::form($dynamics, 'recovery', floatval($a['goal_priority'][$phase] ?? 0.6), 'addiction', $now,
+                    ['phase' => $phase, 'substance' => $strong['substance'], 'substance_word' => $word]);
                 if ($id !== null) {
                     $state = self::state($dynamics);
                     $state['recovering'] = $strong['substance'];
                     $dynamics[self::KEY] = $state;
-                    RelationshipDynamics::log("[RelDyn-SUBSTANCE] {$npcName}: 'I need to stop' ({$strong['substance']}, maturity " . round($own, 1) . ')');
+                    RelationshipDynamics::log("[RelDyn-SUBSTANCE] {$npcName}: " . ($phase === 'clean' ? "'Stay clean'" : "'I need to stop'")
+                        . " ({$strong['substance']}, maturity " . round($own, 1) . ')');
                 }
             }
             return;
@@ -888,6 +894,8 @@ final class RelDynSubstances
             'maturity_ceiling' => self::maturityCeiling($dynamics),
             'interventions' => intval($state['interventions'] ?? 0),
             'open_nights' => count((array) ($state['nights'] ?? [])),
+            // the last drunk night the sober diary judged: endorsed 0..1 (null: a shallow diary)
+            'last_sober_endorsed' => is_array($state['last_sober'] ?? null) ? $state['last_sober']['endorsed'] : null,
         ];
     }
 
