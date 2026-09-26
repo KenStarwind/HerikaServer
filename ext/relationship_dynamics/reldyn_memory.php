@@ -7,10 +7,11 @@
  * THE TRANSLATION LAYER (MDD §12). Vector memory clusters by what happened; a literal log loses
  * the subtext. Before an exchange becomes memory, RelDyn's numbers become a short wrapper of
  * high-impact words (M/F coordinates, arousal / valence, attachment style, plus the states that
- * colour a moment: duty, resentment, distance, pull, jealousy, an open conflict):
+ * colour a moment: duty, resentment, distance, pull, jealousy, an open conflict, and how the
+ * moment itself landed on her: the item's applied change through her own filters, moved()):
  *   "(Beneath this moment with Kaida, Aela the Huntress was operating strictly out of begrudging
- *    duty, cold and correct with her feelings locked away and harbouring a deep, unresolved
- *    resentment toward Kaida. What happened: Kaida asked for work; she named the bandit camp.)"
+ *    duty, harbouring a deep, unresolved resentment toward Kaida and keeping an icy, transactional
+ *    distance. What happened: Kaida asked for work; she named the bandit camp.)"
  * translate() is pure: clauses by salience, at most translation.max_clauses, within
  * translation.token_budget (RelDynFelt::estimateTokens). Words only, never a number (the event is
  * the eval summary cleaned by RelDynFelt::sanitizeReason).
@@ -82,9 +83,12 @@ final class RelDynMemory
                 'drawn_passion_min' => 56.0,
                 'jealousy_min' => 60.0,
                 'mf_min_magnitude' => 15.0,  // |coord_m| or |coord_f| below this: no M/F clause
+                // The moment itself, through her (the item's applied change: core affinity points +
+                // trust + comfort + respect dimension points, after her own filters): how it landed
+                'moved_light' => 2.0, 'moved_deep' => 6.0,
                 // clause => salience (0..1): the order clauses are picked in
                 'salience' => [
-                    'duty' => 1.0, 'conflict' => 0.85, 'resentment' => 0.8, 'jealousy' => 0.75, 'distance' => 0.7,
+                    'duty' => 1.0, 'moment' => 0.9, 'conflict' => 0.85, 'resentment' => 0.8, 'jealousy' => 0.75, 'distance' => 0.7,
                     'arousal_valence' => 0.6, 'attachment' => 0.55, 'drawn' => 0.5, 'affection' => 0.5, 'mf' => 0.45,
                 ],
             ],
@@ -120,6 +124,10 @@ final class RelDynMemory
                 'and' => ' and ',
                 'clauses' => [
                     'duty'       => 'operating strictly out of begrudging duty',
+                    'moment' => [
+                        'wounded' => 'cut deeply by it', 'stung' => 'stung by it',
+                        'warmed' => 'warmed by it', 'moved' => 'deeply moved by it',
+                    ],
                     'conflict'   => 'still hurt from their falling-out',
                     'resentment' => 'harbouring a deep, unresolved resentment toward {PLAYER}',
                     'grudge'     => 'nursing a quiet grudge against {PLAYER}',
@@ -130,7 +138,7 @@ final class RelDynMemory
                     'attachment' => [
                         'anxious'  => 'anxious for reassurance',
                         'avoidant' => 'guarding against getting too close',
-                        'toxic'    => 'wanting closeness and bracing against it at once',
+                        'toxic'    => 'wanting closeness while bracing against it',
                     ],
                     'arousal_valence' => [
                         'high_positive' => 'buzzing with bright, restless energy',
@@ -139,10 +147,10 @@ final class RelDynMemory
                         'low_negative'  => 'numb, going through the motions',
                     ],
                     'mf' => [
-                        '+M/+F' => 'steady and protective',
-                        '+M/-F' => 'cold and correct, feelings locked away',
-                        '-M/+F' => 'soft and yielding',
-                        '-M/-F' => 'bitter and withdrawn, keeping score',
+                        '+M/+F' => 'steady, protective',
+                        '+M/-F' => 'cold, correct, feelings locked away',
+                        '-M/+F' => 'soft, yielding',
+                        '-M/-F' => 'bitter, withdrawn, keeping score',
                     ],
                 ],
                 // what each anchor is, for the note ({PLACE_AT}: ' at <place>' or '')
@@ -217,6 +225,13 @@ final class RelDynMemory
         };
 
         if (!empty($env['duty'])) $add('duty', (string) $txt['duty'], floatval($sal['duty']));
+        // How this moment landed on her ($env['moved']: its applied change, her filters included)
+        if (is_numeric($env['moved'] ?? null)) {
+            $mv = floatval($env['moved']);
+            $k = $mv <= -floatval($tc['moved_deep']) ? 'wounded' : ($mv <= -floatval($tc['moved_light']) ? 'stung'
+                : ($mv >= floatval($tc['moved_deep']) ? 'moved' : ($mv >= floatval($tc['moved_light']) ? 'warmed' : null)));
+            if ($k !== null && isset($txt['moment'][$k])) $add('moment', (string) $txt['moment'][$k], floatval($sal['moment']));
+        }
         if (!empty($dynamics['in_conflict'])) $add('conflict', (string) $txt['conflict'], floatval($sal['conflict']));
         $res = $x('resentment');
         if ($res !== null && $res >= floatval($tc['resentment_deep'])) {
@@ -229,8 +244,10 @@ final class RelDynMemory
         }
         $aff = is_numeric($dynamics['_aff_mirror_x'] ?? null) ? RelationshipDynamics::getCoreAffinity($dynamics) : null;
         $warmth = RelDynPassion::warmth($dynamics);
+        // cold: affinity down past the line, or a closed warmth in a bond already below neutral (a
+        // stranger's neutral is no distance)
         if (($aff !== null && $aff <= floatval($tc['distance_affinity_max']))
-            || ($warmth !== null && $warmth <= floatval($tc['distance_warmth_max']) && ($aff === null || $aff <= 0.0))) {
+            || ($warmth !== null && $warmth <= floatval($tc['distance_warmth_max']) && $aff !== null && $aff < 0.0)) {
             $add('distance', (string) $txt['distance'], floatval($sal['distance']));
         } elseif ($aff !== null && $aff >= floatval($tc['affection_affinity_min'])
             && ($warmth === null || $warmth >= floatval($tc['affection_warmth_min']))) {
@@ -271,6 +288,22 @@ final class RelDynMemory
         return $out;
     }
 
+    /**
+     * How much a moment moved her (points): the applied change of affinity (mirror units x2 = core
+     * points), trust, comfort and respect summed; null when nothing moved.
+     */
+    public static function moved(array $applied): ?float
+    {
+        $sum = 0.0;
+        $any = false;
+        foreach (['affinity' => 2.0, 'trust' => 1.0, 'comfort' => 1.0, 'respect' => 1.0] as $dim => $scale) {
+            if (!is_numeric($applied[$dim] ?? null)) continue;
+            $sum += floatval($applied[$dim]) * $scale;
+            $any = true;
+        }
+        return $any ? round($sum, 4) : null;
+    }
+
     /** "a, b and c" */
     private static function join(array $parts, string $and): string
     {
@@ -299,12 +332,15 @@ final class RelDynMemory
 
     /**
      * One row in core's memory table (logMemory's columns), once per $key (memory.session):
-     * INSERT ... WHERE NOT EXISTS, one statement. Returns true when written.
+     * INSERT ... WHERE NOT EXISTS, one statement. Stamped one gamets after the moment (a fraction of
+     * a game second), so core's packer, ordering by game time, reads it right after the exchange's
+     * own line. Returns true when written.
      */
     private static function writeNote(string $speaker, string $listener, string $message, float $gamets, string $event, string $key): bool
     {
         $db = $GLOBALS['db'] ?? null;
         if (!$db || $gamets <= 0) return false;
+        $gamets += 1.0;
         $row = $db->fetchOne(
             'INSERT INTO memory (localts, speaker, listener, message, gamets, session, momentum, event, ts)
              SELECT $1::bigint, $2::text, $3::text, $4::text, $5::bigint, $6::text, $6::text, $7::text, $5::bigint
@@ -323,16 +359,18 @@ final class RelDynMemory
      * One applied eval item ($n normalized, after its signals and feelings): the anchors its tags
      * make (first_gift, first_intimacy; first_rescue when $rescued) and, with commit on, the
      * wrapper note of the exchange at its game time. $fingerprint: the item's
-     * (evalContractFingerprint), so a re-applied item writes no second note.
+     * (evalContractFingerprint), so a re-applied item writes no second note. $applied: what the
+     * item moved (processEvalContractItem's totals: dimension => actual, affinity in mirror units),
+     * how the moment landed on her.
      */
-    public static function onEvalItem(string $npc, array $n, array &$dynamics, float $gamets, string $fingerprint, bool $rescued = false): void
+    public static function onEvalItem(string $npc, array $n, array &$dynamics, float $gamets, string $fingerprint, bool $rescued = false, array $applied = []): void
     {
         $cfg = self::config();
         if (empty($cfg['enabled'])) return;
         $player = trim((string) ($GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player'));
         $tags = array_map(fn($t) => strtolower((string) $t), (array) ($n['tags'] ?? []));
         $summary = is_string($n['summary'] ?? null) ? $n['summary'] : null;
-        $env = ['duty' => isset($n['duty_factor']) && floatval($n['duty_factor']) < 1.0];
+        $env = ['duty' => isset($n['duty_factor']) && floatval($n['duty_factor']) < 1.0, 'moved' => self::moved($applied)];
         if (in_array('gift', $tags, true)) self::noteAnchor($npc, $dynamics, 'first_gift', $gamets, $summary, $env);
         if (in_array('intimacy', $tags, true)) self::noteAnchor($npc, $dynamics, 'first_intimacy', $gamets, $summary, $env);
         if ($rescued) self::noteAnchor($npc, $dynamics, 'first_rescue', $gamets, $summary, $env);

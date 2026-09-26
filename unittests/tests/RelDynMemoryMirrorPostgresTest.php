@@ -222,7 +222,7 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures);
         $rows = pg_fetch_all(pg_query($this->db->link, "SELECT speaker, listener, message, gamets, event, session FROM memory ORDER BY rowid"));
         $this->assertCount(1, $rows);
-        $this->assertSame(['Aela the Huntress', 'Kaida', (string) $g, 'reldyn_subtext', 'reldyn:fpA'],
+        $this->assertSame(['Aela the Huntress', 'Kaida', (string) ($g + 1), 'reldyn_subtext', 'reldyn:fpA'],
             [$rows[0]['speaker'], $rows[0]['listener'], $rows[0]['gamets'], $rows[0]['event'], $rows[0]['session']]);
         $this->assertSame('(Beneath this moment with Kaida, Aela the Huntress was operating strictly out of begrudging duty, harbouring a deep, '
             . 'unresolved resentment toward Kaida and keeping an icy, transactional distance. What happened: Kaida asked for work; she named the bandit camp.)',
@@ -248,7 +248,7 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
         RelDynMemory::onEvalItem('Ashe', $n, $d, self::T0, 'fpG');
         $a = RelDynMemory::anchors($d)['first_gift'] ?? null;
         $this->assertIsArray($a);
-        $this->assertSame(['name' => 'Breezehome', 'hold' => 'Whiterun'], $a['place']);
+        $this->assertEquals(['name' => 'Breezehome', 'hold' => 'Whiterun'], $a['place']);
         $this->assertSame('The player gave her an old Dwemer gyro', $a['event'], 'the eval summary, cleaned (RelDynFelt::sanitizeReason)');
         $this->assertSame('breezehome', $d[RelDynMemory::PLACE_KEY], 'made here: being here is no arrival');
         // The first stays
@@ -259,7 +259,7 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
         $this->assertCount(1, $notes);
         $this->assertSame('(Important note: Kaida gave Ashe a gift for the first time at Breezehome. This is a defining moment between Ashe and Kaida, so use tag #FirstGift.)',
             $notes[0]['message']);
-        $this->assertSame((string) self::T0, $notes[0]['gamets']);
+        $this->assertSame((string) (self::T0 + 1), $notes[0]['gamets'], 'a fraction of a game second after the moment');
         $this->assertSame([], $this->db->failures);
     }
 

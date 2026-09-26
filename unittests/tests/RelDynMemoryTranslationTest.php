@@ -66,6 +66,18 @@ final class RelDynMemoryTranslationTest extends TestCase
         $this->assertLessThanOrEqual(RelDynMemory::configDefaults()['translation']['token_budget'], $tokens);
     }
 
+    public function testHowTheMomentLandedLeadsTheWrapper(): void
+    {
+        $d = self::state(['resentment' => 5], 20.0);
+        $this->assertNull(RelDynMemory::moved([]));
+        $this->assertSame(-7.0, RelDynMemory::moved(['affinity' => -2.0, 'trust' => -1.0, 'comfort' => -2.0, 'passion' => 9.0]), 'affinity in core points; passion is not how it landed');
+        $words = [];
+        foreach ([-7.0, -3.0, 0.5, 3.0, 8.0] as $mv) $words[] = RelDynMemory::clauses($d, 'Ashe', 'Kaida', ['moved' => $mv])['moment'] ?? null;
+        $this->assertSame(['cut deeply by it', 'stung by it', null, 'warmed by it', 'deeply moved by it'], $words);
+        $c = RelDynMemory::clauses($d + ['in_conflict' => true], 'Ashe', 'Kaida', ['moved' => -9.0, 'duty' => true]);
+        $this->assertSame(['duty', 'moment', 'conflict'], array_keys($c));
+    }
+
     public function testANeutralMomentWithNoEventSaysNothing(): void
     {
         $d = self::state(['resentment' => 5, 'arousal' => 20, 'valence' => 5, 'coord_m' => 5, 'coord_f' => 5], 10.0);

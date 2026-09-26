@@ -9153,7 +9153,7 @@ class RelationshipDynamics
         // The memory translation layer (MDD §12): the anchors this exchange made (Addendum 12)
         // and, with commit on, its subtext note in core's memory; then the player mirror's
         // observation of what the player did (reldyn_mirror.php). Both once per item (fingerprint).
-        RelDynMemory::onEvalItem((string) $npcName, $n, $dynamics, $itemGamets, $fingerprint, $rescued);
+        RelDynMemory::onEvalItem((string) $npcName, $n, $dynamics, $itemGamets, $fingerprint, $rescued, $totals);
         try {
             RelDynMirror::observe((string) $npcName, $n, $mirrorCtx, $itemGamets, $fingerprint);
         } catch (\Throwable $e) {
