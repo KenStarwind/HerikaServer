@@ -137,6 +137,7 @@ final class RelDynDiary
                 'conflict_opened'     => 'a quarrel with {PLAYER} that is not settled',
                 'boundary'            => 'having to draw a line with {PLAYER}',
                 'bond_changed'        => 'what they are to {PLAYER} has changed',
+                'drunk_night'         => 'a night of drinking with {PLAYER} that looks different sober',
             ],
         ];
     }
@@ -185,10 +186,14 @@ final class RelDynDiary
         return $maturity > floatval($cfg['examination_above']) ? 'examination' : 'pattern';
     }
 
-    /** A consumable's immediate effects are still on her (RelationshipDynamics::consumeItem, _active_consumables). */
+    /**
+     * A consumable's immediate effects are still on her (RelationshipDynamics::processConsumable,
+     * _active_consumables), or drink is still in her (RelDynSubstances: the drunk state clears on
+     * the game clock, about six game hours after five ales).
+     */
     public static function intoxicated(array $dynamics): bool
     {
-        return !empty($dynamics['_active_consumables']);
+        return !empty($dynamics['_active_consumables']) || RelDynSubstances::intoxicated($dynamics);
     }
 
     /** Keep marked triggers as one moment at $gamets until a diary entry is read (at most max_moments). */
@@ -344,7 +349,7 @@ final class RelDynDiary
      */
     public static function onPrerequest(string $npcName, array &$dynamics): array
     {
-        $out = ['entries' => 0, 'applied_jobs' => 0, 'depth' => null, 'verdict' => null, 'applied' => [], 'queued' => null];
+        $out = ['entries' => 0, 'applied_jobs' => 0, 'depth' => null, 'verdict' => null, 'applied' => [], 'queued' => null, 'sober' => []];
         if (!self::enabled()) return $out;
         $cfg = self::config();
         $out['applied_jobs'] = self::applyFinishedJobs($npcName, $dynamics, $cfg);
@@ -355,6 +360,9 @@ final class RelDynDiary
         if ($rows === []) return $out;
         $newest = intval(end($rows)['rowid']);
         $out['entries'] = count($rows);
+        // The sober self looks back at the drunk nights (roadmap drunk-state): what it does not
+        // stand behind is regretted, at the depth her own maturity allows
+        $out['sober'] = RelDynSubstances::soberReflection($npcName, $dynamics, self::depth(self::ownMaturity($dynamics), $cfg));
 
         $previous = self::lastSnapshot($dynamics);
         $moments = is_array($dynamics['_diary_moments'] ?? null) ? array_values($dynamics['_diary_moments']) : [];

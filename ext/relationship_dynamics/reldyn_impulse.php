@@ -191,6 +191,7 @@ final class RelDynImpulse
                 'independence' => "keeping room to breathe, on {NAME}'s own terms",
                 'revenge' => 'an old score to settle{SUBJECT}',
                 'self_worth_recovery' => 'the change {NAME} is trying to make',
+                'recovery' => 'staying away from {SUBSTANCE}',
                 'director' => 'what {NAME} is set on right now: {GOAL}',
             ],
             'resolution_text' => [

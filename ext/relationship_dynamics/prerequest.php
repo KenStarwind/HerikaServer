@@ -170,6 +170,8 @@ if ($reldynCfg['jealousy_enabled'] ?? true) {
 // ========== CONSUMABLE EXPIRY TICK (PR 8) ==========
 // Reverse immediate effects of expired consumables (game-time based)
 $expiredCount = RelationshipDynamics::tickConsumableExpiry($dynamics);
+// Her drink wearing off, dependence, craving and withdrawal on the game clock (drunk-state, addiction)
+RelDynSubstances::update($npcName, $dynamics, RelationshipDynamics::currentGamets());
 if ($expiredCount > 0) {
     RelationshipDynamics::log("Consumable expiry: {$expiredCount} expired for {$npcName}");
 }

@@ -88,6 +88,13 @@
  *                    'widow_ceiling' => ?core points, 'crisis' => null | ['event', 'fraction' 0..1],
  *                    'arc' => ?redemption|breaking, 'ick' => bool, 'parasite' => bool,
  *                    'gift_share' => 0..1] (RelDynProtocols::jev)
+ *   substances       null | ['drinks' => drink units in her now, 'effective_drinks' => after her tolerance,
+ *                    'stage' => ?tipsy|merry|drunk, 'held' => dimension => points held now (maturity: the
+ *                    drink, comfort: withdrawal), 'uses' => substance => ['dependence' 0..1, 'tolerance'
+ *                    0..1, 'uses' int, 'hours_since_use' ?game hours], 'addicted' => bool, 'craving' =>
+ *                    0..100, 'withdrawal' => bool, 'relief' => bool (a substitute eases it), 'governing'
+ *                    => bool (self-governance), 'maturity_ceiling' => ?maturity points, 'interventions'
+ *                    => int, 'open_nights' => drunk nights waiting for the sober diary] (RelDynSubstances)
  *   goal             null | ['text' => string, 'priority' => 0..1]
  *   intrinsic_goals  list of ['type' => bond_seeking|purpose|mastery|safety|independence|revenge|
  *                    self_worth_recovery, 'priority' => 0..1, 'progress' => 0..1, 'source' => string,
@@ -153,6 +160,10 @@ final class RelDynJev
         'absence.bond_break.comfort_delta' => 'comfort points', 'absence.bond_break.trust_delta' => 'trust points',
         'absence.rot_applied' => 'core affinity points (total, <= 0)',
         'weather_pull' => 'dimension points held by the weather gravity',
+        'substances.drinks' => 'drink units', 'substances.held' => 'dimension points held now',
+        'substances.uses.dependence' => '0..1', 'substances.uses.tolerance' => '0..1',
+        'substances.uses.hours_since_use' => 'game hours', 'substances.craving' => 'craving points 0..100',
+        'substances.maturity_ceiling' => 'maturity points',
     ];
 
     public static function state(string $npcName, array $dynamics, float $now): array
@@ -256,6 +267,7 @@ final class RelDynJev
             'governor' => RelDynGovernors::jev($dynamics),
             'rescue' => RelDynCombat::jev($dynamics),
             'creature' => RelDynCreatures::jev($dynamics),
+            'substances' => RelDynSubstances::jev($dynamics, $now),
             'protocols' => RelDynProtocols::jev($dynamics),
             'goal' => $goal,
             'intrinsic_goals' => RelDynGoals::jev($dynamics),
@@ -363,6 +375,23 @@ final class RelDynJev
         if (($s['creature'] ?? null) !== null) {
             $parts[] = 'creature=' . $s['creature']['type'] . ($s['creature']['state'] !== null ? "({$s['creature']['state']})" : '')
                 . ($s['creature']['moon'] !== null ? " moon={$s['creature']['moon']}" : '');
+        }
+        if (($s['substances'] ?? null) !== null) {
+            // compact: "substances=<stage> <drinks>(maturity <held>) <substance>(dep <d> tol <t>) craving=<c> withdrawal governing ceiling=<m>"
+            $sb = $s['substances'];
+            $bits = [];
+            if ($sb['drinks'] > 0) $bits[] = ($sb['stage'] ?? 'sober') . ' ' . $f($sb['drinks'])
+                . (isset($sb['held']['maturity']) ? '(maturity ' . $f($sb['held']['maturity']) . ')' : '');
+            foreach ($sb['uses'] as $sub => $u) {
+                if ($u['dependence'] > 0 || $u['tolerance'] > 0) $bits[] = "{$sub}(dep " . number_format($u['dependence'], 2, '.', '')
+                    . ' tol ' . number_format($u['tolerance'], 2, '.', '') . ')';
+            }
+            if ($sb['craving'] > 0) $bits[] = 'craving=' . $f($sb['craving']);
+            if ($sb['withdrawal']) $bits[] = 'withdrawal';
+            if ($sb['relief']) $bits[] = 'relief';
+            if ($sb['governing']) $bits[] = 'governing';
+            if ($sb['maturity_ceiling'] !== null) $bits[] = 'ceiling=' . $f($sb['maturity_ceiling']);
+            if ($bits !== []) $parts[] = 'substances=' . implode(' ', $bits);
         }
         $pr = $s['protocols'] ?? null;
         if (is_array($pr)) {
