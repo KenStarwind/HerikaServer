@@ -210,4 +210,24 @@ final class RelDynAffinityRotTest extends TestCase
         $this->assertEqualsWithDelta(60.0, $break['affinity_before'], 1e-6);
         $this->assertSame(0.0, RelDynAbsence::rotSinceContact($d, $t), 'a new absence starts clean');
     }
+
+    public function testALoadBringsTheAbsenceClocksBackToTheLoadedTime(): void
+    {
+        // save-load-rollback: the rot's onsets, its last positive interaction, a conflict's opening and
+        // the last break are game-calendar stamps; a load to an earlier time moves any later one to it
+        $d = $this->bond('platonic', 50.0, 30.0);
+        $this->conflict($d);
+        $this->calendar($d, 0, 12.0);
+        RelDynAbsence::markPositive($d, self::T0 + 11 * self::DAY);
+        $d[RelDynAbsence::BREAK_KEY] = ['since_gamets' => self::T0 + 2 * self::DAY, 'at_gamets' => self::T0 + 9 * self::DAY, 'mode' => 'confront', 'say' => null, 'count' => 1];
+        $T = self::T0 + 3 * self::DAY;
+        $r = RelDynTimeline::rebaselineDynamics($d, (float) $T, null);
+        $this->assertLessThanOrEqual($T, $r['_last_positive_gamets']);
+        $this->assertLessThanOrEqual($T, $r['_conflict_entered_gamets']);
+        foreach ($r[RelDynAbsence::ROT_KEY]['since'] as $c => $g) $this->assertLessThanOrEqual($T, $g, $c);
+        $this->assertLessThanOrEqual($T, $r[RelDynAbsence::ROT_KEY]['last_gamets']);
+        $this->assertLessThanOrEqual($T, $r[RelDynAbsence::ROT_KEY]['absence']['contact']);
+        $this->assertEqualsWithDelta(self::T0 + 2 * self::DAY, $r[RelDynAbsence::BREAK_KEY]['since_gamets'], 1e-6, 'earlier stamps stay');
+        $this->assertLessThanOrEqual($T, $r[RelDynAbsence::BREAK_KEY]['at_gamets']);
+    }
 }

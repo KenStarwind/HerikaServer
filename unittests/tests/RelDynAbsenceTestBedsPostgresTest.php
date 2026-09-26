@@ -552,6 +552,7 @@ final class RelDynAbsenceTestBedsPostgresTest extends TestCase
             foreach (array_keys($this->felt[$npc]['after']) as $key) $this->assertStringStartsNotWith('bond_break_', (string) $key, "{$npc}: said once");
             $jev = RelationshipDynamics::jevStateBlock($npc);
             $this->assertSame($this->dynamics($npc)[RelDynAbsence::BREAK_KEY]['mode'] ?? null, $jev['absence']['bond_break']['mode'] ?? null, "{$npc}: Jev gets the numbers");
+            if ($npc !== 'Ashe') $this->assertStringContainsString('absence=break(' . $jev['absence']['bond_break']['mode'], $jev['text'], $npc);
             if ($npc !== 'Ashe') $this->assertNull($this->dynamics($npc)[RelDynAbsence::BREAK_KEY]['say'], "{$npc}: said once");
         }
         $this->assertFeelingsNotNumbers();
