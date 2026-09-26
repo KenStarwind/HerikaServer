@@ -110,6 +110,10 @@ final class RelDynIntimacyLaneTest extends TestCase
         $this->assertSame(RelDynPostIntimacy::DRUNK, $case(['intoxicated' => true]));
         $this->assertSame(RelDynPostIntimacy::COMMITTED, $case(['romance' => true, 'core_type' => 'crush']));
         $this->assertSame(RelDynPostIntimacy::AVOIDANT, $case(['romance' => true, 'avoidance' => 0.7]));
+        // who she is in closeness before how deep the bond runs (earned security lowers the axes)
+        $this->assertSame(RelDynPostIntimacy::AVOIDANT, $case(['bonded' => true, 'romance' => true, 'trust' => 70.0, 'avoidance' => 0.7]));
+        $this->assertSame(RelDynPostIntimacy::VULNERABLE, $case(['bonded' => true, 'romance' => true, 'trust' => 70.0, 'anxiety' => 0.6, 'avoidance' => 0.55]));
+        $this->assertSame(RelDynPostIntimacy::COMMITTED, $case(['romance' => true, 'anxiety' => 0.6, 'avoidance' => 0.3]), 'anxious alone is not fear of it');
         $this->assertSame(RelDynPostIntimacy::VULNERABLE, $case(['trust' => 20.0]));
         $this->assertSame(RelDynPostIntimacy::VULNERABLE, $case(['maturity' => 25.0]));
         $this->assertSame(RelDynPostIntimacy::CASUAL, $case([]));

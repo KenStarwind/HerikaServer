@@ -23,16 +23,19 @@
  *                      bond: "Bonded, drunk, regret next day" (+10 -> -15, trust -5,
  *                      resentment_self +10) for a romance, "Stranger, drunk, one-night"
  *                      (+10 -> -20, trust 0, resentment_self +12) otherwise
+ *   vulnerable_fear    fearful attachment (both axes at fearful_at): she wants the closeness and
+ *                      fears it; the draft's "Low maturity, manipulated" row (+5 -> -10, trust
+ *                      -8, resentment_self +8). Before the bond's depth: earned security (the
+ *                      axes' drift) is what lets the same closeness deepen
+ *   avoidant_retreat   attachment avoidance at avoidant_retreat_at: closeness she needs to back
+ *                      away from (a small glow, then a little distance)
  *   bonded_deepening   core partner (bonded_core_types) and trust (as it reads toward the player)
  *                      at trust_deep: "Bonded, high trust, sober" (comfort +15 and warmth +10 for
  *                      2 game hours, trust +3)
- *   avoidant_retreat   attachment avoidance at avoidant_retreat_at: closeness she needs to back
- *                      away from (a small glow, then a little distance)
  *   committed_warmth   a romance (romance_core_types): "Crush, sober, mutual" (comfort +12,
  *                      trust +5)
- *   vulnerable_fear    outside a romance, trust below trust_low or her own maturity below
- *                      maturity_low: "Low maturity, manipulated" (+5 -> -10, trust -8,
- *                      resentment_self +8)
+ *   vulnerable_fear    also outside a romance, trust below trust_low or her own maturity below
+ *                      maturity_low: "Low maturity, manipulated"
  *   casual_distance    anything else: sober and casual, a light glow and some distance
  *
  * Each outcome row (config outcomes): 'held' dimension points applied through applyDelta and
@@ -108,7 +111,9 @@ final class RelDynPostIntimacy
             'trust_low' => 30.0,
             // her own maturity points (without temporary offsets)
             'maturity_low' => 30.0,
-            // attachment avoidance axis 0..1
+            // attachment axes 0..1: fearful (both high: wants closeness and fears it; the style
+            // regions' 0.5) and an avoidance high enough to back away from any closeness
+            'fearful_at' => ['anxiety' => 0.5, 'avoidance' => 0.5],
             'avoidant_retreat_at' => 0.6,
             // arousal points every encounter spikes (the horseshoe: the valence is the row's)
             'arousal_spike' => 30.0,
@@ -237,8 +242,12 @@ final class RelDynPostIntimacy
         $deep = !empty($ctx['bonded']) && floatval($ctx['trust']) >= floatval($cfg['trust_deep']);
         if (!empty($ctx['other_partners']) && empty($ctx['bonded'])) return self::CHEATING;
         if (!empty($ctx['intoxicated']) && !$deep) return self::DRUNK;
-        if ($deep) return self::BONDED;
+        // who she is in closeness comes before how deep the bond runs: earned security lowers the
+        // axes (attachment drift), and then the same closeness deepens
+        if (floatval($ctx['anxiety']) >= floatval($cfg['fearful_at']['anxiety'])
+            && floatval($ctx['avoidance']) >= floatval($cfg['fearful_at']['avoidance'])) return self::VULNERABLE;
         if (floatval($ctx['avoidance']) >= floatval($cfg['avoidant_retreat_at'])) return self::AVOIDANT;
+        if ($deep) return self::BONDED;
         if (!empty($ctx['romance'])) return self::COMMITTED;
         if (floatval($ctx['trust']) < floatval($cfg['trust_low']) || floatval($ctx['maturity']) < floatval($cfg['maturity_low'])) {
             return self::VULNERABLE;
