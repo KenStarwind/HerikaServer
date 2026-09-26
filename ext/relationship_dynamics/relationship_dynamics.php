@@ -962,6 +962,10 @@ class RelationshipDynamics
             'intrinsic_goals' => RelDynGoals::configDefaults(),
             // Reputation: the pre-contact offset from fame / infamy / status (reldyn_reputation.php)
             'reputation' => RelDynReputation::configDefaults(),
+            // Memory translation layer (MDD §12) and semantic anchors (Addendum 12; reldyn_memory.php)
+            'memory_translation' => RelDynMemory::configDefaults(),
+            // The player mirror: the player's behavioural profile from the NPCs' evals (reldyn_mirror.php)
+            'player_mirror' => RelDynMirror::configDefaults(),
             // Prompt gating: who knows the player (name, story, rumours by hold; reldyn_gating.php)
             'prompt_gating' => RelDynGating::configDefaults(),
             // Item modifiers (PR 8, item-modifiers): appraised dimensions, eventlog rows per request
@@ -8254,7 +8258,12 @@ class RelationshipDynamics
         }
         // Romance promotion (rulings §9): the moments these items carried, checked on core's
         // fresh type and affinity (after the commit above); saves what it consumed.
-        RelDynRomance::maybePromote($npcName, $dynamics);
+        $reldynTypeBefore = (string) ($dynamics['_core_rel_type'] ?? '');
+        $promoted = RelDynRomance::maybePromote($npcName, $dynamics);
+        // Becoming partners is an anchor of the bond (Addendum 12's proposal): RelDyn's own promotion
+        if ($promoted !== null && RelDynMemory::notePartners($npcName, $dynamics, $reldynTypeBefore, self::currentGamets())) {
+            self::saveDynamics($npcName, $dynamics);
+        }
         return $evalResults;
     }
 
@@ -9077,6 +9086,8 @@ class RelationshipDynamics
         // The bond the words were spoken in: this item's own affinity change (applied first)
         // must not decide how much its trust / comfort / respect signals land
         self::ensureEvalAffinityMirror($npcName, $dynamics);
+        // Her state when the player acted, for the player mirror's observation (reldyn_mirror.php)
+        $mirrorCtx = RelDynMirror::context($dynamics);
         $bondLevel = self::socialSensitivityBondLevel($dynamics);
         $itemGamets = floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets();   // raw game time
         // The reason anchor (dimensional memory): the summary cleaned of scores and named
@@ -9174,6 +9185,15 @@ class RelationshipDynamics
         // feed of RelDynMoodAxes; off by default): the eval classified it, code sizes it
         foreach (RelDynMoodAxes::onEvalItem($dynamics, $n, $dynamics['inferred_temperament'] ?? null) as $dim => $v) {
             $totals[$dim] = ($totals[$dim] ?? 0.0) + $v;
+        }
+        // The memory translation layer (MDD §12): the anchors this exchange made (Addendum 12)
+        // and, with commit on, its subtext note in core's memory; then the player mirror's
+        // observation of what the player did (reldyn_mirror.php). Both once per item (fingerprint).
+        RelDynMemory::onEvalItem((string) $npcName, $n, $dynamics, $itemGamets, $fingerprint, $rescued, $totals);
+        try {
+            RelDynMirror::observe((string) $npcName, $n, $mirrorCtx, $itemGamets, $fingerprint);
+        } catch (\Throwable $e) {
+            self::logError("player mirror observation for {$npcName}", $e);
         }
 
         $applied[] = $fingerprint;
@@ -18709,3 +18729,6 @@ require_once __DIR__ . '/reldyn_mood_axes.php';
 require_once __DIR__ . '/reldyn_post_intimacy.php';
 // The gift delta formula's base, love language and inversions (gift-delta-formula).
 require_once __DIR__ . '/reldyn_gifts.php';
+// Memory translation layer + semantic anchors (MDD §12, Addendum 12) and the player mirror
+require_once __DIR__ . '/reldyn_memory.php';
+require_once __DIR__ . '/reldyn_mirror.php';

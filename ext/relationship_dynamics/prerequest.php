@@ -320,6 +320,17 @@ if ($reunionPassion > 0) {
 // as romantic. relationships_locked (the editor's manual edits) is respected.
 RelDynRomance::guardCorePromotion($npcName, $dynamics, $reldynPrevCoreType);
 
+// ========== SEMANTIC ANCHORS (pipeline Addendum 12, reldyn_memory.php) ==========
+// The first meeting (a contact while she does not know the player yet) and becoming partners
+// (core's type reached the committed romantic rung since her last request): moments of the bond
+// kept for good, after core's type snapshot and the romance guard above.
+try {
+    RelDynMemory::onContact($npcName, $dynamics, $reldynPrevCoreType,
+        $GLOBALS['RELDYN_PRE_AFF'] !== null ? floatval($GLOBALS['RELDYN_PRE_AFF']) : null, RelationshipDynamics::currentGamets());
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('memory anchors on contact', $e);
+}
+
 // ========== DUTY OVERRIDE (MDD 9) ==========
 // A hostile NPC an active journal quest names: cold, professional compliance (context), her
 // negative eval signals of the exchange dampened (the eval job carries RELDYN_DUTY_FACTOR).

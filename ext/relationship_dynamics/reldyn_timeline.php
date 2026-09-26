@@ -51,6 +51,8 @@
  *         delta written back); core's type re-read; the conflict session starts over.
  *       gold ledger (core_player.reldyn_gold_ledger): FOLLOWS the game, rewound to its newest
  *         checkpoint at or before T.
+ *       player mirror (core_player.reldyn_player_mirror, reldyn_mirror.php): FOLLOWS the game,
+ *         its observations and trajectory snapshots later than T dropped.
  *       play clocks (_accumulated_time play seconds, the play heartbeat, _accumulated_play_gamets
  *         and play-clock timers), static knowledge (facet classifier tables, config) and dead
  *         letters: KEPT. The init prerequest beats the heartbeat first, so the play in the rows
@@ -478,6 +480,8 @@ final class RelDynTimeline
             $summary['inbox_rescued'] += $r['inbox_rescued'];
         }
         $summary['gold_ledger'] = RelDynPlayer::rewindGoldLedger($T);
+        // The player mirror follows the game too: observations past the loaded game time go
+        $summary['player_mirror'] = RelDynMirror::rewind($T);
         if (self::stashTableExists()) {
             self::db()->fetchOne('DELETE FROM ' . self::STASH_TABLE . ' WHERE after_init_rowid < $1', [$load['rowid']]);
         }

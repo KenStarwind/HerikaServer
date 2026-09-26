@@ -33,6 +33,24 @@ personality gives her. A gift is counted by her second love language too. A ring
 she knows stolen goods, her trust and respect fall and she holds it against you; a present someone she knows gave you
 first is recognised for what it is.
 
+## After reldyn-v0.17 (P4 memory lane, untagged) — Memories that keep what she felt, places that bring them back, and the mirror you didn't ask for
+What happens between you no longer turns into a bare log. Before an exchange becomes memory, who she was in it is written
+around it in words: how the moment landed on her (stung, cut deeply, warmed, deeply moved, each by her own measure),
+what she carries (a grudge, an open fight, jealousy, an icy distance, a pull), how she attaches, her mood and her manner.
+One hurtful word said to four women is four different memories. It sits in CHIM's own memory right after the exchange,
+so the summary it becomes keeps the subtext (opt-in: it writes into core's memory table).
+Some moments are kept for good, one of each: the first meeting, the first gift, the first fight side by side, the first
+time you pulled her up after a fall, the first closeness, the day you became partners, each with the place it happened.
+Coming back to that place brings it back to her for a few turns (an ache instead, while the bond is strained) and stirs
+a small moment of passion her own size, once a day at most.
+And the player now has a profile of their own, built only from what every NPC's eval saw them do: maturity, trust,
+warmth, respect, how comfortable people are around them, and self-confidence, each in the design's words; where they look
+for validation; their charisma (rock, catalyst, charmer); their attachment pattern, read every twenty-five exchanges;
+and the love language they show by what they do. Mirror mode reads play alone; Character mode holds an authored role
+while play moves it slowly. A trust record travels: strangers meet a reliable player with a little more trust, a
+liar with less. Whether NPCs sense the rest is opt-in. It follows the game back on a load, and a read API gives the
+spider graph its numbers.
+
 ## After reldyn-v0.17 (batch-Q review, untagged) — Hurt that holds her back, care paid once, and a moment that is hers
 A bond breaks while you are away only once the absence feels intentional to her: past what she would excuse (who she is,
 and how fulfilled the bond was when you left), and as long again. A few days break the fearful and the anxious; the
