@@ -117,7 +117,7 @@ final class RelDynFacetEffectsTest extends TestCase
         for ($i = 0; $i < 30; $i++, $t += 5 * $gameSecond) {
             self::at($t);
             RelDynFacets::placeTurn('Aela', $d, 'The Arcanaeum', RelDynFacetAppraisalTest::LIBRARY, $prefs, $t);
-            RelationshipDynamics::applyWeatherModifiers('Aela', $d, 'Independent', $t);
+            RelationshipDynamics::applyWeatherGravity('Aela', $d, $t);
         }
         $this->assertSame('clear', RelDynFacets::updateWeather('Aela', $d, $prefs, $t));
         $this->assertGreaterThan(-0.02, $d['_weather_state']['pressure'], '2.4 game minutes of library');
@@ -286,32 +286,42 @@ final class RelDynFacetEffectsTest extends TestCase
         $this->assertGreaterThan(5, count(array_unique(array_map(fn($r) => round($r, 4), $rolls))), 'the roll changes day to day');
     }
 
-    /** Emotional gravity (MDD 4.1: a constant pull) works on the game clock, not per request. */
-    public function testWeatherModifiersComeFromConfigAndPullPerGameHour(): void
+    /**
+     * Emotional gravity (MDD 4.1: the weather sets a target node, the mood feels a constant pull;
+     * roadmap weather-gravity-pull) works on the game clock, not per request, and pulls instead
+     * of pushing: the held offset closes pull_per_game_hour of its gap to the node each game hour
+     * and stays there (no accumulation), comfort is not the weather's.
+     */
+    public function testWeatherGravityComesFromConfigAndPullsPerGameHour(): void
     {
-        $this->config(['weather_modifiers' => ['sunny' => ['comfort' => 10]], 'weather_modifier_per_game_hour' => 1.0]);
+        $this->config(['weather_gravity' => ['targets' => ['sunny' => ['valence' => 10.0]],
+            'pull_per_game_hour' => 0.5, 'max_offset' => 20.0]]);
+        $GLOBALS['db']->configValue += ['config_schema' => RelationshipDynamics::CONFIG_SCHEMA, 'internal_weather_enabled' => true];
+        RelationshipDynamics::clearConfigCache();
         $d = self::huntress();
         $d['_internal_weather'] = 'sunny';
         $c0 = self::dim($d, 'comfort');
         for ($i = 0; $i < 10; $i++) {
-            RelationshipDynamics::applyWeatherModifiers('Aela', $d, 'Independent', self::T0);
+            RelationshipDynamics::applyWeatherGravity('Aela', $d, self::T0);
         }
-        $this->assertSame($c0, self::dim($d, 'comfort'), 'requests without game time pull nothing');
-        RelationshipDynamics::applyWeatherModifiers('Aela', $d, 'Independent', self::T0 + self::HOUR);
-        $oneHour = self::dim($d, 'comfort') - $c0;
-        $this->assertGreaterThan(0.0, $oneHour);
-        $e = self::huntress();
-        $e['_internal_weather'] = 'sunny';
-        RelationshipDynamics::applyWeatherModifiers('Aela', $e, 'Independent', self::T0);
-        RelationshipDynamics::applyWeatherModifiers('Aela', $e, 'Independent', self::T0 + 50 * self::HOUR);
-        $maxGap = RelDynFacets::appraisalDefaults()['exposure_max_gap_game_hours'];
-        $this->assertLessThanOrEqual($maxGap * $oneHour + 1e-6, self::dim($e, 'comfort') - $c0, 'a long gap counts only up to the cap');
+        $this->assertSame(0.0, self::dim($d, 'valence'), 'requests without game time pull nothing');
+        RelationshipDynamics::applyWeatherGravity('Aela', $d, self::T0 + self::HOUR);
+        $this->assertEqualsWithDelta(5.0, self::dim($d, 'valence'), 1e-6, 'half the gap in one game hour');
+        RelationshipDynamics::applyWeatherGravity('Aela', $d, self::T0 + 2 * self::HOUR);
+        $this->assertEqualsWithDelta(7.5, self::dim($d, 'valence'), 1e-6);
+        // Self-limiting: fifty game hours of sun settle at the node, never past it
+        RelationshipDynamics::applyWeatherGravity('Aela', $d, self::T0 + 52 * self::HOUR);
+        $this->assertEqualsWithDelta(10.0, self::dim($d, 'valence'), 1e-6);
+        $this->assertEqualsWithDelta(10.0, RelationshipDynamics::heldTemporaryOffset($d, 'valence'), 1e-6, 'held, not who she is');
+        $this->assertSame($c0, self::dim($d, 'comfort'), 'comfort is physical: no weather names it');
 
-        $d2 = self::huntress();
-        $d2['_internal_weather'] = 'stormy';   // the stored table has no stormy row
-        RelationshipDynamics::applyWeatherModifiers('Aela', $d2, 'Independent', self::T0);
-        RelationshipDynamics::applyWeatherModifiers('Aela', $d2, 'Independent', self::T0 + self::HOUR);
-        $this->assertSame(self::dim(self::huntress(), 'comfort'), self::dim($d2, 'comfort'));
+        // The sky clears: the held pull relaxes back, and exactly what it held is taken back
+        $d['_internal_weather'] = 'stormy';   // the stored table has no stormy row: it pulls toward none
+        RelationshipDynamics::applyWeatherGravity('Aela', $d, self::T0 + 53 * self::HOUR);
+        $this->assertEqualsWithDelta(5.0, self::dim($d, 'valence'), 1e-6);
+        RelationshipDynamics::applyWeatherGravity('Aela', $d, self::T0 + 80 * self::HOUR);
+        $this->assertEqualsWithDelta(0.0, self::dim($d, 'valence'), 1e-6);
+        $this->assertSame([], $d['_weather_gravity']['offsets']);
     }
 
     // ---------------------------------------------------------------- shared-activity passion

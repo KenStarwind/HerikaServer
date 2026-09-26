@@ -33,6 +33,8 @@
  *   relationship_type string RelDyn type (RelationshipDynamics::getRelationshipType)
  *   core_type        ?string core relationships.Player.type
  *   weather          string sunny|clear|overcast|stormy
+ *   weather_pull     array  dimension => points the weather's gravity holds on it now (MDD 4.1 target
+ *                           node, roadmap weather-gravity-pull; passion / warmth read at display time)
  *   open_conflict    bool   conflict_repairs int (positive interactions since it opened)
  *   boundary         string none|pending|probation|failed (mature boundary, rulings §9)
  *   concern          ['level' => concern points 0..100 (protective worry, traits design §1.4),
@@ -127,6 +129,7 @@ final class RelDynJev
         'reputation.fame' => '0..1', 'reputation.infamy' => '0..1', 'reputation.weight' => '0..1',
         'reputation.offsets' => 'dimension points held now', 'duty.factor' => 'multiplier on negative eval signals',
         'autonomy.score' => '0..100',
+        'weather_pull' => 'dimension points held by the weather gravity',
     ];
 
     public static function state(string $npcName, array $dynamics, float $now): array
@@ -215,6 +218,7 @@ final class RelDynJev
             'relationship_type' => (string) RelationshipDynamics::getRelationshipType($npcName, $dynamics),
             'core_type' => isset($dynamics['_core_rel_type']) ? (string) $dynamics['_core_rel_type'] : null,
             'weather' => (string) ($dynamics['_internal_weather'] ?? 'clear'),
+            'weather_pull' => array_map(fn($v) => round(floatval($v), 2), (array) ($dynamics['_weather_gravity']['offsets'] ?? [])),
             'open_conflict' => !empty($dynamics['in_conflict']),
             'conflict_repairs' => intval($dynamics['conflict_positive_count'] ?? 0),
             'boundary' => is_string($boundary) ? $boundary : 'none',

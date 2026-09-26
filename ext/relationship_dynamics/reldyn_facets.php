@@ -974,16 +974,24 @@ class RelDynFacets
             'weather_roll_amplitude'                => 0.2,  // the daily roll: +- this, fixed per NPC and game day
             // score = pressure + roll - deprivation x weight; weather = first threshold the score reaches
             'weather_thresholds' => ['sunny' => 0.3, 'clear' => -0.1, 'overcast' => -0.45],   // below: stormy
-            // Emotional gravity (MDD 4.1, a constant pull): raw dimension points x
-            // weather_modifier_per_game_hour, per game hour since the last pull (at most
-            // exposure_max_gap_game_hours of them), never per request
-            'weather_modifiers' => [
-                'sunny'    => ['comfort' => 3, 'warmth' => 2, 'valence' => 5],
-                'clear'    => [],
-                'overcast' => ['comfort' => -2, 'passion' => -1, 'valence' => -5],
-                'stormy'   => ['comfort' => -5, 'warmth' => -3, 'valence' => -10, 'arousal' => 5],
+            // Emotional gravity (MDD 4.1: the weather sets a target node, the mood feels a constant
+            // pull; roadmap weather-gravity-pull, RelationshipDynamics::applyWeatherGravity):
+            //   targets             weather => dimension => offset (points) from where she rests
+            //                       (chunk9 plan's WEATHER_BASELINE_TARGETS; comfort is physical, not
+            //                       the weather's); a dimension the weather names none for relaxes to 0
+            //   pull_per_game_hour  share (0..1) of the gap between the held offset and the target
+            //                       closed per game-calendar hour (never per request)
+            //   max_offset          points: no offset past it (BASELINE_DRIFT_MAX)
+            'weather_gravity' => [
+                'targets' => [
+                    'sunny'    => ['warmth' => 5.0, 'valence' => 10.0],
+                    'clear'    => [],
+                    'overcast' => ['warmth' => -3.0, 'valence' => -8.0, 'passion' => -3.0],
+                    'stormy'   => ['warmth' => -8.0, 'valence' => -15.0, 'arousal' => 10.0],
+                ],
+                'pull_per_game_hour' => 0.1,
+                'max_offset' => 20.0,
             ],
-            'weather_modifier_per_game_hour' => 0.1,
             // Activities RelDyn itself sees (combat events) when thingFacets('activity', ...) knows nothing
             'event_facets' => [
                 'combat' => ['combat' => 1.0, 'danger' => 0.7, 'adventure' => 0.3],

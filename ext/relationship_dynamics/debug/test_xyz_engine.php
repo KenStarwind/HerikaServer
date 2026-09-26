@@ -4656,13 +4656,13 @@ try {
     try { restoreDIConfig($aj10Saved ?? null); } catch (Throwable $e2) {}
 }
 
-// ── AJ11: weather modifier table (config facet_appraisal.weather_modifiers) has all 4 states ──
+// ── AJ11: weather gravity targets (config facet_appraisal.weather_gravity.targets) have all 4 states ──
 try {
-    $aj11Keys = array_keys(RelDynFacets::getAppraisalConfig()['weather_modifiers']);
+    $aj11Keys = array_keys(RelDynFacets::getAppraisalConfig()['weather_gravity']['targets']);
     foreach (['sunny', 'clear', 'overcast', 'stormy'] as $aj11State) {
         check("AJ11: {$aj11State} exists", in_array($aj11State, $aj11Keys), true);
     }
-    echo "      weather_modifiers keys: " . implode(', ', $aj11Keys) . "
+    echo "      weather_gravity targets: " . implode(', ', $aj11Keys) . "
 ";
 } catch (Throwable $e) {
     skip('AJ11', 'Exception: ' . $e->getMessage());
@@ -4671,20 +4671,19 @@ try {
 // AJ12 (FACTION_INTEREST_FLOORS) retired with the April satisfaction engine: faction membership
 // now shapes the signed facet preferences (RelDynFacets::derivePreferences, unit tests).
 
-// ── AJ13: Weather modifiers apply via applyWeatherModifiers ──
+// ── AJ13: Stormy weather pulls mood toward its node (applyWeatherGravity), not comfort ──
 try {
     $aj13Dyn = RelationshipDynamics::defaultDynamics();
     $aj13Dyn['dimensions']['comfort']['x'] = 50;
-    $aj13Dyn['dimensions']['comfort']['baseline'] = 50;
-    $aj13Dyn['_internal_weather'] = 'stormy'; // stormy = comfort -5
-    $aj13Before = $aj13Dyn['dimensions']['comfort']['x'];
-
-    RelationshipDynamics::applyWeatherModifiers('TestNPC_AJ13', $aj13Dyn, 'Stoic');
-
-    $aj13After = $aj13Dyn['dimensions']['comfort']['x'];
-    // Stormy comfort = -5 * 0.1 = -0.5 delta applied through physics
-    check('AJ13: Stormy weather decreased comfort', $aj13After < $aj13Before, true);
-    echo "      comfort: " . round($aj13Before, 2) . " -> " . round($aj13After, 2) . " (stormy)\n";
+    $aj13Dyn['dimensions']['valence']['x'] = 0;
+    $aj13Dyn['_internal_weather'] = 'stormy'; // stormy node: valence -15
+    $aj13T = 100 * RelationshipDynamics::GAMETS_PER_DAY;
+    RelationshipDynamics::applyWeatherGravity('TestNPC_AJ13', $aj13Dyn, $aj13T);                     // starts the clock
+    RelationshipDynamics::applyWeatherGravity('TestNPC_AJ13', $aj13Dyn, $aj13T + RelationshipDynamics::GAMETS_PER_DAY / 24);
+    check('AJ13: Stormy weather pulled the mood down', $aj13Dyn['dimensions']['valence']['x'] < 0, true);
+    check('AJ13: comfort is not the weather's', floatval($aj13Dyn['dimensions']['comfort']['x']), 50.0, 0.001);
+    echo "      valence: 0 -> " . round($aj13Dyn['dimensions']['valence']['x'], 2) . " (stormy, one game hour)
+";
 } catch (Throwable $e) {
     skip('AJ13', 'Exception: ' . $e->getMessage());
 }

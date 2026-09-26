@@ -15201,7 +15201,8 @@ class RelationshipDynamics
      * exactly when its state ends: the creature row (RelDynCreatures, _creature.applied), the
      * physical states (_applied_physical_deltas per state), the place and hour
      * (_env_applied_effects), on comfort the guilt bleed (RelDynResentment, guilt.applied), and
-     * acute grief on comfort / warmth (RelDynProtocols, _grief_held). Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
+     * acute grief on comfort / warmth (RelDynProtocols, _grief_held), and the weather's pull on a
+     * mood dimension (applyWeatherGravity, _weather_gravity.applied). Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
      * per-bond display read the value without them.
      */
     public static function heldTemporaryOffset(array $dynamics, string $dimId): float
@@ -15224,6 +15225,8 @@ class RelationshipDynamics
         }
         // Acute grief toward every other bond (RelDynProtocols::tickGrief)
         $held += floatval($dynamics[RelDynProtocols::GRIEF_HELD_KEY][$dimId] ?? 0.0);
+        // The weather's pull on a mood dimension (applyWeatherGravity)
+        $held += floatval($dynamics['_weather_gravity']['applied'][$dimId] ?? 0.0);
         return $held;
     }
 
@@ -15365,37 +15368,75 @@ class RelationshipDynamics
         return RelDynFacets::updateWeather($npcName, $dynamics, $prefs, $now);
     }
 
+    /** Dimensions the weather's pull reads at display time (never written into x). */
+    const WEATHER_GRAVITY_READ_TIME = ['passion', 'warmth'];
+
     /**
-     * Emotional gravity (MDD 4.1, a constant pull): the weather pulls dimensions by config
-     * facet_appraisal.weather_modifiers (raw points) x weather_modifier_per_game_hour for every
-     * game hour since the last pull (_weather_gravity_gamets; at most
-     * exposure_max_gap_game_hours of them). Requests without game time passing pull nothing,
-     * the first request only starts the clock.
+     * Emotional gravity (MDD 4.1: "Weather sets a Target Node; current mood experiences constant
+     * pull"; roadmap weather-gravity-pull, replacing the push of weather_modifiers): each weather
+     * sets a target offset per dimension (config facet_appraisal.weather_gravity.targets, points
+     * from where she rests; 'clear' none). The offset held on each dimension (_weather_gravity)
+     * closes weather_gravity.pull_per_game_hour of its gap to the target every game hour since
+     * the last pull (_weather_gravity_gamets, the game calendar: the mood goes on while the
+     * player is away), within +- max_offset: self-limiting (a stormy day settles at its node and
+     * stays there, no accumulation), and when the weather turns the held offset relaxes toward
+     * the new target (0 for a dimension it names none for). Mood dimensions (valence, arousal)
+     * carry the offset in x as a held temporary offset (heldTemporaryOffset: the physics and the
+     * drift read her without it, and it is taken back exactly); passion and warmth read it at
+     * display time (the effective passion, derived warmth). Comfort is physical, not the
+     * weather's (chunk9). Requests without game time passing pull nothing; the first request
+     * only starts the clock. Internal weather off: the target is 'clear' (held offsets relax).
+     * Returns dimension => offset held now (points).
      */
-    public static function applyWeatherModifiers(string $npcName, array &$dynamics, string $temperament, ?float $nowGamets = null): void
+    public static function applyWeatherGravity(string $npcName, array &$dynamics, ?float $nowGamets = null): array
     {
         $now = $nowGamets ?? self::currentGamets();
-        if ($now <= 0) return;   // game clock unknown: no time can be credited
-        $cfg = RelDynFacets::getAppraisalConfig();
+        $held = is_array($dynamics['_weather_gravity']['offsets'] ?? null) ? $dynamics['_weather_gravity']['offsets'] : [];
+        if ($now <= 0) return $held;   // game clock unknown: no time can be credited
         $last = floatval($dynamics['_weather_gravity_gamets'] ?? 0);
-        if ($last > 0 && $now <= $last) return;
+        if ($last > 0 && $now <= $last) return $held;
         $dynamics['_weather_gravity_gamets'] = $now;
-        if ($last <= 0) return;
-        $hours = min(($now - $last) / (self::GAMETS_PER_DAY / 24.0), floatval($cfg['exposure_max_gap_game_hours']));
+        if ($last <= 0) return $held;
+        $hours = ($now - $last) / (self::GAMETS_PER_DAY / 24.0);
 
-        $weather = $dynamics['_internal_weather'] ?? 'clear';
-        $modifiers = (array) (((array) ($cfg['weather_modifiers'] ?? []))[$weather] ?? []);
-        $scale = floatval($cfg['weather_modifier_per_game_hour']) * $hours;
+        $g = (array) (RelDynFacets::getAppraisalConfig()['weather_gravity'] ?? []);
+        $weather = self::configValue('internal_weather_enabled') ? (string) ($dynamics['_internal_weather'] ?? 'clear') : 'clear';
+        $targets = (array) (((array) ($g['targets'] ?? []))[$weather] ?? []);
+        $max = max(0.0, floatval($g['max_offset'] ?? 20.0));
+        $keep = pow(1.0 - max(0.0, min(1.0, floatval($g['pull_per_game_hour'] ?? 0.1))), $hours);
+        $applied = is_array($dynamics['_weather_gravity']['applied'] ?? null) ? $dynamics['_weather_gravity']['applied'] : [];
 
-        foreach ($modifiers as $dimId => $delta) {
-            self::applyDelta($dimId, $dynamics, floatval($delta) * $scale, $temperament);
+        $offsets = [];
+        foreach (array_unique(array_merge(array_keys($held), array_keys($targets))) as $dim) {
+            $dim = (string) $dim;
+            if (!self::getDimensionDefinition($dim)) continue;
+            $target = max(-$max, min($max, floatval($targets[$dim] ?? 0.0)));
+            $from = floatval($held[$dim] ?? 0.0);
+            $to = $target + ($from - $target) * $keep;
+            if (abs($to - $target) < 0.005) $to = $target;
+            $to = round($to, 4);
+            if (!in_array($dim, self::WEATHER_GRAVITY_READ_TIME, true)) {
+                // held in x: move x by the change of what is held, record what x actually took
+                $def = self::getDimensionDefinition($dim);
+                $x = floatval($dynamics['dimensions'][$dim]['x'] ?? $def['default_baseline']);
+                $newX = max(floatval($def['range_min']), min(floatval($def['range_max']), $x + ($to - floatval($applied[$dim] ?? 0.0))));
+                $dynamics['dimensions'][$dim]['x'] = round($newX, 4);
+                $applied[$dim] = round(floatval($applied[$dim] ?? 0.0) + ($newX - $x), 4);
+                if (abs($applied[$dim]) < 0.0001) unset($applied[$dim]);
+            }
+            if (abs($to) >= 0.0001) $offsets[$dim] = $to;
         }
+        $dynamics['_weather_gravity'] = ['weather' => $weather, 'offsets' => $offsets, 'applied' => $applied];
+        if ($offsets !== $held) {
+            self::log("[WEATHER] {$npcName}: {$weather} pulls " . json_encode($offsets) . sprintf(' (%.2f game hours)', $hours));
+        }
+        return $offsets;
     }
 
     /**
-     * The weather's pull held on $dimId now (points; weather-gravity-pull, _weather_gravity):
-     * written into x for the stored mood dimensions, read at display time for passion (the
-     * effective passion) and warmth (derived). 0 when none.
+     * The weather's pull on $dimId now (points; applyWeatherGravity): what passion (the effective
+     * passion) and warmth (derived) read at display time; for a mood dimension, what is held in
+     * its x. 0 when none.
      */
     public static function weatherGravityOffset(array $dynamics, string $dimId): float
     {

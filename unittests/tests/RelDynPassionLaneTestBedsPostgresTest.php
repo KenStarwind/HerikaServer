@@ -528,6 +528,70 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures);
     }
 
+    // ------------------------------------------------------------------ weather gravity
+
+    /**
+     * MDD 4.1 emotional gravity: the weather sets a target node and the mood feels a constant
+     * pull toward it, on the game calendar. Aela's day is sunny (her weather pressure held high),
+     * Muiri's stormy (held low). Over eighteen game hours of evenings with the player each mood
+     * closes on its own node (Aela's valence up toward +10, Muiri's down toward -15 with her
+     * nerves up toward +10) and stays there: the pull is held, never accumulated (the old push
+     * went on adding every game hour). What is held is not who she is: the drift sample reads her
+     * without it. Overcast would weigh on passion; neither of these names it, so their floors
+     * and effective passion agree. The LLM hears the weather as a feeling.
+     */
+    public function testEachMoodClosesOnItsOwnWeathersNode(): void
+    {
+        $t = $this->hello();
+        $pin = [self::AELA => 1.0, 'Muiri' => -1.0];
+        $node = [self::AELA => ['valence' => 10.0], 'Muiri' => ['valence' => -15.0, 'arousal' => 10.0]];
+        $trace = [];
+        for ($k = 0; $k < 12; $k++) {
+            $at = $t + (int) round(1.5 * self::HOUR);
+            foreach ($pin as $npc => $p) {
+                $this->editDynamics($npc, function (array &$d) use ($p, $at): void {
+                    $d['_weather_state'] = array_merge((array) ($d['_weather_state'] ?? []), ['pressure' => $p, 'gamets' => $at]);
+                });
+            }
+            $t = $this->round('How are you holding up?', $at, "day{$k}");
+            foreach ($pin as $npc => $_) {
+                $d = $this->dynamics($npc);
+                $trace[$npc][] = [$d['_internal_weather'] ?? null, $d['_weather_gravity']['offsets'] ?? null];
+            }
+        }
+        $why = json_encode($trace);
+        foreach ($pin as $npc => $_) {
+            $d = $this->dynamics($npc);
+            $this->assertSame($npc === self::AELA ? 'sunny' : 'stormy', $d['_internal_weather'], "{$npc} {$why}");
+            foreach ($node[$npc] as $dim => $target) {
+                $held = RelationshipDynamics::weatherGravityOffset($d, $dim);
+                $this->assertGreaterThan(0.75 * abs($target), abs($held), "{$npc} {$dim}: closing on the node {$why}");
+                $this->assertLessThanOrEqual(abs($target) + 1e-6, abs($held), "{$npc} {$dim}: never past it {$why}");
+                $this->assertSame($target > 0, $held > 0, "{$npc} {$dim} {$why}");
+                // held in x, and out of what she is
+                $this->assertEqualsWithDelta($held, $d['_weather_gravity']['applied'][$dim] ?? 0.0, 0.5, "{$npc} {$dim}");
+                $this->assertEqualsWithDelta(floatval($d['dimensions'][$dim]['x']) - RelationshipDynamics::heldTemporaryOffset($d, $dim),
+                    RelationshipDynamics::driftSampleValue($d, $dim), 1e-6, "{$npc} {$dim}");
+            }
+            $this->assertEqualsWithDelta(RelationshipDynamics::getPassion($d) + RelDynPassion::spike($d), RelationshipDynamics::getEffectivePassion($d), 1e-6,
+                "{$npc}: neither weather weighs on passion");
+            // monotone approach: every held offset along the way is no further from the node than the one before
+            $series = array_map(fn($r) => floatval(($r[1] ?? [])['valence'] ?? 0.0), $trace[$npc]);
+            for ($i = 1; $i < count($series); $i++) {
+                $this->assertLessThanOrEqual(abs($series[$i - 1] - $node[$npc]['valence']) + 1e-6, abs($series[$i] - $node[$npc]['valence']), "{$npc} {$why}");
+            }
+        }
+        // The LLM hears the weather as a feeling
+        $sun = (string) ($this->felt[self::AELA]['day11']['weather'] ?? '');
+        $storm = (string) ($this->felt['Muiri']['day11']['weather'] ?? '');
+        $this->assertNotSame('', $sun, $why);
+        $this->assertNotSame('', $storm, $why);
+        $this->assertNotSame(strtolower($sun), strtolower($storm));
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls, 'no trait read');
+        $this->assertSame([], $this->db->failures);
+    }
+
     // ------------------------------------------------------------------ derived warmth
 
     /**
