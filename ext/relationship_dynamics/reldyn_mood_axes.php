@@ -30,7 +30,8 @@
  * Arousal / valence: event-driven (combat, bleedout, rescue, places, creatures, drinks, the
  * scene the plugin reports), never scored by the eval; the eval READS the band (evalLine).
  *   settle  "arousal decays fast, it's momentary" (Z 8), valence "fast decay toward neutral"
- *           (Z 12): what events left on x (x - baseline - the states held on it) halves every
+ *           (Z 12): what events left on x (x - baseline - the states held on it; for arousal
+ *           only what lifted it above rest, only_above) halves every
  *           half_life_play_minutes of play, on the play clock or the game calendar, whichever
  *           moved more (the passion spike's clock: "a short half-life, like arousal"). Held
  *           states (a creature row, the place, a drink, the weather's pull, an afterglow) stay
@@ -76,6 +77,10 @@ final class RelDynMoodAxes
                 // play minutes in which what events left on x halves (arousal Z 8 < valence Z 12:
                 // the valence half-life is the arousal one x 12 / 8)
                 'half_life_play_minutes' => ['arousal' => 5.0, 'valence' => 7.5],
+                // dimensions that settle only what lifted them above rest: arousal is activation
+                // that fades; below its resting 10 there is no event to fade (an NPC whose arousal
+                // was never stirred rests where she started)
+                'only_above' => ['arousal'],
             ],
             'social' => [
                 'enabled' => false,
@@ -245,6 +250,7 @@ final class RelDynMoodAxes
             ? floatval($dynamics['dimensions'][$dim]['baseline']) : floatval($def['default_baseline']);
         $held = RelationshipDynamics::heldTemporaryOffset($dynamics, $dim);
         $residue = floatval($x) - $base - $held;
+        if (in_array($dim, (array) ($cfg['only_above'] ?? []), true)) $residue = max(0.0, $residue);
         if (abs($residue) < 0.01) return 0.0;
         $left = $residue * 0.5 ** ($dt / $half);
         if (abs($left) < 0.01) $left = 0.0;

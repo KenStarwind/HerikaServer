@@ -299,6 +299,12 @@ final class RelDynIntimacyLaneTest extends TestCase
         RelDynMoodAxes::settle($d, self::T0 + 100 * $half);
         $this->assertEqualsWithDelta(25.0, $d['dimensions']['arousal']['x'], 1e-3);
         $this->assertEqualsWithDelta(0.0, $d['dimensions']['valence']['x'], 1e-3);
+        // arousal never stirred rests where it started: below its resting 10 there is no event to fade
+        $still = $this->npc('Stoic', 'friend');
+        $still['dimensions']['arousal']['x'] = 0.0;
+        RelDynMoodAxes::settle($still, self::T0);
+        RelDynMoodAxes::settle($still, self::T0 + 10 * $half);
+        $this->assertSame(0.0, floatval($still['dimensions']['arousal']['x']));
         // a calendar behind the stamp (a load) moves nothing and restarts the clock
         $d['dimensions']['arousal']['x'] = 70.0;
         $this->assertSame([], RelDynMoodAxes::settle($d, self::T0));

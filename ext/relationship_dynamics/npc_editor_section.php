@@ -955,6 +955,14 @@ if ($rdUiPos !== false) {
                     <?php if ($rdMFQuadrantLabel): ?>
                         <span style="color:#b8808a; font-weight:400;"> -- Quadrant: <?= htmlspecialchars($rdMFQuadrantLabel) ?></span>
                     <?php endif; ?>
+                    <?php
+                    // Read-only: the envelope as it reads toward the player now (RelDynMoodAxes: the
+                    // anchor above moved by respect / self-confidence and trust / comfort)
+                    $rdMfNow = class_exists('RelDynMoodAxes') ? RelDynMoodAxes::derivedCoords($rdDynamics) : null;
+                    if (is_array($rdMfNow) && $rdMfNow['coord_m'] !== null && $rdMfNow['coord_f'] !== null):
+                        $rdMfNowBand = RelationshipDynamics::getMFQuadrantBand($rdMfNow['coord_m'], $rdMfNow['coord_f']); ?>
+                        <span style="color:#b8808a; font-weight:400;"> -- now M <?= round($rdMfNow['coord_m']) ?> / F <?= round($rdMfNow['coord_f']) ?> (<?= htmlspecialchars($rdMfNowBand['label']) ?>)</span>
+                    <?php endif; ?>
                 </label>
                 <button type="button" onclick="reldynResetCoordF()"
                     title="Reset feminine coordinate X and baseline to the trait default"
@@ -1138,6 +1146,22 @@ if ($rdUiPos !== false) {
             </span>
         </div>
         <?php endif; ?>
+        <?php endif; ?>
+
+        <!-- ========== AFTER AN ENCOUNTER (post-intimacy, runtime, read-only) ========== -->
+        <?php $rdPiNow = RelationshipDynamics::currentGamets();
+        $rdPostIntimacy = class_exists('RelDynPostIntimacy') ? RelDynPostIntimacy::jev($rdDynamics, $rdPiNow) : null; ?>
+        <?php if (is_array($rdPostIntimacy)): ?>
+        <div style="margin-top:8px; padding:8px 12px; background:#1a1520; border:1px solid #3a2a4a; border-radius:4px;">
+            <span style="color:#9b6dd7; font-weight:700; font-size:0.8em;">After intimacy:</span>
+            <span style="color:#c8a0f0; font-weight:600; font-size:0.8em; margin-left:6px;"><?= htmlspecialchars(str_replace('_', ' ', $rdPostIntimacy['outcome'])) ?></span>
+            <?php if ($rdPiNow > 0): ?>
+            <span style="color:#7a6a8a; font-style:italic; font-size:0.75em; margin-left:8px;">
+                <?php if ($rdPostIntimacy['held_ends_in_game_hours'] !== null): ?>afterglow ends in <?= htmlspecialchars((string) max(0, $rdPostIntimacy['held_ends_in_game_hours'])) ?> game h; <?php endif; ?>
+                <?php if ($rdPostIntimacy['correction_in_game_hours'] !== null): ?>the sober self in <?= htmlspecialchars((string) max(0, $rdPostIntimacy['correction_in_game_hours'])) ?> game h<?php elseif ($rdPostIntimacy['correction'] !== []): ?>the sober self has spoken<?php endif; ?>
+            </span>
+            <?php endif; ?>
+        </div>
         <?php endif; ?>
 
         <!-- ========== RESENTMENT DIMENSION (PR 7) ========== -->

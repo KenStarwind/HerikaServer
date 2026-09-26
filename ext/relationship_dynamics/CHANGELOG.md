@@ -3,6 +3,22 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## After reldyn-v0.17 (lane p4r-intimacy, untagged) — What follows a night, how she stands toward you, a pulse that settles, and a gift that is no gift
+A scene the game reports is no longer only a need met. What follows it is the context, not the act: a partner who
+trusts you deepens (at ease, unguarded, and a little more trust that stays); a newer romance warms; a woman who wants
+closeness and fears it goes quiet and watchful, and later keeps you at arm's length; one who backs away from closeness
+does, gently; a casual night stays light. The glow lasts a couple of game hours and is then gone exactly. A drunken
+night feels the same in the moment, and the sober morning judges it: she avoids your eyes, her ease with you sinks
+below where it was, and the shame is as heavy as what she holds herself to; a shallow mind never looks back. If she
+has a partner who is not you, it is guilt. Every scene makes her pulse race; the context decides whether that reads as
+warmth or unease, and the evaluator is shown it, never asked to score it. A racing pulse and a mood now settle with
+time instead of staying where the last event left them; what a place, a drink or the night holds on her stays until it
+ends. How she carries herself toward you (steady and protective, cold, yielding, bitter) now moves with how much she
+respects you and believes in herself, and how much she trusts you and is at ease with you, around the shape her
+personality gives her. A gift is counted by her second love language too. A ring the game marks as stolen is no gift:
+she knows stolen goods, her trust and respect fall and she holds it against you; a present someone she knows gave you
+first is recognised for what it is.
+
 ## After reldyn-v0.17 (batch-Q review, untagged) — Hurt that holds her back, care paid once, and a moment that is hers
 A bond breaks while you are away only once the absence feels intentional to her: past what she would excuse (who she is,
 and how fulfilled the bond was when you left), and as long again. A few days break the fearful and the anxious; the

@@ -569,7 +569,7 @@ final class RelDynIntimacyLaneTestBedsPostgresTest extends TestCase
         $p0 = count($this->prompts);
         $t = $this->alone('Stay. Just like this.', $night + 1200 * count($beds) + 600, 'pillow');
 
-        $out = $info = [];
+        $out = $info = $nervous = [];
         foreach ($beds as $npc) {
             $d = $this->dynamics($npc);
             $s = $d[RelDynPostIntimacy::KEY] ?? null;
@@ -597,11 +597,20 @@ final class RelDynIntimacyLaneTestBedsPostgresTest extends TestCase
             $this->assertSame($row['valence'] > 0, $info[$npc]['mood']['valence'] > 0, "{$npc}: the valence is the context's {$why}");
             // Jev gets the outcome
             $this->assertStringContainsString("post_intimacy={$out[$npc]}", $this->jev($npc, $t)['text']);
-            // the eval sees the state as input
+            // the eval sees the state as input (unless she is settled: a stoic pulse barely stirs)
             $prompts = $this->promptsOf($npc, $p0);
             $this->assertNotEmpty($prompts, $npc);
-            $this->assertStringContainsString('Nervous state: ', end($prompts), "{$npc}: the band is the eval's input {$why}");
+            $band = RelationshipDynamics::getArousalValenceBand($info[$npc]['arousal'], $info[$npc]['valence']);
+            $nervous[$npc] = $band['label'] === 'Settled' ? null : $band['label'];
+            if ($nervous[$npc] !== null) {
+                $this->assertStringContainsString("Nervous state: {$band['label']} ({$band['keywords']})", end($prompts), "{$npc}: the band is the eval's input {$why}");
+            } else {
+                $this->assertStringNotContainsString('Nervous state: ', end($prompts), "{$npc}: settled {$why}");
+            }
         }
+        // the horseshoe in the eval's input: the same kind of spike, read as ease or as unease
+        $this->assertSame('Content', $nervous[self::AELA], json_encode($nervous) . $why);
+        $this->assertContains($nervous['Muiri'], ['Numb', 'Panicked'], json_encode($nervous) . $why);
         $this->assertGreaterThan(0.0, $info[self::AELA]['mood']['valence']);
         $this->assertLessThan(0.0, $info['Muiri']['mood']['valence'], "Muiri: the same spike reads uneasy {$why}");
         $this->assertGreaterThan($pre[self::AELA]['comfort'] + 5.0, self::x($this->dynamics(self::AELA), 'comfort'), "Aela: the bonded glow {$why}");
@@ -614,7 +623,10 @@ final class RelDynIntimacyLaneTestBedsPostgresTest extends TestCase
             $this->assertEmpty($d[RelDynPostIntimacy::KEY]['held'] ?? [], "{$npc}: the afterglow ended");
             $this->assertArrayNotHasKey('post_intimacy', $this->felt[$npc]['later'] ?? [], "{$npc}: nothing left to show but the after of a pending verdict");
             $this->assertEqualsWithDelta($pre[$npc]['comfort'], self::x($d, 'comfort'), 0.5, "{$npc}: the glow is taken back exactly {$why}");
-            $this->assertLessThan($info[$npc]['arousal'] - 0.5 * ($info[$npc]['arousal'] - 10.0), self::x($d, 'arousal'), "{$npc}: arousal settles {$why}");
+            // what the scene lifted above her rest (baseline + the states held on it) has more than halved
+            $rest = floatval($d['dimensions']['arousal']['baseline'] ?? 10.0) + RelationshipDynamics::heldTemporaryOffset($d, 'arousal');
+            $this->assertLessThanOrEqual(0.5 * max(0.0, $info[$npc]['arousal'] - $rest) + 0.01, max(0.0, self::x($d, 'arousal') - $rest),
+                "{$npc}: arousal settles (rest {$rest}) {$why}");
         }
         $this->assertGreaterThan($pre[self::AELA]['trust'] + 1.0, self::x($this->dynamics(self::AELA), 'trust'),
             "Aela: chose to be vulnerable with him, the trust stays {$why}");
