@@ -363,10 +363,23 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
         $this->assertSame('Stoic', $this->dynamics('Lydia')['inferred_temperament']);
 
         // A warmth really pushed into 'Walled' still speaks (from tier 1: a stranger-tier NPC
-        // shows only its own state)
-        $this->patchDynamics('Lydia', function (array $d): array { $d['dimensions']['warmth']['x'] = 4.0; return $d; });
+        // shows only its own state). Warmth is derived (roadmap derived-warmth): pushed there by
+        // her comfort collapsing under a passion that had grown, sqrt(passion x comfort), well
+        // away from where she rests.
+        $this->patchDynamics('Lydia', function (array $d): array {
+            RelationshipDynamics::setPassion($d, 85.0);
+            $d['dimensions']['comfort']['x'] = 3.0;
+            return $d;
+        });
         pg_query($this->db->link, "UPDATE core_npc_master SET extended_data = jsonb_set(extended_data, '{relationships,Player,aff}', '30') WHERE npc_name = 'Lydia'");
-        $this->assertStringContainsStringIgnoringCase('answers in single words', self::text($this->turn('Lydia', 'Say something.')));
+        $text = self::text($this->turn('Lydia', 'Say something.'));
+        $d = $this->dynamics('Lydia');
+        $w = RelDynPassion::warmth($d, true);
+        $this->assertSame('Walled', RelationshipDynamics::getDimensionBand('warmth', $w)['label'], "warmth {$w}");
+        $this->assertGreaterThan(floatval(RelDynFelt::config()['baseline_deadband']), $w - RelDynPassion::warmthBaseline($d, true), 'pushed there');
+        // Walled comes of her comfort collapsing: the coldness speaks, as Walled or as the Tense
+        // comfort it derives from (both her own bands; the tier's line budget keeps one of them)
+        $this->assertMatchesRegularExpression('/answers in single words|weighs every word/i', $text);
         $this->assertNoDbFailures();
     }
 

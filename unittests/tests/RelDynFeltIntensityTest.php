@@ -204,20 +204,33 @@ final class RelDynFeltIntensityTest extends TestCase
         $this->assertSame(RelDynFelt::playerRef('Kaida', 1, $this->atCore(15)), 'Kaida');
     }
 
+    /**
+     * Warmth is derived (roadmap derived-warmth): sqrt(passion x comfort), raw for the bridges, so
+     * each case sets the passion and comfort that give it (warmth in the comments).
+     */
     public function testTensionBridges(): void
     {
+        // passion 70, comfort 20: warmth 37 (drawn, and guarded)
         $this->assertStringContainsString('fighting it',
-            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(45, ['warmth' => 30.0, 'passion' => 70.0])));
+            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(45, ['passion' => 70.0, 'comfort' => 20.0])));
+        // no passion: warmth 0 (cares, closed)
         $this->assertStringContainsString('lets show',
-            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(80, ['warmth' => 20.0])));
+            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(80, ['passion' => 0.0, 'comfort' => 50.0])));
+        // passion 45, comfort 50: warmth 47
         $this->assertStringContainsString('one eye open',
-            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(45, ['warmth' => 60.0, 'trust' => 20.0])));
+            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(45, ['passion' => 45.0, 'comfort' => 50.0, 'trust' => 20.0])));
         $this->assertStringContainsString('worn thin',
-            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(60, ['warmth' => 60.0, 'resentment' => 70.0])));
+            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(60, ['passion' => 45.0, 'comfort' => 50.0, 'resentment' => 70.0])));
+        // passion 55, comfort 30: warmth 41, never at ease
         $this->assertStringContainsString('never quite at ease',
-            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(60, ['warmth' => 60.0, 'trust' => 60.0, 'comfort' => 20.0])));
+            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(60, ['passion' => 55.0, 'trust' => 60.0, 'comfort' => 30.0])));
+        // passion 40, comfort 60: warmth 49
         $this->assertStringContainsString('nothing left to prove',
-            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(85, ['warmth' => 70.0, 'trust' => 80.0, 'resentment' => 0.0])));
+            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(85, ['passion' => 40.0, 'comfort' => 60.0, 'trust' => 80.0, 'resentment' => 0.0])));
+        // The moment counts: a spike on a guarded floor is the pull she fights (effective passion 60, warmth 35)
+        $d = $this->atCore(45, ['passion' => 40.0, 'comfort' => 20.0]);
+        $d[RelDynPassion::SPIKE_KEY] = 20.0;
+        $this->assertStringContainsString('fighting it', RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $d));
     }
 
     // ------------------------------------------------------------------ selection
