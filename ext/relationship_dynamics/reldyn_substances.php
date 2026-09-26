@@ -461,8 +461,7 @@ final class RelDynSubstances
         if (!$on || $now <= 0) {
             if (!$on && !empty($state['held'])) {
                 RelationshipDynamics::reverseAppliedDeltas($dynamics, (array) $state['held'], 'RelDyn-SUBSTANCE', 'substance offsets (off)');
-                $state['held'] = [];
-                unset($state['drinks'], $state['effective'], $state['stage']);
+                unset($state['held'], $state['targets'], $state['drinks'], $state['effective'], $state['stage']);
                 $dynamics[self::KEY] = $state;
             }
             return $out;
