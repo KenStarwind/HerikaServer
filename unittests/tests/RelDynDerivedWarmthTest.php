@@ -112,8 +112,16 @@ final class RelDynDerivedWarmthTest extends TestCase
         $this->assertEqualsWithDelta(sqrt(30.0 * 50.0), RelDynPassion::warmth($e, false), 1e-9, 'x already carries the held -3');
         // The drift sample leaves the held states out
         $this->assertEqualsWithDelta($before, RelationshipDynamics::driftSampleValue($d, 'warmth'), 1e-9);
-        // The felt baseline: at the passion stage floor and comfort's baseline (early stage: 0)
-        $this->assertEqualsWithDelta(0.0, RelDynPassion::warmthBaseline($d, true), 1e-9);
+        // The felt baseline: at the passion stage floor and comfort's baseline. The early stage's
+        // floor is 0, but a crush's tier holds passion at its governor floor once reached (MDD 8.3,
+        // RelDynGovernors: crush 10), so she rests a little open
+        $floor = RelationshipDynamics::passionStageFloor($d);
+        $this->assertEqualsWithDelta(10.0, $floor, 1e-9);
+        $cb = floatval($d['dimensions']['comfort']['baseline']);
+        $this->assertEqualsWithDelta(sqrt(RelationshipDynamics::getEffectiveDimensionValue($d, 'passion', $floor)
+            * RelationshipDynamics::getEffectiveDimensionValue($d, 'comfort', $cb)), RelDynPassion::warmthBaseline($d, true), 1e-9);
+        $e = $this->npc('neutral', 0, 30, 50);
+        $this->assertEqualsWithDelta(0.0, RelDynPassion::warmthBaseline($e, true), 1e-9, 'a stranger, early: the tier holds nothing');
     }
 
     public function testStoredWarmthIsOnlyReadWithDerivedWarmthOff(): void

@@ -325,10 +325,15 @@ final class RelDynJev
         $parts[] = 'fulfillment=' . number_format($s['fulfillment']['band'], 2, '.', '') . ($s['fulfillment']['low'] ? '(low)' : '');
         $ab = $s['absence'] ?? null;
         if (is_array($ab) && ($ab['bond_break'] !== null || $ab['rot_conditions'] !== [] || $ab['rot_applied'] != 0.0)) {
+            // compact: "absence=break(<mode> <game days>d +<resentment>) rot(<conditions> <core points>)"
             $bb = $ab['bond_break'];
-            $parts[] = 'absence=' . ($bb !== null ? "break({$bb['mode']}, " . $f($bb['absent_game_days']) . ' days, resentment +' . $f($bb['resentment']) . ')' : 'intact')
-                . ($ab['rot_conditions'] !== [] ? ' rot=' . implode('+', $ab['rot_conditions']) : '')
-                . ($ab['rot_applied'] != 0.0 ? ' rot_total=' . $f($ab['rot_applied']) : '');
+            $bits = [];
+            if ($bb !== null) $bits[] = "break({$bb['mode']} " . $f($bb['absent_game_days']) . 'd +' . $f($bb['resentment']) . ')';
+            if ($ab['rot_conditions'] !== [] || $ab['rot_applied'] != 0.0) {
+                $bits[] = 'rot(' . ($ab['rot_conditions'] !== [] ? implode('+', $ab['rot_conditions']) : '-')
+                    . ($ab['rot_applied'] != 0.0 ? ' ' . $f($ab['rot_applied']) : '') . ')';
+            }
+            $parts[] = 'absence=' . implode(' ', $bits);
         }
         if (($s['exclusivity'] ?? null) !== null) {
             $x = $s['exclusivity'];
@@ -394,7 +399,8 @@ final class RelDynJev
                 $parts[] = "inner_conflict={$c['impulse']} vs {$c['motivation']}(" . number_format($c['weight'], 2, '.', '') . ") -> {$c['resolution']}";
             }
         }
-        if (($s['reputation'] ?? null) !== null) {
+        // compact: a reputation she has heard nothing of says nothing (the state block keeps it)
+        if (($s['reputation'] ?? null) !== null && (floatval($s['reputation']['fame']) > 0.0 || floatval($s['reputation']['infamy']) > 0.0)) {
             $r = $s['reputation'];
             $parts[] = 'reputation=fame ' . number_format($r['fame'], 2, '.', '') . ' infamy ' . number_format($r['infamy'], 2, '.', '')
                 . ' weight ' . number_format($r['weight'], 2, '.', '');

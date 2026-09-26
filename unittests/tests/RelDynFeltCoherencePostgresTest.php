@@ -365,7 +365,10 @@ final class RelDynFeltCoherencePostgresTest extends TestCase
         // A warmth really pushed into 'Walled' still speaks (from tier 1: a stranger-tier NPC
         // shows only its own state). Warmth is derived (roadmap derived-warmth): pushed there by
         // her comfort collapsing under a passion that had grown, sqrt(passion x comfort), well
-        // away from where she rests.
+        // away from where she rests. The short band held still (impulse off): at that passion,
+        // alone with the player, her romantic urge (MDD 13.1) would take the stranger tier's one
+        // subtext slot, and this is about the long state speaking.
+        $this->storeConfig(['impulse' => array_replace(RelDynImpulse::configDefaults(), ['enabled' => false])]);
         $this->patchDynamics('Lydia', function (array $d): array {
             RelationshipDynamics::setPassion($d, 85.0);
             $d['dimensions']['comfort']['x'] = 3.0;

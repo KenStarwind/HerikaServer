@@ -583,7 +583,7 @@ final class RelDynFeltSteeringPostgresTest extends TestCase
         $this->assertMatchesRegularExpression('/affinity=-?\d/', $jev['text']);
         $this->assertMatchesRegularExpression('/jealousy=\d+/', $jev['text']);
         $this->assertStringContainsString('conflict=open', $jev['text']);
-        $this->assertLessThan(700, strlen($jev['text']), 'compact');
+        $this->assertLessThan(700, strlen($jev['text']), 'compact: ' . $jev['text']);
 
         // Mjoll's probation is visible to Jev as state, not prose.
         $this->assertSame('probation', RelationshipDynamics::jevStateBlock('Mjoll the Lioness')['boundary']);

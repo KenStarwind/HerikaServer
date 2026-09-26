@@ -56,7 +56,11 @@ final class RelDynPassionSpikeTest extends TestCase
         RelationshipDynamics::clearConfigCache();
     }
 
-    /** An NPC of $temperament with passion floor $floor, arousal $arousal, an open attraction (spark 20, x1). */
+    /**
+     * An NPC of $temperament with passion floor $floor, arousal $arousal, an open attraction (spark
+     * 20, x1), the player's partner (core romantic: the tier's governor, Committed, leaves the
+     * moment room up to 100; MDD 8 bounds floor + spike like every passion gain).
+     */
     private function npc(string $temperament, float $floor, float $arousal = 10.0, array $attraction = []): array
     {
         $d = RelationshipDynamics::migrateDimensions(array_merge(RelationshipDynamics::defaultDynamics(), [
@@ -64,6 +68,7 @@ final class RelDynPassionSpikeTest extends TestCase
             'love_language_primary' => RelationshipDynamics::LL_TOUCH,
             'love_language_secondary' => RelationshipDynamics::LL_WORDS,
         ]));
+        RelationshipDynamics::setCoreRelationshipType($d, 'romantic');
         RelationshipDynamics::setPassion($d, $floor);
         $d['dimensions']['arousal']['x'] = $arousal;
         $d['_attraction'] = array_merge(['enabled' => true, 'spark' => 20.0, 'spark_mult' => 1.0, 'passion_mult' => 1.0], $attraction);
@@ -107,7 +112,9 @@ final class RelDynPassionSpikeTest extends TestCase
         // The affinity drive (MDD 1.1 RPM) stays on the floor
         $this->assertEqualsWithDelta(0.3 + 0.4 * 1.7, RelationshipDynamics::getAffinityGainMultiplier($d), 1e-9);
 
-        // Capped: spike.max (40), and floor + spike never past passion_max (100)
+        // Capped: spike.max (40), and floor + spike never past passion_max (100); his partner
+        // again (an acquaintance's tier would hold floor + spike at its governor's ceiling)
+        RelationshipDynamics::setCoreRelationshipType($d, 'romantic');
         for ($i = 0; $i < 10; $i++) RelDynPassion::addTrigger('Tester', $d, 'touch', ['touch']);
         $this->assertEqualsWithDelta(40.0, RelDynPassion::spike($d), 1e-9);
         $high = $this->npc('Romantic', 80.0);

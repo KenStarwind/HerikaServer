@@ -3,17 +3,32 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## After reldyn-v0.16 (lane p4q-absence, untagged) — Staying away can break a bond; a fight left open rots it
-Leave someone you are close to long enough and there comes a point where the absence stops being "life happens" and
-starts feeling intentional. When you come back past that point, it lands on who she is: an anxious or fearful
-partner lets it spill out ("where were you?"), a guarded one lets the walls go back up and keeps you at arm's length,
-and a mature one either tells you calmly what she needs or simply talks it through; her anger has a floor, and if
-the pattern goes on she steps back rather than exploding. Trust buys you the benefit of the doubt, a romance weighs
-more than a friendship, and a longer absence weighs more than a short one. It happens once per absence, costs her
-some comfort and some trust, and the resentment it adds never goes past what an absence alone could make her feel.
-A fight left unresolved, or a romance gone cold, slowly and permanently wears the bond down after a week without a
-single good moment between you: past the floors that normally hold a bond, down to where she walks away. Time never
-gives it back; one warm exchange starts the week over.
+## reldyn-v0.17 — The moment on top of the bond, the urge she acts on, and what time away does to it
+Passion now has two parts. The floor is what you have earned with her and changes slowly; on top of it, a moment (a
+touch, a flirt, a topic she loves, being helped up after a fall) makes her heart race for a little while and then
+fades over the next few exchanges, and faster while you are gone. How big the moment is depends on who she is: the
+restrained feel it least, and a woman barely drawn to you feels none. What she shows follows both: her warmth toward
+you is no longer a number of its own but how much she feels for you and how at ease she is with you, together, so it
+opens in a good moment and closes when she stops feeling safe. Excitement feeds desire, and her mood colours it; a
+move you make lands by what you are to her, welcome from a partner or a crush, shrugged off by an acquaintance,
+unwelcome from a stranger, and never welcome while the ick lasts. The weather now pulls her mood toward its own
+feeling and holds it there instead of piling up.
+How far passion can go now depends on what you are to each other: a friend's has a ceiling unless she is drawn to
+you and built to let it grow, a partner's has a floor it will not cool below, and an ex's does not grow at all, not
+even for a moment. Big fights stir her more than small ones, and when she goes down and your next word to her is
+care, it moves her by who she is: the self-reliant barely, the anxious deeply, and it can make her lean on you more.
+She now has a short band of wants that rise and fall with the moment: to be close to you when you are alone, to
+shield you when you are hurt, to seek your company when she has missed you, to get herself out of danger, to go and
+look at a place she has never seen. Each fires by how guarded and how sure of herself she is, and shows in her own
+way (plainly, held back, in false starts, in a joke). When what she wants right now pulls against what she is working
+toward in life, you see the struggle, and her temperament decides which wins.
+Leave someone you are close to long enough and the absence starts to feel intentional. Come back past that point
+and it lands on who she is: an anxious or fearful partner lets it spill out, a guarded one lets the walls go back up,
+a mature one tells you calmly what she needs or steps back rather than exploding. It happens once per absence, costs
+her some comfort, and so some of her warmth toward you, and some trust. A fight left unresolved, or a romance gone
+cold, slowly and permanently wears the bond down after a week without a single good moment between you; one warm
+exchange starts the week over. Coming home after a long time away is itself a strain for now, and a strained bond
+reaches for nothing, however much she missed you. A reloaded save forgets any fall and rescue that happened after it.
 
 ## reldyn-v0.16 — Shame is met gently, the style you bring is graded, and the ick is hers
 When she walks off in shame, going to her is not chasing her: a gentle word can reach her, she can tell you what she

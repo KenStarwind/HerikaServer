@@ -359,10 +359,12 @@ final class RelDynImpulse
         $fighting = $combat !== null && !empty($combat['in_combat']);
         $aftermath = !empty($env['aftermath']) && !$fighting;
 
-        // Romantic: passion x privacy, with the player here; the glow after a shared fight
+        // Romantic: passion x privacy, with the player here; the glow after a shared fight. The
+        // short band reads the passion of the moment: the effective passion (the earned floor +
+        // the spike + the weather's pull, RelDynPassion), not the floor alone
         $r = (array) $cfg['romantic'];
         if ($present && !$strained && empty($env['platonic'])) {
-            $passion = RelationshipDynamics::getPassion($dynamics);
+            $passion = RelationshipDynamics::getEffectivePassion($dynamics);
             $privacy = 1.0 / (1.0 + floatval($r['crowd_per_person']) * max(0, intval($env['audience'] ?? 0)));
             $take('romantic', $passion * floatval($r['passion_weight']) * $privacy, 'passion');
             if ($aftermath && $passion >= floatval($r['aftermath_passion_min'])) {

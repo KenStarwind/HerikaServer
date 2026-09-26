@@ -699,6 +699,19 @@ final class RelDynTimeline
         self::clampIn($d, [RelDynAbsence::ROT_KEY, 'absence', 'contact'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'at_gamets'], $T);
+        // Combat's rescue response (reldyn_combat.php): a fall the load discarded never happened (no
+        // rescue waits for it), nor did an exchange that claimed one after the loaded time; the felt
+        // moment of a rescue answered after it is gone (its passion stays as the policy kept it)
+        $rescue = $d[RelDynCombat::RESCUE_PENDING_KEY] ?? null;
+        if (is_array($rescue) && is_numeric($rescue['fall_gamets'] ?? null) && floatval($rescue['fall_gamets']) > $T) {
+            unset($d[RelDynCombat::RESCUE_PENDING_KEY]);
+        } elseif (is_array($rescue) && is_numeric($rescue['claimed_gamets'] ?? null) && floatval($rescue['claimed_gamets']) > $T) {
+            $d[RelDynCombat::RESCUE_PENDING_KEY]['claimed_gamets'] = null;
+        }
+        $last = $d[RelDynCombat::RESCUE_LAST_KEY] ?? null;
+        if (is_array($last) && is_numeric($last['gamets'] ?? null) && floatval($last['gamets']) > $T) {
+            unset($d[RelDynCombat::RESCUE_LAST_KEY]);
+        }
         // The short band (impulses) starts over; the loneliness timer and places seen come back to it
         if (is_array($d[RelDynImpulse::KEY] ?? null)) {
             RelDynImpulse::rebaseline($d[RelDynImpulse::KEY], $T);
