@@ -470,4 +470,62 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
         $this->assertGreaterThan(0, $this->evalCalls);
         $this->assertSame([], $this->db->failures);
     }
+
+    // ------------------------------------------------------------------ derived warmth
+
+    /**
+     * Warmth is how open she is with this player: sqrt(passion x comfort) as they read toward the
+     * player, not a stored number. The four partners share a floor (35) and each rests at her own
+     * comfort (her trait baseline); the stored warmth of all four is pushed to 99 and nobody
+     * shows it. What each shows (the felt band line, the band of her derived warmth) follows her
+     * own comfort; a hug (the moment) opens each further, by her own spike; Jev gets the numbers.
+     */
+    public function testWarmthIsHowOpenSheIsWithThisPlayer(): void
+    {
+        $t = $this->hello();
+        $all = array_keys(self::BEDS);
+        foreach ($all as $npc) {
+            $this->editDynamics($npc, function (array &$d): void {
+                RelationshipDynamics::setPassion($d, 35.0);
+                unset($d[RelDynPassion::SPIKE_KEY]);
+                $d['dimensions']['comfort']['x'] = floatval($d['dimensions']['comfort']['baseline']);
+                $d['dimensions']['warmth']['x'] = 99.0;
+            });
+        }
+        $t = $this->play($t + 600, 10.0);
+        $t = $this->round('How are you?', $t + 600, 'plain');
+        $w = [];
+        $comfort = [];
+        foreach ($all as $npc) {
+            $d = $this->dynamics($npc);
+            $w[$npc] = RelDynPassion::warmth($d, true);
+            $comfort[$npc] = RelationshipDynamics::getEffectiveDimensionValue($d, 'comfort');
+            $band = RelationshipDynamics::getDimensionBand('warmth', $w[$npc]);
+            $this->assertNotSame('Intimate', $band['label'], "{$npc}: the stored 99 is not what she shows");
+            // What reached the LLM is never the stored Intimate band ("completely unguarded")
+            foreach ((array) ($this->felt[$npc]['plain'] ?? []) as $text) {
+                $this->assertStringNotContainsStringIgnoringCase('unguarded', (string) $text, $npc);
+            }
+            $this->assertEqualsWithDelta(round(RelDynPassion::warmth($d, false), 2), RelDynJev::state($npc, $d, 0.0)['warmth'], 1e-6, $npc);
+        }
+        $why = json_encode(['warmth' => $w, 'comfort' => $comfort]);
+        $this->assertGreaterThan(1, count(array_unique(array_map(fn($x) => round($x, 2), $w))), "four women, four openings {$why}");
+        // Same passion, same bond: whoever rests easier opens further
+        $byW = $w; arsort($byW);
+        $byC = $comfort; arsort($byC);
+        $this->assertSame(array_keys($byC), array_keys($byW), $why);
+
+        // A hug: the moment opens each of them further, by her own spike
+        $t = $this->round('Come here, let me hold you.', $t + 600, 'hug');
+        foreach ($all as $npc) {
+            $d = $this->dynamics($npc);
+            $after = RelDynPassion::warmth($d, true);
+            if (RelDynPassion::spike($d) > 0.0) {
+                $this->assertGreaterThan($w[$npc] - 1.0, $after, "{$npc}: the moment warms her {$why}");
+            }
+        }
+        $this->assertFeelingsNotNumbers();
+        $this->assertSame(0, $this->llmCalls, 'no trait read');
+        $this->assertSame([], $this->db->failures);
+    }
 }

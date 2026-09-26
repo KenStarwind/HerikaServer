@@ -32,6 +32,14 @@ $rdHomeLocation = $rdDynamics['home_location'] ?? '';
 $rdPassion      = floatval($rdDynamics['passion'] ?? 0);
 // Passion floor + spike (roadmap passion-floor-spike): the moment on top of the earned floor, read-only
 $rdPassionSpike = class_exists('RelDynPassion') ? RelDynPassion::spike($rdDynamics) : 0.0;
+// Warmth is derived (roadmap derived-warmth): sqrt(passion x comfort) toward the player, read-only
+$rdWarmthDerived = null;
+$rdWarmthBandLabel = '';
+if (class_exists('RelDynPassion') && RelDynPassion::derivedWarmthEnabled() && $rdDynamics !== []) {
+    $rdWarmthDerived = RelDynPassion::warmth($rdDynamics, true);
+    $rdWarmthBand = $rdWarmthDerived !== null ? RelationshipDynamics::getDimensionBand('warmth', $rdWarmthDerived) : null;
+    $rdWarmthBandLabel = is_array($rdWarmthBand) ? (string) $rdWarmthBand['label'] : '';
+}
 $rdJealousy     = floatval($rdDynamics['jealousy_anger'] ?? 0);
 $rdStage        = $rdDynamics['stage'] ?? 'early';
 $rdTotalPos     = intval($rdDynamics['total_positive_interactions'] ?? 0);
@@ -583,6 +591,11 @@ if ($rdUiPos !== false) {
                     <div style="height:100%; width:<?= min(100, $rdPassion) ?>%; background:linear-gradient(90deg, #22c55e, #fbbf24 50%, #ef4444); border-radius:4px; transition:width 0.3s;"></div>
                     <div style="height:100%; width:<?= max(0, min(100 - min(100, $rdPassion), $rdPassionSpike)) ?>%; background:repeating-linear-gradient(45deg, #fbbf24, #fbbf24 4px, #b45309 4px, #b45309 8px); opacity:0.8;"></div>
                 </div>
+                <?php if ($rdWarmthDerived !== null): ?>
+                <div style="color:#9fb1c9; font-size:0.75em; margin-top:4px;" title="Warmth is derived, not stored: sqrt(passion x comfort) as they read toward the player (read-only)">
+                    Warmth (derived) — <?= round($rdWarmthDerived, 1) ?>/100<?= $rdWarmthBandLabel !== '' ? ' — ' . htmlspecialchars($rdWarmthBandLabel) : '' ?>
+                </div>
+                <?php endif; ?>
             </div>
             <div>
                 <label style="font-weight:600; color:#9fb1c9; display:block; margin-bottom:4px; font-size:0.8em;">

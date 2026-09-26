@@ -14,7 +14,8 @@
  *   affinity_tier    string hostile|stranger|acquaintance|friend|close_friend|bonded|devoted
  *   context_tier     int    0..3 (with the high-water mark)
  *   trust, comfort, respect, warmth, maturity, resentment, resentment_self, self_confidence
- *                    float  dimension points 0..100
+ *                    float  dimension points 0..100 (warmth derived: sqrt(effective passion x comfort)
+ *                           + the states held on it, roadmap derived-warmth)
  *   arousal          float  0..100      valence  float -100..100
  *   passion          float  0..100 the floor: passion earned through play (the Attraction Matrix's uphill)
  *   passion_spike    float  0..100 the moment on top of it (roadmap passion-floor-spike: fades per exchange)
@@ -196,7 +197,7 @@ final class RelDynJev
             'affinity_tier' => RelationshipDynamics::getCurrentTier($affinity),
             'context_tier' => RelationshipDynamics::getContextTier($dynamics),
             'trust' => $num('trust', 50.0), 'comfort' => $num('comfort', 50.0), 'respect' => $num('respect', 50.0),
-            'warmth' => $num('warmth', 50.0), 'maturity' => $num('maturity', 50.0), 'resentment' => $num('resentment', 0.0),
+            'warmth' => round(RelDynPassion::warmth($dynamics, false) ?? 50.0, 2), 'maturity' => $num('maturity', 50.0), 'resentment' => $num('resentment', 0.0),
             'resentment_self' => $num('resentment_self', 0.0), 'self_confidence' => $num('self_confidence', 50.0),
             'arousal' => $num('arousal', 10.0), 'valence' => $num('valence', 0.0),
             'passion' => round(RelationshipDynamics::getPassion($dynamics), 2),

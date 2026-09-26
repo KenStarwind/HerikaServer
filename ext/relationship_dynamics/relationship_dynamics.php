@@ -7682,7 +7682,7 @@ class RelationshipDynamics
         'comfort_delta'  => 'comfort',
         'respect_delta'  => 'respect',
         'passion_delta'  => 'passion',
-        'warmth_delta'   => 'warmth',
+        // (no warmth_delta: warmth is derived from passion and comfort, roadmap derived-warmth)
         // ========== AROUSAL/VALENCE (PR 6) ==========
         'arousal_delta'  => 'arousal',
         'valence_delta'  => 'valence',
@@ -9992,9 +9992,15 @@ class RelationshipDynamics
      * without them and they are added back as they are, so a partner's guilt still shows (a
      * saturating multiplier swallowed it). A $value passed in is read as it is.
      * Passion's stored value is the effective passion (floor + spike, RelDynPassion::effective).
+     * Warmth, derived (roadmap derived-warmth): the bond is already in it (sqrt of passion and
+     * comfort as they read toward the player, RelDynPassion::warmth); a $value passed in is a
+     * derived reading and comes back as it is.
      */
     public static function getEffectiveDimensionValue(array $dynamics, string $dimensionId, ?float $value = null, ?string $relationshipType = null): ?float
     {
+        if ($dimensionId === 'warmth' && RelDynPassion::derivedWarmthEnabled()) {
+            return $value === null ? RelDynPassion::warmth($dynamics, true, $relationshipType) : max(0.0, min(100.0, $value));
+        }
         $held = 0.0;
         if ($value === null) {
             $x = $dimensionId === 'passion' ? self::getEffectivePassion($dynamics) : ($dynamics['dimensions'][$dimensionId]['x'] ?? null);
@@ -11126,7 +11132,7 @@ class RelationshipDynamics
             'core_affinity_at_death'  => $coreAff,
             'widow_lock'              => $lock,
             'bond_type'               => 'grieving',
-            'warmth_at_death'         => floatval($dims['warmth']['x'] ?? 0),
+            'warmth_at_death'         => floatval(RelDynPassion::warmth($survivorDynamics, false) ?? 0.0),   // derived (roadmap derived-warmth)
             'trust_at_death'          => floatval($dims['trust']['x'] ?? 0),
             'phase_transitions'       => [1 => $death],
             '_phase_1_applied'        => false,
@@ -15161,6 +15167,13 @@ class RelationshipDynamics
         if ($dimId === 'affinity') {
             return is_numeric($dynamics['_aff_mirror_x'] ?? null) ? self::getCoreAffinity($dynamics) : null;
         }
+        if ($dimId === 'warmth' && RelDynPassion::derivedWarmthEnabled()) {
+            // derived (roadmap derived-warmth): raw, without the states held on it
+            $w = RelDynPassion::warmth($dynamics, false);
+            if ($w === null) return null;
+            return max(0.0, $w - self::heldTemporaryOffset($dynamics, 'warmth') - self::heldBaselineOffset($dynamics, 'warmth')
+                - self::weatherGravityOffset($dynamics, 'warmth'));
+        }
         $x = $dynamics['dimensions'][$dimId]['x'] ?? null;
         return is_numeric($x) ? floatval($x) - self::heldTemporaryOffset($dynamics, $dimId) : null;
     }
@@ -15495,7 +15508,8 @@ class RelationshipDynamics
             $match = true;
 
             foreach ($rules as $dimId => $range) {
-                $value = floatval($dims[$dimId]['x'] ?? 0);
+                // warmth is derived (roadmap derived-warmth), raw like every tension check
+                $value = $dimId === 'warmth' ? floatval(RelDynPassion::warmth($dynamics, false) ?? 0.0) : floatval($dims[$dimId]['x'] ?? 0);
                 if ($value < $range[0] || $value > $range[1]) {
                     $match = false;
                     break;
@@ -15913,7 +15927,8 @@ class RelationshipDynamics
         $maskEffectiveness = max(0.0, min(1.0, ($maturity - 25) / 50.0));
 
         foreach (self::MASK_DIMENSION_OVERRIDES as $dimId => $override) {
-            $trueValue = floatval($dims[$dimId]['x'] ?? 0);
+            $trueValue = $dimId === 'warmth' ? floatval(RelDynPassion::warmth($dynamics, false) ?? 0.0)   // derived (roadmap derived-warmth)
+                : floatval($dims[$dimId]['x'] ?? 0);
             $target = floatval($override['target']);
             $shift = ($target - $trueValue) * $maskEffectiveness;
             $performed[$dimId] = round($trueValue + $shift, 2);
@@ -15980,7 +15995,8 @@ class RelationshipDynamics
     {
         $true = [];
         foreach (['resentment', 'comfort', 'warmth'] as $dim) {
-            $x = floatval($dynamics['dimensions'][$dim]['x'] ?? ($dim === 'resentment' ? 0 : 50));
+            $x = $dim === 'warmth' ? floatval(RelDynPassion::warmth($dynamics, false) ?? 50.0)   // derived (roadmap derived-warmth)
+                : floatval($dynamics['dimensions'][$dim]['x'] ?? ($dim === 'resentment' ? 0 : 50));
             $gap = abs($x - floatval($performedState[$dim] ?? $x));
             $band = self::getDimensionBand($dim, $x);
             if ($band !== null && trim((string) $band['keywords']) !== '') $true[$dim] = [$gap, (string) $band['keywords']];
@@ -16305,7 +16321,7 @@ class RelationshipDynamics
         $dims = $dynamics['dimensions'] ?? [];
         $comfort = floatval($dims['comfort']['x'] ?? 50);
         $passion = floatval($dims['passion']['x'] ?? 0);
-        $warmth  = floatval($dims['warmth']['x'] ?? 50);
+        $warmth  = RelDynPassion::warmth(is_array($dynamics) ? $dynamics : [], false) ?? 50.0;   // raw derived warmth (roadmap derived-warmth)
 
         // NPC must be unreceptive: comfort < 40 AND (passion < 20 OR warmth < 30) (config protocols.ick)
         if ($comfort >= floatval($ick['comfort_floor'])) {

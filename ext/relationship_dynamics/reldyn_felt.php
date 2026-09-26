@@ -830,11 +830,20 @@ final class RelDynFelt
             }
         }
 
+        $derivedWarmth = RelDynPassion::derivedWarmthEnabled();
         foreach (['affinity', 'warmth', 'trust', 'comfort', 'respect', 'resentment', 'maturity', 'self_confidence', 'resentment_self'] as $dim) {
-            if (!isset($dims[$dim]) || $x($dim) === null) continue;
+            $derived = $dim === 'warmth' && $derivedWarmth;
+            if (!$derived && (!isset($dims[$dim]) || $x($dim) === null)) continue;
             $def = RelationshipDynamics::getDimensionDefinition($dim);
             if (!$def) continue;
-            if ($dim === 'affinity') {
+            if ($derived) {
+                // Derived warmth (roadmap derived-warmth): sqrt(passion x comfort) as they read
+                // toward the player, measured from where it rests (passion's stage floor, comfort's baseline)
+                $val = RelDynPassion::warmth($dynamics, true);
+                $base = RelDynPassion::warmthBaseline($dynamics, true);
+                if ($val === null || $base === null) continue;
+                $band = RelationshipDynamics::getDimensionBand('warmth', $val);
+            } elseif ($dim === 'affinity') {
                 $val = RelationshipDynamics::getCoreAffinity($dynamics);   // core units
                 $base = floatval($dims['affinity']['baseline'] ?? RelationshipDynamics::getTemperamentBaseline($dynamics['inferred_temperament'] ?? null, 'affinity', $dynamics));
                 $band = RelationshipDynamics::getAffinityBand($dynamics);
@@ -1062,7 +1071,7 @@ final class RelDynFelt
         $b = (array) $cfg['bridge'];
         $dims = $dynamics['dimensions'] ?? [];
         $v = fn(string $d, float $def) => is_numeric($dims[$d]['x'] ?? null) ? floatval($dims[$d]['x']) : $def;
-        $warmth = $v('warmth', 50.0);
+        $warmth = RelDynPassion::warmth($dynamics, false) ?? 50.0;   // raw, like every tension check
         $trust = $v('trust', 50.0);
         $resentment = $v('resentment', 0.0);
         $passion = RelationshipDynamics::getEffectivePassion($dynamics);
