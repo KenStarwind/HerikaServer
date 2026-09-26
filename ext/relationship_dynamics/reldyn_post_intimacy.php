@@ -99,6 +99,9 @@ final class RelDynPostIntimacy
             'enabled' => true,
             // RelDynIntimacy::requestKind kinds that are an encounter (a VR touch is not a scene)
             'kinds' => ['scene'],
+            // game hours without a scene request that end an encounter (RelDyn's pick: a scene reports
+            // a request per stage, minutes apart; an hour of quiet is another encounter). Encounters
+            // of one drinking night share one verdict (nightVerdict), so the gap never doubles it
             'encounter_gap_game_hours' => 1.0,
             // draft: "Post-scene modifiers (temporary, 2 game hours)"
             'held_game_hours' => 2.0,
