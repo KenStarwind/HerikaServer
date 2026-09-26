@@ -614,6 +614,57 @@ final class RelDynBatchQFixTestBedsPostgresTest extends TestCase
         $this->assertClean();
     }
 
+    // ------------------------------------------------------------------ the cold romance
+
+    /**
+     * absence x attraction x rot. Four partners (core romantic, affinity 70) whose passion has
+     * cooled below the spark; the player is there every day, small talk, never one warm exchange.
+     * MDD 6.5: prolonged low passion bleeds affinity, from a week without a positive interaction.
+     * It is the romance between them, so it runs while he is there (and not over an absence: the
+     * absence path owns that); and MDD 8.3's political marriage (a partner the Matrix finds
+     * unattracted: loveless by nature) does not rot, only a partner who could burn and does not.
+     * Each at her own pace (M_modifiers: who she is).
+     */
+    public function testTheColdRomanceRotsWhileHeIsThereAndOnlyWhereItCouldBurn(): void
+    {
+        $this->seed(70);
+        $t = $this->hello();
+        $this->floors(12.0);
+        $beds = array_keys(self::BEDS);
+        $t = $this->play($t + 600, 10.0);
+        $at = [];
+        foreach ($beds as $npc) $at[$npc] = RelationshipDynamics::getCoreAffinity($this->dynamics($npc));
+        for ($k = 1; $k <= 12; $k++) {
+            $t = $this->play(max($t + 600, self::at(self::N0 + $k, 9.0)), 2.0);
+            $t = $this->round('Morning.', $t, "day{$k}");
+            if ($k === 6) {
+                foreach ($beds as $npc) $this->assertSame(0.0, floatval(RelDynAbsence::jev($this->dynamics($npc))['rot_applied']), "{$npc}: a week of grace");
+            }
+        }
+        $lost = $attracted = $info = [];
+        foreach ($beds as $npc) {
+            $d = $this->dynamics($npc);
+            $attracted[$npc] = !empty($d['_attraction']['attracted']) && empty($d['_attraction']['hard_zero']);
+            $lost[$npc] = -floatval(RelDynAbsence::jev($d)['rot_applied']);
+            $info[$npc] = ['attracted' => $attracted[$npc], 'lost' => $lost[$npc], 'passion' => RelationshipDynamics::getPassion($d),
+                'rot' => $d[RelDynAbsence::ROT_KEY] ?? null, 'aff0' => $at[$npc], 'aff' => RelationshipDynamics::getCoreAffinity($d)];
+        }
+        $this->probe('cold romance', $info);
+        $why = json_encode($info);
+        foreach ($beds as $npc) {
+            if ($attracted[$npc]) {
+                $this->assertGreaterThan(1.0, $lost[$npc], "{$npc}: a romance gone cold between them bleeds {$why}");
+                $this->assertContains('low_passion', RelDynAbsence::jev($this->dynamics($npc))['rot_conditions'], $npc);
+            } else {
+                $this->assertSame(0.0, $lost[$npc], "{$npc}: loveless by nature, not rotting (MDD 8.3) {$why}");
+            }
+        }
+        // (all four are drawn to Kaida here; the political marriage is RelDynBatchQFixTest's)
+        $this->assertGreaterThan(1.0, max($lost) - min($lost), "each at her own pace {$why}");
+        $this->assertGreaterThan($lost['Ashe'], $lost['Muiri'], "the immature toxic bed bleeds faster than the mature one {$why}");
+        $this->assertClean();
+    }
+
     // ------------------------------------------------------------------ her own line
 
     /**

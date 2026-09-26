@@ -219,5 +219,99 @@ final class RelDynBatchQFixTest extends TestCase
         $this->assertArrayNotHasKey('rescue', $m);
         $this->assertGreaterThan(0.0, $m['love_language_primary'] ?? 0.0, 'time together is her love language, not the rescue');
     }
+
+    // ================================================================ affinity-rot
+
+    /** Rot core points (<= 0) of the calendar [fromDay, toDay] (game days after T0), one step per game day, no contact. */
+    private function apart(array &$d, float $fromDay, float $toDay): float
+    {
+        $rot = 0.0;
+        for ($day = $fromDay; $day < $toDay - 1e-9; $day += 1.0) {
+            $rot += RelationshipDynamics::advanceCalendar($d, self::T0 + $day * self::DAY, self::T0 + min($toDay, $day + 1.0) * self::DAY)['rot']['applied'];
+        }
+        return $rot;
+    }
+
+    /** The same, with the player there every game day (contact, never a positive exchange). */
+    private function together(array &$d, float $fromDay, float $toDay): float
+    {
+        $rot = 0.0;
+        for ($day = $fromDay; $day < $toDay - 1e-9; $day += 1.0) {
+            $t = self::T0 + min($toDay, $day + 1.0) * self::DAY;
+            $rot += RelationshipDynamics::advanceCalendar($d, self::T0 + $day * self::DAY, $t)['rot']['applied'];
+            $this->at($t);
+            RelationshipDynamics::markContact($d);
+        }
+        return $rot;
+    }
+
+    /**
+     * MDD 6.5 "prolonged low Passion" is the romance gone cold between them, not the absence: time
+     * apart is the absence path's (the decay, the daily neglect, the bond break), so the cold
+     * romance rots only while the absence is still "life happens" (up to her neglect grace after
+     * the last contact). The player there every day without one warm exchange: it rots.
+     */
+    public function testTheColdRomanceRotsBetweenThemNotWhileHeIsAway(): void
+    {
+        $away = $this->bond('Romantic', 'secure', 50.0, 'romantic', 60.0, 10.0);
+        $away['_last_positive_gamets'] = self::T0;
+        $this->assertSame(['low_passion' => true], RelDynAbsence::rotConditions($away));
+        $this->assertEqualsWithDelta(0.0, $this->apart($away, 0, 20.0), 1e-9, 'two weeks and more apart: the absence path owns that time');
+
+        $there = $this->bond('Romantic', 'secure', 50.0, 'romantic', 60.0, 10.0);
+        $there['_last_positive_gamets'] = self::T0;
+        $m = RelationshipDynamics::affinityModifiers($there, -1.0, ['neglect'])['M'];
+        $this->assertEqualsWithDelta(-5.0 * $m, $this->together($there, 0, 12.0), 1e-3, 'together every day, cold: five rot days past the week');
+
+        // an open fight still rots through the absence (time does not heal, decisions §2)
+        $fight = $this->bond('Romantic', 'secure', 50.0, 'platonic', 60.0, 30.0);
+        $fight['_last_positive_gamets'] = self::T0;
+        RelationshipDynamics::enterConflict($fight);
+        $this->assertLessThan(0.0, $this->apart($fight, 0, 12.0));
+    }
+
+    /**
+     * A committed partner's passion cools to her tier's floor (MDD 8.1: 20) and stays there: that
+     * is as cold as the committed tier lets her go, and it rots like any cold romance (MDD 6.5).
+     * Before this, the governor's floor equalled the rot's line (20, strict <) and a committed
+     * partner who had ever reached 20 never rotted.
+     */
+    public function testACommittedRomanceHeldAtItsTierFloorHasGoneCold(): void
+    {
+        $d = $this->bond('Romantic', 'secure', 50.0, 'romantic', 60.0, 35.0);
+        $d['_last_positive_gamets'] = self::T0;
+        $gov = RelDynGovernors::governor($d);
+        $this->assertSame('committed', $gov['tier']);
+        $this->assertEqualsWithDelta(20.0, $gov['floor'], 1e-9);
+        $this->apart($d, 0, 30.0);   // the calendar fade takes her to the floor and holds her there
+        $this->assertEqualsWithDelta(20.0, RelationshipDynamics::getPassion($d), 1e-6);
+        $this->assertArrayHasKey('low_passion', RelDynAbsence::rotConditions($d), 'at her tier floor: gone cold');
+        $this->at(self::T0 + 30 * self::DAY);
+        RelationshipDynamics::markContact($d);
+        RelDynAbsence::markPositive($d, self::T0 + 30 * self::DAY);
+        $this->assertLessThan(0.0, $this->together($d, 30.0, 40.0), 'the player there, no warmth: it rots');
+        $warm = $this->bond('Romantic', 'secure', 50.0, 'romantic', 60.0, 25.0);
+        $this->assertArrayNotHasKey('low_passion', RelDynAbsence::rotConditions($warm), 'above her floor: not cold');
+    }
+
+    /**
+     * MDD 8.3: "low passion, high tier" (the political marriage: committed but loveless) is a real
+     * bond, gated by different pillars. A partner the Matrix finds unattracted was never going to
+     * burn; her low passion is who they are together, not a romance gone cold, and it does not rot.
+     * An open fight in it still does.
+     */
+    public function testAPoliticalMarriageIsLovelessNotRotting(): void
+    {
+        $d = $this->bond('Romantic', 'secure', 50.0, 'romantic', 60.0, 10.0);
+        $d['_attraction'] = ['enabled' => true, 'attracted' => false, 'spark' => 20.0, 'passion_mult' => 0.2, 'spark_mult' => 1.0];
+        $d['_last_positive_gamets'] = self::T0;
+        $this->assertArrayNotHasKey('low_passion', RelDynAbsence::rotConditions($d));
+        $this->assertEqualsWithDelta(0.0, $this->together($d, 0, 12.0), 1e-9);
+        $this->at(self::T0 + 12 * self::DAY);
+        RelationshipDynamics::enterConflict($d);
+        $this->assertLessThan(0.0, $this->together($d, 12.0, 24.0), 'a fight left open still wears it down');
+        $d['_attraction']['attracted'] = true;
+        $this->assertArrayHasKey('low_passion', RelDynAbsence::rotConditions($d), 'an attracted partner gone cold does rot');
+    }
 }
 

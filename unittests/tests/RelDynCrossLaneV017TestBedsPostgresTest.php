@@ -673,15 +673,17 @@ final class RelDynCrossLaneV017TestBedsPostgresTest extends TestCase
         $why = json_encode($info);
         foreach ($beds as $npc) $this->assertLessThan(0.01, RelDynPassion::spike($d[$npc]), "{$npc}: the moment did not wait two weeks {$why}");
 
-        // Who broke is the absence lane's (Muiri and Lynly break, Aela and Ashe hold)
-        $this->assertSame([self::AELA => false, 'Ashe' => false, 'Muiri' => true, self::LYNLY => true], $broke, $why);
+        // Who broke is the absence lane's (Muiri breaks; Aela, Ashe and Lynly hold: the cold
+        // romance does not rot while he is away, batch-Q review, and Lynly's decay alone leaves
+        // her just above the line)
+        $this->assertSame([self::AELA => false, 'Ashe' => false, 'Muiri' => true, self::LYNLY => false], $broke, $why);
         // A broken bond cost her comfort, and so warmth: her openness fell further than a held bond's
-        foreach (['Muiri', self::LYNLY] as $npc) {
+        foreach (['Muiri'] as $npc) {
             $this->assertLessThan(0.0, $d[$npc][RelDynAbsence::BREAK_KEY]['comfort_delta'], $npc);
             $restored = $d[$npc];
             $restored['dimensions']['comfort']['x'] = self::x($restored, 'comfort') - floatval($d[$npc][RelDynAbsence::BREAK_KEY]['comfort_delta']);
             $this->assertLessThan(RelDynPassion::warmth($restored), $warm1[$npc], "{$npc}: the break's comfort is warmth she no longer shows {$why}");
-            foreach ([self::AELA, 'Ashe'] as $held) {
+            foreach ([self::AELA, 'Ashe', self::LYNLY] as $held) {
                 $this->assertLessThan($warm1[$held] / $warm0[$held], $warm1[$npc] / $warm0[$npc], "{$npc} vs {$held} {$why}");
             }
         }

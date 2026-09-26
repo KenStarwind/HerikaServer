@@ -42,9 +42,15 @@
  * interaction, and the stage can regress below its floor). On the game calendar
  * (rotStep, from advanceCalendar), for a bond that existed (context-tier high-water mark >=
  * walkaway_affinity_min_tier), not walking away:
- *   conditions: 'conflict'    an open conflict (in_conflict), any bond that decays;
- *               'low_passion' passion below low_passion_below in a romance (core romantic/crush),
- *                             paused while a grief's acute offsets are held (her loss, not the bond);
+ *   conditions: 'conflict'    an open conflict (in_conflict), any bond that decays; it rots
+ *                             through any absence (time does not heal);
+ *               'low_passion' a romance gone cold (core romantic/crush): passion below
+ *                             low_passion_below, or held at the tier's governor floor (as cold as
+ *                             the tier lets her go); only a partner the Matrix finds attracted
+ *                             (MDD 8.3: the political marriage is loveless, not rotting); paused
+ *                             while a grief's acute offsets are held (her loss, not the bond); and
+ *                             only up to her neglect grace after the last contact (the time apart
+ *                             past it is the absence path's: decay, neglect, the bond break);
  *   clock:      a condition's rot starts grace_game_days after the later of its onset and the
  *               last positive interaction (markPositive: an eval-scored positive exchange, a
  *               local positive exchange); time alone never resets it, contact does;
@@ -142,8 +148,15 @@ class RelDynAbsence
                 'conflict' => ['mult' => 1.0, 'tags' => []],
                 'low_passion' => ['mult' => 1.0, 'tags' => ['neglect']],
             ],
-            'low_passion_below' => 20.0,         // passion points: the spark level (decisions §13)
+            // passion points: the spark level (decisions §13); passion at or below the tier's
+            // governor floor (RelDynGovernors: a committed partner's 20) counts as cold too, it is as
+            // cold as her tier lets her go
+            'low_passion_below' => 20.0,
             'low_passion_core_types' => ['romantic', 'crush'],   // core Player.type: a romance
+            // MDD 8.3: "low passion, high tier" (the political marriage) is a real bond: only a
+            // partner the Attraction Matrix finds attracted (or won over) has a romance to go cold.
+            // No Matrix summary, or the Matrix off: as before (a romance can go cold).
+            'low_passion_needs_attraction' => true,
             // While a grief's acute offsets are held (reldyn_protocols.php, _grief_held) her passion is
             // low for her loss, not for the bond: the cold-romance rot pauses (an open fight still rots)
             'low_passion_grief_pause' => true,
@@ -406,11 +419,43 @@ class RelDynAbsence
         if (!empty($dynamics['in_conflict']) && $gate !== 'no_decay') $out['conflict'] = true;
         $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         $grieving = !empty($cfg['low_passion_grief_pause']) && is_array($dynamics['_grief_held'] ?? null) && $dynamics['_grief_held'] !== [];
-        if (!$grieving && in_array($core, (array) $cfg['low_passion_core_types'], true)
-            && RelationshipDynamics::getPassion($dynamics) < floatval($cfg['low_passion_below'])) {
-            $out['low_passion'] = true;
+        if (!$grieving && in_array($core, (array) $cfg['low_passion_core_types'], true) && self::romanceCanGoCold($dynamics, $cfg)) {
+            $passion = RelationshipDynamics::getPassion($dynamics);   // passion points (the floor, no moment)
+            $tierFloor = RelDynGovernors::floor($dynamics);          // passion points, 0 without a governor
+            if ($passion < floatval($cfg['low_passion_below']) || ($tierFloor > 0.0 && $passion <= $tierFloor + 1e-6)) {
+                $out['low_passion'] = true;
+            }
         }
         return array_intersect_key($out, (array) $cfg['conditions']);
+    }
+
+    /**
+     * MDD 8.3 (low_passion_needs_attraction): an unattracted partner (the political marriage) has
+     * no romance to go cold. True without a Matrix summary or with the Matrix off. Pure.
+     */
+    private static function romanceCanGoCold(array $dynamics, array $cfg): bool
+    {
+        if (empty($cfg['low_passion_needs_attraction'])) return true;
+        $a = $dynamics['_attraction'] ?? null;
+        if (!is_array($a) || empty($a['enabled'])) return true;
+        return !empty($a['attracted']) && empty($a['hard_zero']);
+    }
+
+    /**
+     * The end (raw gamets) of the time a condition's rot can run in [.., $to]: an open conflict
+     * rots through any absence (time does not heal, decisions §2); the cold romance only while the
+     * absence is still "life happens", her neglect grace after the last contact (or the contact
+     * itself for a bond whose neglect does not matter). Past that the absence path owns the time
+     * apart (the decay, the daily neglect, the bond break), and the cold romance is the romance
+     * between them, not his absence counted twice.
+     */
+    private static function rotRunsUntil(string $condition, array $dynamics, float $to): float
+    {
+        if ($condition !== 'low_passion') return $to;
+        $contact = floatval($dynamics['_last_contact_gamets'] ?? 0);   // raw gamets
+        if ($contact <= 0) return $to;
+        $grace = RelationshipDynamics::neglectGraceGameDays($dynamics) ?? 0.0;   // game days
+        return min($to, $contact + $grace * RelationshipDynamics::GAMETS_PER_DAY);
     }
 
     /**
@@ -449,7 +494,7 @@ class RelDynAbsence
         $best = 0.0;
         foreach ($since as $c => $s) {
             $start = max(floatval($s), $lastPositive) + $grace;
-            $days = max(0.0, $to - max($from, $start)) / $day;
+            $days = max(0.0, self::rotRunsUntil((string) $c, $dynamics, $to) - max($from, $start)) / $day;
             $weighted = $days * floatval(((array) $cfg['conditions'][$c])['mult'] ?? 1.0);
             if ($weighted > $best) {
                 $best = $weighted;

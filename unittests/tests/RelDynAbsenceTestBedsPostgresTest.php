@@ -456,16 +456,19 @@ final class RelDynAbsenceTestBedsPostgresTest extends TestCase
     /**
      * Bond-break resentment with the four partners (core romantic, affinity 80). The player
      * leaves without a word. Time moves for every bond (the calendar scan on the return: daily
-     * neglect, the passion fade, any rot); on the return each one's absence, past her own neglect
-     * grace, may carry her below a partner's threshold, and each takes it as who she is.
-     *   Two game weeks: the absence erodes Muiri (possessive enough, fearful) and Lynly below it:
-     *     both protest ("where WERE you?"), Muiri the harder; Aela (secure-leaning, low
-     *     possessiveness) and Ashe (mature, Resilient) hold: the bond is intact. Ashe, mature,
-     *     states her §9 boundary calmly instead (the absence left her needs unmet).
+     * neglect, the passion fade; the cold-romance rot does not run while he is away, the absence
+     * path owns that time: batch-Q review); on the return each one's absence, past her own
+     * neglect grace x break_after_grace_mult (intentional, to her), may carry her below a
+     * partner's threshold, and each takes it as who she is.
+     *   Two game weeks: the absence erodes Muiri (possessive enough, fearful) below it: she
+     *     protests ("where WERE you?"); Aela (secure-leaning, low possessiveness), Ashe (mature,
+     *     Resilient) and Lynly hold: the bond is intact (Lynly's absence decay alone leaves her just
+     *     above the line). Ashe, mature, states her §9 boundary calmly instead (the absence left
+     *     her needs unmet).
      *   Five more weeks: Aela breaks and the walls go back up (guarded, not in the anxious half
-     *     even after the neglect's drift); Ashe's probation ran out while the player was gone:
-     *     a deliberate step-back from romance, no break, no rage, her resentment at her own
-     *     ceiling; Muiri and Lynly, already below it, do not break twice.
+     *     even after the neglect's drift); Lynly breaks and it spills out; Ashe's probation ran out
+     *     while the player was gone: a deliberate step-back from romance, no break, no rage, her
+     *     resentment at her own ceiling; Muiri, already below it, does not break twice.
      * Said once, to the player's face, as feelings; Jev gets the numbers; core carries the affinity.
      */
     public function testLongAbsencesBreakEachPartnerHerOwnWay(): void
@@ -487,7 +490,10 @@ final class RelDynAbsenceTestBedsPostgresTest extends TestCase
             $res[$npc] = self::x($d[$npc], 'resentment');
         }
         $why = fn() => json_encode(array_map(fn($x) => ['aff' => RelationshipDynamics::getCoreAffinity($x), 'jev' => RelDynAbsence::jev($x)], $d));
-        foreach (['Muiri', self::LYNLY] as $npc) {
+        foreach ($beds as $npc) {
+            $this->assertSame(0.0, floatval(RelDynAbsence::jev($d[$npc])['rot_applied']), "{$npc}: no rot while he was away " . $why());
+        }
+        foreach (['Muiri'] as $npc) {
             $b = $d[$npc][RelDynAbsence::BREAK_KEY] ?? null;
             $this->assertIsArray($b, "{$npc}: two weeks without a word broke the bond " . $why());
             $this->assertSame('bonded', $b['bond_type'], $npc);
@@ -502,13 +508,12 @@ final class RelDynAbsenceTestBedsPostgresTest extends TestCase
             $this->assertTrue(isset($lines['bond_break_confront']) || isset($lines['resentment_confront']),
                 "{$npc}: said to the player's face (her line, or the confrontation that carries it) " . json_encode(array_keys($lines)));
         }
-        $this->assertGreaterThan($d[self::LYNLY][RelDynAbsence::BREAK_KEY]['raw'], $d['Muiri'][RelDynAbsence::BREAK_KEY]['raw'],
-            'Muiri, codependent and fearful, takes the same absence harder ' . $why());
-        foreach ([self::AELA, 'Ashe'] as $npc) {
+        foreach ([self::AELA, 'Ashe', self::LYNLY] as $npc) {
             $this->assertNull($d[$npc][RelDynAbsence::BREAK_KEY] ?? null, "{$npc}: two weeks do not break her " . $why());
             $this->assertGreaterThanOrEqual(56.0, $this->coreAff($npc), "{$npc}: still close");
         }
-        $this->assertGreaterThan(max($res[self::AELA], $res['Ashe']), $res['Muiri'], 'resentment: ' . json_encode($res));
+        $this->assertGreaterThan(max($res[self::AELA], $res['Ashe'], $res[self::LYNLY]), $res['Muiri'],
+            'Muiri, codependent and fearful, takes the same absence hardest: ' . json_encode($res));
         $this->assertArrayHasKey('fulfillment_boundary', $this->felt['Ashe']['return1'], 'Ashe states her boundary calmly: '
             . json_encode(array_keys($this->felt['Ashe']['return1'])));
         $this->assertSame('probation', RelDynFulfillment::pairState($d['Ashe'])['boundary']['state']);
@@ -539,10 +544,14 @@ final class RelDynAbsenceTestBedsPostgresTest extends TestCase
         $this->assertLessThanOrEqual(RelationshipDynamics::getNeglectProfile($d2['Ashe'])['ceiling'] + 1e-6, self::x($d2['Ashe'], 'resentment'),
             'a floor on her anger: seven weeks alone take her no further than her own ceiling');
         $this->assertLessThan(self::x($d2['Muiri'], 'resentment') + 20.0, self::x($d2['Ashe'], 'resentment'));
-        foreach (['Muiri', self::LYNLY] as $npc) {
-            $this->assertSame(1, $d2[$npc][RelDynAbsence::BREAK_KEY]['count'], "{$npc}: already below it, not broken twice");
-        }
-        $reactions = ['Muiri' => $d['Muiri'][RelDynAbsence::BREAK_KEY]['mode'], self::LYNLY => $d[self::LYNLY][RelDynAbsence::BREAK_KEY]['mode'],
+        $this->assertSame(1, $d2['Muiri'][RelDynAbsence::BREAK_KEY]['count'], "Muiri: already below it, not broken twice");
+        $lb = $d2[self::LYNLY][RelDynAbsence::BREAK_KEY] ?? null;
+        $this->assertIsArray($lb, "Lynly: five weeks broke the bond {$why2}");
+        $this->assertGreaterThan(34.9, $lb['absent_game_days']);
+        $this->assertSame('confront', $modes[self::LYNLY], "Lynly: it spills out {$why2}");
+        $this->assertTrue(isset($this->felt[self::LYNLY]['return2']['bond_break_confront']) || isset($this->felt[self::LYNLY]['return2']['resentment_confront']),
+            "Lynly: said to the player's face " . json_encode(array_keys($this->felt[self::LYNLY]['return2'])));
+        $reactions = ['Muiri' => $d['Muiri'][RelDynAbsence::BREAK_KEY]['mode'], self::LYNLY => $modes[self::LYNLY],
                       self::AELA => $modes[self::AELA], 'Ashe' => 'step_back'];
         $this->assertCount(3, array_unique($reactions), 'four partners, three reactions: ' . json_encode($reactions));
 

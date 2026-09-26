@@ -66,8 +66,12 @@ final class RelDynAffinityRotTest extends TestCase
         RelationshipDynamics::enterConflict($d);
     }
 
-    /** The calendar from $fromDay to $toDay (game days after T0), in $steps equal steps. */
-    private function calendar(array &$d, float $fromDay, float $toDay, int $steps = 1): array
+    /**
+     * The calendar from $fromDay to $toDay (game days after T0), in $steps equal steps. $together:
+     * the player is there at the end of every step (contact, never a positive exchange): the cold
+     * romance rots between them, not while he is away (batch-Q review).
+     */
+    private function calendar(array &$d, float $fromDay, float $toDay, int $steps = 1, bool $together = false): array
     {
         $rot = 0.0;
         $w = ($toDay - $fromDay) / $steps;
@@ -75,6 +79,10 @@ final class RelDynAffinityRotTest extends TestCase
             $a = self::T0 + ($fromDay + $i * $w) * self::DAY;
             $b = self::T0 + ($fromDay + ($i + 1) * $w) * self::DAY;
             $rot += RelationshipDynamics::advanceCalendar($d, $a, $b)['rot']['applied'];
+            if ($together) {
+                $this->at($b);
+                RelationshipDynamics::markContact($d);
+            }
         }
         return ['rot' => $rot, 'aff' => RelationshipDynamics::getCoreAffinity($d)];
     }
@@ -124,18 +132,18 @@ final class RelDynAffinityRotTest extends TestCase
         }
         unset($d);
         $m = self::m($cold, ['neglect']);
-        $this->assertEqualsWithDelta(-3.0 * $m, $this->calendar($cold, 0, 10.0)['rot'], 1e-3, 'a romance gone cold');
+        $this->assertEqualsWithDelta(-3.0 * $m, $this->calendar($cold, 0, 10.0, 10, true)['rot'], 1e-3, 'a romance gone cold, the player there every day');
         $this->assertSame('low_passion', RelDynAbsence::jev($cold)['rot_conditions'][0]);
-        $this->assertEqualsWithDelta(0.0, $this->calendar($warm, 0, 10.0)['rot'], 1e-9, 'passion still there');
-        $this->assertEqualsWithDelta(0.0, $this->calendar($friend, 0, 10.0)['rot'], 1e-9, 'a friendship needs no passion');
+        $this->assertEqualsWithDelta(0.0, $this->calendar($warm, 0, 10.0, 10, true)['rot'], 1e-9, 'passion still there');
+        $this->assertEqualsWithDelta(0.0, $this->calendar($friend, 0, 10.0, 10, true)['rot'], 1e-9, 'a friendship needs no passion');
     }
 
     public function testRotIsRelativeToWhoTheNpcIs(): void
     {
         $immature = $this->bond('romantic', 60.0, 10.0, 20.0, 'anxious');
         $mature = $this->bond('romantic', 60.0, 10.0, 85.0, 'avoidant');
-        $a = $this->calendar($immature, 0, 12.0)['rot'];
-        $b = $this->calendar($mature, 0, 12.0)['rot'];
+        $a = $this->calendar($immature, 0, 12.0, 12, true)['rot'];
+        $b = $this->calendar($mature, 0, 12.0, 12, true)['rot'];
         $this->assertLessThan($b * 3.0, $a, 'the immature anxious partner bleeds far faster (maturity losses, anxious neglect x2)');
         $this->assertLessThan(0.0, $b, 'the mature avoidant one still bleeds, slowly');
     }
@@ -146,7 +154,7 @@ final class RelDynAffinityRotTest extends TestCase
         $d['_current_tier'] = 'bonded';
         $d['_current_tier_units'] = RelationshipDynamics::TIER_LABEL_UNITS;
         $d['dimensions']['trust']['x'] = 90.0;   // the trust gate would hold absence decay here
-        $r = $this->calendar($d, 0, 30.0, 23);
+        $r = $this->calendar($d, 0, 30.0, 23, true);
         $this->assertLessThan(76.0, $r['aff']);
         $this->assertSame(RelationshipDynamics::getCurrentTier($r['aff']), $d['_current_tier'], 'the held label regresses with the number');
         $this->assertNotSame('bonded', $d['_current_tier']);
@@ -235,13 +243,13 @@ final class RelDynAffinityRotTest extends TestCase
     {
         $d = $this->bond('romantic', 60.0, 5.0);
         $d['_grief_held'] = ['comfort' => -15.0, 'warmth' => -10.0];
-        $this->assertEqualsWithDelta(0.0, $this->calendar($d, 0, 12.0)['rot'], 1e-9, 'the cold romance pauses while she grieves');
+        $this->assertEqualsWithDelta(0.0, $this->calendar($d, 0, 12.0, 12, true)['rot'], 1e-9, 'the cold romance pauses while she grieves');
         $this->conflict($d);
         $this->assertLessThan(0.0, $this->calendar($d, 12.0, 22.0)['rot'], 'an open fight still rots');
         $e = $this->bond('romantic', 60.0, 5.0);
         $e['_grief_held'] = ['comfort' => -15.0];
-        $this->calendar($e, 0, 5.0);
+        $this->calendar($e, 0, 5.0, 5, true);
         unset($e['_grief_held']);   // the acute grief lifts
-        $this->assertLessThan(0.0, $this->calendar($e, 5.0, 14.0)['rot'], 'then the romance gone cold rots again');
+        $this->assertLessThan(0.0, $this->calendar($e, 5.0, 14.0, 9, true)['rot'], 'then the romance gone cold rots again');
     }
 }
