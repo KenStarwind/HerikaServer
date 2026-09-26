@@ -832,6 +832,101 @@ final class RelDynNpcEditorTestBedsPostgresTest extends TestCase
         $this->assertSame('derived', $this->field($m, 'personality', 'prof:temperament')['state']);
     }
 
+    // ------------------------------------------------------------------ the page itself (php-cli)
+
+    /**
+     * npc.php run as CHIM runs it (its own PHP process: runtime bootstrap, session, core's head /
+     * navbar / footer) against this schema. Returns [exit code, stdout, stderr].
+     */
+    private function runPage(string $method, array $get, array $post, string $sessionToken): array
+    {
+        $engine = dirname(__DIR__, 2);
+        $harness = tempnam(sys_get_temp_dir(), 'rdnpcpage_') . '.php';
+        file_put_contents($harness, <<<'PHP'
+<?php
+[$self, $page, $dsn, $schema, $method, $query, $postJson, $token] = $argv;
+$GLOBALS['chim_interaction_generation'] = 0;
+final class RelDynNpcPageHarnessDb
+{
+    public $link;
+    public function __construct(string $dsn, string $schema) { $this->link = pg_connect($dsn, PGSQL_CONNECT_FORCE_NEW); pg_query($this->link, "SET search_path TO {$schema}"); }
+    public function fetchOne($q, array $params = []) { $r = $params ? @pg_query_params($this->link, $q, $params) : @pg_query($this->link, $q); return $r ? (pg_fetch_assoc($r) ?: []) : []; }
+    public function fetchAll($q, $log = false) { $r = @pg_query($this->link, $q); $out = []; if ($r) while ($row = pg_fetch_assoc($r)) $out[] = $row; return $out; }
+    public function query($q) { return $this->fetchOne($q); }
+    public function execQuery($q) { return @pg_query($this->link, $q); }
+    public function insert($t, $d) { return false; }
+    public function escape($s) { return pg_escape_string($this->link, (string) $s); }
+    public function escapeLiteral($s) { return pg_escape_literal($this->link, (string) $s); }
+    public function close() {}
+}
+$GLOBALS['DBDRIVER'] = 'postgresql';
+$GLOBALS['db'] = new RelDynNpcPageHarnessDb($dsn, $schema);
+$GLOBALS['PLAYER_NAME'] = 'Kaida';
+$_SERVER['REQUEST_METHOD'] = $method;
+$_SERVER['SCRIPT_NAME'] = '/HerikaServer/ext/relationship_dynamics/npc.php';
+parse_str($query, $_GET);
+$_POST = json_decode($postJson, true) ?: [];
+session_save_path(sys_get_temp_dir());
+session_id('rdnpcpage' . getmypid());
+session_start();
+$_SESSION['reldyn_editor_csrf'] = $token;
+register_shutdown_function(function () { echo "\n__STATUS__ " . var_export(http_response_code(), true) . "\n"; @session_destroy(); });
+require $page;
+PHP);
+        try {
+            $cmd = [PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'log_errors=0', $harness, $engine . '/ext/relationship_dynamics/npc.php',
+                $this->dsn, $this->schema, $method, http_build_query($get), json_encode($post), $sessionToken];
+            $proc = proc_open($cmd, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $engine);
+            fclose($pipes[0]);
+            $out = (string) stream_get_contents($pipes[1]);
+            $err = (string) stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            return [proc_close($proc), $out, $err];
+        } finally {
+            @unlink($harness);
+        }
+    }
+
+    public function testThePageRunsInCoreChromeAndItsPostsNeedTheToken(): void
+    {
+        $token = bin2hex(random_bytes(32));
+        [$code, $out, $err] = $this->runPage('GET', ['npc' => self::AELA], [], $token);
+        $this->assertSame(0, $code, $err);
+        $this->assertStringNotContainsString('Fatal error', $err);
+        $this->assertStringContainsString('<title>RelDyn: Aela the Huntress</title>', $out);
+        $this->assertStringContainsString('chim-navbar', $out, 'core navbar');
+        $this->assertStringContainsString('<meta name="viewport" content="width=device-width, initial-scale=1"', $out, 'core head (phone width)');
+        $this->assertStringContainsString('<h1>Aela the Huntress</h1>', $out);
+        $this->assertStringContainsString('<input type="hidden" name="csrf_token" value="' . $token . '">', $out);
+        $this->assertStringContainsString('__STATUS__ 200', $out);
+        // no external asset beyond what core's own head already loads
+        preg_match_all('#(?:src|href)="(https?://[^"]+)"#', $out, $ext);
+        $head = (string) file_get_contents(dirname(__DIR__, 2) . '/ui/tmpl/head.html') . (string) file_get_contents(dirname(__DIR__, 2) . '/ui/tmpl/navbar.php');
+        foreach (array_unique($ext[1]) as $url) $this->assertStringContainsString($url, $head, "{$url} is not one of core's own assets");
+
+        [$code, $out] = $this->runPage('GET', [], [], $token);
+        $this->assertSame(0, $code);
+        $this->assertStringContainsString('<title>RelDyn NPCs</title>', $out);
+        $this->assertStringContainsString('>Lynly Star-Sung<', $out);
+
+        // a POST with a wrong token: 403, nothing stored
+        [$code, $out] = $this->runPage('POST', [], ['npc' => self::AELA, 'op' => 'save', 'section' => 'jealousy',
+            'f' => ['jeal:level' => '50'], 'csrf_token' => str_repeat('a', 64)], $token);
+        $this->assertSame(0, $code);
+        $this->assertStringContainsString('Security check failed', $out);
+        $this->assertStringContainsString('__STATUS__ 403', $out);
+        $this->assertNull($this->stored(self::AELA));
+
+        // with the session's token: the save lands and the page redirects (no body)
+        [$code, $out] = $this->runPage('POST', [], ['npc' => self::AELA, 'op' => 'save', 'section' => 'jealousy',
+            'f' => ['jeal:level' => '50', 'jeal:rival' => ''], 'csrf_token' => $token], $token);
+        $this->assertSame(0, $code);
+        $this->assertStringNotContainsString('<html', $out);
+        $this->assertStringContainsString('__STATUS__ 303', $out);
+        $this->assertEqualsWithDelta(50.0, $this->stored(self::AELA)['jealousy_anger'], 1e-9);
+    }
+
     public function testUnknownOpsSectionsAndFieldsAreRefused(): void
     {
         $this->track('Muiri');
