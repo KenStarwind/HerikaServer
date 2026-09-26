@@ -461,11 +461,14 @@ final class RelDynTraitPhase3Test extends TestCase
     public function testEditorAndSettingsTextSpeakTraits(): void
     {
         $dir = __DIR__ . '/../../ext/relationship_dynamics/';
-        $editor = (string) file_get_contents($dir . 'npc_editor_section.php');
-        // the preset picker lists all 13 (the 11-of-13 bug: Gentle and Defiant were missing)
-        $this->assertSame(1, preg_match('/\$rdTempOptions = \[(.*?)\];/s', $editor, $m));
-        preg_match_all("/'([A-Za-z]*)' =>/", $m[1], $keys);
-        $this->assertEqualsCanonicalizing(array_merge([''], array_keys(RelDynTraits::PRESET_TRAITS)), $keys[1]);
+        // the P5 editor (reldyn_editor.php; the April npc_editor_section.php is retired)
+        $editor = (string) file_get_contents($dir . 'reldyn_editor.php');
+        // the preset picker lists all 13 (the 11-of-13 bug: Gentle and Defiant were missing): it is
+        // built from TEMPERAMENT_TYPES, which holds exactly the 13 presets (rendered option by option
+        // in RelDynNpcEditorTestBedsPostgresTest)
+        $this->assertStringContainsString("\$temps = RelationshipDynamics::TEMPERAMENT_TYPES;", $editor);
+        $this->assertStringContainsString("'options' => ['' => '(none yet)'] + array_combine(\$temps, \$temps)", $editor);
+        $this->assertEqualsCanonicalizing(array_keys(RelDynTraits::PRESET_TRAITS), RelationshipDynamics::TEMPERAMENT_TYPES);
         $this->assertStringNotContainsString('temperament default', $editor);
         $this->assertStringNotContainsString('From temperament', $editor);
         $this->assertStringNotContainsString('Auto from temperament', $editor);

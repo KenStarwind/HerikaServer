@@ -212,8 +212,9 @@ final class RelDynFreshStartTest extends TestCase
         $this->assertFalse(method_exists('RelDynStorage', 'migrateLegacy'));
         $this->assertFalse(method_exists('RelationshipDynamics', 'migrateOldPreferences'));
         $this->assertFalse(defined('RelationshipDynamics::DIMENSION_STATE_VERSION'));
-        $src = file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/api_save_npc.php')
-             . file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/npc_editor_section.php');
+        // the P5 editor (reldyn_editor.php / npc.php; the April npc_editor_section.php and api_save_npc.php are retired)
+        $src = file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/reldyn_editor.php')
+             . file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/npc.php');
         $this->assertStringNotContainsString('activity_preferences', $src, 'editor neither reads nor accepts the April key');
     }
 }

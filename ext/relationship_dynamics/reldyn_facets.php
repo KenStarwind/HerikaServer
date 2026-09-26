@@ -743,7 +743,7 @@ class RelDynFacets
         return true;
     }
 
-    /** The NPC editor's interest sliders: range 0.5..2.0, step 0.1 (npc_editor_section.php). */
+    /** Interest sliders as MDD 1.2 multipliers: range 0.5..2.0, step 0.1 (the April editor's; the P5 editor edits the signed preferences directly). */
     const INTEREST_SLIDER_STEP = 0.1;
 
     /**
