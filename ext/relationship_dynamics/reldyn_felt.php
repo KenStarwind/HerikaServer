@@ -614,6 +614,16 @@ final class RelDynFelt
                 ['must' => !empty($l['must']), 'intense' => !empty($l['intense'])]);
         }
 
+        // --- Bond break (bond-break-resentment): the return from an absence that broke the bond,
+        // said to the player's face; a blow-up the confrontation above already said is not said twice ---
+        $confronted = in_array('confront', array_column($resent['lines'], 'key'), true);
+        $absence = RelDynAbsence::takeFeltLines($dynamics, $npc, $player, !empty($env['player_addressed']), $confronted);
+        if ($absence['changed']) $changed = true;
+        foreach ($absence['lines'] as $l) {
+            $lines[] = self::line('bond_break_' . $l['key'], self::SCOPE_BOND, self::LANE_TURN, 1.0, (string) $l['text'],
+                ['must' => true, 'intense' => $l['key'] === 'confront']);
+        }
+
         // --- Intimacy need (rulings §10) ---
         $intimacy = RelDynIntimacy::feltText($npc, $player, $dynamics, $now);
         if ($intimacy) $lines[] = self::line('intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['intimacy']), $intimacy);

@@ -463,6 +463,7 @@ if (!empty($reldynCfg['attachment_style_enabled'] ?? true)) {
 // leaves exactly the walkaway interval out, so a walkaway that starts on this turn does not
 // swallow the absence before it.
 if (!empty($reldynCfg['dimension_engine_enabled'])) {
+    $decayResult = null;
     $decayTicks = RelationshipDynamics::calculateDecayTicks($dynamics);
     if ($decayTicks > 0.001) {
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
@@ -474,6 +475,10 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
             RelationshipDynamics::log("[RelDyn-DECAY-WIRED] {$npcName}: decay=" . round($decayResult['decay_amount'], 2));
         }
     }
+    // Bond break (bond-break-resentment): the return from an absence past the neglect grace
+    // that carried the bond below its type's threshold (absence decay, affinity rot), once per
+    // absence (reldyn_absence.php). After markContact above: the absence began at the previous contact.
+    RelDynAbsence::onAbsenceDecay($npcName, $dynamics, $decayResult, RelationshipDynamics::currentGamets());
 }
 
 // Effective disposition: the MDD overlay (passion x 0.3 - jealousy x 0.3) on Sharmat's own

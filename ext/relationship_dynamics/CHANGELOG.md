@@ -3,6 +3,18 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## After reldyn-v0.16 (lane p4q-absence, untagged) — Staying away can break a bond; a fight left open rots it
+Leave someone you are close to long enough and there comes a point where the absence stops being "life happens" and
+starts feeling intentional. When you come back past that point, it lands on who she is: an anxious or fearful
+partner lets it spill out ("where were you?"), a guarded one lets the walls go back up and keeps you at arm's length,
+and a mature one either tells you calmly what she needs or simply talks it through; her anger has a floor, and if
+the pattern goes on she steps back rather than exploding. Trust buys you the benefit of the doubt, a romance weighs
+more than a friendship, and a longer absence weighs more than a short one. It happens once per absence, costs her
+some comfort and some trust, and the resentment it adds never goes past what an absence alone could make her feel.
+A fight left unresolved, or a romance gone cold, slowly and permanently wears the bond down after a week without a
+single good moment between you: past the floors that normally hold a bond, down to where she walks away. Time never
+gives it back; one warm exchange starts the week over.
+
 ## reldyn-v0.16 — Shame is met gently, the style you bring is graded, and the ick is hers
 When she walks off in shame, going to her is not chasing her: a gentle word can reach her, she can tell you what she
 is ashamed of, and you can forgive her, and each of those brings her back sooner. Admitting something she is ashamed

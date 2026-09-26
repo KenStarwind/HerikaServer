@@ -391,6 +391,8 @@ if (!empty($reldynCfg['ick_system_enabled'] ?? true)) {
 if ($positiveExchange) {
     $dynamics['total_positive_interactions'] = intval($dynamics['total_positive_interactions'] ?? 0) + 1;
     RelationshipDynamics::checkStageAdvancement($dynamics);
+    // Contact heals: the affinity rot clock starts over (reldyn_absence.php)
+    RelDynAbsence::markPositive($dynamics, RelationshipDynamics::currentGamets());
 }
 
 // Social masking (MDD 11): the context decides and records the mask each turn

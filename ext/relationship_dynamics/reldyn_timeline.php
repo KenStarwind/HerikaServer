@@ -97,6 +97,8 @@ final class RelDynTimeline
         '_walkaway_started_calendar_gamets', '_walkaway_activated_calendar_gamets',
         '_boundary_test_started_calendar_gamets', '_walkaway_recovery_calendar_gamets',
         '_walkaway_permanent_calendar_gamets',
+        // absence (reldyn_absence.php): the rot clock's last positive interaction, a conflict's opening
+        '_last_positive_gamets', '_conflict_entered_gamets',
     ];
     /** [start, end] of an absolute calendar window in the dynamics: a start past the load shifts both. */
     const CALENDAR_WINDOWS = [
@@ -688,6 +690,15 @@ final class RelDynTimeline
         }
         self::clampIn($d, ['_ick_tracker', 'ick_triggered_gamets'], $T);
         self::clampIn($d, [RelDynProtocols::PARASITE_CLOCK_KEY], $T);
+        // Absence (reldyn_absence.php): the rot's condition onsets and its per-absence ledger, the
+        // last bond break's stamps, all on the loaded time at the latest
+        foreach (array_keys(is_array($d[RelDynAbsence::ROT_KEY]['since'] ?? null) ? $d[RelDynAbsence::ROT_KEY]['since'] : []) as $c) {
+            self::clampIn($d, [RelDynAbsence::ROT_KEY, 'since', $c], $T);
+        }
+        self::clampIn($d, [RelDynAbsence::ROT_KEY, 'last_gamets'], $T);
+        self::clampIn($d, [RelDynAbsence::ROT_KEY, 'absence', 'contact'], $T);
+        self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
+        self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'at_gamets'], $T);
         foreach (array_keys(is_array($d['_grief_bonds'] ?? null) ? $d['_grief_bonds'] : []) as $deceased) {
             self::clampIn($d, ['_grief_bonds', $deceased, 'death_gamets'], $T);
         }

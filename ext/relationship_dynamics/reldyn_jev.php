@@ -123,6 +123,9 @@ final class RelDynJev
         'reputation.fame' => '0..1', 'reputation.infamy' => '0..1', 'reputation.weight' => '0..1',
         'reputation.offsets' => 'dimension points held now', 'duty.factor' => 'multiplier on negative eval signals',
         'autonomy.score' => '0..100',
+        'absence.bond_break.absent_game_days' => 'game days', 'absence.bond_break.resentment' => 'resentment points added',
+        'absence.bond_break.comfort_delta' => 'comfort points', 'absence.bond_break.trust_delta' => 'trust points',
+        'absence.rot_applied' => 'core affinity points (total, <= 0)',
     ];
 
     public static function state(string $npcName, array $dynamics, float $now): array
@@ -215,6 +218,7 @@ final class RelDynJev
             'concern' => RelDynConcern::jev($dynamics, $now),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'resentment_arc' => RelDynResentment::jev($dynamics),
+            'absence' => RelDynAbsence::jev($dynamics),
             'fulfillment' => $fulfillment,
             'exclusivity' => RelDynExclusivity::jev($dynamics, $now),
             'attraction' => $attraction,
@@ -285,6 +289,13 @@ final class RelDynJev
             . ($r['guilt_bleed'] != 0.0 ? ' guilt=' . $f($r['guilt_bleed']) : '')
             . ($r['reject_recruitment'] ? ' reject_recruitment' : '');
         $parts[] = 'fulfillment=' . number_format($s['fulfillment']['band'], 2, '.', '') . ($s['fulfillment']['low'] ? '(low)' : '');
+        $ab = $s['absence'] ?? null;
+        if (is_array($ab) && ($ab['bond_break'] !== null || $ab['rot_conditions'] !== [] || $ab['rot_applied'] != 0.0)) {
+            $bb = $ab['bond_break'];
+            $parts[] = 'absence=' . ($bb !== null ? "break({$bb['mode']}, " . $f($bb['absent_game_days']) . ' days, resentment +' . $f($bb['resentment']) . ')' : 'intact')
+                . ($ab['rot_conditions'] !== [] ? ' rot=' . implode('+', $ab['rot_conditions']) : '')
+                . ($ab['rot_applied'] != 0.0 ? ' rot_total=' . $f($ab['rot_applied']) : '');
+        }
         if (($s['exclusivity'] ?? null) !== null) {
             $x = $s['exclusivity'];
             $suitors = [];
