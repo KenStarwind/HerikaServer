@@ -1523,6 +1523,25 @@ class RelDynAttraction
     }
 
     /**
+     * The factor (0..1, unitless) of a passion SPIKE of $raw points at effective passion $passion
+     * (feedback_passion_spikes: the moment "bypasses session / gate multipliers"): the decisions §13
+     * uphill and the spark split are multipliers and do not scale it; what stays absolute is a hard
+     * zero (§13: 100 x 0 = 0; spark_mult 0), a closed channel (§15) and the MDD 1.4 passion ceiling
+     * (a cap: floor + moment never past it). The tier's governor is applied by the caller.
+     */
+    public static function spikeFactor(array $summary, float $passion, float $raw, ?array $tags = null): float
+    {
+        if (!self::channelOpen($summary, $tags) || !empty($summary['hard_zero'])) return 0.0;
+        if (is_numeric($summary['spark_mult'] ?? null) && floatval($summary['spark_mult']) <= 0.0) return 0.0;
+        $ceiling = $summary['passion_ceiling'] ?? null;
+        if ($raw > 0.0 && is_numeric($ceiling)) {
+            $room = floatval($ceiling) - $passion;
+            return $room <= 0.0 ? 0.0 : min(1.0, $room / $raw);
+        }
+        return 1.0;
+    }
+
+    /**
      * Decisions §15: does a passion gain carrying eval tags $tags (null / [] = a gain with no
      * channel: combat, a gift, a reunion, repair, the hoover, a place) move this NPC's passion?
      * Always, unless the summary restricts passion to channels (passion_channels, an asexual

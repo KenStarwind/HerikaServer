@@ -495,7 +495,10 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $this->assertGreaterThanOrEqual(20.0, RelationshipDynamics::getPassion($bard), 'the bard reached the spark');
         $this->assertLessThan(20.5, RelationshipDynamics::getPassion($bard), 'the crossing step is split at 20: little past it');
 
-        // Past the spark: the bard's gain is ~0.12x the raw, a fraction of the warrior's
+        // Past the spark: the bard's gain is ~0.12x the raw, a fraction of the warrior's (the
+        // attraction factor alone: at Acquaintance the MDD 8.1 row holds an unattracted bard at 20,
+        // the governors' own business)
+        $this->governorsOff();
         RelationshipDynamics::setPassion($bard, 30.0);
         RelationshipDynamics::setPassion($warrior, 30.0);
         $gb = RelationshipDynamics::gainPassion(self::AELA, $bard, 10.0, 'reunion');
@@ -1465,6 +1468,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $a = $d['_attraction'];
         $floor = floatval(RelDynFacets::getAppraisalConfig()['poi_passion_floor']);
         $this->assertLessThanOrEqual(20.0, $floor, 'the default place floor sits inside the spark: ' . $floor);
+        $this->governorsOff();   // the attraction factor alone (at Acquaintance the MDD 8.1 row holds 20)
         RelationshipDynamics::setPassion($d, 21.0);
         $factor = RelationshipDynamics::attractionPassionFactor(self::AELA, $d, 1.0, 'poi_floor');
         $this->assertEqualsWithDelta($a['passion_mult'], $factor, 1e-9, 'above the spark: passion_mult');

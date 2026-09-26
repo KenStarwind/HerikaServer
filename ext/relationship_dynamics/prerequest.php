@@ -158,6 +158,8 @@ $reldynCfg = RelationshipDynamics::getConfig();
 // Apply time-based decays
 if ($reldynCfg['passion_enabled'] ?? true) {
     RelationshipDynamics::decayPassion($dynamics);
+    // The moment on top of the floor halves with time between exchanges (RelDynPassion::decayTime)
+    RelDynPassion::decayTime($dynamics, RelationshipDynamics::currentGamets());
 }
 // MDD 6.2 Parasite: a transactional bond's passion halves every 2 game hours (reldyn_protocols.php)
 RelDynProtocols::parasitePassionDecay($dynamics, RelationshipDynamics::currentGamets());

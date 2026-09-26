@@ -209,12 +209,13 @@ final class RelDynThreatRescueGovernorTest extends TestCase
     public function testTheTierComesFromCoresOwnData(): void
     {
         $g = fn(array $d) => RelDynGovernors::governor($d);
-        // A stranger: Unknown / Acquaintance, 0 / 20; the 20 is the spark now (decisions §13: it
-        // "uncaps passion", the uphill brakes the climb), so the next rung's 40 bounds it
-        $this->assertSame(['tier' => 'distant', 'floor' => 0.0, 'ceiling' => 40.0, 'base_ceiling' => 20.0, 'raised' => false],
+        // A stranger: Unknown / Acquaintance, 0 / 20 (MDD 8.1 as written: decisions §13 retired
+        // the MDD 6.2 friendzone cap, not this row; batch-Q review); spark_supersedes reads the
+        // next rung's 40 instead
+        $this->assertSame(['tier' => 'distant', 'floor' => 0.0, 'ceiling' => 20.0, 'base_ceiling' => 20.0, 'raised' => false],
             $g(self::npc('Bold', 0.15, 0.15, 0.0)));
-        $asWritten = ['spark_supersedes' => false] + RelDynGovernors::configDefaults();
-        $this->assertSame(20.0, RelDynGovernors::governor(self::npc('Bold', 0.15, 0.15, 0.0), $asWritten)['ceiling'], 'the MDD row as written');
+        $spark = ['spark_supersedes' => true] + RelDynGovernors::configDefaults();
+        $this->assertSame(40.0, RelDynGovernors::governor(self::npc('Bold', 0.15, 0.15, 0.0), $spark)['ceiling'], 'the spark supersedes the 20');
         $this->assertSame('distant', $g(self::npc('Bold', 0.15, 0.15, 20.0))['tier'], 'an acquaintance');
         $this->assertSame(['friendly', 5.0, 40.0], array_values(array_intersect_key($g(self::npc('Bold', 0.15, 0.15, 40.0)), array_flip(['tier', 'floor', 'ceiling']))));
         $this->assertSame('friendly', $g(self::npc('Bold', 0.15, 0.15, 95.0))['tier'], 'a devoted friendship is still platonic');
@@ -239,8 +240,8 @@ final class RelDynThreatRescueGovernorTest extends TestCase
                 'spark' => 20.0, 'passion_mult' => 1.0, 'spark_mult' => 1.0, 'blocked_types' => []];
             return RelDynGovernors::governor($d, $cfg);
         };
-        // The MDD rows as written (spark_supersedes off)
-        $asWritten = ['spark_supersedes' => false] + RelDynGovernors::configDefaults();
+        // The MDD rows as written (spark_supersedes off: shipped)
+        $asWritten = RelDynGovernors::configDefaults();
         $aela = $judged(0.0, 'visceral', true, null, $asWritten);
         $this->assertSame(40.0, $aela['ceiling'], 'Aela (MDD 8.2): 40 instead of 20 at Acquaintance');
         $this->assertTrue($aela['raised']);
@@ -248,10 +249,13 @@ final class RelDynThreatRescueGovernorTest extends TestCase
         $this->assertSame(20.0, $judged(0.0, 'bond', true, null, $asWritten)['ceiling'], 'Ashe (bond-gated): the table as it is');
         $this->assertSame(20.0, $judged(0.0, 'visceral', false, null, $asWritten)['ceiling'], 'not attracted: no raise');
         $this->assertSame(20.0, $judged(0.0, 'visceral', true, 'orientation', $asWritten)['ceiling'], 'a hard zero: no raise');
-        // Shipped: the spark supersedes the 20, so 40 at Acquaintance for everyone; the raise shows from Friendly
-        $this->assertSame(40.0, $judged(0.0, 'visceral', true)['ceiling']);
-        $this->assertTrue($judged(0.0, 'visceral', true)['raised']);
-        $this->assertSame(40.0, $judged(0.0, 'visceral', false)['ceiling'], 'the unattracted climb the uphill to 40 (won over there, §15)');
+        // spark_supersedes on: 40 at Acquaintance for everyone (the unattracted climb the uphill to
+        // 40, won over there, §15); the raise shows from Friendly
+        $spark = ['spark_supersedes' => true] + RelDynGovernors::configDefaults();
+        $this->assertSame(40.0, $judged(0.0, 'visceral', true, null, $spark)['ceiling']);
+        $this->assertTrue($judged(0.0, 'visceral', true, null, $spark)['raised']);
+        $this->assertSame(40.0, $judged(0.0, 'visceral', false, null, $spark)['ceiling'], 'the unattracted climb the uphill to 40 (won over there, §15)');
+        $this->assertSame(20.0, $judged(0.0, 'visceral', false)['ceiling'], 'shipped: the unattracted acquaintance stops at 20');
         $this->assertSame(80.0, $judged(40.0, 'balanced', true)['ceiling'], 'a friendship that attracts can grow toward a crush');
         $this->assertSame(40.0, $judged(40.0, 'bond', true)['ceiling'], 'Ashe (bond-gated): the Friendly row as it is');
         $this->assertSame(40.0, $judged(40.0, 'visceral', false)['ceiling'], 'the Friendly row until she is won over');

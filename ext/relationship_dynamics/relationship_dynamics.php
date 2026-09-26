@@ -14302,6 +14302,32 @@ class RelationshipDynamics
     }
 
     /**
+     * The factor (unitless) of a passion SPIKE of $raw points from $source (feedback_passion_spikes:
+     * the moment bypasses the gate multipliers): RelDynAttraction::spikeFactor at the effective
+     * passion (a hard zero, a closed channel, the MDD 1.4 ceiling; not the decisions §13 uphill),
+     * then the tier's governor (MDD 8: floor + moment never past the tier's ceiling), logged.
+     */
+    private static function spikePassionFactor(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
+    {
+        if (!is_array($dynamics['_attraction'] ?? null)) {
+            self::updateAttraction($npcName, $dynamics);
+        }
+        $passion = RelDynPassion::effective($dynamics);
+        $a = (array) ($dynamics['_attraction'] ?? []);
+        $factor = $a === [] ? 1.0 : RelDynAttraction::spikeFactor($a, $passion, $raw, $tags);
+        $governed = false;
+        if ($factor > 0.0 && $raw > 0.0) {
+            $gov = RelDynGovernors::gainFactor($dynamics, $passion, $raw * $factor, $source);
+            $governed = $gov < 1.0;
+            $factor *= $gov;
+        }
+        self::log(sprintf('[ATTRACTION] %s: %s passion +%.4f at %.2f x%.4f (a moment: no uphill)%s', $npcName, $source, $raw, $passion, $factor,
+            ($factor <= 0.0 && $raw > 0.0) ? ' (' . self::passionClosedReason($a, $tags, $dynamics) . ')'
+                : ($governed ? ' (bounded by ' . self::governorReason($dynamics) . ')' : '')));
+        return $factor;
+    }
+
+    /**
      * RelDynAttraction::gainFactor on the stored summary at the current passion ($atPassion:
      * passion points to read it at instead, a spike's effective passion), then the tier's
      * governor (MDD 8, RelDynGovernors::gainFactor: the gain never lifts passion, or a spike's
@@ -14349,10 +14375,11 @@ class RelationshipDynamics
      * A passion GAIN of $raw passion points from $source, through the attraction (decisions
      * §13: raw x attractionPassionFactor; a hard zero adds exactly 0), then addPassion (stage
      * ceiling). $tags: the gain's eval tags (its channel, decisions §15; null = no channel).
-     * $spike: a passion spike (RelDynPassion, roadmap passion-floor-spike): the attraction factor
-     * is read at the effective passion (floor + spike, what the moment stacks on), the gain goes
-     * to the spike instead of the floor, and while the Ick lasts there is no spike at all (the
-     * floor path turns the exchange's gains into losses). Returns the gain asked of addPassion
+     * $spike: a passion spike (RelDynPassion, roadmap passion-floor-spike): spikePassionFactor at
+     * the effective passion (floor + spike, what the moment stacks on: no uphill, but a hard zero,
+     * a closed channel, the MDD 1.4 ceiling and the tier's governor), the gain goes to the spike
+     * instead of the floor, and while the Ick lasts there is no spike at all (the floor path turns
+     * the exchange's gains into losses). Returns the gain asked of addPassion
      * (points), or the spike points added.
      */
     public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null, bool $spike = false): float
@@ -14364,8 +14391,8 @@ class RelationshipDynamics
             self::log("[ICK] {$npcName}: {$source} no spike while the Ick lasts");
             return 0.0;
         }
-        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source, $tags,
-            $spike ? RelDynPassion::effective($dynamics) : null);
+        $gain = $raw * ($spike ? self::spikePassionFactor($npcName, $dynamics, $raw, $source, $tags)
+            : self::attractionPassionFactor($npcName, $dynamics, $raw, $source, $tags));
         if ($gain <= 0.0) {
             return 0.0;
         }

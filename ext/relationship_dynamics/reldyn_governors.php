@@ -25,12 +25,12 @@
  * 20"; the engine revs, the gear does not shift). A bond-gated NPC keeps the table as it is
  * (Ashe: "the base table is accurate as-is ... passion stays low until deep trust is earned").
  * A lower ceiling for a pillar she does not pass is the MDD 1.4 cut (RelDynAttraction::gainFactor).
- * Decisions §13 (which win over the MDD) turned the Unknown / Acquaintance row's 20 into the
- * spark: "a spark is open to anyone ... [20] uncaps passion", above it the uphill brakes the
- * climb, and passion climbed to 40 on the uphill wins her over (§15). So a base ceiling at or
- * below the spark (spark_supersedes) reads as the next rung's for everyone: the unattracted climb
- * the steep hill to it, the attracted run at their rate; neither passes 40 before the bond is a
- * friendship (Aela's "40 instead of 20" either way; her raise shows at the Friendly row: 80).
+ * Decisions §13 retired the MDD 6.2 friendzone cap in favour of the uphill, not the MDD 8.1 row:
+ * by default an unattracted acquaintance stops at the row's 20 (the spark), so she cannot climb
+ * to the §15 won-over line (40) and open romance before the bond is a friendship; MDD 8.2 raises
+ * it to 40 only for an NPC the Matrix finds attracted. spark_supersedes (off by default; Ken's
+ * call, batch-Q review) reads a base ceiling at or below the spark as the next rung's for
+ * everyone instead: the unattracted climb the steep hill to 40, the attracted run at their rate.
  * Which pillars move the tier itself is the Matrix's depth ceiling (MDD 8.3, the decoupling
  * principle: passion and tier are gated by different pillars).
  *
@@ -82,10 +82,11 @@ final class RelDynGovernors
             // nobles) keeps the base table
             'raise_gates' => ['visceral', 'balanced'],
             'raise_steps' => 1,
-            // Decisions §13 (module doc): a base ceiling at or below the attraction spark
-            // (attraction.curve.spark, 20) reads as the next rung's ceiling; false = the MDD 8.1
-            // row as written (a hard 20 for the unattracted at Unknown / Acquaintance)
-            'spark_supersedes' => true,
+            // Off (default): the MDD 8.1 row as written, a 20 for the unattracted at Unknown /
+            // Acquaintance (decisions §13 retired only the MDD 6.2 friendzone cap). On: a base
+            // ceiling at or below the attraction spark (attraction.curve.spark, 20) reads as the
+            // next rung's ceiling for everyone (module doc)
+            'spark_supersedes' => false,
             // Passion writers (gainPassion / attractionPassionFactor sources) the ceiling does not bound
             'exempt_sources' => ['hoover'],
         ];

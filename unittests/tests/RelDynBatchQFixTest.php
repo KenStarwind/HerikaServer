@@ -426,4 +426,117 @@ final class RelDynBatchQFixTest extends TestCase
         $this->assertGreaterThan($drop['mature'], $drop['anxious'], 'the less mature, anxious one loses more ' . json_encode(compact('drop', 'target')));
         $this->assertGreaterThan(0.0, $drop['mature'], 'the mature one still misses him');
     }
+
+    // ================================================================ passion-floor-spike
+
+    /** A partner with passion floor $floor and a Matrix summary $attraction (core romantic: the committed tier). */
+    private function heart(string $temperament, float $floor, array $attraction = []): array
+    {
+        $d = $this->bond($temperament, 'secure', 50.0, 'romantic', 70.0, $floor);
+        $d['love_language_primary'] = RelationshipDynamics::LL_TOUCH;
+        $d['dimensions']['arousal']['x'] = 10.0;
+        $d['_attraction'] = array_merge(['enabled' => true, 'spark' => 20.0, 'spark_mult' => 1.0, 'passion_mult' => 1.0], $attraction);
+        unset($d[RelDynPassion::SPIKE_KEY]);
+        return $d;
+    }
+
+    /**
+     * feedback_passion_spikes: the spike "bypasses session / gate multipliers" and "hits hard". The
+     * decisions §13 uphill (the continuous attraction multiplier above the spark) is such a
+     * multiplier: the moment is the size who she is makes it (temperament, floor, arousal), not
+     * crushed by how far she is below her floors. What stays absolute: a hard zero (§13: 100 x 0),
+     * a closed channel (§15, an asexual NPC's touch), the MDD 1.4 ceiling and the tier's governor
+     * (caps, not multipliers).
+     */
+    public function testTheMomentBypassesTheUphillButNotAHardZeroOrACap(): void
+    {
+        $open = $this->heart('Romantic', 30.0);
+        $hill = $this->heart('Romantic', 30.0, ['passion_mult' => 0.09]);   // far below her floors
+        $a = RelDynPassion::addTrigger('Aela', $open, 'touch', ['touch']);
+        $b = RelDynPassion::addTrigger('Aela', $hill, 'touch', ['touch']);
+        $this->assertGreaterThan(5.0, $a);
+        $this->assertEqualsWithDelta($a, $b, 1e-9, 'the uphill does not crush the moment');
+
+        $zero = $this->heart('Romantic', 30.0, ['spark_mult' => 0.0, 'passion_mult' => 0.0, 'hard_zero' => 'orientation']);
+        $this->assertSame(0.0, RelDynPassion::addTrigger('Aela', $zero, 'touch', ['touch']), 'a hard zero stays zero');
+        $ace = $this->heart('Romantic', 30.0, ['passion_channels' => ['praise'], 'passion_channel' => 'emotional']);
+        $this->assertSame(0.0, RelDynPassion::addTrigger('Aela', $ace, 'touch', ['touch']), 'a closed channel stays closed');
+        $cap = $this->heart('Romantic', 30.0, ['passion_ceiling' => 33.0]);
+        $this->assertEqualsWithDelta(3.0, RelDynPassion::addTrigger('Aela', $cap, 'touch', ['touch']), 1e-9, 'the MDD 1.4 ceiling bounds floor + moment');
+        $ex = $this->heart('Romantic', 30.0);
+        RelationshipDynamics::setCoreRelationshipType($ex, 'ex');
+        $this->assertSame(0.0, RelDynPassion::addTrigger('Aela', $ex, 'touch', ['touch']), "an ex's tier holds her");
+    }
+
+    /**
+     * feedback_passion_spikes: spikes "decay with a short half-life", like arousal. Besides the
+     * 45% each exchange takes, the moment halves every spike.half_life_play_minutes of play (her
+     * play clock, or the calendar when the world moved more: a wait passes too); a calendar that
+     * went back (a load) drops it. A kiss the player then leaves alone in silence does not keep
+     * feeding the felt band, desire and the urge for hours.
+     */
+    public function testTheMomentHalvesWithTimeNotOnlyWithExchanges(): void
+    {
+        $half = floatval(RelDynPassion::config()['spike']['half_life_play_minutes']);
+        $this->assertGreaterThan(0.0, $half);
+        $minute = 60.0 * RelationshipDynamics::GAMETS_PER_REAL_SECOND;   // a minute of play in gamets
+        $d = $this->heart('Romantic', 40.0);
+        $this->at(self::T0 + self::DAY);
+        RelDynPassion::storeSpike($d, 10.0, 'touch');
+        $this->assertEqualsWithDelta(10.0, RelDynPassion::spike($d), 1e-9);
+
+        // quiet play: the play clock runs, no exchange
+        $d['_accumulated_play_gamets'] = floatval($d['_accumulated_play_gamets']) + $half * $minute;
+        RelDynPassion::decayTime($d, RelationshipDynamics::currentGamets());
+        $this->assertEqualsWithDelta(5.0, RelDynPassion::spike($d), 1e-6, 'one half-life of play');
+        // a wait in the world (a game hour, three real minutes at the default timescale), then a night
+        $this->at(self::T0 + self::DAY + RelationshipDynamics::GAMETS_PER_DAY / 24.0);
+        RelDynPassion::decayTime($d, RelationshipDynamics::currentGamets());
+        $this->assertLessThan(5.0, RelDynPassion::spike($d), 'a wait passes in the world too');
+        $this->assertGreaterThan(0.0, RelDynPassion::spike($d));
+        $this->at(self::T0 + 2 * self::DAY);
+        RelDynPassion::decayTime($d, RelationshipDynamics::currentGamets());
+        $this->assertSame(0.0, RelDynPassion::spike($d), 'the next day it is gone');
+
+        // a load (the calendar went back): the moment from the future is dropped
+        $e = $this->heart('Romantic', 40.0);
+        $this->at(self::T0 + self::DAY);
+        RelDynPassion::storeSpike($e, 10.0, 'touch');
+        RelDynPassion::decayTime($e, self::T0 + self::DAY - 1000.0);
+        $this->assertSame(0.0, RelDynPassion::spike($e));
+    }
+
+    // ================================================================ tiered-governors
+
+    /**
+     * MDD 8.1: Unknown / Acquaintance 0 / 20. Decisions §13 retired the MDD 6.2 friendzone cap,
+     * not the 8.1 row, and MDD 8.2 raises the acquaintance ceiling to 40 only for an NPC the
+     * Matrix finds attracted (Aela: "Beauty + Strength pass -> 40 instead of 20"). So by default
+     * (spark_supersedes off) an unattracted acquaintance's passion stops at 20: she cannot climb to
+     * the §15 won-over line (40) and open romance and intimacy before the bond is a friendship. An
+     * attracted one whose gate allows it reads 40; a friend reads the Friendly row's 40.
+     */
+    public function testAnUnattractedAcquaintanceIsHeldAtTheMddRowAndCannotBeWonOver(): void
+    {
+        $this->assertFalse((bool) RelDynGovernors::configDefaults()['spark_supersedes'], 'the MDD 8.1 row as written, by default');
+        $cold = $this->bond('Romantic', 'secure', 50.0, 'professional', 10.0, 18.0);
+        $cold['_attraction'] = ['enabled' => true, 'attracted' => false, 'gate' => 'visceral', 'spark' => 20.0, 'spark_mult' => 1.0, 'passion_mult' => 0.5];
+        $cold['_attraction_state'] = ['won_over' => false];
+        $g = RelDynGovernors::governor($cold);
+        $this->assertSame('distant', $g['tier']);
+        $this->assertEqualsWithDelta(20.0, $g['ceiling'], 1e-9, 'Unknown / Acquaintance: 20');
+        for ($i = 0; $i < 60; $i++) RelationshipDynamics::gainPassion('Test', $cold, 5.0, 'love_match');
+        $this->assertLessThanOrEqual(20.0 + 1e-6, RelationshipDynamics::getPassion($cold), 'no further than the row allows');
+        $this->assertEmpty($cold['_attraction_state']['won_over'] ?? false, 'not won over below the friendship tier');
+
+        $drawn = $cold;
+        $drawn['_attraction']['attracted'] = true;
+        $this->assertEqualsWithDelta(40.0, RelDynGovernors::governor($drawn)['ceiling'], 1e-9, 'MDD 8.2: attracted, the next rung');
+        $this->assertTrue(RelDynGovernors::governor($drawn)['raised']);
+
+        $friend = $this->bond('Romantic', 'secure', 50.0, 'platonic', 40.0, 18.0);
+        $friend['_attraction'] = $cold['_attraction'];
+        $this->assertSame('friendly', RelDynGovernors::governor($friend)['tier']);
+        $this->assertEqualsWithDelta(40.0, RelDynGovernors::governor($friend)['ceiling'], 1e-9, 'Friendly / Platonic: 40');
+    }
 }

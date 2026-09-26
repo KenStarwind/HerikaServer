@@ -10,10 +10,13 @@
  *   - the SPIKE: the heart-racing moment (a flirt, a touch, a rescue). Event-driven, it bypasses
  *     the multiplicative suppressors (session, stage, love language, place), hits hard and keeps
  *     spike.retention_per_interaction of itself per interaction of the player pair, so it is gone
- *     in about five exchanges. It never forms on a floor below spike.min_floor (no racing heart
- *     for a stranger); temperament scales it (the trait engine's passion_mult: Guarded 0.6), a
- *     higher floor makes it bigger, arousal amplifies it. Every spike is a passion gain: it goes
- *     through RelationshipDynamics::gainPassion (the attraction factor at the effective passion).
+ *     in about five exchanges, and halves every spike.half_life_play_minutes of play between them
+ *     (decayTime: a moment left alone in silence does not last). It never forms on a floor below
+ *     spike.min_floor (no racing heart for a stranger); temperament scales it (the trait engine's
+ *     passion_mult: Guarded 0.6), a higher floor makes it bigger, arousal amplifies it. Every
+ *     spike is a passion gain through RelationshipDynamics::gainPassion, bypassing the decisions
+ *     §13 uphill (a multiplier) but not a hard zero, a closed channel, the MDD 1.4 ceiling or the
+ *     tier's governor (RelDynAttraction::spikeFactor).
  *   effective passion = floor + spike (+ the weather's pull on passion, weather-gravity-pull):
  *   what display, desire and the context read. The affinity drive, the stage floor, the
  *   attraction's won-over and emergent emotions keep reading the floor (lasting state).
@@ -49,6 +52,8 @@ final class RelDynPassion
     const SPIKE_KEY = '_passion_spike';
     /** The last trigger that fed the spike, for the log and the editor. */
     const SPIKE_TRIGGER_KEY = '_passion_spike_trigger';
+    /** When the spike was last stored or decayed: ['play' => play gamets, 'gamets' => raw game calendar] (decayTime). */
+    const SPIKE_CLOCK_KEY = '_passion_spike_clock';
 
     public static function configDefaults(): array
     {
@@ -61,6 +66,11 @@ final class RelDynPassion
                 // the share of the spike kept per interaction of the player pair (55%: gone in
                 // about five exchanges)
                 'retention_per_interaction' => 0.55,
+                // feedback_passion_spikes: "decay with a short half-life", like arousal. Minutes of
+                // play (a play minute is GAMETS_PER_REAL_SECOND x 60 gamets; the play clock, or the
+                // game calendar when the world moved more) in which the spike halves between
+                // exchanges; the impulse short band's value (MDD 13.1). 0 = no time decay.
+                'half_life_play_minutes' => 5.0,
                 // spike points; floor + spike never passes passion_max either
                 'max' => 40.0,
                 // spike points per trigger before the NPC's scaling (session 2026-03-30)
@@ -217,6 +227,8 @@ final class RelDynPassion
     public static function storeSpike(array &$dynamics, float $gain, string $source): float
     {
         if ($gain <= 0.0) return 0.0;
+        $now = RelationshipDynamics::currentGamets();   // raw gamets (the game calendar)
+        self::decayTime($dynamics, $now);               // the moment so far, to now
         $cfg = self::config();
         $max = floatval(RelationshipDynamics::configValue('passion_max') ?? 100.0);
         $room = max(0.0, min(floatval($cfg['spike']['max']), $max - RelationshipDynamics::getPassion($dynamics)));
@@ -225,7 +237,58 @@ final class RelDynPassion
         if ($after <= $before) return 0.0;
         $dynamics[self::SPIKE_KEY] = round($after, 4);
         $dynamics[self::SPIKE_TRIGGER_KEY] = $source;
+        self::stampClock($dynamics, $now);
         return $after - $before;
+    }
+
+    /**
+     * Time takes the moment too (feedback_passion_spikes: a short half-life, like arousal): since
+     * the spike was last stored or decayed, the play clock (getPlayGamets) or the game calendar
+     * ($now, raw gamets; 0 = unknown), whichever moved more, halves it every
+     * spike.half_life_play_minutes of play (a wait passes in the world too). A calendar behind the
+     * stamp (a load) drops it: that moment is from a future the save never lived. Below 0.01
+     * points it is gone. The prerequest runs it every turn; storeSpike before it adds. Returns the
+     * spike after.
+     */
+    public static function decayTime(array &$dynamics, float $now): float
+    {
+        $s = self::spike($dynamics);
+        if ($s <= 0.0) {
+            unset($dynamics[self::SPIKE_CLOCK_KEY]);
+            return 0.0;
+        }
+        $clock = $dynamics[self::SPIKE_CLOCK_KEY] ?? null;
+        if (!is_array($clock)) {
+            self::stampClock($dynamics, $now);   // a spike from before the clock: its time starts now
+            return $s;
+        }
+        $last = floatval($clock['gamets'] ?? 0);   // raw gamets
+        if ($now > 0 && $last > 0 && $now < $last) {
+            unset($dynamics[self::SPIKE_KEY], $dynamics[self::SPIKE_TRIGGER_KEY], $dynamics[self::SPIKE_CLOCK_KEY]);
+            return 0.0;
+        }
+        $play = RelationshipDynamics::getPlayGamets($dynamics);
+        $dt = max(0.0, $play - floatval($clock['play'] ?? $play));   // play gamets
+        if ($now > 0 && $last > 0) $dt = max($dt, $now - $last);
+        $half = max(0.0, floatval(self::config()['spike']['half_life_play_minutes'])) * 60.0 * RelationshipDynamics::GAMETS_PER_REAL_SECOND;
+        if ($half > 0.0 && $dt > 0.0) {
+            $s *= 0.5 ** ($dt / $half);
+            if ($s < 0.01) {
+                unset($dynamics[self::SPIKE_KEY], $dynamics[self::SPIKE_TRIGGER_KEY], $dynamics[self::SPIKE_CLOCK_KEY]);
+                return 0.0;
+            }
+            $dynamics[self::SPIKE_KEY] = round($s, 6);
+        }
+        self::stampClock($dynamics, $now);
+        return $s;
+    }
+
+    /** The spike's clock now: the play clock and the game calendar ($now raw gamets, 0 = unknown: kept). */
+    private static function stampClock(array &$dynamics, float $now): void
+    {
+        $prev = is_array($dynamics[self::SPIKE_CLOCK_KEY] ?? null) ? $dynamics[self::SPIKE_CLOCK_KEY] : [];
+        $dynamics[self::SPIKE_CLOCK_KEY] = ['play' => RelationshipDynamics::getPlayGamets($dynamics),
+            'gamets' => $now > 0 ? $now : floatval($prev['gamets'] ?? 0)];
     }
 
     /**
@@ -238,7 +301,7 @@ final class RelDynPassion
         if ($s <= 0.0) return 0.0;
         $s *= max(0.0, min(1.0, floatval(self::config()['spike']['retention_per_interaction'])));
         if ($s < 0.01) {
-            unset($dynamics[self::SPIKE_KEY], $dynamics[self::SPIKE_TRIGGER_KEY]);
+            unset($dynamics[self::SPIKE_KEY], $dynamics[self::SPIKE_TRIGGER_KEY], $dynamics[self::SPIKE_CLOCK_KEY]);
             return 0.0;
         }
         $dynamics[self::SPIKE_KEY] = round($s, 4);
@@ -256,7 +319,7 @@ final class RelDynPassion
         if ($s <= 0.0 || $absentDays <= 0.0) return 0.0;
         $fade = min($s, floatval(self::config()['spike']['absence_fade_per_game_day']) * $absentDays * max(0.0, $mult));
         if ($s - $fade < 0.01) {
-            unset($dynamics[self::SPIKE_KEY], $dynamics[self::SPIKE_TRIGGER_KEY]);
+            unset($dynamics[self::SPIKE_KEY], $dynamics[self::SPIKE_TRIGGER_KEY], $dynamics[self::SPIKE_CLOCK_KEY]);
             return $s;
         }
         $dynamics[self::SPIKE_KEY] = round($s - $fade, 6);
