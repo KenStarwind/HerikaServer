@@ -1088,7 +1088,7 @@ final class RelDynEval
             'Maturity: ' . $band('maturity', $dimX('maturity')),
             'Trust in the player: ' . $band('trust', $shown('trust')),
             'Comfort with the player: ' . $band('comfort', $shown('comfort')),
-            'Passion: ' . RelationshipDynamics::getPassionBand(RelationshipDynamics::getPassion($dynamics)),
+            'Passion: ' . RelationshipDynamics::getPassionBand(RelationshipDynamics::getEffectivePassion($dynamics)),
             'Jealousy: ' . $jealousyBand . ($jealousyBand !== 'none' && $rival ? " (about {$rival})" : ''),
             'Resentment: ' . $band('resentment', floatval($dynamics['dimensions']['resentment']['x'] ?? 0)),
         ];

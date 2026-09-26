@@ -551,9 +551,11 @@ final class RelDynFeltSteeringPostgresTest extends TestCase
 
         $this->assertSame('Ysolda', $jev['npc']);
         $this->assertEqualsWithDelta(RelationshipDynamics::getCoreAffinity($d), $jev['affinity'], 0.001, 'core units');
-        foreach (['trust', 'comfort', 'respect', 'warmth', 'maturity', 'resentment'] as $dim) {
+        foreach (['trust', 'comfort', 'respect', 'maturity', 'resentment'] as $dim) {
             $this->assertEqualsWithDelta(floatval($d['dimensions'][$dim]['x']), $jev[$dim], 0.001, $dim);
         }
+        // warmth is derived (roadmap derived-warmth): sqrt(passion x comfort) and what is held on it
+        $this->assertEqualsWithDelta(RelDynPassion::warmth($d, false), $jev['warmth'], 0.01, 'warmth');
         $this->assertEqualsWithDelta(RelationshipDynamics::getPassion($d), $jev['passion'], 0.001);
         $this->assertEqualsWithDelta(floatval($d['jealousy_anger']), $jev['jealousy'], 0.001);
         $this->assertGreaterThan(50.0, $jev['jealousy']);

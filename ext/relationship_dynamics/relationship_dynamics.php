@@ -1114,6 +1114,9 @@ class RelationshipDynamics
             'passion_absence_grace_game_hours' => 24,
             'passion_absence_fade_per_game_day' => 3.0,
             'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
+            // Passion floor + spike, the desire loop, derived warmth (roadmap passion-floor-spike,
+            // desire-loop, derived-warmth; reldyn_passion.php, RelDynPassion::configDefaults()).
+            'passion_dynamics' => RelDynPassion::configDefaults(),
             // The fall of bleedout (A2, traits phase 3; design §2.5, MDD 1.3 combat notes and the MDD
             // bleedout section; RelDynTraits::bleedout): net = fight - fear (unitless), with
             //   fight = rage_weight x C Rs L (1 - D)                      (Bold / Defiant / Aela: RAGE)
@@ -3818,7 +3821,10 @@ class RelationshipDynamics
             $repairMult = floatval($cfg2['conflict_repair_passion_mult'] ?? 1.5);
         }
 
-        $gain = $baseGain * $llMult * $sessionMult * $stageMult * $tempMult * $interestMult * $repairMult;
+        // The desire loop (roadmap desire-loop): arousal amplifies the gain, 1.0x..1.8x
+        $arousalMult = RelDynPassion::arousalAmp($dynamics);
+
+        $gain = $baseGain * $llMult * $sessionMult * $stageMult * $tempMult * $interestMult * $repairMult * $arousalMult;
 
         return max(0.0, $gain);
     }
@@ -4376,7 +4382,7 @@ class RelationshipDynamics
     public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
     {
         $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0, 'jealousy_resentment_raw' => 0.0,
-                'neglect_days' => 0.0, 'neglect_ceiling' => null, 'passion_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
+                'neglect_days' => 0.0, 'neglect_ceiling' => null, 'passion_fade' => 0.0, 'spike_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
         if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
             return $out;
         }
@@ -4461,6 +4467,8 @@ class RelationshipDynamics
                     self::setPassion($dynamics, $new);
                     $out['passion_fade'] = $passion - $new;
                 }
+                // The moment does not outlast the absence either (a spike, RelDynPassion)
+                $out['spike_fade'] = RelDynPassion::fadeWithAbsence($dynamics, $absentDays, $mult);
             }
 
             // Warmth (0..100) above its baseline fades at its own rate, grace and rate scaled
@@ -4943,7 +4951,7 @@ class RelationshipDynamics
             $step = self::advanceCalendar($dyn, $from, $now);
             $result['calendar'] = $step;
             $changed = $changed || $step['resentment_raw'] > 0 || $step['jealousy_resentment_raw'] > 0
-                || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0 || !empty($step['rot']['changed']);
+                || $step['passion_fade'] > 0 || $step['spike_fade'] > 0 || $step['warmth_fade'] > 0 || !empty($step['rot']['changed']);
         }
         // Fulfillment (rulings §9): day-end samples, unfulfilled neglect and the mature boundary
         // move with the calendar for every bond that has a fulfillment state, talked to or not.
@@ -5383,16 +5391,20 @@ class RelationshipDynamics
     // =========================================================================
 
     /**
-     * Calculate effective sex_disposal with passion and jealousy overlay. Passion that only the
-     * emotional channels move (asexual, decisions §15) is no sexual arousal: it adds nothing.
+     * Calculate effective sex_disposal (desire) with passion and jealousy overlay. Passion that
+     * only the emotional channels move (asexual, decisions §15) is no sexual arousal: it adds
+     * nothing. The desire loop (roadmap desire-loop): the passion is the effective passion
+     * (floor + the moment), and the mood adds or takes up to desire.valence_max points
+     * (RelDynPassion::desireValenceTerm).
      */
     public static function getEffectiveDisposition($baseDisposal, $dynamics)
     {
-        $passion = floatval($dynamics['passion'] ?? 0);
+        $dynamics = is_array($dynamics) ? $dynamics : [];
+        $passion = self::getEffectivePassion($dynamics);
         if (($dynamics['_attraction']['passion_channel'] ?? null) === 'emotional') $passion = 0.0;
         $jealousy = floatval($dynamics['jealousy_anger'] ?? 0);
 
-        $effective = $baseDisposal + ($passion * 0.3) - ($jealousy * 0.3);
+        $effective = $baseDisposal + ($passion * 0.3) - ($jealousy * 0.3) + RelDynPassion::desireValenceTerm($dynamics);
         return max(0, min(30, intval(round($effective))));
     }
 
@@ -7739,7 +7751,7 @@ class RelationshipDynamics
         'comfort_delta'  => 'comfort',
         'respect_delta'  => 'respect',
         'passion_delta'  => 'passion',
-        'warmth_delta'   => 'warmth',
+        // (no warmth_delta: warmth is derived from passion and comfort, roadmap derived-warmth)
         // ========== AROUSAL/VALENCE (PR 6) ==========
         'arousal_delta'  => 'arousal',
         'valence_delta'  => 'valence',
@@ -8621,6 +8633,12 @@ class RelationshipDynamics
                 $raw *= $pm;
                 $steps .= sprintf(' place x%.2f', $pm);
             }
+            // The desire loop (roadmap desire-loop): arousal amplifies passion gain, 1.0x..1.8x
+            $am = RelDynPassion::arousalAmp($dynamics);
+            if (abs($am - 1.0) > 0.001) {
+                $raw *= $am;
+                $steps .= sprintf(' arousal x%.2f', $am);
+            }
             // Attraction (decisions §13): the spark, then the uphill x attachment (rulings §9);
             // Aela warms to a warrior, a bard climbs a long hill; a hard zero leaves exactly 0.
             // The dimension engine applies it to the physics' move (applyDelta, attraction_source).
@@ -9017,6 +9035,14 @@ class RelationshipDynamics
                 self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $anchor, $bondName, $itemGamets);
             }
         }
+        // The moment on top of the floor (passion spike, RelDynPassion): her love language, a touch,
+        // a rescue, the exchange's passion; after the signals, so it stacks on the floor they left
+        $spikes = RelDynPassion::onEvalItem((string) $npcName, $n, $dynamics);
+        if ($spikes !== []) {
+            // the blush reads the moment (reldyn_felt.php)
+            $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($spikes), 2));
+            self::log("[SPIKE] {$npcName} eval item gamets={$n['gamets']}: " . json_encode($spikes));
+        }
         // Interaction significance for the diary's defining_moment trigger, on the legacy 1..3
         // level scale: contract significance 0..1 x 3, rounded (0.33, "normal +-10 of 30" -> 1;
         // 1.0 -> 3). The strongest item of this request counts.
@@ -9097,6 +9123,11 @@ class RelationshipDynamics
         }
         if (isset($n['romantic_intent']) && !empty($cfg['ick_system_enabled'] ?? true)) {
             self::recordIckEvalAttempt($npcName, $n, $dynamics);
+        }
+        // The desire loop's valence back-filter (roadmap desire-loop): the bond decides how the
+        // player's romantic move feels (a crush warms to it, a stranger's reads "eww")
+        if (floatval($n['romantic_intent'] ?? 0) > 0) {
+            RelDynPassion::flirtValence($npcName, $dynamics, floatval($n['romantic_intent']));
         }
         if (($n['goal_addressed'] ?? false) === true && !empty($cfg['director_goals_enabled'])) {
             $goal = self::getActiveDirectorGoal($dynamics);
@@ -10047,12 +10078,19 @@ class RelationshipDynamics
      * row, a physical state, the place) are states, not the bond: the multiplier scales the value
      * without them and they are added back as they are, so a partner's guilt still shows (a
      * saturating multiplier swallowed it). A $value passed in is read as it is.
+     * Passion's stored value is the effective passion (floor + spike, RelDynPassion::effective).
+     * Warmth, derived (roadmap derived-warmth): the bond is already in it (sqrt of passion and
+     * comfort as they read toward the player, RelDynPassion::warmth); a $value passed in is a
+     * derived reading and comes back as it is.
      */
     public static function getEffectiveDimensionValue(array $dynamics, string $dimensionId, ?float $value = null, ?string $relationshipType = null): ?float
     {
+        if ($dimensionId === 'warmth' && RelDynPassion::derivedWarmthEnabled()) {
+            return $value === null ? RelDynPassion::warmth($dynamics, true, $relationshipType) : max(0.0, min(100.0, $value));
+        }
         $held = 0.0;
         if ($value === null) {
-            $x = $dimensionId === 'passion' ? self::getPassion($dynamics) : ($dynamics['dimensions'][$dimensionId]['x'] ?? null);
+            $x = $dimensionId === 'passion' ? self::getEffectivePassion($dynamics) : ($dynamics['dimensions'][$dimensionId]['x'] ?? null);
             if (!is_numeric($x)) {
                 return null;
             }
@@ -11190,7 +11228,7 @@ class RelationshipDynamics
             'core_affinity_at_death'  => $coreAff,
             'widow_lock'              => $lock,
             'bond_type'               => 'grieving',
-            'warmth_at_death'         => floatval($dims['warmth']['x'] ?? 0),
+            'warmth_at_death'         => floatval(RelDynPassion::warmth($survivorDynamics, false) ?? 0.0),   // derived (roadmap derived-warmth)
             'trust_at_death'          => floatval($dims['trust']['x'] ?? 0),
             'phase_transitions'       => [1 => $death],
             '_phase_1_applied'        => false,
@@ -14207,23 +14245,24 @@ class RelationshipDynamics
      * passion_mult (the uphill), 0 for a hard zero (RelDynAttraction::gainFactor). Uses this
      * request's summary; evaluates first when the NPC has none yet. Logged per gain ($source).
      */
-    public static function attractionPassionFactor(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
+    public static function attractionPassionFactor(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null, ?float $atPassion = null): float
     {
         if (!is_array($dynamics['_attraction'] ?? null)) {
             self::updateAttraction($npcName, $dynamics);
         }
-        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}", $tags, $source);
+        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}", $tags, $source, $atPassion);
     }
 
     /**
-     * RelDynAttraction::gainFactor on the stored summary at the current passion, then the tier's
-     * governor (MDD 8, RelDynGovernors::gainFactor: the gain never lifts passion past the tier's
-     * ceiling; $source in its exempt_sources is not bounded), logged ($label: who / which path;
-     * $tags: the gain's eval tags, its channel, decisions §15).
+     * RelDynAttraction::gainFactor on the stored summary at the current passion ($atPassion:
+     * passion points to read it at instead, a spike's effective passion), then the tier's
+     * governor (MDD 8, RelDynGovernors::gainFactor: the gain never lifts passion, or a spike's
+     * effective passion, past the tier's ceiling; $source in its exempt_sources is not bounded),
+     * logged ($label: who / which path; $tags: the gain's eval tags, its channel, decisions §15).
      */
-    private static function loggedPassionFactor(array $dynamics, float $raw, string $label, ?array $tags = null, ?string $source = null): float
+    private static function loggedPassionFactor(array $dynamics, float $raw, string $label, ?array $tags = null, ?string $source = null, ?float $atPassion = null): float
     {
-        $passion = self::getPassion($dynamics);
+        $passion = $atPassion ?? self::getPassion($dynamics);
         $a = (array) ($dynamics['_attraction'] ?? []);
         $factor = $a === [] ? 1.0 : RelDynAttraction::gainFactor($a, $passion, $raw, $tags);
         $governed = false;
@@ -14262,19 +14301,43 @@ class RelationshipDynamics
      * A passion GAIN of $raw passion points from $source, through the attraction (decisions
      * §13: raw x attractionPassionFactor; a hard zero adds exactly 0), then addPassion (stage
      * ceiling). $tags: the gain's eval tags (its channel, decisions §15; null = no channel).
-     * Returns the gain asked of addPassion (points).
+     * $spike: a passion spike (RelDynPassion, roadmap passion-floor-spike): the attraction factor
+     * is read at the effective passion (floor + spike, what the moment stacks on), the gain goes
+     * to the spike instead of the floor, and while the Ick lasts there is no spike at all (the
+     * floor path turns the exchange's gains into losses). Returns the gain asked of addPassion
+     * (points), or the spike points added.
      */
-    public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
+    public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null, bool $spike = false): float
     {
         if ($raw <= 0.0) {
             return 0.0;
         }
-        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source, $tags);
+        if ($spike && !empty($dynamics['_ick_tracker']['ick_active']) && !empty(self::getConfig()['ick_system_enabled'] ?? true)) {
+            self::log("[ICK] {$npcName}: {$source} no spike while the Ick lasts");
+            return 0.0;
+        }
+        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source, $tags,
+            $spike ? RelDynPassion::effective($dynamics) : null);
         if ($gain <= 0.0) {
             return 0.0;
         }
+        if ($spike) {
+            $added = RelDynPassion::storeSpike($dynamics, $gain, $source);
+            self::log(sprintf('[SPIKE] %s %s +%.4f (spike %.2f, floor %.2f)', $npcName, $source, $added,
+                RelDynPassion::spike($dynamics), self::getPassion($dynamics)));
+            return $added;
+        }
         self::addPassion($dynamics, $gain, $source);
         return $gain;
+    }
+
+    /**
+     * Effective passion (points): the floor (getPassion) + the spike + the weather's pull on
+     * passion (RelDynPassion::effective). What display, desire and the context read.
+     */
+    public static function getEffectivePassion(array $dynamics): float
+    {
+        return RelDynPassion::effective($dynamics);
     }
 
     /**
@@ -15222,6 +15285,13 @@ class RelationshipDynamics
         if ($dimId === 'affinity') {
             return is_numeric($dynamics['_aff_mirror_x'] ?? null) ? self::getCoreAffinity($dynamics) : null;
         }
+        if ($dimId === 'warmth' && RelDynPassion::derivedWarmthEnabled()) {
+            // derived (roadmap derived-warmth): raw, without the states held on it
+            $w = RelDynPassion::warmth($dynamics, false);
+            if ($w === null) return null;
+            return max(0.0, $w - self::heldTemporaryOffset($dynamics, 'warmth') - self::heldBaselineOffset($dynamics, 'warmth')
+                - self::weatherGravityOffset($dynamics, 'warmth'));
+        }
         $x = $dynamics['dimensions'][$dimId]['x'] ?? null;
         return is_numeric($x) ? floatval($x) - self::heldTemporaryOffset($dynamics, $dimId) : null;
     }
@@ -15231,7 +15301,8 @@ class RelationshipDynamics
      * exactly when its state ends: the creature row (RelDynCreatures, _creature.applied), the
      * physical states (_applied_physical_deltas per state), the place and hour
      * (_env_applied_effects), on comfort the guilt bleed (RelDynResentment, guilt.applied), and
-     * acute grief on comfort / warmth (RelDynProtocols, _grief_held). Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
+     * acute grief on comfort / warmth (RelDynProtocols, _grief_held), and the weather's pull on a
+     * mood dimension (applyWeatherGravity, _weather_gravity.applied). Dimension points; 0 when none. The physics (applyDelta), the drift samples and the
      * per-bond display read the value without them.
      */
     public static function heldTemporaryOffset(array $dynamics, string $dimId): float
@@ -15254,6 +15325,8 @@ class RelationshipDynamics
         }
         // Acute grief toward every other bond (RelDynProtocols::tickGrief)
         $held += floatval($dynamics[RelDynProtocols::GRIEF_HELD_KEY][$dimId] ?? 0.0);
+        // The weather's pull on a mood dimension (applyWeatherGravity)
+        $held += floatval($dynamics['_weather_gravity']['applied'][$dimId] ?? 0.0);
         return $held;
     }
 
@@ -15395,31 +15468,80 @@ class RelationshipDynamics
         return RelDynFacets::updateWeather($npcName, $dynamics, $prefs, $now);
     }
 
+    /** Dimensions the weather's pull reads at display time (never written into x). */
+    const WEATHER_GRAVITY_READ_TIME = ['passion', 'warmth'];
+
     /**
-     * Emotional gravity (MDD 4.1, a constant pull): the weather pulls dimensions by config
-     * facet_appraisal.weather_modifiers (raw points) x weather_modifier_per_game_hour for every
-     * game hour since the last pull (_weather_gravity_gamets; at most
-     * exposure_max_gap_game_hours of them). Requests without game time passing pull nothing,
-     * the first request only starts the clock.
+     * Emotional gravity (MDD 4.1: "Weather sets a Target Node; current mood experiences constant
+     * pull"; roadmap weather-gravity-pull, replacing the push of weather_modifiers): each weather
+     * sets a target offset per dimension (config facet_appraisal.weather_gravity.targets, points
+     * from where she rests; 'clear' none). The offset held on each dimension (_weather_gravity)
+     * closes weather_gravity.pull_per_game_hour of its gap to the target every game hour since
+     * the last pull (_weather_gravity_gamets, the game calendar: the mood goes on while the
+     * player is away), within +- max_offset: self-limiting (a stormy day settles at its node and
+     * stays there, no accumulation), and when the weather turns the held offset relaxes toward
+     * the new target (0 for a dimension it names none for). Mood dimensions (valence, arousal)
+     * carry the offset in x as a held temporary offset (heldTemporaryOffset: the physics and the
+     * drift read her without it, and it is taken back exactly); passion and warmth read it at
+     * display time (the effective passion, derived warmth). Comfort is physical, not the
+     * weather's (chunk9). Requests without game time passing pull nothing; the first request
+     * only starts the clock. Internal weather off: the target is 'clear' (held offsets relax).
+     * Returns dimension => offset held now (points).
      */
-    public static function applyWeatherModifiers(string $npcName, array &$dynamics, string $temperament, ?float $nowGamets = null): void
+    public static function applyWeatherGravity(string $npcName, array &$dynamics, ?float $nowGamets = null): array
     {
         $now = $nowGamets ?? self::currentGamets();
-        if ($now <= 0) return;   // game clock unknown: no time can be credited
-        $cfg = RelDynFacets::getAppraisalConfig();
+        $held = is_array($dynamics['_weather_gravity']['offsets'] ?? null) ? $dynamics['_weather_gravity']['offsets'] : [];
+        if ($now <= 0) return $held;   // game clock unknown: no time can be credited
         $last = floatval($dynamics['_weather_gravity_gamets'] ?? 0);
-        if ($last > 0 && $now <= $last) return;
+        if ($last > 0 && $now <= $last) return $held;
         $dynamics['_weather_gravity_gamets'] = $now;
-        if ($last <= 0) return;
-        $hours = min(($now - $last) / (self::GAMETS_PER_DAY / 24.0), floatval($cfg['exposure_max_gap_game_hours']));
+        if ($last <= 0) return $held;
+        $hours = ($now - $last) / (self::GAMETS_PER_DAY / 24.0);
 
-        $weather = $dynamics['_internal_weather'] ?? 'clear';
-        $modifiers = (array) (((array) ($cfg['weather_modifiers'] ?? []))[$weather] ?? []);
-        $scale = floatval($cfg['weather_modifier_per_game_hour']) * $hours;
+        $g = (array) (RelDynFacets::getAppraisalConfig()['weather_gravity'] ?? []);
+        $weather = self::configValue('internal_weather_enabled') ? (string) ($dynamics['_internal_weather'] ?? 'clear') : 'clear';
+        $targets = (array) (((array) ($g['targets'] ?? []))[$weather] ?? []);
+        $max = max(0.0, floatval($g['max_offset'] ?? 20.0));
+        $keep = pow(1.0 - max(0.0, min(1.0, floatval($g['pull_per_game_hour'] ?? 0.1))), $hours);
+        $applied = is_array($dynamics['_weather_gravity']['applied'] ?? null) ? $dynamics['_weather_gravity']['applied'] : [];
 
-        foreach ($modifiers as $dimId => $delta) {
-            self::applyDelta($dimId, $dynamics, floatval($delta) * $scale, $temperament);
+        $offsets = [];
+        foreach (array_unique(array_merge(array_keys($held), array_keys($targets))) as $dim) {
+            $dim = (string) $dim;
+            if (!self::getDimensionDefinition($dim)) continue;
+            $target = max(-$max, min($max, floatval($targets[$dim] ?? 0.0)));
+            $from = floatval($held[$dim] ?? 0.0);
+            $to = $target + ($from - $target) * $keep;
+            if (abs($to - $target) < 0.005) $to = $target;
+            $to = round($to, 4);
+            if (!in_array($dim, self::WEATHER_GRAVITY_READ_TIME, true)) {
+                // held in x: move x by the change of what is held, record what x actually took
+                $def = self::getDimensionDefinition($dim);
+                $x = floatval($dynamics['dimensions'][$dim]['x'] ?? $def['default_baseline']);
+                $newX = max(floatval($def['range_min']), min(floatval($def['range_max']), $x + ($to - floatval($applied[$dim] ?? 0.0))));
+                $dynamics['dimensions'][$dim]['x'] = round($newX, 4);
+                $applied[$dim] = round(floatval($applied[$dim] ?? 0.0) + ($newX - $x), 4);
+                if (abs($applied[$dim]) < 0.0001) unset($applied[$dim]);
+            }
+            if (abs($to) >= 0.0001) $offsets[$dim] = $to;
         }
+        $dynamics['_weather_gravity'] = ['weather' => $weather, 'offsets' => $offsets, 'applied' => $applied];
+        if ($offsets !== $held) {
+            self::log("[WEATHER] {$npcName}: {$weather} pulls " . json_encode($offsets) . sprintf(' (%.2f game hours)', $hours));
+        }
+        return $offsets;
+    }
+
+    /**
+     * The weather's pull on $dimId now (points; applyWeatherGravity): what passion (the effective
+     * passion) and warmth (derived) read at display time; for a mood dimension, what is held in
+     * its x. 0 when none.
+     */
+    public static function weatherGravityOffset(array $dynamics, string $dimId): float
+    {
+        $o = $dynamics['_weather_gravity']['offsets'][$dimId] ?? null;
+        return is_numeric($o) ? floatval($o) : 0.0;
     }
 
     // ========== VAMPIRE/WEREWOLF MOODIFICATIONS (PR 13) ==========
@@ -15545,7 +15667,8 @@ class RelationshipDynamics
             $match = true;
 
             foreach ($rules as $dimId => $range) {
-                $value = floatval($dims[$dimId]['x'] ?? 0);
+                // warmth is derived (roadmap derived-warmth), raw like every tension check
+                $value = $dimId === 'warmth' ? floatval(RelDynPassion::warmth($dynamics, false) ?? 0.0) : floatval($dims[$dimId]['x'] ?? 0);
                 if ($value < $range[0] || $value > $range[1]) {
                     $match = false;
                     break;
@@ -15963,7 +16086,8 @@ class RelationshipDynamics
         $maskEffectiveness = max(0.0, min(1.0, ($maturity - 25) / 50.0));
 
         foreach (self::MASK_DIMENSION_OVERRIDES as $dimId => $override) {
-            $trueValue = floatval($dims[$dimId]['x'] ?? 0);
+            $trueValue = $dimId === 'warmth' ? floatval(RelDynPassion::warmth($dynamics, false) ?? 0.0)   // derived (roadmap derived-warmth)
+                : floatval($dims[$dimId]['x'] ?? 0);
             $target = floatval($override['target']);
             $shift = ($target - $trueValue) * $maskEffectiveness;
             $performed[$dimId] = round($trueValue + $shift, 2);
@@ -16030,7 +16154,8 @@ class RelationshipDynamics
     {
         $true = [];
         foreach (['resentment', 'comfort', 'warmth'] as $dim) {
-            $x = floatval($dynamics['dimensions'][$dim]['x'] ?? ($dim === 'resentment' ? 0 : 50));
+            $x = $dim === 'warmth' ? floatval(RelDynPassion::warmth($dynamics, false) ?? 50.0)   // derived (roadmap derived-warmth)
+                : floatval($dynamics['dimensions'][$dim]['x'] ?? ($dim === 'resentment' ? 0 : 50));
             $gap = abs($x - floatval($performedState[$dim] ?? $x));
             $band = self::getDimensionBand($dim, $x);
             if ($band !== null && trim((string) $band['keywords']) !== '') $true[$dim] = [$gap, (string) $band['keywords']];
@@ -16355,7 +16480,7 @@ class RelationshipDynamics
         $dims = $dynamics['dimensions'] ?? [];
         $comfort = floatval($dims['comfort']['x'] ?? 50);
         $passion = floatval($dims['passion']['x'] ?? 0);
-        $warmth  = floatval($dims['warmth']['x'] ?? 50);
+        $warmth  = RelDynPassion::warmth(is_array($dynamics) ? $dynamics : [], false) ?? 50.0;   // raw derived warmth (roadmap derived-warmth)
 
         // NPC must be unreceptive: comfort < 40 AND (passion < 20 OR warmth < 30) (config protocols.ick)
         if ($comfort >= floatval($ick['comfort_floor'])) {
@@ -18374,3 +18499,5 @@ require_once __DIR__ . '/reldyn_diary.php';
 require_once __DIR__ . '/reldyn_protocols.php';
 // Absence: the bond break (bond-break-resentment) and affinity rot (MDD 6.5); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_absence.php';
+// Passion floor + spike, the desire loop, derived warmth; its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_passion.php';

@@ -529,7 +529,7 @@ final class RelDynRomance
             'core_type' => $type,
             'rung' => self::rung($type),
             'romantic' => self::rung($type) > 0,
-            'passion_band' => RelationshipDynamics::getPassionBand(RelationshipDynamics::getPassion($dynamics)),
+            'passion_band' => RelationshipDynamics::getPassionBand(RelationshipDynamics::getEffectivePassion($dynamics)),
             // decisions §15: 'emotional' = the passion is not sexual (asexual; null = unrestricted)
             'passion_channel' => $att['passion_channel'] ?? null,
             'attraction_pass' => $sum === null ? null : !empty($sum['passes']),

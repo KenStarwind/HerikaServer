@@ -319,9 +319,10 @@ if (!empty($reldynCfg['internal_weather_enabled'])) {
     // caches needed. The place appraisal that feeds it runs in context.php, after core has
     // set CACHE_LOCATION / CACHE_PEOPLE.
     RelationshipDynamics::updateInternalWeather($npcName, $dynamics);
-    $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
-    RelationshipDynamics::applyWeatherModifiers($npcName, $dynamics, $temperament);
 }
+// Emotional gravity (MDD 4.1, roadmap weather-gravity-pull): the weather's target node pulls
+// on the game calendar; with internal weather off the held pull relaxes back to none.
+RelationshipDynamics::applyWeatherGravity($npcName, $dynamics);
 
 // ========== CREATURE MOODIFICATIONS (feedback_creature_moodifications, decisions §7) ==========
 // Vampires by night / day, werewolves by Skyrim's moon: the row's offsets are held while it

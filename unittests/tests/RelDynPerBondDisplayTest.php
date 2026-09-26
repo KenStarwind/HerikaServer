@@ -84,10 +84,14 @@ final class RelDynPerBondDisplayTest extends TestCase
         $this->assertEqualsWithDelta(38.0 * 1.15 * sqrt(2.0), $eff, 1e-6);
         $this->assertLessThan(76.0, $eff, 'room to breathe: not Burning, never Redline from the multiplier alone');
 
-        // warmth: crush baseline 25 x 1.15 x 1.41 = 40.6, a guarded crush reads Guarded / Cautious, not Comfortable
-        $w = RelationshipDynamics::getEffectiveDimensionValue($crush100, 'warmth', 25.0);
-        $this->assertEqualsWithDelta(25.0 * 1.15 * sqrt(2.0), $w, 1e-6);
+        // warmth is derived (roadmap derived-warmth, RelDynDerivedWarmthTest): the bond reaches it
+        // through passion and comfort as they read toward the player, sqrt(passion x comfort); a
+        // guarded crush at the Guarded comfort baseline reads Guarded / Cautious, not Comfortable
+        $comfort = RelationshipDynamics::getEffectiveDimensionValue($crush100, 'comfort');
+        $w = RelationshipDynamics::getEffectiveDimensionValue($crush100, 'warmth');
+        $this->assertEqualsWithDelta(sqrt($eff * $comfort), $w, 1e-6);
         $this->assertNotSame('Comfortable', RelationshipDynamics::getDimensionBand('warmth', $w)['label']);
+        $this->assertSame(25.0, RelationshipDynamics::getEffectiveDimensionValue($crush100, 'warmth', 25.0), 'a derived reading passes through');
 
         // trust / comfort: pow 0.75 (bonded 2.0 -> 1.68, 2.5 -> 1.99); affinity bonus linear over 0..100;
         // lifted above 1 they saturate (rulings 2026-09-25 §18 #8): 100 x (1 - (1 - x/100)^mult)
@@ -116,7 +120,8 @@ final class RelDynPerBondDisplayTest extends TestCase
         $enemy = $this->npc('enemy', -80.0, ['trust' => 40.0, 'warmth' => 30.0]);
         $this->assertSame('hostile', RelationshipDynamics::getRelationshipType('Tester', $enemy));
         $this->assertEqualsWithDelta(40.0 * pow(0.1, 0.75), RelationshipDynamics::getEffectiveDimensionValue($enemy, 'trust'), 1e-6);
-        $this->assertSame(0.0, RelationshipDynamics::getEffectiveDimensionValue($enemy, 'warmth'), 'Hostile warmth x0');
+        $this->assertSame('Walled', RelationshipDynamics::getDimensionBand('warmth', RelationshipDynamics::getEffectiveDimensionValue($enemy, 'warmth'))['label'],
+            'an enemy is walled off (derived warmth: hostile passion and comfort)');
     }
 
     public function testGlobalDimensionsAffinityAndResentmentPassThrough(): void

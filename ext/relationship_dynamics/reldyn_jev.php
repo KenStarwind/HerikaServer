@@ -14,9 +14,12 @@
  *   affinity_tier    string hostile|stranger|acquaintance|friend|close_friend|bonded|devoted
  *   context_tier     int    0..3 (with the high-water mark)
  *   trust, comfort, respect, warmth, maturity, resentment, resentment_self, self_confidence
- *                    float  dimension points 0..100
+ *                    float  dimension points 0..100 (warmth derived: sqrt(effective passion x comfort)
+ *                           + the states held on it, roadmap derived-warmth)
  *   arousal          float  0..100      valence  float -100..100
- *   passion          float  0..100 (capped by the Attraction Matrix)
+ *   passion          float  0..100 the floor: passion earned through play (the Attraction Matrix's uphill)
+ *   passion_spike    float  0..100 the moment on top of it (roadmap passion-floor-spike: fades per exchange)
+ *   passion_effective float 0..100 floor + spike + the weather's pull (what she feels right now)
  *   jealousy         float  0..100      jealousy_rival ?string
  *   attachment       string secure|anxious|avoidant|toxic (the style region of the axes; toxic =
  *                           fearful, MDD Toxic/Disorganized)
@@ -30,6 +33,8 @@
  *   relationship_type string RelDyn type (RelationshipDynamics::getRelationshipType)
  *   core_type        ?string core relationships.Player.type
  *   weather          string sunny|clear|overcast|stormy
+ *   weather_pull     array  dimension => points the weather's gravity holds on it now (MDD 4.1 target
+ *                           node, roadmap weather-gravity-pull; passion / warmth read at display time)
  *   open_conflict    bool   conflict_repairs int (positive interactions since it opened)
  *   boundary         string none|pending|probation|failed (mature boundary, rulings §9)
  *   concern          ['level' => concern points 0..100 (protective worry, traits design §1.4),
@@ -102,7 +107,8 @@ final class RelDynJev
     const UNITS = [
         'affinity' => 'core units -100..100',
         'dimensions' => 'points 0..100 (valence -100..100)',
-        'passion' => 'points 0..100', 'jealousy' => 'points 0..100',
+        'passion' => 'points 0..100 (the floor)', 'passion_spike' => 'points 0..100', 'passion_effective' => 'points 0..100',
+        'jealousy' => 'points 0..100',
         'fulfillment.band' => '-1..1 (below fulfillment low_band = neglected)',
         'fulfillment.trend' => 'band change per game day',
         'exclusivity.pull' => '0..1 (pull toward the player)', 'exclusivity.suitor_interest' => 'interest points 0..100',
@@ -134,6 +140,7 @@ final class RelDynJev
         'absence.bond_break.absent_game_days' => 'game days', 'absence.bond_break.resentment' => 'resentment points added',
         'absence.bond_break.comfort_delta' => 'comfort points', 'absence.bond_break.trust_delta' => 'trust points',
         'absence.rot_applied' => 'core affinity points (total, <= 0)',
+        'weather_pull' => 'dimension points held by the weather gravity',
     ];
 
     public static function state(string $npcName, array $dynamics, float $now): array
@@ -204,10 +211,12 @@ final class RelDynJev
             'affinity_tier' => RelationshipDynamics::getCurrentTier($affinity),
             'context_tier' => RelationshipDynamics::getContextTier($dynamics),
             'trust' => $num('trust', 50.0), 'comfort' => $num('comfort', 50.0), 'respect' => $num('respect', 50.0),
-            'warmth' => $num('warmth', 50.0), 'maturity' => $num('maturity', 50.0), 'resentment' => $num('resentment', 0.0),
+            'warmth' => round(RelDynPassion::warmth($dynamics, false) ?? 50.0, 2), 'maturity' => $num('maturity', 50.0), 'resentment' => $num('resentment', 0.0),
             'resentment_self' => $num('resentment_self', 0.0), 'self_confidence' => $num('self_confidence', 50.0),
             'arousal' => $num('arousal', 10.0), 'valence' => $num('valence', 0.0),
             'passion' => round(RelationshipDynamics::getPassion($dynamics), 2),
+            'passion_spike' => round(RelDynPassion::spike($dynamics), 2),
+            'passion_effective' => round(RelationshipDynamics::getEffectivePassion($dynamics), 2),
             'jealousy' => round(floatval($dynamics['jealousy_anger'] ?? 0), 2),
             'jealousy_rival' => $rival !== '' ? $rival : null,
             'attachment' => RelationshipDynamics::attachmentStyleOf($axes['anxiety'], $axes['avoidance']),
@@ -220,6 +229,7 @@ final class RelDynJev
             'relationship_type' => (string) RelationshipDynamics::getRelationshipType($npcName, $dynamics),
             'core_type' => isset($dynamics['_core_rel_type']) ? (string) $dynamics['_core_rel_type'] : null,
             'weather' => (string) ($dynamics['_internal_weather'] ?? 'clear'),
+            'weather_pull' => array_map(fn($v) => round(floatval($v), 2), (array) ($dynamics['_weather_gravity']['offsets'] ?? [])),
             'open_conflict' => !empty($dynamics['in_conflict']),
             'conflict_repairs' => intval($dynamics['conflict_positive_count'] ?? 0),
             'boundary' => is_string($boundary) ? $boundary : 'none',
@@ -266,6 +276,7 @@ final class RelDynJev
             "type={$s['relationship_type']}",
         ];
         foreach (['trust', 'comfort', 'respect', 'warmth', 'maturity', 'passion'] as $k) $parts[] = "{$k}=" . $f($s[$k]);
+        if ($s['passion_spike'] > 0) $parts[] = 'passion_spike=' . $f($s['passion_spike']);
         $parts[] = 'jealousy=' . $f($s['jealousy']) . ($s['jealousy_rival'] !== null ? "(rival {$s['jealousy_rival']})" : '');
         $parts[] = 'resentment=' . $f($s['resentment']);
         $parts[] = 'mood=' . $f($s['arousal']) . '/' . $f($s['valence']);
