@@ -40,6 +40,10 @@
  *     (the Attraction Matrix's summary, or a romance core already holds); otherwise her sober
  *     passion curve (0..1, the uphill's multiplier below her floors). A shallow diary (her own
  *     maturity at or below diary shallow_at) corrects nothing: no meaningful self-reflection.
+ *   - One night, one shame (the worked example has one sober verdict): a drunken scene the
+ *     post-intimacy states also judge (RelDynPostIntimacy's drunk_regret / cheating correction) and
+ *     this diary verdict share the night's resentment_self; whichever comes second adds only what
+ *     exceeds the first (nightShame, both in asked points before the physics).
  *
  * ADDICTION (per substance: skooma, sap, alcohol; addiction.substances maps consumables):
  *   - Each use raises dependence and tolerance (per substance); abstinence lowers them per game
@@ -663,6 +667,7 @@ final class RelDynSubstances
         $last = 0.0;
         foreach ($drinks as $dr) $last = max($last, floatval($dr['g'] ?? 0));
         $end = min($now, $last + ($rate > 0 ? self::levelAt($drinks, $last, $rate) / $rate * self::hour() : 0.0));
+        if (is_array($state['shame'][$key] ?? null)) $state['shame'][$key]['end'] = $end;
         if (is_array($state['nights'][$key] ?? null)) {
             $state['nights'][$key]['end'] = $end;
             $state['nights'][$key]['drinks'] = $drinks;
@@ -717,7 +722,11 @@ final class RelDynSubstances
                 $rs = $share * ($lo + ($hi - $lo) * max(0.0, min(1.0, $own / 100.0)));
                 if ($rs > 1e-6) {
                     $asked['resentment_self'] = round($rs, 4);
-                    $applied['resentment_self'] = RelationshipDynamics::applyDelta('resentment_self', $dynamics, $rs, $temperament);
+                    // one night, one shame: only what exceeds a post-intimacy verdict on this night
+                    $rs = self::nightShame($dynamics, floatval($night['start'] ?? $key), $rs, RelationshipDynamics::currentGamets(), (string) $key);
+                    if ($rs > 1e-6) {
+                        $applied['resentment_self'] = RelationshipDynamics::applyDelta('resentment_self', $dynamics, $rs, $temperament);
+                    }
                 }
             }
             $out[$key] = ['endorsed' => round($E, 4), 'asked' => $asked, 'applied' => $applied];
@@ -747,6 +756,50 @@ final class RelDynSubstances
         if (!empty($att['hard_zero'])) return 0.0;
         $curve = $att['passion']['curve'] ?? $att['passion_mult'] ?? 1.0;
         return max(0.0, min(1.0, floatval($curve)));
+    }
+
+    /**
+     * One drinking night, one shame. A sober verdict on the night that holds $at (or the night
+     * $nightKey) asks $asked resentment_self points (before the physics); returns the points still
+     * to apply: what exceeds the heaviest shame already given for that night, and records it
+     * (state 'shame': night key => start, end, verdicts [[at gamets, points]]). Outside any drinking night (no session,
+     * no ledger night, no record) nothing is shared: $asked comes back whole and unrecorded.
+     */
+    public static function nightShame(array &$dynamics, float $at, float $asked, float $now, ?string $nightKey = null): float
+    {
+        if ($asked <= 1e-6) return $asked;
+        $state = self::state($dynamics);
+        $shame = is_array($state['shame'] ?? null) ? $state['shame'] : [];
+        // a closed span only (an open one is the session above; closeNight ends a record's span)
+        $within = fn($n): bool => is_array($n) && is_numeric($n['end'] ?? null)
+            && floatval($n['start'] ?? INF) <= $at && $at <= floatval($n['end']);
+        $key = null;
+        $span = null;
+        if ($nightKey !== null) {
+            $key = $nightKey;
+            $n = $state['nights'][$key] ?? $shame[$key] ?? null;
+            $span = is_array($n) ? $n : ['start' => $at];
+        } elseif (!empty($state['drinks']) && floatval($state['session_start'] ?? INF) <= $at) {
+            $key = (string) (int) $state['session_start'];
+            $span = ['start' => floatval($state['session_start'])];
+        } else {
+            foreach ([(array) ($state['nights'] ?? []), $shame] as $list) {
+                foreach ($list as $k => $n) {
+                    if ($within($n)) { $key = (string) $k; $span = $n; break 2; }
+                }
+            }
+        }
+        if ($key === null) return $asked;
+        $verdicts = is_array($shame[$key]['verdicts'] ?? null) ? array_values($shame[$key]['verdicts']) : [];
+        $given = 0.0;
+        foreach ($verdicts as $v) $given = max($given, floatval($v[1] ?? 0.0));
+        $verdicts[] = [$now, round($asked, 4)];
+        $shame[$key] = ['start' => floatval($span['start'] ?? $at),
+            'end' => is_numeric($span['end'] ?? null) ? floatval($span['end']) : null,
+            'verdicts' => $verdicts];
+        $state['shame'] = array_slice($shame, -max(1, intval(self::config()['sober']['nights_kept'])), null, true);
+        $dynamics[self::KEY] = $state;
+        return max(0.0, $asked - $given);
     }
 
     // =====================================================================
@@ -914,6 +967,16 @@ final class RelDynSubstances
             foreach ($state['nights'] as $k => $n) {
                 if (is_numeric($n['end'] ?? null) && floatval($n['end']) > $T) unset($state['nights'][$k]['end'], $state['nights'][$k]['closed']);
             }
+        }
+        if (is_array($state['shame'] ?? null)) {
+            // a verdict the loaded game never lived is not given; a night it never lived is gone
+            foreach ($state['shame'] as $k => $s) {
+                $kept = array_values(array_filter((array) ($s['verdicts'] ?? []), fn($v) => is_array($v) && floatval($v[0] ?? 0) <= $T));
+                if ($kept === [] || floatval($s['start'] ?? 0) > $T) { unset($state['shame'][$k]); continue; }
+                $state['shame'][$k]['verdicts'] = $kept;
+                if (is_numeric($s['end'] ?? null) && floatval($s['end']) > $T) $state['shame'][$k]['end'] = null;
+            }
+            if ($state['shame'] === []) unset($state['shame']);
         }
         foreach ((array) ($state['use'] ?? []) as $s => $u) {
             if (is_array($u) && floatval($u['last_use'] ?? 0) > $T) $state['use'][$s]['last_use'] = $T;

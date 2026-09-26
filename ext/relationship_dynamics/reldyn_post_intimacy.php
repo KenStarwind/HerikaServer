@@ -19,8 +19,8 @@
  *                      not the player, and the player is not her partner: the draft's
  *                      "cheating on bonded partner" (comfort +8 -> -25, resentment_self +15; the
  *                      trust -15 is toward the one she cheated on, a pair RelDyn does not keep)
- *   drunk_regret       intoxicated (an intoxicant among her active consumables) and not a deep
- *                      bond: "Bonded, drunk, regret next day" (+10 -> -15, trust -5,
+ *   drunk_regret       intoxicated (an intoxicant among her active consumables, or drink still
+ *                      in her: RelDynSubstances::intoxicated) and not a deep bond: "Bonded, drunk, regret next day" (+10 -> -15, trust -5,
  *                      resentment_self +10) for a romance, "Stranger, drunk, one-night"
  *                      (+10 -> -20, trust 0, resentment_self +12) otherwise
  *   vulnerable_fear    fearful attachment (both axes at fearful_at): she wants the closeness and
@@ -48,7 +48,9 @@
  * trust points, resentment_self scaled by her own maturity (x clamp(maturity /
  * resentment_self_maturity_ref, ...), then kept within resentment_self_range: "+5 to +15
  * depending on maturity"), and a 'correction_valence'. A shallow mind (RelDynDiary::depth
- * 'shallow', the bad evaluator of the draft) never corrects.
+ * 'shallow', the bad evaluator of the draft) never corrects. One drinking night gets one shame:
+ * the correction's resentment_self adds only what exceeds what the sober diary already gave that
+ * night (RelDynSubstances::nightShame; the draft's worked example has one sober verdict).
  *
  * Felt text (feelings, never numbers; RelDynFelt 'post_intimacy', bond scope): the row's glow
  * while the afterglow holds ('moment' for a row with a correction still to come), its 'after'
@@ -187,9 +189,13 @@ final class RelDynPostIntimacy
     // THE CONTEXT AND THE OUTCOME (pure)
     // =====================================================================
 
-    /** Is an intoxicant among her active consumables (config intoxicants)? Pure. */
+    /**
+     * Is an intoxicant among her active consumables (config intoxicants), or is drink still in her
+     * (her own drinking, RelDynSubstances: it wears off on its own clock)? Pure.
+     */
     public static function intoxicated(array $dynamics, ?array $cfg = null): bool
     {
+        if (RelDynSubstances::intoxicated($dynamics)) return true;
         $keys = array_map('strval', (array) (($cfg ?? self::config())['intoxicants'] ?? []));
         foreach ((array) ($dynamics['_active_consumables'] ?? []) as $c) {
             if (is_array($c) && in_array((string) ($c['key'] ?? ''), $keys, true)) return true;
@@ -427,7 +433,11 @@ final class RelDynPostIntimacy
         $applied = [];
         foreach ($table as $dim => $p) {
             $p = floatval($p);
-            if ($dim === 'resentment_self') $p = self::resentmentSelf($p, $maturity, $cfg);
+            if ($dim === 'resentment_self') {
+                // one drinking night, one shame: only what exceeds the sober diary's verdict on it
+                $p = RelDynSubstances::nightShame($dynamics, floatval($state['start'] ?? $now),
+                    self::resentmentSelf($p, $maturity, $cfg), $now);
+            }
             $a = RelationshipDynamics::applyDelta((string) $dim, $dynamics, $p, $temperament);
             if (abs($a) > 1e-6) $applied[(string) $dim] = round($a, 4);
         }

@@ -266,8 +266,10 @@ final class RelDynMemory
         $att = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
         $platonic = !empty($att['enabled']) && (!empty($att['hard_zero']) || ($att['attracted'] ?? true) === false);
         if (!$platonic && $passion >= floatval($tc['drawn_passion_min'])) $add('drawn', (string) $txt['drawn'], floatval($sal['drawn']));
-        $m = $x('coord_m');
-        $f = $x('coord_f');
+        // how she carries herself now: the envelope as it reads (RelDynMoodAxes, derived at display
+        // time from how she feels, Fix 6), the same the felt band line and Jev read
+        $m = RelDynMoodAxes::derivedCoord($dynamics, 'coord_m');
+        $f = RelDynMoodAxes::derivedCoord($dynamics, 'coord_f');
         if ($m !== null && $f !== null && max(abs($m), abs($f)) >= floatval($tc['mf_min_magnitude'])) {
             $q = RelationshipDynamics::getMFQuadrantBand($m, $f)['quadrant'];
             if (isset($txt['mf'][$q])) $add('mf', (string) $txt['mf'][$q], floatval($sal['mf']));
