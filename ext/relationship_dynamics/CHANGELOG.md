@@ -3,69 +3,48 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## After reldyn-v0.17 (lane p4r-substances, untagged) — Her own drink, and what it costs her
-She drinks on her own account now (core's own lines of her consuming, nothing else). Each mug takes a little more of
-her judgement than the last, the design's night: a steady huntress at sixty-five is at thirty-three after five ales,
-laughing easily from the third, guards down from the fourth (more open, her standards lowered, blind to desperation),
-and below forty the floors that keep her from slipping are gone. It is a state, not who she is: it wears off on the
-game clock, about six hours after five ales, and leaves her exactly herself. What she did drunk waits for the sober
-self: her first diary page after it looks back at the night, and whatever she would not have done sober (a flirt with
-someone she is not drawn to) is regretted, more so the more she expects of herself; a shallow diary looks at nothing.
-Skooma, the sap and heavy drinking build a dependence and a tolerance: each high a little less, the craving growing
-with the hours, then the sickness of going without, until the next use or a healing potion that takes the edge off
-without feeding it. While she depends on it she does not grow up, unless someone who cares tells her to stop. Past
-twenty she knows she needs to stop; past twenty-five she keeps herself clean, is ashamed when she slips, and after
-days clean is steadier for it. The player's own drinking still reaches her only as worry (protective concern).
-
-## After reldyn-v0.17 (lane p4r-intimacy, untagged) — What follows a night, how she stands toward you, a pulse that settles, and a gift that is no gift
-A scene the game reports is no longer only a need met. What follows it is the context, not the act: a partner who
-trusts you deepens (at ease, unguarded, and a little more trust that stays); a newer romance warms; a woman who wants
-closeness and fears it goes quiet and watchful, and later keeps you at arm's length; one who backs away from closeness
-does, gently; a casual night stays light. The glow lasts a couple of game hours and is then gone exactly. A drunken
-night feels the same in the moment, and the sober morning judges it: she avoids your eyes, her ease with you sinks
-below where it was, and the shame is as heavy as what she holds herself to; a shallow mind never looks back. If she
-has a partner who is not you, it is guilt. Every scene makes her pulse race; the context decides whether that reads as
-warmth or unease, and the evaluator is shown it, never asked to score it. A racing pulse and a mood now settle with
-time instead of staying where the last event left them; what a place, a drink or the night holds on her stays until it
-ends. How she carries herself toward you (steady and protective, cold, yielding, bitter) now moves with how much she
-respects you and believes in herself, and how much she trusts you and is at ease with you, around the shape her
-personality gives her. A gift is counted by her second love language too. A ring the game marks as stolen is no gift:
-she knows stolen goods, her trust and respect fall and she holds it against you; a present someone she knows gave you
-first is recognised for what it is.
-
-## After reldyn-v0.17 (P4 memory lane, untagged) — Memories that keep what she felt, places that bring them back, and the mirror you didn't ask for
-What happens between you no longer turns into a bare log. Before an exchange becomes memory, who she was in it is written
-around it in words: how the moment landed on her (stung, cut deeply, warmed, deeply moved, each by her own measure),
-what she carries (a grudge, an open fight, jealousy, an icy distance, a pull), how she attaches, her mood and her manner.
-One hurtful word said to four women is four different memories. It sits in CHIM's own memory right after the exchange,
-so the summary it becomes keeps the subtext (opt-in: it writes into core's memory table).
-Some moments are kept for good, one of each: the first meeting, the first gift, the first fight side by side, the first
-time you pulled her up after a fall, the first closeness, the day you became partners, each with the place it happened.
-Coming back to that place brings it back to her for a few turns (an ache instead, while the bond is strained) and stirs
-a small moment of passion her own size, once a day at most.
-And the player now has a profile of their own, built only from what every NPC's eval saw them do: maturity, trust,
-warmth, respect, how comfortable people are around them, and self-confidence, each in the design's words; where they look
-for validation; their charisma (rock, catalyst, charmer); their attachment pattern, read every twenty-five exchanges;
-and the love language they show by what they do. Mirror mode reads play alone; Character mode holds an authored role
-while play moves it slowly. A trust record travels: strangers meet a reliable player with a little more trust, a
-liar with less. Whether NPCs sense the rest is opt-in. It follows the game back on a load, and a read API gives the
-spider graph its numbers.
-
-## After reldyn-v0.17 (batch-Q review, untagged) — Hurt that holds her back, care paid once, and a moment that is hers
-A bond breaks while you are away only once the absence feels intentional to her: past what she would excuse (who she is,
-and how fulfilled the bond was when you left), and as long again. A few days break the fearful and the anxious; the
-secure and the mature give you longer, even when the days have worn the bond thin. When it does break, the hurt holds
-her back on the return: she does not reach for you or show the pull beside it until you have been warm to her since.
-A romance gone cold wears the bond down between the two of you, while you are there without warmth, not again while you
-are away (the absence already costs what it costs). A partner held at the coldest her commitment allows is cold, and a
-marriage without attraction is loveless by nature, not rotting; an open fight still rots through any absence.
-When she goes down, her own words about it are not your answer; yours are. Care after her fall is the rescue itself,
-paid once, by who she is. The moment on top of the bond (a touch, a flirt) is the size her temperament makes it, not
-shrunk by how far you are from her type; only what she will never feel, and the caps of her tier, hold it. It halves
-within minutes of quiet, not only with each exchange. Her warmth feels each held state once at its own weight (a grief,
-an overcast mood), fades while you are away by who she is and comes back with warm moments, and a catastrophe that
-breaks her closes it to anyone but her partner for a while. An acquaintance who is not drawn to you stops at the spark
-(the MDD row as written); only attraction raises it before you are friends.
+## reldyn-v0.18 — Her own drink and the morning after, what follows a night, memories that keep what she felt, and the mirror
+A bond breaks while you are away only once the absence feels intentional to her, past what she would excuse given who
+she is and how fulfilled the bond was when you left: the fearful and the anxious break sooner, the secure and the
+mature give you longer. When it breaks, the hurt holds her back on your return until you have been warm to her since.
+A romance gone cold wears the bond down while you are there without warmth, not again while you are away, and a
+marriage without attraction is loveless by nature, not rotting. Care after her fall is the rescue itself, paid once,
+by who she is. The moment on top of the bond is the size her temperament makes it and halves within minutes of quiet;
+her warmth feels each held state once, fades while you are away by who she is, and a catastrophe closes it to anyone
+but her partner for a while.
+She drinks on her own account now, read from the game's own lines of her consuming. Each drink takes a little more of
+her judgement than the last: laughing easily, then her guard and her standards down and blind to desperation, and at
+last without the floors that keep her from slipping. It is a state, not who she is: it wears off on the game clock and
+leaves her exactly herself. Skooma, the sap and heavy drinking build a dependence and a tolerance: each high a little
+less, the craving growing with the hours, then the sickness of going without, until the next use or a healing potion
+that eases it without feeding it. While she depends on it she does not grow up, unless someone who cares tells her to
+stop; once she knows she needs to stop she can set herself to stay clean, is ashamed when she slips, and is steadier
+for the days she stays clean. The player's own drinking still reaches her only as worry.
+A scene the game reports is followed by its context, not by the act: a partner who trusts you deepens, a newer romance
+warms, a woman who wants closeness and fears it goes quiet and watchful, one who backs away from closeness does, a
+casual night stays light, and if she has a partner who is not you it is guilt. The glow lasts a little while and is
+then gone exactly. Every scene makes her pulse race; the context decides whether that reads as warmth or unease, and
+the evaluator is shown it, never asked to score it. Her pulse and her mood now settle with time instead of staying
+where the last event left them. How she carries herself toward you (steady and protective, cold, yielding, bitter)
+moves with how much she respects you and believes in herself, and how much she trusts you and is at ease with you,
+around the shape her personality gives her. A gift counts by her second love language too; a stolen gift, or a present
+she knows was someone else's first, is no gift at all.
+What she did drunk waits for her sober self. The morning judges a drunken night, and her first diary page after it
+looks back at what she let happen: whatever she would not have done sober is regretted, the more so the more she
+expects of herself, and a shallow mind never looks back. However many ways her sober self looks back on one night, it
+is one shame: the heavier verdict counts, never both, and each keeps the rest of what it says. Drink still in her is
+drunk, even when the moment of the mug has long passed.
+Before an exchange becomes memory, who she was in it is written around it in words: how the moment landed on her by
+her own measure, what she carries, how she attaches, her mood, and how she carries herself toward you as she does now.
+One hurtful word said to four women is four different memories (opt-in: it writes into CHIM's own memory, right after
+the exchange). Some firsts are kept for good with the place they happened, and coming back there brings them back to
+her for a while, or an ache while the bond is strained, with a small moment of passion her own size.
+The player now has a profile of their own, built only from what the evaluators saw them do: maturity, trust, warmth,
+respect, how comfortable people are around them and self-confidence; where they look for validation; their charisma;
+their attachment pattern; the love language they show. Mirror mode reads play alone; Character mode holds an authored
+role that play moves slowly. A trust record travels: strangers meet a reliable player with a little more trust, a liar
+with less. Whether NPCs sense the rest is opt-in; it follows the game back on a load, and a read API feeds the spider
+graph.
 
 ## reldyn-v0.17 — The moment on top of the bond, the urge she acts on, and what time away does to it
 Passion now has two parts. The floor is what you have earned with her and changes slowly; on top of it, a moment (a
