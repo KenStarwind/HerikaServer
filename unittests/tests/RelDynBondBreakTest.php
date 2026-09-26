@@ -211,10 +211,15 @@ final class RelDynBondBreakTest extends TestCase
     public function testGuardedNpcWithdrawsAndTheWallsGoBackUp(): void
     {
         $guarded = $this->bond('Guarded', 'avoidant', 40.0, 'crush', 50.0, ['trust' => 40.0]);
-        $this->assertGreaterThanOrEqual(0.6, RelDynAbsence::guardedness($guarded));
+        $this->assertTrue(RelDynAbsence::withdraws($guarded));
         $this->assertSame('withdraw', RelDynAbsence::mode($guarded));
         $open = $this->bond('Romantic', 'secure', 40.0, 'crush', 50.0, ['trust' => 40.0]);
         $this->assertSame('confront', RelDynAbsence::mode($open));
+        // an anxious attachment protests however guarded the temperament: fear of abandonment speaks first
+        $protest = $this->bond('Guarded', 'anxious', 40.0, 'crush', 50.0, ['trust' => 40.0]);
+        $this->assertGreaterThanOrEqual(0.55, RelDynAbsence::guardedness($protest), 'guarded');
+        $this->assertFalse(RelDynAbsence::withdraws($protest), 'but anxious');
+        $this->assertSame('confront', RelDynAbsence::mode($protest));
         $w = RelDynAbsence::magnitudes($guarded, 'crush', 21.0);
         $this->assertEqualsWithDelta(1.5, $w['comfort'] / (10.0 * 0.7 * (0.5 + RelationshipDynamics::getNeglectProfile($guarded)['codependence'])), 1e-9,
             'withdraw: the comfort drop is x1.5');

@@ -25,9 +25,12 @@
  *       boundary  mature, a step-back target exists, no boundary running: the §9 boundary comes
  *                 due now (calm statement -> probation -> a deliberate step-back if it goes on);
  *       repair    mature otherwise: a calm "let's talk it through" instead of a grudge;
- *       withdraw  guarded or avoidant (max(guard trait, avoidance axis) >= withdraw_at): the walls
- *                 go back up, a bigger comfort drop, no scene;
- *       confront  everyone else: it spills out on the return ("where WERE you?").
+ *       withdraw  guarded (max(guard trait G, avoidance axis) >= withdraw_at, above the middle)
+ *                 and not in the anxious half (anxiety axis < protest_at; Fraley & Shaver axes,
+ *                 decisions §12, as they have drifted): the walls go back up, a bigger comfort
+ *                 drop, no scene;
+ *       confront  everyone else, anxious protest first: it spills out on the return ("where WERE
+ *                 you?").
  *     Walkaway and the MDD 15.5 confrontation stay the existing thresholds on resentment: the
  *     break only feeds them. The line is said to the player's face (takeFeltLines).
  *
@@ -101,7 +104,8 @@ class RelDynAbsence
             'comfort_base' => 10.0,             // comfort points at severity 1 and codependence 0.5
             'withdraw_comfort_mult' => 1.5,     // walls back up: comfort falls further
             'trust_base' => 6.0,                // trust points at severity 1 and duration_scale 1
-            'withdraw_at' => 0.6,               // max(guard trait G, avoidance axis) 0..1 from which the NPC withdraws
+            'withdraw_at' => 0.55,              // guardedness (0..1) from which the walls go back up
+            'protest_at' => 0.5,                // anxiety axis (0..1) from which fear of abandonment protests instead
             'felt_text' => [
                 'confront' => "{NAME} was left alone far too long, and now that {PLAYER} is back it spills out before they can stop it: "
                     . "where were they, did {NAME} even cross their mind? The hurt comes out as accusation, raw and close to the surface.",
@@ -174,7 +178,18 @@ class RelDynAbsence
                 && RelDynFulfillment::pairState($dynamics) !== null;
             return $boundaryOpen ? 'boundary' : 'repair';
         }
-        return self::guardedness($dynamics) >= floatval($cfg['withdraw_at']) ? 'withdraw' : 'confront';
+        return self::withdraws($dynamics, $cfg) ? 'withdraw' : 'confront';
+    }
+
+    /**
+     * A guarded or avoidant NPC pulls back (guardedness >= withdraw_at); one in the anxious half
+     * (anxiety axis >= protest_at) protests however guarded: fear of abandonment speaks first.
+     */
+    public static function withdraws(array $dynamics, ?array $cfg = null): bool
+    {
+        $cfg = $cfg ?? self::breakConfig();
+        $anxiety = floatval(RelationshipDynamics::getAttachmentAxes($dynamics)['anxiety'] ?? 0.0);   // 0..1
+        return self::guardedness($dynamics) >= floatval($cfg['withdraw_at']) && $anxiety < floatval($cfg['protest_at']);
     }
 
     /** max(guard trait G, attachment avoidance axis), 0..1: how readily the walls go back up. */
