@@ -259,7 +259,8 @@ final class RelDynMemoryMirrorPostgresTest extends TestCase
         $this->assertCount(1, $rows);
         $this->assertSame(['Aela the Huntress', 'Kaida', (string) ($g + 1), 'reldyn_subtext', 'reldyn:fpA'],
             [$rows[0]['speaker'], $rows[0]['listener'], $rows[0]['gamets'], $rows[0]['event'], $rows[0]['session']]);
-        $this->assertSame('(Beneath this moment with Kaida, Aela the Huntress was operating strictly out of begrudging duty, harbouring a deep, '
+        // the exchange's location as core's speech rows carry it (batch-R: PackIntoSummary cuts a queue at a row without one)
+        $this->assertSame('(Context Location:Jorrvaskr) (Beneath this moment with Kaida, Aela the Huntress was operating strictly out of begrudging duty, harbouring a deep, '
             . 'unresolved resentment toward Kaida and keeping an icy, transactional distance. What happened: Kaida asked for work; she named the bandit camp.)',
             $rows[0]['message']);
         // Core's packer reads it right after the exchange's speech (memory_v, ordered by game time)

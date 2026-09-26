@@ -501,7 +501,8 @@ final class RelDynMemoryMirrorTestBedsPostgresTest extends TestCase
             $this->assertSame((string) ($t0 + 600 * $i + 1), $rows[0]['gamets'], "{$npc}: right after the exchange (one gamets)");
             $this->assertSame(self::PLAYER, $rows[0]['listener']);
             $notes[$npc] = $rows[0]['message'];
-            $this->assertStringStartsWith("(Beneath this moment with Kaida, {$npc} was ", $notes[$npc]);
+            // the exchange's location as core's speech rows carry it (batch-R: PackIntoSummary cuts a queue at a row without one)
+            $this->assertStringStartsWith("(Context Location:Breezehome) (Beneath this moment with Kaida, {$npc} was ", $notes[$npc]);
             $this->assertStringEndsWith('What happened: The player called her useless in front of everyone.)', $notes[$npc]);
             $this->assertDoesNotMatchRegularExpression('/\d/', $notes[$npc]);
             // How the word landed on her, through her own filters: the applied change of the exchange

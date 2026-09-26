@@ -19,7 +19,9 @@
  * memory_v = the memory table + speech + death / location rows into memory_summary, which the
  * summarizer and the vector search read). So the wrapper reaches core's memory the way core's
  * own AddFirstTimeMet note does: one row in the memory table at the exchange's game time, which
- * the packer puts into the same packed_message as the exchange's speech. commit.enabled (default
+ * the packer puts into the same packed_message as the exchange's speech (the note carries the
+ * speech rows' "(Context Location:X)": PackIntoSummary cuts a queue at any row without a location,
+ * and a queue under AUTO_CREATE_SUMMARY_MIN_EVENTS is never packed). commit.enabled (default
  * off: a new write into a core table; open question) writes it for every applied eval item of at
  * least commit.min_significance, once per item (memory.session holds the item's fingerprint), and
  * a load prunes it with core's memory rows (comm.php deletes memory past the loaded game time).
@@ -333,15 +335,42 @@ final class RelDynMemory
     }
 
     /**
+     * Core's location of $npc's exchange at $gamets as its speech rows carry it (the speech column
+     * memory_v turns into "(Context Location:<location>) "): her latest speech row (as speaker or
+     * listener) within the game hour before $gamets, or null.
+     */
+    private static function exchangeLocation(string $npc, float $gamets): ?string
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || $gamets <= 0 || trim($npc) === '') return null;
+        $row = $db->fetchOne(
+            "SELECT location FROM speech WHERE gamets <= \$1::bigint AND gamets >= \$2::bigint AND (speaker = \$3 OR listener = \$3)
+               AND coalesce(trim(location), '') <> '' ORDER BY gamets DESC, rowid DESC LIMIT 1",
+            [(string) (int) round($gamets), (string) (int) round($gamets - RelationshipDynamics::GAMETS_PER_HOUR), trim($npc)]
+        );
+        $loc = is_array($row) ? trim((string) ($row['location'] ?? '')) : '';
+        return $loc === '' ? null : $loc;
+    }
+
+    /**
      * One row in core's memory table (logMemory's columns), once per $key (memory.session):
      * INSERT ... WHERE NOT EXISTS, one statement. Stamped one gamets after the moment (a fraction of
      * a game second), so core's packer, ordering by game time, reads it right after the exchange's
-     * own line. Returns true when written.
+     * own line. It carries the exchange's location as core's speech rows do ("(Context Location:X) ",
+     * exchangeLocation of $npc): core's PackIntoSummary cuts its queues wherever a row has no
+     * location, so a note without one would split the exchange and leave it out of memory_summary.
+     * Returns true when written.
      */
-    private static function writeNote(string $speaker, string $listener, string $message, float $gamets, string $event, string $key): bool
+    private static function writeNote(string $speaker, string $listener, string $message, float $gamets, string $event, string $key, string $npc): bool
     {
         $db = $GLOBALS['db'] ?? null;
         if (!$db || $gamets <= 0) return false;
+        $location = self::exchangeLocation($npc, $gamets);
+        if ($location !== null) {
+            $message = '(Context Location:' . $location . ') ' . $message;
+        } else {
+            RelationshipDynamics::log("[RelDyn-MEMORY] {$npc}: no speech location for the note at gamets {$gamets}; core packs it on its own");
+        }
         $gamets += 1.0;
         $row = $db->fetchOne(
             'INSERT INTO memory (localts, speaker, listener, message, gamets, session, momentum, event, ts)
@@ -382,7 +411,7 @@ final class RelDynMemory
         $note = self::translate($dynamics, $npc, $player, $summary, $env, $cfg);
         if ($note === null) return;
         try {
-            if (self::writeNote($npc, $player, $note, $gamets, self::NOTE_EVENT, 'reldyn:' . $fingerprint)) {
+            if (self::writeNote($npc, $player, $note, $gamets, self::NOTE_EVENT, 'reldyn:' . $fingerprint, $npc)) {
                 RelationshipDynamics::log("[RelDyn-MEMORY] {$npc}: subtext note at gamets {$gamets}: {$note}");
             }
         } catch (\Throwable $e) {
@@ -447,7 +476,7 @@ final class RelDynMemory
             $note = strtr((string) $t['anchor_note'], $vars + ['{MOMENT}' => $moment, '{TAG}' => (string) ($t['anchor_tag'][$kind] ?? $kind)]);
             try {
                 $npcKey = strtolower(preg_replace('/\s+/', '_', trim($npc)));
-                self::writeNote($player, $npc, $note, $anchor['gamets'], self::ANCHOR_EVENT, "reldyn:anchor:{$npcKey}:{$kind}");
+                self::writeNote($player, $npc, $note, $anchor['gamets'], self::ANCHOR_EVENT, "reldyn:anchor:{$npcKey}:{$kind}", $npc);
             } catch (\Throwable $e) {
                 RelationshipDynamics::logError("memory anchor note for {$npc}", $e);
             }
