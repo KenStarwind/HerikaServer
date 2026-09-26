@@ -394,8 +394,9 @@ final class RelDynPassion
 
     /** dynamics key: the rulings §8 absence fade held on derived warmth (warmth points, <= 0). */
     const WARMTH_FADE_KEY = '_warmth_fade';
-    /** dynamics key: the breaking arc's closure of derived warmth ['start_gamets', 'until_gamets'] (raw gamets). */
-    const BREAKING_WARMTH_KEY = '_breaking_warmth';
+    /** dynamics keys: the breaking arc's closure of derived warmth, its start and end (raw gamets; a calendar window, RelDynTimeline). */
+    const BREAKING_WARMTH_START_KEY = '_breaking_warmth_start_gamets';
+    const BREAKING_WARMTH_UNTIL_KEY = '_breaking_warmth_until_gamets';
     /** RelDyn bond types the breaking arc does not shut out (applyBreakingArc: "toward non-bonded"). */
     const BREAKING_EXEMPT_TYPES = ['bonded', 'sworn'];
 
@@ -466,11 +467,10 @@ final class RelDynPassion
      */
     public static function breakingOpenness(array $dynamics): float
     {
-        $b = $dynamics[self::BREAKING_WARMTH_KEY] ?? null;
-        if (!is_array($b)) return 1.0;
+        $start = floatval($dynamics[self::BREAKING_WARMTH_START_KEY] ?? 0);   // raw gamets
+        $until = floatval($dynamics[self::BREAKING_WARMTH_UNTIL_KEY] ?? 0);   // raw gamets
+        if ($start <= 0) return 1.0;
         if (in_array(RelationshipDynamics::getRelationshipType('', $dynamics), self::BREAKING_EXEMPT_TYPES, true)) return 1.0;
-        $start = floatval($b['start_gamets'] ?? 0);   // raw gamets
-        $until = floatval($b['until_gamets'] ?? 0);   // raw gamets
         $now = RelDynProtocols::calendarNow($dynamics);
         if ($start <= 0 || $until <= $start || $now < $start) return 1.0;
         return max(0.0, min(1.0, ($now - $start) / ($until - $start)));
@@ -481,7 +481,8 @@ final class RelDynPassion
     {
         if ($now <= 0) return;
         $days = max(0.0, floatval(self::config()['breaking_warmth_reopen_game_days']));
-        $dynamics[self::BREAKING_WARMTH_KEY] = ['start_gamets' => $now, 'until_gamets' => $now + $days * RelationshipDynamics::GAMETS_PER_DAY];
+        $dynamics[self::BREAKING_WARMTH_START_KEY] = $now;
+        $dynamics[self::BREAKING_WARMTH_UNTIL_KEY] = $now + $days * RelationshipDynamics::GAMETS_PER_DAY;
     }
 
     /**

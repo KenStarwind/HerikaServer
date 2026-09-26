@@ -103,6 +103,8 @@ final class RelDynTimeline
     /** [start, end] of an absolute calendar window in the dynamics: a start past the load shifts both. */
     const CALENDAR_WINDOWS = [
         ['_plasticity_override_start_gamets', '_plasticity_override_expires_gamets'],
+        // the breaking arc's closure of derived warmth (RelDynPassion::breakingOpenness)
+        ['_breaking_warmth_start_gamets', '_breaking_warmth_until_gamets'],
     ];
     /** Fulfillment boundary stamps (raw gamets) clamped to the load point. */
     const BOUNDARY_STAMPS = ['decided_gamets', 'failed_gamets', 'resolved_gamets', 'dropped_gamets'];

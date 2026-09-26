@@ -382,7 +382,7 @@ final class RelDynBatchQFixTest extends TestCase
         $this->assertGreaterThan(0.0, $half);
         $this->assertLessThan(0.75 * $before, $half, 'half way through the arc: still closed off');
         $this->at(self::T0 + 31 * self::DAY);
-        $this->assertEqualsWithDelta(RelDynPassion::warmth(array_diff_key($d, ['_breaking_warmth' => 1]), false), RelDynPassion::warmth($d, false), 1e-9, 'open again');
+        $this->assertEqualsWithDelta(RelDynPassion::warmth(array_diff_key($d, [RelDynPassion::BREAKING_WARMTH_START_KEY => 1]), false), RelDynPassion::warmth($d, false), 1e-9, 'open again');
 
         $partner = $this->open(30.0, 60.0, 'romantic', 80.0, 'Guarded');
         $this->assertSame('bonded', RelationshipDynamics::getRelationshipType('Test', $partner));
