@@ -1163,6 +1163,13 @@ class RelationshipDynamics
             // Per-NPC severity of neglect and warmth fade (rulings 2026-09-24 §8), see
             // neglectSeverityDefaults() / getNeglectProfile() for the formula.
             'neglect_severity' => self::neglectSeverityDefaults(),
+            // Bond break (roadmap bond-break-resentment): the return from an absence whose decay
+            // carried the bond below its type's threshold; resentment through the neglect buffer
+            // and ceiling, comfort and trust drops, expressed by who the NPC is (reldyn_absence.php).
+            'bond_break' => RelDynAbsence::bondBreakDefaults(),
+            // Affinity rot (MDD 6.5): open conflict or low passion in a romance, past a grace
+            // without a positive interaction, bleeds core affinity (reldyn_absence.php).
+            'affinity_rot' => RelDynAbsence::rotDefaults(),
             // Calendar scan: NPCs whose calendar step is at least this many game hours old are
             // advanced on any request; at most calendar_scan_max_npcs per request.
             'calendar_scan_interval_game_hours' => 1,
@@ -4347,7 +4354,9 @@ class RelationshipDynamics
      * Nothing negative is ever reduced here. Neglect and fade are skipped while the NPC is
      * the one who left (walkaway). Pure: no database, no clock reads.
      *
-     * @return array ['game_days', 'resentment_raw', 'resentment', 'jealousy_resentment_raw', 'neglect_days', 'neglect_ceiling', 'passion_fade', 'warmth_fade', 'bond_type']
+     * Affinity rot runs on the same interval (RelDynAbsence::rotStep, result under 'rot').
+     *
+     * @return array ['game_days', 'resentment_raw', 'resentment', 'jealousy_resentment_raw', 'neglect_days', 'neglect_ceiling', 'passion_fade', 'warmth_fade', 'bond_type', 'rot']
      */
     public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
     {
@@ -4416,6 +4425,11 @@ class RelationshipDynamics
                 }
             }
         }
+
+        // Affinity rot (MDD 6.5): open conflict or low passion in a romance, past its grace with no
+        // positive interaction, bleeds core affinity (reldyn_absence.php). Before the passion fade:
+        // the low-passion condition reads passion as the interval began.
+        $out['rot'] = RelDynAbsence::rotStep($dynamics, $fromGamets, $toGamets);
 
         // Positive states fade with absence (passion), scaled by attachment.
         if (!$away && $lastContact > 0) {
@@ -4492,6 +4506,28 @@ class RelationshipDynamics
         }
         $dynamics[$bufferKey] = round(max(0.0, $buffer), 9);
         return $applied;
+    }
+
+    /**
+     * Raw resentment (0..100 points, before applyDelta's physics) from an absence that is not a
+     * day of it: the bond break (reldyn_absence.php). The same neglect buffer and the same
+     * per-NPC neglect ceiling as the daily neglect (getNeglectProfile): one absence path, whose
+     * anger stops where this NPC's does. A walkaway that starts on the return from the absence
+     * begun at $sinceGamets (raw) is a neglect walkaway (walkawayReason).
+     *
+     * @return float resentment points actually applied
+     */
+    public static function chargeNeglectResentment(array &$dynamics, float $raw, float $sinceGamets): float
+    {
+        if ($raw <= 0.0 || !self::configValue('neglect_enabled')) return 0.0;
+        $max = floatval(self::getDimensionDefinition('resentment')['range_max'] ?? 100);
+        $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
+        $felt = self::drainCalendarResentment($dynamics, '_calendar_neglect_raw', $raw,
+            min($max, self::getNeglectProfile($dynamics)['ceiling']), $temperament);
+        if ($felt > 0.0) {
+            $dynamics['_neglect_resentment_since_gamets'] = $sinceGamets;   // raw gamets
+        }
+        return $felt;
     }
 
     /** One 'neglect' grievance per absence (keyed by the contact it counts from), kept current. */
@@ -4892,7 +4928,7 @@ class RelationshipDynamics
             $step = self::advanceCalendar($dyn, $from, $now);
             $result['calendar'] = $step;
             $changed = $changed || $step['resentment_raw'] > 0 || $step['jealousy_resentment_raw'] > 0
-                || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0;
+                || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0 || !empty($step['rot']['changed']);
         }
         // Fulfillment (rulings §9): day-end samples, unfulfilled neglect and the mature boundary
         // move with the calendar for every bond that has a fulfillment state, talked to or not.
@@ -4929,6 +4965,13 @@ class RelationshipDynamics
         }
 
         if ($changed) {
+            // Affinity rot moved the core mirror: push it to core as a locked delta first
+            $rot = $result['calendar']['rot'] ?? null;
+            if (is_array($rot) && $rot['applied'] != 0.0) {
+                self::commitPlayerAffinity($npcName, $dyn);
+                self::log("[ROT] {$npcName}: {$rot['condition']} for " . round($rot['days'], 2) . ' game day(s), affinity '
+                    . round($rot['applied'], 3) . ($rot['tier_regressed'] !== null ? ", tier regressed to {$rot['tier_regressed']}" : ''));
+            }
             self::saveDynamics($npcName, $dyn);
         }
         return $result;
@@ -4970,6 +5013,8 @@ class RelationshipDynamics
     {
         $dynamics['in_conflict'] = true;
         $dynamics['conflict_entered_at'] = self::getPlayGamets($dynamics);
+        // Game calendar (raw gamets) of the opening: affinity rot counts its onset from here
+        $dynamics['_conflict_entered_gamets'] = self::currentGamets();
         $dynamics['conflict_positive_count'] = 0;
         self::log("Entered conflict state");
     }
@@ -9490,6 +9535,8 @@ class RelationshipDynamics
             // (postrequest counts it only when the local classifier scored the exchange)
             $dynamics['total_positive_interactions'] = intval($dynamics['total_positive_interactions'] ?? 0) + 1;
             self::checkStageAdvancement($dynamics);
+            // Contact heals: the affinity rot clock starts over (reldyn_absence.php)
+            RelDynAbsence::markPositive($dynamics, floatval($item['gamets'] ?? 0) > 0 ? floatval($item['gamets']) : self::currentGamets());
             // MDD 15.5 natural decay: -1 raw per meaningful positive interaction (the eval judged it)
             if (floatval($dynamics['dimensions']['resentment']['x'] ?? 0) > 0) {
                 $out['resentment_decay'] = self::applyDelta('resentment', $dynamics,
@@ -10181,6 +10228,15 @@ class RelationshipDynamics
     {
         $coreAff = max(self::CORE_AFFINITY_MIN, min(self::CORE_AFFINITY_MAX, $coreAff));
         $dynamics['dimensions']['affinity']['x'] = round(($coreAff + 100.0) / 2.0, 4);
+    }
+
+    /**
+     * setCoreAffinity() for RelDyn's own modules (affinity rot, reldyn_absence.php): moves the
+     * mirror x to a CORE value (-100..+100); commitPlayerAffinity() pushes the change to core.
+     */
+    public static function setCoreAffinityValue(array &$dynamics, float $coreAff): void
+    {
+        self::setCoreAffinity($dynamics, $coreAff);
     }
 
     /**
@@ -18270,3 +18326,5 @@ require_once __DIR__ . '/reldyn_gating.php';
 require_once __DIR__ . '/reldyn_diary.php';
 // Divine Intervention, grief / widow's lock, the Ick's tuning, the Parasite (P3 protocols)
 require_once __DIR__ . '/reldyn_protocols.php';
+// Absence: the bond break (bond-break-resentment) and affinity rot (MDD 6.5); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_absence.php';

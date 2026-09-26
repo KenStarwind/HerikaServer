@@ -215,6 +215,7 @@ final class RelDynJev
             'concern' => RelDynConcern::jev($dynamics, $now),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'resentment_arc' => RelDynResentment::jev($dynamics),
+            'absence' => RelDynAbsence::jev($dynamics),
             'fulfillment' => $fulfillment,
             'exclusivity' => RelDynExclusivity::jev($dynamics, $now),
             'attraction' => $attraction,
