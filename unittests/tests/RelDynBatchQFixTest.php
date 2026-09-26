@@ -313,5 +313,117 @@ final class RelDynBatchQFixTest extends TestCase
         $d['_attraction']['attracted'] = true;
         $this->assertArrayHasKey('low_passion', RelDynAbsence::rotConditions($d), 'an attracted partner gone cold does rot');
     }
-}
 
+    // ================================================================ derived-warmth
+
+    /** A bond whose derived warmth reads sqrt(passion x comfort) plainly: passion and comfort points, no moment. */
+    private function open(float $passion, float $comfort, string $coreType = 'platonic', float $aff = 40.0, string $temperament = 'Romantic',
+                          string $attachment = 'secure', float $maturity = 50.0): array
+    {
+        $d = $this->bond($temperament, $attachment, $maturity, $coreType, $aff, $passion, ['comfort' => $comfort]);
+        unset($d[RelDynPassion::SPIKE_KEY], $d['_weather_gravity']);
+        return $d;
+    }
+
+    /**
+     * Derived warmth is sqrt(passion x comfort), so a held state that moves comfort (or the
+     * weather's pull on passion) already moves it. The offset tables were written for a stand-alone
+     * warmth dimension, with a warmth column of their own: a state that has one reaches warmth at
+     * that value, once (its comfort / passion part is not counted into the root as well); a state
+     * with no warmth column reaches it through the root.
+     */
+    public function testAHeldStateReachesWarmthOnceAtItsDesignedValue(): void
+    {
+        $base = RelDynPassion::warmth($this->open(40.0, 50.0), false);
+        $this->assertEqualsWithDelta(sqrt(40.0 * 50.0), $base, 1e-6);
+
+        // acute grief (RelDynProtocols: comfort -15 held in x, warmth -10): -10, not -17
+        $grief = $this->open(40.0, 35.0);
+        $grief[RelDynProtocols::GRIEF_HELD_KEY] = ['comfort' => -15.0, 'warmth' => -10.0];
+        $this->assertEqualsWithDelta($base - 10.0, RelDynPassion::warmth($grief, false), 1e-6, 'acute grief');
+
+        // an overcast mood (the weather's node: warmth -3, passion -3 read at display time): -3, not -4.7
+        $overcast = $this->open(40.0, 50.0);
+        $overcast['_weather_gravity'] = ['weather' => 'overcast', 'offsets' => ['warmth' => -3.0, 'passion' => -3.0], 'applied' => []];
+        $this->assertEqualsWithDelta($base - 3.0, RelDynPassion::warmth($overcast, false), 1e-6, 'overcast');
+        $this->assertEqualsWithDelta(37.0, RelDynPassion::effective($overcast), 1e-6, 'the pull on passion itself stays');
+
+        // a fire (comfort +10, warmth +5, passion +5, all held in x): +5
+        $fire = $this->open(45.0, 60.0);
+        $fire['_applied_physical_deltas'] = ['warm_fire' => ['comfort' => 10.0, 'warmth' => 5.0, 'passion' => 5.0]];
+        $this->assertEqualsWithDelta($base + 5.0, RelDynPassion::warmth($fire, false), 1e-6, 'a fire');
+
+        // the cold (comfort -10 held in x, no warmth column): through the root, she closes a little
+        $cold = $this->open(40.0, 40.0);
+        $cold['_applied_physical_deltas'] = ['cold' => ['comfort' => -10.0]];
+        $this->assertEqualsWithDelta(sqrt(40.0 * 40.0), RelDynPassion::warmth($cold, false), 1e-6, 'the cold');
+    }
+
+    /**
+     * Divine Intervention's breaking arc: "zero warmth toward non-bonded". Warmth is derived, so the
+     * arc closes it where it is read: toward a player who is not her bonded / sworn partner it
+     * reads nothing at the arc and opens again across the arc's own Brittle window (30 game days).
+     * A bonded partner is not shut out.
+     */
+    public function testTheBreakingArcClosesHerWarmthAndItOpensAgainOverTheArc(): void
+    {
+        $arc = new ReflectionMethod(RelationshipDynamics::class, 'applyBreakingArc');
+        $arc->setAccessible(true);
+        $d = $this->open(30.0, 60.0, 'platonic', 40.0, 'Guarded');
+        $this->assertNotContains(RelationshipDynamics::getRelationshipType('Test', $d), ['bonded', 'sworn']);
+        $before = RelDynPassion::warmth($d, false);
+        $this->assertGreaterThan(20.0, $before);
+        $this->at(self::T0);
+        $arc->invokeArgs(null, ['Test', 3, &$d]);
+        $this->assertEqualsWithDelta(0.0, RelDynPassion::warmth($d, false), 1e-9, 'walled at the arc');
+        $this->assertEqualsWithDelta(0.0, (float) RelDynPassion::warmth($d), 1e-9, 'toward him too');
+        $this->at(self::T0 + 15 * self::DAY);
+        $half = RelDynPassion::warmth($d, false);
+        $this->assertGreaterThan(0.0, $half);
+        $this->assertLessThan(0.75 * $before, $half, 'half way through the arc: still closed off');
+        $this->at(self::T0 + 31 * self::DAY);
+        $this->assertEqualsWithDelta(RelDynPassion::warmth(array_diff_key($d, ['_breaking_warmth' => 1]), false), RelDynPassion::warmth($d, false), 1e-9, 'open again');
+
+        $partner = $this->open(30.0, 60.0, 'romantic', 80.0, 'Guarded');
+        $this->assertSame('bonded', RelationshipDynamics::getRelationshipType('Test', $partner));
+        $this->at(self::T0);
+        $arc->invokeArgs(null, ['Test', 3, &$partner]);
+        $this->assertGreaterThan(0.0, RelDynPassion::warmth($partner, false), 'her bonded partner is not shut out');
+    }
+
+    /**
+     * Rulings §8: "the same scaling applies to warmth fade" (neglect severity per NPC: codependence,
+     * maturity, pride). Warmth is derived; the absence fades what she shows by at least the §8
+     * warmth fade (its grace and rate x getNeglectProfile), never below where her warmth rests,
+     * and a warm exchange gives some of it back (contact heals, decisions §2).
+     */
+    public function testWarmthFadesWithAbsenceByWhoSheIs(): void
+    {
+        $cfg = RelationshipDynamics::defaultConfig();
+        $rate = (float) $cfg['warmth_absence_fade_per_game_day'];   // warmth points per game day
+        $grace = (float) $cfg['warmth_absence_grace_game_hours'] / 24.0;
+        $drop = $target = [];
+        foreach (['mature' => ['Independent', 'secure', 80.0], 'anxious' => ['Anxious', 'anxious', 30.0]] as $who => [$t, $a, $m]) {
+            // a partner at her tier's floor (committed: 20), so the passion fade moves nothing: the
+            // warmth fade is the rulings §8 fade alone
+            $d = $this->open(20.0, 90.0, 'romantic', 70.0, $t, $a, $m);
+            $prof = RelationshipDynamics::getNeglectProfile($d);
+            $w0 = RelDynPassion::warmth($d, false);
+            $rest = RelDynPassion::warmthBaseline($d, false);
+            RelationshipDynamics::advanceCalendar($d, self::T0, self::T0 + 6 * self::DAY);
+            $this->assertEqualsWithDelta(20.0, RelationshipDynamics::getPassion($d), 1e-6, "{$who}: passion held at her floor");
+            $this->assertEqualsWithDelta(90.0, (float) $d['dimensions']['comfort']['x'], 1e-6, "{$who}: her comfort as it was");
+            $drop[$who] = $w0 - RelDynPassion::warmth($d, false);
+            $target[$who] = min($w0 - $rest, $rate * $prof['rate_mult'] * max(0.0, 6.0 - $grace * $prof['grace_mult']));
+            $this->assertEqualsWithDelta($target[$who], $drop[$who], 1e-6, "{$who}: the rulings 8 warmth fade");
+            $this->assertGreaterThanOrEqual($rest - 1e-6, RelDynPassion::warmth($d, false), "{$who}: never below where she rests");
+            if ($who === 'anxious') {
+                $faded = RelDynPassion::warmth($d, false);
+                RelDynAbsence::markPositive($d, self::T0 + 6 * self::DAY);
+                $this->assertGreaterThan($faded, RelDynPassion::warmth($d, false), 'a warm exchange gives some back');
+            }
+        }
+        $this->assertGreaterThan($drop['mature'], $drop['anxious'], 'the less mature, anxious one loses more ' . json_encode(compact('drop', 'target')));
+        $this->assertGreaterThan(0.0, $drop['mature'], 'the mature one still misses him');
+    }
+}

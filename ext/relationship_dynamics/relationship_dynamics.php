@@ -4381,12 +4381,12 @@ class RelationshipDynamics
      *
      * Affinity rot runs on the same interval (RelDynAbsence::rotStep, result under 'rot').
      *
-     * @return array ['game_days', 'resentment_raw', 'resentment', 'jealousy_resentment_raw', 'neglect_days', 'neglect_ceiling', 'passion_fade', 'warmth_fade', 'bond_type', 'rot']
+     * @return array ['game_days', 'resentment_raw', 'resentment', 'jealousy_resentment_raw', 'neglect_days', 'neglect_ceiling', 'passion_fade', 'warmth_fade', 'warmth_fade_derived', 'bond_type', 'rot']
      */
     public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
     {
         $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0, 'jealousy_resentment_raw' => 0.0,
-                'neglect_days' => 0.0, 'neglect_ceiling' => null, 'passion_fade' => 0.0, 'spike_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
+                'neglect_days' => 0.0, 'neglect_ceiling' => null, 'passion_fade' => 0.0, 'spike_fade' => 0.0, 'warmth_fade' => 0.0, 'warmth_fade_derived' => 0.0, 'bond_type' => null];
         if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
             return $out;
         }
@@ -4458,6 +4458,8 @@ class RelationshipDynamics
 
         // Positive states fade with absence (passion), scaled by attachment.
         if (!$away && $lastContact > 0) {
+            // derived warmth as the step began (the passion fade below closes it too; fadeWarmth)
+            $warmthBefore = RelDynPassion::derivedWarmthEnabled() ? RelDynPassion::rawOpenness($dynamics) : null;
             $graceGamets = floatval(self::configValue('passion_absence_grace_game_hours')) * self::GAMETS_PER_DAY / 24.0;
             $absentDays = self::calendarDaysFrom($fromGamets, $toGamets, $lastContact + $graceGamets);
             if ($absentDays > 0) {
@@ -4490,6 +4492,11 @@ class RelationshipDynamics
                     $dynamics['dimensions']['warmth']['x'] = round($new, 6);
                     $out['warmth_fade'] = floatval($warmth) - $new;
                 }
+            }
+            // Derived warmth (what every reader shows): the same grace and rate, per NPC (rulings §8),
+            // as a fade held on it beyond what the passion fade already closed (RelDynPassion::fadeWarmth)
+            if ($warmthBefore !== null && $absentDays > 0) {
+                $out['warmth_fade_derived'] = RelDynPassion::fadeWarmth($dynamics, $warmthBefore, $absentDays, $severity['rate_mult']);
             }
         }
 
@@ -4974,7 +4981,8 @@ class RelationshipDynamics
             $step = self::advanceCalendar($dyn, $from, $now);
             $result['calendar'] = $step;
             $changed = $changed || $step['resentment_raw'] > 0 || $step['jealousy_resentment_raw'] > 0
-                || $step['passion_fade'] > 0 || $step['spike_fade'] > 0 || $step['warmth_fade'] > 0 || !empty($step['rot']['changed']);
+                || $step['passion_fade'] > 0 || $step['spike_fade'] > 0 || $step['warmth_fade'] > 0 || $step['warmth_fade_derived'] > 0
+                || !empty($step['rot']['changed']);
         }
         // Fulfillment (rulings §9): day-end samples, unfulfilled neglect and the mature boundary
         // move with the calendar for every bond that has a fulfillment state, talked to or not.
@@ -11001,14 +11009,16 @@ class RelationshipDynamics
         // Halve trust
         $dims['trust']['x'] = floatval($dims['trust']['x'] ?? 50) / 2.0;
 
-        // Zero warmth toward non-bonded
-        $relType = self::getRelationshipType($npcName, $dynamics);
-        if ($relType !== 'bonded' && $relType !== 'sworn') {
-            $dims['warmth']['x'] = 0;
-        }
-
         // Plasticity override: Brittle for 30 game days (raw game calendar from the event)
         $currentRawGamets = RelDynProtocols::calendarNow($dynamics);
+
+        // Zero warmth toward non-bonded: the stored warmth (derived warmth off), and derived warmth
+        // closed where it is read, opening again over the arc (RelDynPassion::breakingOpenness)
+        $relType = self::getRelationshipType($npcName, $dynamics);
+        if (!in_array($relType, RelDynPassion::BREAKING_EXEMPT_TYPES, true)) {
+            $dims['warmth']['x'] = 0;
+            RelDynPassion::closeWarmthForBreaking($dynamics, $currentRawGamets);
+        }
         $dynamics['_plasticity_override'] = 'Brittle';
         $dynamics['_plasticity_override_start_gamets'] = $currentRawGamets;
         $dynamics['_plasticity_override_expires_gamets'] = $currentRawGamets + self::THIRTY_GAME_DAYS_GAMETS;
@@ -15345,27 +15355,41 @@ class RelationshipDynamics
      */
     public static function heldTemporaryOffset(array $dynamics, string $dimId): float
     {
-        $held = floatval($dynamics[RelDynCreatures::STATE_KEY]['applied'][$dimId] ?? 0.0);
+        $held = 0.0;
+        foreach (self::heldTemporarySources($dynamics) as $source) {
+            $held += floatval($source[$dimId] ?? 0.0);
+        }
+        return $held;
+    }
+
+    /**
+     * The temporary-offset pipeline source by source (heldTemporaryOffset sums them): each a map
+     * dimension => points it holds on that dimension's x right now. Derived warmth reads them one
+     * by one (RelDynPassion::warmth): a source with a warmth column of its own reaches warmth at
+     * that value, and its comfort / passion part is not counted into the root again.
+     *
+     * @return array[] list of [dimension => points]
+     */
+    public static function heldTemporarySources(array $dynamics): array
+    {
+        $num = fn($m): array => is_array($m) ? array_map('floatval', array_filter($m, 'is_numeric')) : [];
+        $out = [$num($dynamics[RelDynCreatures::STATE_KEY]['applied'] ?? null)];
         foreach ((array) ($dynamics['_applied_physical_deltas'] ?? []) as $applied) {
-            if (is_array($applied)) $held += floatval($applied[$dimId] ?? 0.0);
+            $out[] = $num($applied);
         }
-        if (is_array($dynamics['_env_applied_effects'] ?? null)) {
-            $held += floatval($dynamics['_env_applied_effects'][$dimId] ?? 0.0);
-        }
-        if ($dimId === 'comfort') {
-            $held += floatval($dynamics[RelDynResentment::STATE_KEY]['guilt']['applied'] ?? 0.0);
-        }
+        $out[] = $num($dynamics['_env_applied_effects'] ?? null);
+        $out[] = ['comfort' => floatval($dynamics[RelDynResentment::STATE_KEY]['guilt']['applied'] ?? 0.0)];
         // What she heard of the player before meeting them (reputation-layer), fading
-        $held += RelDynReputation::heldOffset($dynamics, $dimId);
+        $out[] = $num($dynamics[RelDynReputation::KEY]['effective'] ?? null);
         // A consumable's spike until it wears off (item-modifiers)
         foreach ((array) ($dynamics['_active_consumables'] ?? []) as $c) {
-            if (is_array($c)) $held += floatval($c['immediate'][$dimId] ?? 0.0);
+            if (is_array($c)) $out[] = $num($c['immediate'] ?? null);
         }
         // Acute grief toward every other bond (RelDynProtocols::tickGrief)
-        $held += floatval($dynamics[RelDynProtocols::GRIEF_HELD_KEY][$dimId] ?? 0.0);
+        $out[] = $num($dynamics[RelDynProtocols::GRIEF_HELD_KEY] ?? null);
         // The weather's pull on a mood dimension (applyWeatherGravity)
-        $held += floatval($dynamics['_weather_gravity']['applied'][$dimId] ?? 0.0);
-        return $held;
+        $out[] = $num($dynamics['_weather_gravity']['applied'] ?? null);
+        return array_values(array_filter($out, fn(array $m) => $m !== []));
     }
 
     /**

@@ -396,6 +396,8 @@ class RelDynAbsence
     {
         if ($gamets <= 0) return;
         $dynamics['_last_positive_gamets'] = max(floatval($dynamics['_last_positive_gamets'] ?? 0), $gamets);
+        // contact heals: some of the warmth the absence faded comes back (rulings §8 on derived warmth)
+        RelDynPassion::regainWarmthFade($dynamics);
     }
 
     /**

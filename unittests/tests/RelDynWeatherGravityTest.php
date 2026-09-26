@@ -111,8 +111,9 @@ final class RelDynWeatherGravityTest extends TestCase
         $this->assertEqualsWithDelta(-3.0, RelationshipDynamics::weatherGravityOffset($d, 'passion'), 1e-3);
         $this->assertSame(30.0, RelationshipDynamics::getPassion($d), 'the earned floor is not the weather\'s');
         $this->assertEqualsWithDelta(27.0, RelationshipDynamics::getEffectivePassion($d), 1e-3);
-        // Derived warmth: sqrt(27 x 50) - 3
-        $this->assertEqualsWithDelta(sqrt(27.0 * 50.0) - 3.0, RelDynPassion::warmth($d, false), 1e-3);
+        // Derived warmth: the overcast node's warmth column (-3) stands for the weather, once; its
+        // pull on passion is not counted into the root as well (batch-Q review): sqrt(30 x 50) - 3
+        $this->assertEqualsWithDelta(sqrt(30.0 * 50.0) - 3.0, RelDynPassion::warmth($d, false), 1e-3);
         // A sunny day lifts it
         $s = $this->npc('sunny');
         RelationshipDynamics::applyWeatherGravity('Tester', $s, self::T0 + 100 * self::HOUR);

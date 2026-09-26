@@ -32,8 +32,13 @@
  * dimension the display reads. Per bond, warmth = sqrt(effective passion x effective comfort)
  * (both as they read toward the player: getEffectiveDimensionValue), plus the states held on
  * warmth (a drink, dusk, acute grief: heldTemporaryOffset; resentment_self's shame and worn gear:
- * heldBaselineOffset) and the weather's pull on warmth. Its bands and keywords stay. The raw
- * reading (no per-bond multiplier) is what tension checks use, as for every dimension.
+ * heldBaselineOffset) and the weather's pull on warmth, each state once: one with a warmth column
+ * of its own (a grief's -10, the overcast node's -3) reaches warmth at that value and its comfort
+ * / passion part stays out of the root. The absence fades it by who she is (rulings §8,
+ * fadeWarmth; a warm exchange gives some back) and Divine Intervention's breaking arc closes it
+ * toward anyone but her bonded partner, opening again over the arc (breakingOpenness). Its bands
+ * and keywords stay. The raw reading (no per-bond multiplier) is what tension checks use, as for
+ * every dimension.
  *
  * Units: passion, spike, warmth, comfort 0..100 points; valence -100..100 points; arousal 0..100
  * points; disposition 0..30 points (Sharmat's sex_disposal scale); multipliers unitless.
@@ -107,6 +112,13 @@ final class RelDynPassion
             ],
             // Derived warmth (display / steering). Off: the stored warmth dimension is read as before.
             'derived_warmth_enabled' => true,
+            // Rulings §8 warmth fade on derived warmth (the calendar step, fadeWarmth): warmth points a
+            // positive interaction gives back of what the absence faded (contact heals, decisions §2).
+            // Serene's starting value.
+            'warmth_fade_regain_per_positive' => 2.0,
+            // Divine Intervention's breaking arc, "zero warmth toward non-bonded": closed at the arc,
+            // open again linearly over this many game days (the arc's own Brittle window, 30).
+            'breaking_warmth_reopen_game_days' => 30.0,
         ];
     }
 
@@ -380,11 +392,20 @@ final class RelDynPassion
         return !empty(self::config()['derived_warmth_enabled']);
     }
 
+    /** dynamics key: the rulings §8 absence fade held on derived warmth (warmth points, <= 0). */
+    const WARMTH_FADE_KEY = '_warmth_fade';
+    /** dynamics key: the breaking arc's closure of derived warmth ['start_gamets', 'until_gamets'] (raw gamets). */
+    const BREAKING_WARMTH_KEY = '_breaking_warmth';
+    /** RelDyn bond types the breaking arc does not shut out (applyBreakingArc: "toward non-bonded"). */
+    const BREAKING_EXEMPT_TYPES = ['bonded', 'sworn'];
+
     /**
      * Warmth (0..100 points): with derived warmth on, sqrt(passion x comfort) from the effective
      * passion and comfort, per bond ($perBond: as they read toward the player,
      * getEffectiveDimensionValue; else raw), plus the states held on warmth and the weather's
-     * pull. Off: the stored warmth x (null when unset).
+     * pull, each state once (warmthColumnShadow); less the absence fade (rulings §8, fadeWarmth);
+     * closed by a breaking arc toward a player who is not her bonded partner (breakingOpenness).
+     * Off: the stored warmth x (null when unset).
      */
     public static function warmth(array $dynamics, bool $perBond = true, ?string $relationshipType = null): ?float
     {
@@ -393,14 +414,115 @@ final class RelDynPassion
             if (!is_numeric($x)) return null;
             return $perBond ? RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'warmth', null, $relationshipType) : floatval($x);
         }
+        $w = self::openness($dynamics, $perBond, $relationshipType) + floatval($dynamics[self::WARMTH_FADE_KEY] ?? 0.0);
+        return max(0.0, min(100.0, $w)) * self::breakingOpenness($dynamics);
+    }
+
+    /**
+     * Derived warmth before the absence fade and the breaking arc (points 0..100): the root of the
+     * passion and comfort she has with the held states that carry no warmth column of their own,
+     * plus the warmth columns of those that do (the tables were written for a stand-alone warmth:
+     * a grief's -10, the weather's -3 reach warmth at that value, once).
+     */
+    private static function openness(array $dynamics, bool $perBond, ?string $relationshipType): float
+    {
+        [$shadowComfort, $shadowPassion] = self::warmthColumnShadow($dynamics);
+        $max = floatval(RelationshipDynamics::configValue('passion_max') ?? 100.0);
         $comfort = self::comfortOwn($dynamics);
-        $passion = self::effective($dynamics);
+        $passion = max(0.0, min($max, RelationshipDynamics::getPassion($dynamics) + self::spike($dynamics)
+            + RelationshipDynamics::weatherGravityOffset($dynamics, 'passion') - $shadowPassion));
         if ($perBond) {
             $passion = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'passion', $passion, $relationshipType) ?? $passion;
             $comfort = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'comfort', $comfort, $relationshipType) ?? $comfort;
         }
-        $comfort += RelationshipDynamics::heldTemporaryOffset($dynamics, 'comfort');
+        $comfort += RelationshipDynamics::heldTemporaryOffset($dynamics, 'comfort') - $shadowComfort;
         return self::derive($dynamics, $passion, $comfort, true);
+    }
+
+    /**
+     * The comfort and passion points held by states that carry a warmth column of their own
+     * (heldTemporarySources; the weather's pull when its node names warmth): [comfort, passion].
+     * Derived warmth leaves them out of the root, the warmth column stands for them.
+     */
+    private static function warmthColumnShadow(array $dynamics): array
+    {
+        $comfort = 0.0;
+        $passion = 0.0;
+        foreach (RelationshipDynamics::heldTemporarySources($dynamics) as $source) {
+            if (abs(floatval($source['warmth'] ?? 0.0)) < 1e-9) continue;
+            $comfort += floatval($source['comfort'] ?? 0.0);
+            $passion += floatval($source['passion'] ?? 0.0);
+        }
+        if (abs(RelationshipDynamics::weatherGravityOffset($dynamics, 'warmth')) >= 1e-9) {
+            $passion += RelationshipDynamics::weatherGravityOffset($dynamics, 'passion');
+        }
+        return [$comfort, $passion];
+    }
+
+    /**
+     * The breaking arc's closure (0..1, unitless): 0 at the arc toward a player who is not her
+     * bonded / sworn partner, opening linearly to 1 over breaking_warmth_reopen_game_days of the
+     * game calendar; 1 without an arc, for her bonded partner, or before the arc (a load).
+     */
+    public static function breakingOpenness(array $dynamics): float
+    {
+        $b = $dynamics[self::BREAKING_WARMTH_KEY] ?? null;
+        if (!is_array($b)) return 1.0;
+        if (in_array(RelationshipDynamics::getRelationshipType('', $dynamics), self::BREAKING_EXEMPT_TYPES, true)) return 1.0;
+        $start = floatval($b['start_gamets'] ?? 0);   // raw gamets
+        $until = floatval($b['until_gamets'] ?? 0);   // raw gamets
+        $now = RelDynProtocols::calendarNow($dynamics);
+        if ($start <= 0 || $until <= $start || $now < $start) return 1.0;
+        return max(0.0, min(1.0, ($now - $start) / ($until - $start)));
+    }
+
+    /** The breaking arc at raw gamets $now closes derived warmth (applyBreakingArc; read by breakingOpenness). */
+    public static function closeWarmthForBreaking(array &$dynamics, float $now): void
+    {
+        if ($now <= 0) return;
+        $days = max(0.0, floatval(self::config()['breaking_warmth_reopen_game_days']));
+        $dynamics[self::BREAKING_WARMTH_KEY] = ['start_gamets' => $now, 'until_gamets' => $now + $days * RelationshipDynamics::GAMETS_PER_DAY];
+    }
+
+    /**
+     * Rulings §8 on derived warmth (the calendar step): $absentDays game days past the warmth
+     * absence grace (x the NPC's grace_mult) fade what she shows by at least
+     * warmth_absence_fade_per_game_day x $absentDays x $rateMult (getNeglectProfile's rate_mult):
+     * the passion fade of the same step already closed the root by ($before - now), the rest is
+     * held as the fade (WARMTH_FADE_KEY), never taking her below where her warmth rests
+     * (warmthBaseline). $before: rawOpenness before this step's passion fade. Returns the warmth
+     * points newly held.
+     */
+    public static function fadeWarmth(array &$dynamics, float $before, float $absentDays, float $rateMult): float
+    {
+        if (!self::derivedWarmthEnabled() || $absentDays <= 0.0) return 0.0;
+        $now = self::openness($dynamics, false, null);
+        $target = floatval(RelationshipDynamics::configValue('warmth_absence_fade_per_game_day')) * $absentDays * max(0.0, $rateMult);
+        $extra = max(0.0, $target - max(0.0, $before - $now));
+        $old = min(0.0, floatval($dynamics[self::WARMTH_FADE_KEY] ?? 0.0));
+        $floor = min(0.0, floatval(self::warmthBaseline($dynamics, false)) - $now);   // never below where she rests
+        $new = min($old, max($floor, $old - $extra));
+        if ($new > -1e-6) {
+            unset($dynamics[self::WARMTH_FADE_KEY]);
+        } else {
+            $dynamics[self::WARMTH_FADE_KEY] = round($new, 6);
+        }
+        return $old - $new;
+    }
+
+    /** Raw openness now (points, no per-bond reading, no fade, no arc): fadeWarmth's reference before a calendar step. */
+    public static function rawOpenness(array $dynamics): float
+    {
+        return self::openness($dynamics, false, null);
+    }
+
+    /** A positive interaction gives back warmth_fade_regain_per_positive of the absence fade (contact heals, decisions §2). */
+    public static function regainWarmthFade(array &$dynamics): void
+    {
+        $old = floatval($dynamics[self::WARMTH_FADE_KEY] ?? 0.0);
+        if ($old >= 0.0) return;
+        $new = min(0.0, $old + max(0.0, floatval(self::config()['warmth_fade_regain_per_positive'])));
+        if ($new > -1e-6) unset($dynamics[self::WARMTH_FADE_KEY]); else $dynamics[self::WARMTH_FADE_KEY] = round($new, 6);
     }
 
     /**
