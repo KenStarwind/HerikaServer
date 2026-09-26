@@ -307,8 +307,8 @@ final class RelDynMemory
         if (!$db || $gamets <= 0) return false;
         $row = $db->fetchOne(
             'INSERT INTO memory (localts, speaker, listener, message, gamets, session, momentum, event, ts)
-             SELECT $1::bigint, $2, $3, $4, $5::bigint, $6, $6, $7, $5::bigint
-             WHERE NOT EXISTS (SELECT 1 FROM memory WHERE event = $7 AND session = $6)
+             SELECT $1::bigint, $2::text, $3::text, $4::text, $5::bigint, $6::text, $6::text, $7::text, $5::bigint
+             WHERE NOT EXISTS (SELECT 1 FROM memory WHERE event = $7::text AND session = $6::text)
              RETURNING gamets',
             [time(), $speaker, $listener, $message, (string) (int) round($gamets), $key, $event]
         );
