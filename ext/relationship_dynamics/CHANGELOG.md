@@ -3,6 +3,20 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## After reldyn-v0.17 (lane p4r-substances, untagged) — Her own drink, and what it costs her
+She drinks on her own account now (core's own lines of her consuming, nothing else). Each mug takes a little more of
+her judgement than the last, the design's night: a steady huntress at sixty-five is at thirty-three after five ales,
+laughing easily from the third, guards down from the fourth (more open, her standards lowered, blind to desperation),
+and below forty the floors that keep her from slipping are gone. It is a state, not who she is: it wears off on the
+game clock, about six hours after five ales, and leaves her exactly herself. What she did drunk waits for the sober
+self: her first diary page after it looks back at the night, and whatever she would not have done sober (a flirt with
+someone she is not drawn to) is regretted, more so the more she expects of herself; a shallow diary looks at nothing.
+Skooma, the sap and heavy drinking build a dependence and a tolerance: each high a little less, the craving growing
+with the hours, then the sickness of going without, until the next use or a healing potion that takes the edge off
+without feeding it. While she depends on it she does not grow up, unless someone who cares tells her to stop. Past
+twenty she knows she needs to stop; past twenty-five she keeps herself clean, is ashamed when she slips, and after
+days clean is steadier for it. The player's own drinking still reaches her only as worry (protective concern).
+
 ## After reldyn-v0.17 (batch-Q review, untagged) — Hurt that holds her back, care paid once, and a moment that is hers
 A bond breaks while you are away only once the absence feels intentional to her: past what she would excuse (who she is,
 and how fulfilled the bond was when you left), and as long again. A few days break the fearful and the anxious; the

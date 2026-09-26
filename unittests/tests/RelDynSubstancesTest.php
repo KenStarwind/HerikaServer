@@ -107,6 +107,15 @@ final class RelDynSubstancesTest extends TestCase
         }
         $this->assertTrue(RelDynSubstances::intoxicated($d));
         $this->assertTrue(RelDynDiary::intoxicated($d), 'the diary waits for the sober self');
+        // Below maturity forty the floors are off (MATURITY_FLOOR_THRESHOLD reads maturity as it is now)
+        $floor = floatval(RelationshipDynamics::getTierFloor('friend'));
+        $slipping = function (array $dyn) use ($floor): array {
+            $dyn['_aff_mirror_x'] = ($floor - 40.0 + 100.0) / 2.0;
+            $dyn['dimensions']['affinity']['x'] = $dyn['_aff_mirror_x'];
+            return RelationshipDynamics::checkTierDemotion($dyn, 'Bold', 'friend', 'friend');
+        };
+        $this->assertFalse($slipping($d)['floor_active'], 'drunk at thirty-three: floors off');
+        $this->assertTrue($slipping($this->npc(65.0))['floor_active'], 'sober at sixty-five: floors on');
 
         RelDynSubstances::update('Aela the Huntress', $d, $t0 + 5.9 * self::HOUR);
         $this->assertTrue(RelDynSubstances::intoxicated($d), 'still in her at five hours and fifty-four minutes');
