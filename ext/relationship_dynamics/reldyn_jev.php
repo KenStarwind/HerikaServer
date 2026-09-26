@@ -22,7 +22,8 @@
  *                    'anchor_m', 'anchor_f' => the personality anchors]
  *   post_intimacy    null | ['outcome' => RelDynPostIntimacy outcome, 'held' => dimension => points held
  *                    now, 'held_ends_in_game_hours', 'correction_in_game_hours' (null = none pending),
- *                    'correction' / 'lasting' => dimension => points applied]
+ *                    'correction' / 'lasting' => dimension => points applied, 'deferred_corrections'
+ *                    => earlier encounters whose sober verdict still waits]
  *   passion          float  0..100 the floor: passion earned through play (the Attraction Matrix's uphill)
  *   passion_spike    float  0..100 the moment on top of it (roadmap passion-floor-spike: fades per exchange)
  *   passion_effective float 0..100 floor + spike + the weather's pull (what she feels right now)
@@ -164,7 +165,7 @@ final class RelDynJev
         'mf' => 'coordinate points -100..100 (derived now; anchors stored)',
         'post_intimacy.held' => 'dimension points held now', 'post_intimacy.held_ends_in_game_hours' => 'game hours',
         'post_intimacy.correction_in_game_hours' => 'game hours', 'post_intimacy.correction' => 'dimension points',
-        'post_intimacy.lasting' => 'dimension points',
+        'post_intimacy.lasting' => 'dimension points', 'post_intimacy.deferred_corrections' => 'earlier encounters whose sober verdict waits',
         'autonomy.score' => '0..100',
         'absence.bond_break.absent_game_days' => 'game days', 'absence.bond_break.resentment' => 'resentment points added',
         'absence.bond_break.comfort_delta' => 'comfort points', 'absence.bond_break.trust_delta' => 'trust points',

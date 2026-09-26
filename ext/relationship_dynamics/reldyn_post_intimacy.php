@@ -23,10 +23,12 @@
  *                      in her: RelDynSubstances::intoxicated) and not a deep bond: "Bonded, drunk, regret next day" (+10 -> -15, trust -5,
  *                      resentment_self +10) for a romance, "Stranger, drunk, one-night"
  *                      (+10 -> -20, trust 0, resentment_self +12) otherwise
- *   vulnerable_fear    fearful attachment (both axes at fearful_at): she wants the closeness and
- *                      fears it; the draft's "Low maturity, manipulated" row (+5 -> -10, trust
- *                      -8, resentment_self +8). Before the bond's depth: earned security (the
- *                      axes' drift) is what lets the same closeness deepen
+ *   vulnerable_fear    OPT-IN (fearful_vulnerable, off by default: the draft keys this row on
+ *                      maturity and manipulation, not attachment): fearful attachment (both axes
+ *                      at fearful_at): she wants the closeness and fears it; the draft's "Low
+ *                      maturity, manipulated" row (+5 -> -10, trust -8, resentment_self +8).
+ *                      Before the bond's depth: earned security (the axes' drift) is what lets
+ *                      the same closeness deepen
  *   avoidant_retreat   attachment avoidance at avoidant_retreat_at: closeness she needs to back
  *                      away from (a small glow, then a little distance)
  *   bonded_deepening   core partner (bonded_core_types) and trust (as it reads toward the player)
@@ -48,9 +50,12 @@
  * trust points, resentment_self scaled by her own maturity (x clamp(maturity /
  * resentment_self_maturity_ref, ...), then kept within resentment_self_range: "+5 to +15
  * depending on maturity"), and a 'correction_valence'. A shallow mind (RelDynDiary::depth
- * 'shallow', the bad evaluator of the draft) never corrects. One drinking night gets one shame:
- * the correction's resentment_self adds only what exceeds what the sober diary already gave that
- * night (RelDynSubstances::nightShame; the draft's worked example has one sober verdict).
+ * 'shallow', the bad evaluator of the draft) never corrects. A new encounter never brings the
+ * earlier one's verdict early: a pending verdict is deferred (state 'deferred') and lands on its
+ * own clock, when due and sober. One drinking night gets one verdict per dimension: the
+ * correction's points (resentment_self, comfort, trust) add only what exceeds what the sober
+ * diary or another scene of that night already asked (RelDynSubstances::nightVerdict, the night
+ * the encounter began in; the draft's worked example has one sober verdict).
  *
  * Felt text (feelings, never numbers; RelDynFelt 'post_intimacy', bond scope): the row's glow
  * while the afterglow holds ('moment' for a row with a correction still to come), its 'after'
@@ -116,6 +121,11 @@ final class RelDynPostIntimacy
             // attachment axes 0..1: fearful (both high: wants closeness and fears it; the style
             // regions' 0.5) and an avoidance high enough to back away from any closeness
             'fearful_at' => ['anxiety' => 0.5, 'avoidance' => 0.5],
+            // Serene's reading of the draft's "Low maturity, manipulated" row as fearful attachment
+            // (ahead of the bond's depth). The draft keys that row on maturity and manipulation, not
+            // attachment, and the reading costs a trusted partner's every sober scene trust and
+            // shame: off until Ken rules on it (open question)
+            'fearful_vulnerable' => false,
             'avoidant_retreat_at' => 0.6,
             // arousal points every encounter spikes (the horseshoe: the valence is the row's)
             'arousal_spike' => 30.0,
@@ -249,8 +259,8 @@ final class RelDynPostIntimacy
         if (!empty($ctx['other_partners']) && empty($ctx['bonded'])) return self::CHEATING;
         if (!empty($ctx['intoxicated']) && !$deep) return self::DRUNK;
         // who she is in closeness comes before how deep the bond runs: earned security lowers the
-        // axes (attachment drift), and then the same closeness deepens
-        if (floatval($ctx['anxiety']) >= floatval($cfg['fearful_at']['anxiety'])
+        // axes (attachment drift), and then the same closeness deepens (the fearful reading: opt-in)
+        if (!empty($cfg['fearful_vulnerable']) && floatval($ctx['anxiety']) >= floatval($cfg['fearful_at']['anxiety'])
             && floatval($ctx['avoidance']) >= floatval($cfg['fearful_at']['avoidance'])) return self::VULNERABLE;
         if (floatval($ctx['avoidance']) >= floatval($cfg['avoidant_retreat_at'])) return self::AVOIDANT;
         if ($deep) return self::BONDED;
@@ -302,7 +312,7 @@ final class RelDynPostIntimacy
             $dynamics[self::KEY] = $state;
             return null;
         }
-        if ($state !== null) self::finish($npcName, $dynamics, $now, $cfg, 'a new encounter');
+        $deferred = $state !== null ? self::finish($dynamics, 'a new encounter') : [];
 
         $partners = [];
         try {
@@ -345,6 +355,10 @@ final class RelDynPostIntimacy
             'felt_until' => $heldUntil,
             'lasting' => $lasting, 'mood' => $mood,
             'context' => $ctx,
+            // the drinking night it began in (RelDynSubstances::sessionKey): its verdicts are shared
+            'night' => RelDynSubstances::sessionKey($dynamics),
+            // earlier encounters whose sober verdict is still to come
+            'deferred' => $deferred,
         ];
         RelationshipDynamics::log(sprintf('[POST-INTIMACY] %s: %s (core %s, trust %.1f, maturity %.1f, %s, avoidance %.2f%s) held %s lasting %s mood %s',
             $npcName, $outcome, $ctx['core_type'] !== '' ? $ctx['core_type'] : 'none', $ctx['trust'], $ctx['maturity'],
@@ -355,10 +369,12 @@ final class RelDynPostIntimacy
 
     /**
      * The aftermath at $now (prerequest, every turn): the afterglow ends at held_until (its held
-     * points taken back exactly), the sober self's correction lands when due and she is sober,
-     * the state ends when nothing is held, pending or felt. A load from before the encounter
-     * drops it. Returns what happened: ['released' => dim => points, 'corrected' => dim => points,
-     * 'dropped' => bool, 'ended' => bool].
+     * points taken back exactly), the sober self's correction lands when due and she is sober
+     * (the deferred verdicts of earlier encounters first, each on its own clock), the state ends
+     * when nothing is held, pending or felt. A load from before the encounter drops it (and the
+     * deferred ones it never lived). Returns what happened: ['released' => dim => points,
+     * 'corrected' => dim => points (summed over the verdicts that landed), 'dropped' => bool,
+     * 'ended' => bool].
      */
     public static function tick(string $npcName, array &$dynamics, float $now): array
     {
@@ -369,20 +385,46 @@ final class RelDynPostIntimacy
         if ($now < floatval($state['start'] ?? 0)) {
             // a save from before the encounter: it never happened in this timeline
             $out['released'] = self::release($dynamics, $state, 'the encounter a load undid');
-            unset($dynamics[self::KEY]);
             $out['dropped'] = true;
             RelationshipDynamics::log("[POST-INTIMACY] {$npcName}: dropped (the calendar is before the encounter)");
+            // an earlier encounter the loaded game did live is pending again
+            $kept = array_values(array_filter((array) ($state['deferred'] ?? []), fn($p) => is_array($p) && floatval($p['start'] ?? INF) <= $now));
+            if ($kept === []) {
+                unset($dynamics[self::KEY]);
+                return $out;
+            }
+            $p = array_pop($kept);
+            $dynamics[self::KEY] = ['outcome' => (string) $p['outcome'], 'start' => floatval($p['start']), 'last' => floatval($p['start']),
+                'held' => [], 'held_until' => floatval($p['start']), 'correction_due' => floatval($p['due']), 'corrected' => false,
+                'felt_until' => floatval($p['start']), 'lasting' => [], 'mood' => [], 'context' => (array) ($p['context'] ?? []),
+                'night' => $p['night'] ?? null, 'deferred' => $kept];
             return $out;
         }
         if (!empty($state['held']) && $now >= floatval($state['held_until'] ?? 0)) {
             $out['released'] = self::release($dynamics, $state, 'the afterglow');
             $state['held'] = [];
         }
-        if (empty($state['corrected']) && $now >= floatval($state['correction_due'] ?? PHP_FLOAT_MAX)
-            && !self::intoxicated($dynamics, $cfg)) {
-            $out['corrected'] = self::correct($npcName, $dynamics, $state, $now, $cfg);
+        $sober = !self::intoxicated($dynamics, $cfg);
+        $add = function (array $applied) use (&$out): void {
+            foreach ($applied as $dim => $p) $out['corrected'][$dim] = round(floatval($out['corrected'][$dim] ?? 0.0) + floatval($p), 4);
+        };
+        // the sober verdicts of earlier encounters, oldest first, each when due and she is sober
+        $waiting = [];
+        foreach ((array) ($state['deferred'] ?? []) as $p) {
+            if (!is_array($p)) continue;
+            if ($sober && $now >= floatval($p['due'] ?? PHP_FLOAT_MAX)) {
+                $add(self::correct($npcName, $dynamics, $p, $now, $cfg));
+                if (!empty($p['correction'])) $state['after'] = ['outcome' => (string) $p['outcome'], 'until' => floatval($p['felt_until'] ?? $now)];
+            } else {
+                $waiting[] = $p;
+            }
         }
-        if (empty($state['held']) && !empty($state['corrected']) && $now >= floatval($state['felt_until'] ?? 0)) {
+        $state['deferred'] = $waiting;
+        if (empty($state['corrected']) && $now >= floatval($state['correction_due'] ?? PHP_FLOAT_MAX) && $sober) {
+            $add(self::correct($npcName, $dynamics, $state, $now, $cfg));
+        }
+        if (empty($state['held']) && !empty($state['corrected']) && $now >= floatval($state['felt_until'] ?? 0)
+            && $waiting === [] && $now >= floatval($state['after']['until'] ?? 0)) {
             unset($dynamics[self::KEY]);
             $out['ended'] = true;
             return $out;
@@ -391,14 +433,22 @@ final class RelDynPostIntimacy
         return $out;
     }
 
-    /** End an encounter now (a new one begins): what is held is taken back, a pending correction lands. */
-    private static function finish(string $npcName, array &$dynamics, float $now, array $cfg, string $why): void
+    /**
+     * End an encounter now (a new one begins): what is held is taken back; a correction still to
+     * come is NOT brought forward: it joins the deferred verdicts (due on its own clock, and only
+     * when she is sober). Returns the deferred list for the new encounter.
+     */
+    private static function finish(array &$dynamics, string $why): array
     {
         $state = (array) $dynamics[self::KEY];
         self::release($dynamics, $state, "the afterglow ({$why})");
-        $state['held'] = [];
-        if (empty($state['corrected'])) self::correct($npcName, $dynamics, $state, $now, $cfg);
+        $deferred = array_values(array_filter((array) ($state['deferred'] ?? []), 'is_array'));
+        if (empty($state['corrected']) && isset($state['correction_due'])) {
+            $deferred[] = ['outcome' => (string) ($state['outcome'] ?? ''), 'start' => floatval($state['start'] ?? 0),
+                'due' => floatval($state['correction_due']), 'context' => (array) ($state['context'] ?? []), 'night' => $state['night'] ?? null];
+        }
         unset($dynamics[self::KEY]);
+        return $deferred;
     }
 
     /** Take back the held points exactly (RelationshipDynamics::reverseAppliedDeltas). */
@@ -430,14 +480,14 @@ final class RelDynPostIntimacy
             $table = $row['correction_casual'];
         }
         $temperament = $dynamics['inferred_temperament'] ?? null;
+        $night = isset($state['night']) && $state['night'] !== null ? (string) $state['night'] : null;
         $applied = [];
         foreach ($table as $dim => $p) {
             $p = floatval($p);
-            if ($dim === 'resentment_self') {
-                // one drinking night, one shame: only what exceeds the sober diary's verdict on it
-                $p = RelDynSubstances::nightShame($dynamics, floatval($state['start'] ?? $now),
-                    self::resentmentSelf($p, $maturity, $cfg), $now);
-            }
+            if ($dim === 'resentment_self') $p = self::resentmentSelf($p, $maturity, $cfg);
+            // one drinking night, one verdict: only what exceeds the sober diary's or another scene's on it
+            $p = RelDynSubstances::nightVerdict($dynamics, floatval($state['start'] ?? $now), (string) $dim, $p, $now, $night);
+            if (abs($p) < 1e-9) continue;
             $a = RelationshipDynamics::applyDelta((string) $dim, $dynamics, $p, $temperament);
             if (abs($a) > 1e-6) $applied[(string) $dim] = round($a, 4);
         }
@@ -457,23 +507,29 @@ final class RelDynPostIntimacy
     // =====================================================================
 
     /**
-     * The felt read at $now (behavioural keywords, never numbers): the row's glow while the
-     * afterglow holds ('glow'; before a pending correction it is the moment), its 'after' text
-     * from the correction while felt. Null without an encounter or text.
+     * The felt read at $now (behavioural keywords, never numbers): its 'after' text from the
+     * correction while felt (this encounter's, else an earlier encounter's deferred verdict that
+     * landed), else the row's glow while the afterglow holds ('glow'; before a pending correction
+     * it is the moment). Null without an encounter or text.
      */
     public static function feltText(array $dynamics, float $now): ?array
     {
         $state = is_array($dynamics[self::KEY] ?? null) ? $dynamics[self::KEY] : null;
         if ($state === null || $now <= 0 || $now < floatval($state['start'] ?? 0)) return null;
-        $row = (array) (((array) self::config()['outcomes'])[(string) ($state['outcome'] ?? '')] ?? []);
+        $outcomes = (array) self::config()['outcomes'];
+        $outcome = (string) ($state['outcome'] ?? '');
         $phase = null;
         if (!empty($state['correction']) && $now < floatval($state['felt_until'] ?? 0)) {
             $phase = 'after';
+        } elseif (is_array($state['after'] ?? null) && $now < floatval($state['after']['until'] ?? 0)) {
+            $phase = 'after';
+            $outcome = (string) ($state['after']['outcome'] ?? '');
         } elseif ($now < floatval($state['held_until'] ?? 0)) {
             $phase = 'glow';
         }
+        $row = (array) ($outcomes[$outcome] ?? []);
         $text = $phase !== null ? trim((string) ($row[$phase] ?? '')) : '';
-        return $text === '' ? null : ['phase' => $phase, 'text' => $text, 'outcome' => (string) $state['outcome']];
+        return $text === '' ? null : ['phase' => $phase, 'text' => $text, 'outcome' => $outcome];
     }
 
     /** Jev's numbers (decisions §3): outcome, phase times in game hours from now, what was applied. */
@@ -489,6 +545,8 @@ final class RelDynPostIntimacy
             'correction_in_game_hours' => empty($state['corrected']) ? $h($state['correction_due'] ?? null) : null,
             'correction' => (array) ($state['correction'] ?? []),
             'lasting' => (array) ($state['lasting'] ?? []),
+            // earlier encounters whose sober verdict is still to come
+            'deferred_corrections' => count((array) ($state['deferred'] ?? [])),
         ];
     }
 }

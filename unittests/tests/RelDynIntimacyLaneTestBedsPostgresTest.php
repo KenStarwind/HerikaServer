@@ -553,6 +553,13 @@ final class RelDynIntimacyLaneTestBedsPostgresTest extends TestCase
      */
     public function testTheSameSceneFollowsWhoSheIsAndTheGlowFades(): void
     {
+        // Serene's fearful reading of the draft's "manipulated" row is opt-in (batch-R review,
+        // post_intimacy.fearful_vulnerable, off by default): this scene shows it switched on
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1',
+            [RelationshipDynamics::CONFIG_ROW_ID, json_encode(array_merge(RelationshipDynamics::defaultConfig(),
+                ['log_enabled' => true, 'internal_weather_enabled' => false,
+                 'post_intimacy' => array_replace(RelDynPostIntimacy::configDefaults(), ['fearful_vulnerable' => true])]))]);
+        RelationshipDynamics::clearConfigCache();
         $this->seed(60);
         $t = $this->hello();
         $this->floors(30.0);

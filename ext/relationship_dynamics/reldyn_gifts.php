@@ -24,7 +24,11 @@
  * Re-gift: the item reached the player as someone else's gift (an eventlog row "<giver> gave
  * [n] <item> to <player>" before this handover, within regift_lookback_game_days, types
  * regift_row_types) and she knows that giver (a relationships entry of her core row): "This was
- * Ysolda's, wasn't it?"
+ * Ysolda's, wasn't it?" Only a thing she could recognize: the eventlog names items, never the
+ * physical one, so a fungible item is never a recognized re-gift (recognizable): gold and the
+ * regift_fungible_words (whole words), any consumable (CONSUMABLE_EFFECTS keywords: mead, a
+ * potion, bread), or a name two different people gave the player within the lookback (which
+ * one is this?). A distinct thing that came as several from one giver is still that giver's.
  *
  * Units: gift delta and base in affinity-dimension points (processGift's applyDelta); gold
  * value in septims; multipliers unitless; trust / respect points; time in game days
@@ -54,6 +58,9 @@ final class RelDynGifts
             'regift' => ['enabled' => true, 'trust' => -10.0, 'respect' => -8.0],
             'regift_lookback_game_days' => 30.0,
             'regift_row_types' => ['itemfound', 'itemtransfer'],
+            // whole words of an item name that make it fungible (besides every consumable): money
+            // and ammunition, one coin or arrow is any other
+            'regift_fungible_words' => ['gold', 'septim', 'septims', 'coin', 'coins', 'arrow', 'arrows', 'bolt', 'bolts', 'lockpick', 'lockpicks'],
             'felt_text' => [
                 'stolen' => '{NAME} knows stolen goods on sight: the {THING} is held at arm\'s length, and the thanks never comes.',
                 'regift' => '{NAME} knows whose {THING} this was; the smile thins and the gift is set aside.',
@@ -104,15 +111,37 @@ final class RelDynGifts
     }
 
     /**
-     * Who gave the player $item before this handover (the newest eventlog row "<giver> gave [n]
-     * <item> to <player>" of regift_row_types, before $beforeRowid, within the lookback of $now
-     * on the game calendar), or null. The giver is neither the player nor $npcName.
+     * Could she tell this one from any other of its name? Not gold or another regift_fungible_words
+     * item, not a consumable (any CONSUMABLE_EFFECTS keyword). Whole-word matches ('Dragonscale' is
+     * no ale). Pure.
+     */
+    public static function recognizable(string $item, ?array $cfg = null): bool
+    {
+        $words = (array) (($cfg ?? self::config())['regift_fungible_words'] ?? []);
+        foreach (RelationshipDynamics::CONSUMABLE_EFFECTS as $entry) {
+            foreach ((array) ($entry['keywords'] ?? []) as $kw) $words[] = $kw;
+        }
+        $name = strtolower(trim($item));
+        foreach ($words as $w) {
+            $w = strtolower(trim((string) $w));
+            if ($w !== '' && preg_match('/(?<![a-z])' . preg_quote($w, '/') . '(?![a-z])/', $name)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Who gave the player $item before this handover (the eventlog rows "<giver> gave [n] <item>
+     * to <player>" of regift_row_types, before $beforeRowid, within the lookback of $now on the
+     * game calendar), or null. The giver is neither the player nor $npcName. Null for a thing no
+     * one could recognize (recognizable: fungible), and when two different people gave the player
+     * an item of that name.
      */
     public static function previousGiver(string $npcName, string $item, string $playerName, ?int $beforeRowid, float $now, ?array $cfg = null): ?string
     {
         $cfg = $cfg ?? self::config();
         $db = $GLOBALS['db'] ?? null;
         if (!$db || trim($item) === '' || trim($playerName) === '') return null;
+        if (!self::recognizable($item, $cfg)) return null;
         $types = array_values(array_filter(array_map('strval', (array) ($cfg['regift_row_types'] ?? [])), fn($t) => $t !== ''));
         if ($types === []) return null;
         $typeList = implode(', ', array_map(fn($t) => "'" . $db->escape($t) . "'", $types));
@@ -120,15 +149,19 @@ final class RelDynGifts
         $where = ["type IN ({$typeList})", "data ILIKE '{$pattern}' ESCAPE '\\'"];
         if ($beforeRowid !== null) $where[] = 'rowid < ' . intval($beforeRowid);
         if ($now > 0) $where[] = 'gamets >= ' . intval($now - floatval($cfg['regift_lookback_game_days']) * RelationshipDynamics::GAMETS_PER_DAY);
-        $rows = $db->fetchAll('SELECT data FROM eventlog WHERE ' . implode(' AND ', $where) . ' ORDER BY rowid DESC LIMIT 5');
+        $rows = $db->fetchAll('SELECT data FROM eventlog WHERE ' . implode(' AND ', $where) . ' ORDER BY rowid DESC LIMIT 20');
+        $givers = [];
         foreach ((array) $rows as $row) {
             if (!preg_match('/^\s*(.+?)\s+gave\s+(?:\d+\s+)?(.+?)\s+to\s+(.+?)\s*(?:,\s*\(value\s+\d+\s+gold\))?\s*$/i', (string) ($row['data'] ?? ''), $m)) continue;
             $giver = trim($m[1]);
             if (strcasecmp(trim($m[2]), trim($item)) !== 0 || strcasecmp(trim($m[3]), trim($playerName)) !== 0) continue;
-            if (strcasecmp($giver, trim($playerName)) === 0 || strcasecmp($giver, trim($npcName)) === 0) continue;
-            return $giver;
+            if (strcasecmp($giver, trim($playerName)) === 0) continue;
+            $givers[strtolower($giver)] = $giver;
         }
-        return null;
+        // none, or two people gave one (she herself among them): which one is this?
+        if (count($givers) !== 1) return null;
+        $giver = (string) array_values($givers)[0];
+        return strcasecmp($giver, trim($npcName)) === 0 ? null : $giver;
     }
 
     /** Does $npcName know $giver (an entry for the giver in her core relationships)? */

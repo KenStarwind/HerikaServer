@@ -13077,9 +13077,12 @@ class RelationshipDynamics
      * @param string      $itemName     Consumed item display name
      * @param string|null $temperament  NPC temperament name
      * @param string      $npcName      the NPC (her preferences; '' = neutral)
+     * @param float|null  $at           raw gamets she consumed it (its eventlog row), null = now;
+     *                                  never after the game clock. A spike that wore off before now
+     *                                  is not applied (its permanent cost is).
      * @return array  Map of dimension => actual_delta applied, empty if unrecognised
      */
-    public static function processConsumable(&$dynamics, $itemName, $temperament = null, string $npcName = '')
+    public static function processConsumable(&$dynamics, $itemName, $temperament = null, string $npcName = '', ?float $at = null)
     {
         $config = self::getConfig();
         if (empty($config['dimension_engine_enabled'])) {
@@ -13094,9 +13097,13 @@ class RelationshipDynamics
         $key   = $classified['key'];
         $entry = $classified['entry'];
         $results = [];
-        $now = self::currentGamets();
+        $clock = self::currentGamets();
+        $now = ($at !== null && $at > 0) ? ($clock > 0 ? min($at, $clock) : $at) : $clock;
+        $durationGamets = intval(($entry['duration_game_hours'] ?? 0.5) * self::GAMETS_PER_HOUR);
+        $woreOff = $now > 0 && $clock > 0 && $now + $durationGamets <= $clock;
         // Her drinking and dependence (roadmap drunk-state, addiction): the tolerance before this use
-        // scales the high; the use, the drink and a substitute's relief are counted (RelDynSubstances)
+        // scales the high; the use, the drink and a substitute's relief are counted (RelDynSubstances),
+        // dated when she had it
         $substance = RelDynSubstances::onConsume((string) $npcName, $dynamics, (string) $key, $now);
         $appraisal = self::itemAppraisal($dynamics, $npcName, (string) $itemName);
         if ($appraisal['appraisal'] !== null && $npcName !== '') {
@@ -13106,9 +13113,9 @@ class RelationshipDynamics
                 self::isPairInteraction($GLOBALS['gameRequest'] ?? null, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')) ? RelDynFulfillment::PLAYER : null);
         }
 
-        // --- Apply immediate effects through XYZ engine ---
+        // --- Apply immediate effects through XYZ engine (a spike that already wore off: none) ---
         $appliedImmediate = [];
-        $immediate = array_map(fn($v) => floatval($v) * $substance['spike_mult'], (array) ($entry['immediate'] ?? []));
+        $immediate = $woreOff ? [] : array_map(fn($v) => floatval($v) * $substance['spike_mult'], (array) ($entry['immediate'] ?? []));
         foreach (self::appraisedEffects($immediate, $appraisal['m']) as $dimId => $delta) {
             $actual = self::applyDelta($dimId, $dynamics, floatval($delta), $temperament);
             if (abs($actual) > 0.001) {
@@ -13117,20 +13124,23 @@ class RelationshipDynamics
             }
         }
 
-        // --- Track for expiry (game-calendar hours on the eventlog clock) ---
-        $durationGamets = intval(($entry['duration_game_hours'] ?? 0.5) * self::GAMETS_PER_HOUR);
-
+        // --- Track for expiry (game-calendar hours on the eventlog clock, from when she had it) ---
         if (!isset($dynamics['_active_consumables']) || !is_array($dynamics['_active_consumables'])) {
             $dynamics['_active_consumables'] = [];
         }
 
-        $dynamics['_active_consumables'][] = [
-            'key'       => $key,
-            'item_name' => $itemName,
-            'immediate' => $appliedImmediate,
-            'expires_gamets' => $now > 0 ? $now + $durationGamets : 0,
-            'applied_gamets' => $now,
-        ];
+        if ($woreOff) {
+            error_log("[RelDyn-ITEM] {$key} ({$itemName}) was consumed " . round(($clock - $now) / self::GAMETS_PER_HOUR, 1)
+                . "h game time ago: its spike wore off before now");
+        } else {
+            $dynamics['_active_consumables'][] = [
+                'key'       => $key,
+                'item_name' => $itemName,
+                'immediate' => $appliedImmediate,
+                'expires_gamets' => $now > 0 ? $now + $durationGamets : 0,
+                'applied_gamets' => $now,
+            ];
+        }
 
         // --- Apply permanent costs directly to baselines (never reversed) ---
         foreach (($entry['permanent'] ?? []) as $dimId => $cost) {
@@ -13563,7 +13573,7 @@ class RelationshipDynamics
             // crowd hers out of the rows read.
             $ownLine = $db->escape(self::escapeLike(trim((string) $npcName)));
             $rows = $db->fetchAll(
-                "SELECT rowid, data FROM eventlog WHERE type IN ('infoaction', 'itemfound') "
+                "SELECT rowid, data, gamets FROM eventlog WHERE type IN ('infoaction', 'itemfound') "
                 . "AND ltrim(data) ILIKE '{$ownLine} %' ESCAPE '\\' "
                 . "AND (data ~* '\\m(consumes|consumed|drank|ate)\\M' OR data ~* '\\mused\\M.*potion') "
                 . "AND {$consumeSince} "
@@ -13579,6 +13589,8 @@ class RelationshipDynamics
                     'item'   => trim($cm[2], " .\t"),
                     'source' => 'eventlog',
                     'rowid'  => isset($row['rowid']) ? intval($row['rowid']) : null,
+                    // when she consumed it (raw game time of the row), not when she is next spoken to
+                    'gamets' => is_numeric($row['gamets'] ?? null) && floatval($row['gamets']) > 0 ? floatval($row['gamets']) : null,
                 ];
             }
         } catch (\Throwable $e) {
@@ -13674,13 +13686,18 @@ class RelationshipDynamics
         if (empty($events)) {
             return [];
         }
+        // Her consumables in the order she had them (a first look reads the newest rows first)
+        $consumes = array_values(array_filter($events, fn($e) => ($e['action'] ?? '') === 'consume'));
+        usort($consumes, fn($a, $b) => [floatval($a['gamets'] ?? 0), intval($a['rowid'] ?? 0)] <=> [floatval($b['gamets'] ?? 0), intval($b['rowid'] ?? 0)]);
+        $events = array_merge(array_values(array_filter($events, fn($e) => ($e['action'] ?? '') !== 'consume')), $consumes);
 
         $allResults = ['consumable' => [], 'gift' => [], 'equip' => []];
 
         foreach ($events as $event) {
             switch ($event['action']) {
                 case 'consume':
-                    $results = self::processConsumable($dynamics, $event['item'], $temperament, (string) $npcName);
+                    $results = self::processConsumable($dynamics, $event['item'], $temperament, (string) $npcName,
+                        isset($event['gamets']) ? floatval($event['gamets']) : null);
                     if (!empty($results)) {
                         $allResults['consumable'][] = ['item' => $event['item'], 'deltas' => $results];
                     }
@@ -13714,6 +13731,10 @@ class RelationshipDynamics
                     }
                     break;
             }
+        }
+        // Drinks dated when she had them: her state brought to the game clock (what wore off since is gone)
+        if ($consumes !== [] && self::currentGamets() > 0) {
+            RelDynSubstances::update((string) $npcName, $dynamics, self::currentGamets());
         }
 
         return $allResults;

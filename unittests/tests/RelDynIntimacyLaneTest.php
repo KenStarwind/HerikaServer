@@ -112,8 +112,11 @@ final class RelDynIntimacyLaneTest extends TestCase
         $this->assertSame(RelDynPostIntimacy::AVOIDANT, $case(['romance' => true, 'avoidance' => 0.7]));
         // who she is in closeness before how deep the bond runs (earned security lowers the axes)
         $this->assertSame(RelDynPostIntimacy::AVOIDANT, $case(['bonded' => true, 'romance' => true, 'trust' => 70.0, 'avoidance' => 0.7]));
-        $this->assertSame(RelDynPostIntimacy::VULNERABLE, $case(['bonded' => true, 'romance' => true, 'trust' => 70.0, 'anxiety' => 0.6, 'avoidance' => 0.55]));
-        $this->assertSame(RelDynPostIntimacy::COMMITTED, $case(['romance' => true, 'anxiety' => 0.6, 'avoidance' => 0.3]), 'anxious alone is not fear of it');
+        // the fearful reading of "manipulated" is opt-in (batch-R: the draft keys that row on maturity, not attachment)
+        $this->assertSame(RelDynPostIntimacy::BONDED, $case(['bonded' => true, 'romance' => true, 'trust' => 70.0, 'anxiety' => 0.6, 'avoidance' => 0.55]));
+        $fearful = fn(array $c) => RelDynPostIntimacy::outcome(array_replace($base, $c), ['fearful_vulnerable' => true] + $cfg);
+        $this->assertSame(RelDynPostIntimacy::VULNERABLE, $fearful(['bonded' => true, 'romance' => true, 'trust' => 70.0, 'anxiety' => 0.6, 'avoidance' => 0.55]));
+        $this->assertSame(RelDynPostIntimacy::COMMITTED, $fearful(['romance' => true, 'anxiety' => 0.6, 'avoidance' => 0.3]), 'anxious alone is not fear of it');
         $this->assertSame(RelDynPostIntimacy::VULNERABLE, $case(['trust' => 20.0]));
         $this->assertSame(RelDynPostIntimacy::VULNERABLE, $case(['maturity' => 25.0]));
         $this->assertSame(RelDynPostIntimacy::CASUAL, $case([]));

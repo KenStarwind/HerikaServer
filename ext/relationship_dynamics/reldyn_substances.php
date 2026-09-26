@@ -40,10 +40,14 @@
  *     (the Attraction Matrix's summary, or a romance core already holds); otherwise her sober
  *     passion curve (0..1, the uphill's multiplier below her floors). A shallow diary (her own
  *     maturity at or below diary shallow_at) corrects nothing: no meaningful self-reflection.
- *   - One night, one shame (the worked example has one sober verdict): a drunken scene the
- *     post-intimacy states also judge (RelDynPostIntimacy's drunk_regret / cheating correction) and
- *     this diary verdict share the night's resentment_self; whichever comes second adds only what
- *     exceeds the first (nightShame, both in asked points before the physics).
+ *   - One night, one verdict (the worked example has one sober verdict: "comfort toward Mikael:
+ *     -20", "resentment_self: +12"): a drunken scene the post-intimacy states also judge
+ *     (RelDynPostIntimacy's drunk_regret / cheating correction, two scenes of one night) and this
+ *     diary verdict share the night per dimension (resentment_self, comfort, trust, ...);
+ *     whichever comes second adds only what exceeds the first in the same direction
+ *     (nightVerdict, asked points before the physics).
+ *   - A drink is dated when she drank it (the eventlog row's game time, processConsumable), not
+ *     when she is next spoken to: last night's mead does not make her drunk this morning.
  *
  * ADDICTION (per substance: skooma, sap, alcohol; addiction.substances maps consumables):
  *   - Each use raises dependence and tolerance (per substance); abstinence lowers them per game
@@ -141,8 +145,11 @@ final class RelDynSubstances
                 // days of the Addict Cycle reach dependence; a drink now and then never does)
                 'dependence_per_use' => ['skooma' => 0.12, 'sap' => 0.08, 'alcohol' => 0.03],
                 'tolerance_per_use' => ['skooma' => 0.10, 'sap' => 0.08, 'alcohol' => 0.04],
-                // Abstinence, per game day (0..1 per day)
-                'dependence_decay_per_game_day' => 0.02,
+                // Abstinence, per game day (0..1 per day): one number for every substance, or a map
+                // substance => rate ('default' for the rest). Alcohol clears faster than it builds
+                // from a tavern habit (RelDyn's pick: up to two drinks an evening, 0.06 a day, never
+                // accumulate; getting drunk every night still does, in about a week)
+                'dependence_decay_per_game_day' => ['default' => 0.02, 'alcohol' => 0.08],
                 'tolerance_decay_per_game_day' => 0.05,
                 // At tolerance 1 the high (spike, drunk level) is (1 - tolerance_cut) of the table's
                 'tolerance_cut' => 0.6,
@@ -368,10 +375,12 @@ final class RelDynSubstances
     // =====================================================================
 
     /**
-     * She consumed $key (a CONSUMABLE_EFFECTS key) at $now: the tolerance before this use scales
-     * the high ('spike_mult' for the table's immediate effects); the use raises dependence and
-     * tolerance; a drink joins the session; a substitute while dependent brings relief; a use in
-     * the 'clean' phase is a relapse. The held offsets are re-held at once (update).
+     * She consumed $key (a CONSUMABLE_EFFECTS key) at $now (raw gamets of the consumption, which
+     * can be before the game clock: a row read on a later request): the tolerance before this use
+     * scales the high ('spike_mult' for the table's immediate effects); the use raises dependence
+     * and tolerance; a drink joins the session; a substitute while dependent brings relief; a use
+     * in the 'clean' phase is a relapse. The held offsets are re-held at once (update at $now; a
+     * caller dating drinks in the past brings her to the game clock with update afterwards).
      * Returns ['spike_mult' => 0..1, 'substance' => ?string, 'drinks' => level after].
      */
     public static function onConsume(string $npcName, array &$dynamics, string $key, float $now): array
@@ -429,6 +438,16 @@ final class RelDynSubstances
         return $out;
     }
 
+    /**
+     * A per-game-day rate of $substance from a config value that is one number for every
+     * substance or a map substance => rate with a 'default'. Pure.
+     */
+    public static function ratePerDay($rate, string $substance): float
+    {
+        if (!is_array($rate)) return floatval($rate);
+        return floatval($rate[$substance] ?? $rate['default'] ?? 0.0);
+    }
+
     /** Abstinence since the last tick: dependence and tolerance fall per game day (linear, floored at 0). */
     private static function tickUse(array &$state, float $now, array $a): void
     {
@@ -437,8 +456,8 @@ final class RelDynSubstances
             $days = ($now - $last) / RelationshipDynamics::GAMETS_PER_DAY;
             foreach ((array) ($state['use'] ?? []) as $s => $u) {
                 if (!is_array($u)) continue;
-                $u['dependence'] = round(max(0.0, floatval($u['dependence'] ?? 0) - floatval($a['dependence_decay_per_game_day']) * $days), 4);
-                $u['tolerance'] = round(max(0.0, floatval($u['tolerance'] ?? 0) - floatval($a['tolerance_decay_per_game_day']) * $days), 4);
+                $u['dependence'] = round(max(0.0, floatval($u['dependence'] ?? 0) - self::ratePerDay($a['dependence_decay_per_game_day'], (string) $s) * $days), 4);
+                $u['tolerance'] = round(max(0.0, floatval($u['tolerance'] ?? 0) - self::ratePerDay($a['tolerance_decay_per_game_day'], (string) $s) * $days), 4);
                 $state['use'][$s] = $u;
             }
         }
@@ -714,6 +733,9 @@ final class RelDynSubstances
                     $v = -floatval($sober['regret_mult']) * $share * floatval($gain);
                     if (abs($v) < 1e-6) continue;
                     $asked[(string) $signal] = round($v, 4);
+                    // one night, one verdict: only what exceeds a post-intimacy verdict on this night (its comfort / trust)
+                    $v = self::nightVerdict($dynamics, floatval($night['start'] ?? $key), (string) $signal, $v, RelationshipDynamics::currentGamets(), (string) $key);
+                    if (abs($v) < 1e-6) continue;
                     $a = RelationshipDynamics::applyDelta((string) $signal, $dynamics, $v, $temperament);
                     $applied[(string) $signal] = round($signal === 'affinity' ? $a * 2.0 : $a, 4);
                 }
@@ -723,7 +745,7 @@ final class RelDynSubstances
                 if ($rs > 1e-6) {
                     $asked['resentment_self'] = round($rs, 4);
                     // one night, one shame: only what exceeds a post-intimacy verdict on this night
-                    $rs = self::nightShame($dynamics, floatval($night['start'] ?? $key), $rs, RelationshipDynamics::currentGamets(), (string) $key);
+                    $rs = self::nightVerdict($dynamics, floatval($night['start'] ?? $key), 'resentment_self', $rs, RelationshipDynamics::currentGamets(), (string) $key);
                     if ($rs > 1e-6) {
                         $applied['resentment_self'] = RelationshipDynamics::applyDelta('resentment_self', $dynamics, $rs, $temperament);
                     }
@@ -758,16 +780,33 @@ final class RelDynSubstances
         return max(0.0, min(1.0, floatval($curve)));
     }
 
-    /**
-     * One drinking night, one shame. A sober verdict on the night that holds $at (or the night
-     * $nightKey) asks $asked resentment_self points (before the physics); returns the points still
-     * to apply: what exceeds the heaviest shame already given for that night, and records it
-     * (state 'shame': night key => start, end, verdicts [[at gamets, points]]). Outside any drinking night (no session,
-     * no ledger night, no record) nothing is shared: $asked comes back whole and unrecorded.
-     */
+    /** The key of the drinking session she is in now (its start, as the night's key), or null sober. */
+    public static function sessionKey(array $dynamics): ?string
+    {
+        $s = self::state($dynamics);
+        return !empty($s['drinks']) && is_numeric($s['session_start'] ?? null) ? (string) (int) $s['session_start'] : null;
+    }
+
+    /** One drinking night, one shame: nightVerdict for resentment_self. */
     public static function nightShame(array &$dynamics, float $at, float $asked, float $now, ?string $nightKey = null): float
     {
         if ($asked <= 1e-6) return $asked;
+        return self::nightVerdict($dynamics, $at, 'resentment_self', $asked, $now, $nightKey);
+    }
+
+    /**
+     * One drinking night, one sober verdict per dimension (the draft's worked example has ONE diary
+     * verdict: "comfort toward Mikael: -20", "resentment_self: +12"). A verdict on the night that
+     * holds $at (or the night $nightKey) asks $asked points of $dim (before the physics); returns
+     * the points still to apply: what exceeds, in the same direction, the heaviest ask already
+     * given for that dimension that night (an ask the other way is never cancelled), and records
+     * it (state 'shame': night key => start, end, verdicts [[at gamets, points]] for resentment_self,
+     * dims => dim => [[at gamets, points]] for the rest). Outside any drinking night (no session,
+     * no ledger night, no record, no key) nothing is shared: $asked comes back whole and unrecorded.
+     */
+    public static function nightVerdict(array &$dynamics, float $at, string $dim, float $asked, float $now, ?string $nightKey = null): float
+    {
+        if (abs($asked) <= 1e-6) return $asked;
         $state = self::state($dynamics);
         $shame = is_array($state['shame'] ?? null) ? $state['shame'] : [];
         // a closed span only (an open one is the session above; closeNight ends a record's span)
@@ -790,16 +829,29 @@ final class RelDynSubstances
             }
         }
         if ($key === null) return $asked;
-        $verdicts = is_array($shame[$key]['verdicts'] ?? null) ? array_values($shame[$key]['verdicts']) : [];
-        $given = 0.0;
-        foreach ($verdicts as $v) $given = max($given, floatval($v[1] ?? 0.0));
-        $verdicts[] = [$now, round($asked, 4)];
-        $shame[$key] = ['start' => floatval($span['start'] ?? $at),
-            'end' => is_numeric($span['end'] ?? null) ? floatval($span['end']) : null,
-            'verdicts' => $verdicts];
+        $record = is_array($shame[$key] ?? null) ? $shame[$key] : [];
+        $shameDim = $dim === 'resentment_self';
+        $list = $shameDim ? ($record['verdicts'] ?? []) : ($record['dims'][$dim] ?? []);
+        $list = is_array($list) ? array_values($list) : [];
+        $given = 0.0;   // the heaviest ask so far in the same direction
+        foreach ($list as $v) {
+            $p = floatval($v[1] ?? 0.0);
+            if ($p * $asked > 0.0 && abs($p) > abs($given)) $given = $p;
+        }
+        $list[] = [$now, round($asked, 4)];
+        $record['start'] = floatval($span['start'] ?? $record['start'] ?? $at);
+        $record['end'] = is_numeric($span['end'] ?? null) ? floatval($span['end']) : (is_numeric($record['end'] ?? null) ? floatval($record['end']) : null);
+        if ($shameDim) {
+            $record['verdicts'] = $list;
+        } else {
+            $record['verdicts'] = is_array($record['verdicts'] ?? null) ? $record['verdicts'] : [];
+            $record['dims'][$dim] = $list;
+        }
+        $shame[$key] = $record;
         $state['shame'] = array_slice($shame, -max(1, intval(self::config()['sober']['nights_kept'])), null, true);
         $dynamics[self::KEY] = $state;
-        return max(0.0, $asked - $given);
+        $rest = abs($asked) - abs($given);
+        return $rest > 0.0 ? ($asked > 0 ? $rest : -$rest) : 0.0;
     }
 
     // =====================================================================
@@ -970,10 +1022,13 @@ final class RelDynSubstances
         }
         if (is_array($state['shame'] ?? null)) {
             // a verdict the loaded game never lived is not given; a night it never lived is gone
+            $lived = fn($list) => array_values(array_filter((array) $list, fn($v) => is_array($v) && floatval($v[0] ?? 0) <= $T));
             foreach ($state['shame'] as $k => $s) {
-                $kept = array_values(array_filter((array) ($s['verdicts'] ?? []), fn($v) => is_array($v) && floatval($v[0] ?? 0) <= $T));
-                if ($kept === [] || floatval($s['start'] ?? 0) > $T) { unset($state['shame'][$k]); continue; }
+                $kept = $lived($s['verdicts'] ?? []);
+                $dims = array_filter(array_map($lived, (array) ($s['dims'] ?? [])));
+                if (($kept === [] && $dims === []) || floatval($s['start'] ?? 0) > $T) { unset($state['shame'][$k]); continue; }
                 $state['shame'][$k]['verdicts'] = $kept;
+                if ($dims === []) unset($state['shame'][$k]['dims']); else $state['shame'][$k]['dims'] = $dims;
                 if (is_numeric($s['end'] ?? null) && floatval($s['end']) > $T) $state['shame'][$k]['end'] = null;
             }
             if ($state['shame'] === []) unset($state['shame']);

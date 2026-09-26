@@ -27,10 +27,14 @@
  *     concentrated_npcs NPCs hold concentrated_share of the validation seeking).
  *   charisma archetype (design / MDD 5.1): over the last charisma.window observations, the
  *     eval's grade counts: primary and secondary (min_graded to name one).
- *   attachment pattern (design): votes over attachment.window observations (anxious: back at her
- *     within a short gap after a bad exchange, pushing while she pulls away, a gift into a fight;
- *     avoidant: a long gap from a bond, surface talk with a bond; secure: constructive repair,
- *     steady contact, leaving her room; disorganized: hot and cold with the same NPC). Updated
+ *   attachment pattern (design): votes over attachment.window observations. How often the player
+ *     comes back is read per VISIT (an NPC's exchanges within visit_gap_game_hours: one
+ *     conversation), never from the next line of the same conversation (anxious: a visit soon
+ *     after a visit with a bad exchange; avoidant: a long gap from a bond, a visit with a bond that
+ *     is all surface talk; secure: steady visits that went well; disorganized: a hot visit and a
+ *     cold one close together); the acts per exchange (anxious: pushing while she pulls away, a
+ *     gift into a fight; secure: constructive repair, leaving her room). Validation seeking is the
+ *     same visit-level return (or a gift into her open conflict). Updated
  *     every attachment.update_every observations (the window ends at the last multiple);
  *     named at min_confidence (60%) share, else "-leaning".
  *   love language (design): the tags' love languages (the one tag table,
@@ -85,6 +89,10 @@ final class RelDynMirror
             'min_weight' => 0.1,             // weight of an observation of significance 0
             'negative_net' => 0.15,          // |mean normalized signal| from which an exchange was good / bad
             'comfort_low' => 35.0,           // her comfort (points) under which a push is pressure
+            // one visit (one conversation): an NPC's exchanges no more than this apart. How often
+            // the player comes back (validation seeking, the attachment pattern's frequency
+            // signals) is read per visit, never from the next line of the same conversation
+            'visit_gap_game_hours' => 1.0,
             // evidence (e, -1..1) of the design's detection signals
             'evidence' => [
                 'pressure_comfort' => -0.8,      // romantic move while she pulls away / is uneasy
@@ -379,13 +387,33 @@ final class RelDynMirror
             $p = $prev[$i];
             return $p === null ? null : max(0.0, (floatval($obs[$i]['g']) - floatval($obs[$p]['g'])) / $hour);
         };
-        // Validation seeking: back at her within recheck hours after a bad exchange, or a gift into her open conflict
+        // Visits: an NPC's exchanges within visit_gap_game_hours of the one before are one conversation
+        $visitGap = floatval($cfg['visit_gap_game_hours'] ?? 1.0);
+        $visitOf = [];
+        $visits = [];
+        foreach ($obs as $i => $o) {
+            $g = $gapH($i);
+            if ($prev[$i] === null || $g === null || $g > $visitGap) {
+                $visits[] = [$i];
+                $visitOf[$i] = count($visits) - 1;
+            } else {
+                $visitOf[$i] = $visitOf[$prev[$i]];
+                $visits[$visitOf[$i]][] = $i;
+            }
+        }
+        // the first exchange of a visit: the previous visit with her (its exchanges), else null
+        $prevVisit = fn(int $i): ?array => $visits[$visitOf[$i]][0] === $i && $prev[$i] !== null ? $visits[$visitOf[$prev[$i]]] : null;
+        $visitBad = function (array $members) use ($obs, $cfg): bool {
+            foreach ($members as $j) if (self::bad($obs[$j], $cfg)) return true;
+            return false;
+        };
+        // Validation seeking: a visit soon (recheck hours) after a visit with a bad exchange, or a gift into her open conflict
         $recheck = floatval($cfg['validation']['recheck_game_hours']);
-        $seeking = function (int $i) use ($obs, $prev, $gapH, $cfg, $recheck): bool {
+        $seeking = function (int $i) use ($obs, $gapH, $prevVisit, $visitBad, $recheck): bool {
             $o = $obs[$i];
             if (!empty($o['c']['cf']) && in_array('gift', (array) ($o['t'] ?? []), true)) return true;
-            $p = $prev[$i];
-            return $p !== null && self::bad($obs[$p], $cfg) && ($g = $gapH($i)) !== null && $g <= $recheck;
+            $pv = $prevVisit($i);
+            return $pv !== null && $visitBad($pv) && ($g = $gapH($i)) !== null && $g <= $recheck;
         };
 
         // ---- the six dimensions
@@ -520,6 +548,17 @@ final class RelDynMirror
             $idx = array_slice($idx, -max(1, intval($atc['window'])));
             $votes = array_fill_keys(self::PATTERNS, 0.0);
             $vw = (array) $atc['votes'];
+            // The frequency signals (design: "interaction frequency spikes after conflict", "long
+            // gaps", "prefers surface-level exchanges", "consistent interaction frequency", "hot and
+            // cold") are read per visit, at its first exchange, over its exchanges in this read;
+            // the acts (a push, a gift into a fight, a repair, leaving her room) per exchange.
+            $inRead = array_flip($idx);
+            $members = fn(array $visit): array => array_values(array_filter($visit, fn($j) => isset($inRead[$j])));
+            $visitNet = function (array $m) use ($obs, $cfg): float {
+                $sum = 0.0;
+                foreach ($m as $j) $sum += self::net($obs[$j], $cfg);
+                return $m === [] ? 0.0 : $sum / count($m);
+            };
             foreach ($idx as $i) {
                 $o = $obs[$i];
                 $c = (array) ($o['c'] ?? []);
@@ -527,21 +566,28 @@ final class RelDynMirror
                 $g = $gapH($i);
                 $p = $prev[$i];
                 $bond = is_numeric($c['b'] ?? null) && floatval($c['b']) >= floatval($atc['bond_min']);
-                if ($p !== null && self::bad($obs[$p], $cfg) && $g !== null && $g <= floatval($atc['spike_game_hours'])) $votes['anxious'] += floatval($vw['spike']);
+                $first = $visits[$visitOf[$i]][0] === $i;
+                $visit = $members($visits[$visitOf[$i]]);
+                $pv = $prevVisit($i);
+                $pvIn = $pv !== null ? $members($pv) : [];
+                if ($pvIn !== [] && $visitBad($pvIn) && $g !== null && $g <= floatval($atc['spike_game_hours'])) $votes['anxious'] += floatval($vw['spike']);
                 if (intval($o['ri'] ?? 0) > 0 && (!empty($c['pa']) || !empty($c['cm']))) $votes['anxious'] += floatval($vw['push']);
                 if (in_array('gift', $tags, true) && (!empty($c['cf']) || ($p !== null && self::bad($obs[$p], $cfg)))) $votes['anxious'] += floatval($vw['gift_bomb']);
-                if ($bond && $g !== null && $g >= floatval($atc['long_gap_game_days']) * 24.0) $votes['avoidant'] += floatval($vw['long_gap']);
-                if ($bond && floatval($o['sig'] ?? 0) <= floatval($atc['surface_max_significance'])) $votes['avoidant'] += floatval($vw['surface']);
+                if ($first && $bond && $g !== null && $g >= floatval($atc['long_gap_game_days']) * 24.0) $votes['avoidant'] += floatval($vw['long_gap']);
+                if ($first && $bond && max(array_map(fn($j) => floatval($obs[$j]['sig'] ?? 0), $visit)) <= floatval($atc['surface_max_significance'])) {
+                    $votes['avoidant'] += floatval($vw['surface']);
+                }
                 if (!empty($c['cf']) && !empty($o['pi']) && array_intersect($tags, ['apology', 'reassurance', 'confiding', 'forgiveness']) !== []) {
                     $votes['secure'] += floatval($vw['repair']);
                 }
-                if ($g !== null && $g > floatval($atc['spike_game_hours']) && $g < floatval($atc['long_gap_game_days']) * 24.0 && !empty($o['pi'])) {
+                if ($first && $g !== null && $g > floatval($atc['spike_game_hours']) && $g < floatval($atc['long_gap_game_days']) * 24.0
+                    && array_filter($visit, fn($j) => !empty($obs[$j]['pi'])) !== [] && !$visitBad($visit)) {
                     $votes['secure'] += floatval($vw['steady']);
                 }
                 if (!empty($c['pa']) && intval($o['ri'] ?? 0) === 0 && !in_array('command', $tags, true)) $votes['secure'] += floatval($vw['room']);
-                if ($p !== null && $g !== null && $g <= floatval($atc['hot_cold_game_hours'])) {
-                    $a = self::net($obs[$p], $cfg);
-                    $b = self::net($o, $cfg);
+                if ($pvIn !== [] && $g !== null && $g <= floatval($atc['hot_cold_game_hours'])) {
+                    $a = $visitNet($pvIn);
+                    $b = $visitNet($visit);
                     $hc = floatval($atc['hot_cold_net']);
                     if (($a >= $hc && $b <= -$hc) || ($a <= -$hc && $b >= $hc)) $votes['disorganized'] += floatval($vw['hot_cold']);
                 }
