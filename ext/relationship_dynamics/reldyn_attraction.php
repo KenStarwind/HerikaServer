@@ -1127,7 +1127,9 @@ class RelDynAttraction
         $passionNow = RelationshipDynamics::getPassion($dynamics);
         $wonOver = !$pu['bars_met'] && $hardZero === null && $romanceCapable
             && !empty(((array) $cc['won_over_openness'])[$def['openness']])
-            && ($passionNow >= floatval($cc['won_over_passion'])
+            // (a gain bounded at a ceiling of exactly won_over_passion, MDD 8.1's Friendly row via
+            // RelDynGovernors, lands on it up to float noise)
+            && ($passionNow >= floatval($cc['won_over_passion']) - 1e-6
                 || (!empty($state['won_over']) && $passionNow >= floatval($cc['spark'])));
 
         // ---- Depth axis (allowed): pillar walk capped by the MDD 2.6 filter. Visceral pillars
@@ -1876,6 +1878,25 @@ class RelDynAttraction
         if ($wasFz !== (bool) $r['friendzoned']) {
             RelationshipDynamics::log("[ATTRACTION] {$npcName}: friendzone " . ($r['friendzoned'] ? 'begins' : 'ends') . " ({$r['reason']})");
         }
+    }
+
+    /**
+     * Passion was just written at $passion points (RelationshipDynamics::setPassion). Won over
+     * (decisions §13 / §15) is judged when the Matrix evaluates, at the next request; a gain that
+     * climbs to won_over_passion can be held there by the tier's governor (MDD 8.1: the
+     * Friendly row's ceiling is the same 40, RelDynGovernors) and faded below it again before
+     * that evaluation. So reaching it is recorded here: the state's won_over, which evaluate()
+     * holds until passion falls under the spark, and only where evaluate's own conditions
+     * (below her bars, no hard zero, openness, romance possible) also hold.
+     */
+    public static function notePassionReached(array &$dynamics, float $passion): void
+    {
+        $a = $dynamics['_attraction'] ?? null;
+        $state = $dynamics['_attraction_state'] ?? null;
+        if (!is_array($a) || !is_array($state) || empty($a['enabled']) || !empty($a['attracted'])
+            || !empty($a['hard_zero']) || !empty($state['won_over'])) return;
+        if ($passion < floatval(self::curveConfig()['won_over_passion']) - 1e-6) return;
+        $dynamics['_attraction_state']['won_over'] = true;
     }
 
     /**

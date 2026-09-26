@@ -1288,6 +1288,10 @@ class RelationshipDynamics
             // Witness / shared / danger multipliers, kill streak, core's death / bleedout rows
             // read from the eventlog (reldyn_combat.php, RelDynCombat::configDefaults()).
             'combat' => RelDynCombat::configDefaults(),
+            // ===== Tiered governors (MDD §8, roadmap tiered-governors) =====
+            // Passion floor / ceiling per relationship tier, the attracted NPC's raise, exempt
+            // writers (reldyn_governors.php, RelDynGovernors::configDefaults()).
+            'governors' => RelDynGovernors::configDefaults(),
             // ===== Natural exclusivity (decisions 2026-09-24 §17) =====
             // The pull toward the player (drive, disposition, title, weakening), bands, suitor
             // markers and damping, style rules, NPC-NPC felt text (reldyn_exclusivity.php).
@@ -3673,11 +3677,20 @@ class RelationshipDynamics
      * (passion_mult of at least 1: at or past her floors), since above the spark she only
      * warms as fast as the uphill allows; never above the MDD 1.4 passion ceiling. A summary
      * from before the spark: 0 when its passion_mult is 0.
+     * The relationship tier's floor (MDD 8.1 tiered governors, RelDynGovernors) joins it once
+     * passion has reached it: it holds passion there, it never lifts passion that is below it
+     * (MDD 8.3, the decoupling principle: "low passion, high tier" is a real bond, the political
+     * marriage). The higher of the two, never above the tier's ceiling (Divorced / Hostile: none).
      */
     public static function passionStageFloor(array $dynamics): float
     {
         $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
         $floor = floatval(self::STAGE_PARAMS[$stage]['floor'] ?? 0);
+        $gov = RelDynGovernors::governor($dynamics);
+        if ($gov !== null) {
+            $held = self::getPassion($dynamics) >= $gov['floor'] ? $gov['floor'] : 0.0;
+            $floor = min(max($floor, $held), $gov['ceiling']);
+        }
         $a = $dynamics['_attraction'] ?? null;
         if ($floor <= 0.0 || !is_array($a)) return $floor;
         $sparkMult = $a['spark_mult'] ?? ($a['passion_mult'] ?? 1.0);
@@ -3719,6 +3732,8 @@ class RelationshipDynamics
         }
         $dynamics['dimensions']['passion']['x'] = $value;
         $dynamics['passion'] = $value;
+        // Won over is reached where passion reaches it, even if a tier's ceiling holds it there
+        RelDynAttraction::notePassionReached($dynamics, $value);
     }
 
     /**
@@ -7595,12 +7610,14 @@ class RelationshipDynamics
 
         // --- Decisions §13: a passion GAIN is x the attraction factor (the spark below 20, the
         // curve above it, 0 for a hard zero; RelDynAttraction::gainFactor) from this request's
-        // summary (none yet: not judged, x1). Applied to the physics' move, so the spark splits
-        // where passion itself crosses it (the physics is linear in the delta) ---
-        if ($dimensionId === 'passion' && $actualDelta > 0 && is_array($dynamics['_attraction'] ?? null)) {
+        // summary (none yet: not judged, x1), then bounded by the tier's governor (MDD 8,
+        // RelDynGovernors). Applied to the physics' move, so the spark splits where passion
+        // itself crosses it (the physics is linear in the delta) ---
+        if ($dimensionId === 'passion' && $actualDelta > 0) {
             $attractionFactor = self::loggedPassionFactor($dynamics, $actualDelta,
                 (string) ($overrides['attraction_source'] ?? 'dimension engine'),
-                is_array($overrides['attraction_tags'] ?? null) ? $overrides['attraction_tags'] : null);
+                is_array($overrides['attraction_tags'] ?? null) ? $overrides['attraction_tags'] : null,
+                isset($overrides['attraction_source']) ? (string) $overrides['attraction_source'] : null);
             $actualDelta *= $attractionFactor;
             if ($actualDelta < 0.0001) {
                 return 0.0;
@@ -8610,11 +8627,14 @@ class RelationshipDynamics
             // Decisions §15: the item's tags are the gain's channel (an asexual NPC's passion
             // grows only through the emotional ones).
             self::attractionPassionMult((string) $npcName, $dynamics);   // this request's summary
-            if (RelDynAttraction::gainFactor((array) $dynamics['_attraction'], self::getPassion($dynamics), $raw, $tags) <= 0.0) {
+            $gf = RelDynAttraction::gainFactor((array) $dynamics['_attraction'], self::getPassion($dynamics), $raw, $tags);
+            // ... and the tier's governor (MDD 8): no room under the tier's passion ceiling
+            $govRoom = $gf > 0.0 ? RelDynGovernors::gainFactor($dynamics, self::getPassion($dynamics), $raw * $gf) : 1.0;
+            if ($gf <= 0.0 || $govRoom <= 0.0) {
                 self::attractionPassionFactor((string) $npcName, $dynamics, $raw, 'eval', $tags);   // logged: why
                 $why = isset($dynamics['_attraction']['hard_zero']) ? 'attraction hard zero'
                     : (!RelDynAttraction::channelOpen((array) $dynamics['_attraction'], $tags) ? 'emotional passion only: not an emotional channel'
-                    : 'at the attraction passion ceiling');
+                    : ($gf <= 0.0 ? 'at the attraction passion ceiling' : "at the tier's passion ceiling"));
                 $result['line'] = sprintf('%s %+.2f%s%s -> 0 (%s)', $signal, $rawIn, $clampNote, $steps, $why);
                 return $result;
             }
@@ -9028,6 +9048,8 @@ class RelationshipDynamics
             floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
         // A romantic moment or a setback, for the romance promotion after the inbox (rulings §9)
         RelDynRomance::noteMoment($dynamics, $n);
+        // The player's first exchange after her fall, answered with care or not (MDD 3.3 rescue response)
+        RelDynCombat::onEvalItem((string) $npcName, $n, $dynamics);
         // Betrayal / a lie are attachment experiences (decisions §12), x the exchange's significance
         foreach ((array) (self::getAttachmentConfig()['drift']['tag_events'] ?? []) as $tag => $event) {
             if (in_array($tag, $n['tags'], true)) {
@@ -11393,6 +11415,9 @@ class RelationshipDynamics
                     'lie'               => ['anxiety' => 0.015, 'avoidance' => 0.01],
                     'walkaway'          => ['anxiety' => 0.03, 'avoidance' => 0.04],     // things got bad enough that they left
                     'boundary_violated' => ['anxiety' => 0.02, 'avoidance' => 0.04],     // followed while they needed space
+                    // MDD 3.3 rescue response, Anxious: "massive bonding, but creates dependency
+                    // pattern" (x the NPC's anxious lean, RelDynCombat::rescueResponse)
+                    'rescue_dependency' => ['anxiety' => 0.02, 'avoidance' => 0.0],
                 ],
                 // Eval source tags that are attachment experiences (tag => event).
                 'tag_events' => ['betrayal' => 'betrayal', 'lie' => 'lie'],
@@ -14187,31 +14212,50 @@ class RelationshipDynamics
         if (!is_array($dynamics['_attraction'] ?? null)) {
             self::updateAttraction($npcName, $dynamics);
         }
-        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}", $tags);
+        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}", $tags, $source);
     }
 
     /**
-     * RelDynAttraction::gainFactor on the stored summary at the current passion, logged ($label:
-     * who / which path; $tags: the gain's eval tags, its channel, decisions §15).
+     * RelDynAttraction::gainFactor on the stored summary at the current passion, then the tier's
+     * governor (MDD 8, RelDynGovernors::gainFactor: the gain never lifts passion past the tier's
+     * ceiling; $source in its exempt_sources is not bounded), logged ($label: who / which path;
+     * $tags: the gain's eval tags, its channel, decisions §15).
      */
-    private static function loggedPassionFactor(array $dynamics, float $raw, string $label, ?array $tags = null): float
+    private static function loggedPassionFactor(array $dynamics, float $raw, string $label, ?array $tags = null, ?string $source = null): float
     {
         $passion = self::getPassion($dynamics);
         $a = (array) ($dynamics['_attraction'] ?? []);
-        $factor = RelDynAttraction::gainFactor($a, $passion, $raw, $tags);
+        $factor = $a === [] ? 1.0 : RelDynAttraction::gainFactor($a, $passion, $raw, $tags);
+        $governed = false;
+        if ($factor > 0.0 && $raw > 0.0) {
+            $gov = RelDynGovernors::gainFactor($dynamics, $passion, $raw * $factor, $source);
+            $governed = $gov < 1.0;
+            $factor *= $gov;
+        }
         self::log(sprintf('[ATTRACTION] %s passion +%.4f at %.2f x%.4f%s', $label, $raw, $passion, $factor,
-            ($factor <= 0.0 && $raw > 0.0) ? ' (' . self::passionClosedReason($a, $tags) . ')' : ''));
+            ($factor <= 0.0 && $raw > 0.0) ? ' (' . self::passionClosedReason($a, $tags, $dynamics) . ')'
+                : ($governed ? ' (bounded by ' . self::governorReason($dynamics) . ')' : '')));
         return $factor;
     }
 
-    /** Why a passion gain adds nothing (log / eval line): hard zero, a closed channel, or the MDD 1.4 ceiling. */
-    private static function passionClosedReason(array $a, ?array $tags): string
+    /** Why a passion gain adds nothing (log / eval line): hard zero, a closed channel, the MDD 1.4 ceiling or the tier's governor. */
+    private static function passionClosedReason(array $a, ?array $tags, array $dynamics = []): string
     {
         if (isset($a['hard_zero'])) return 'hard zero: ' . $a['hard_zero'];
-        if (!RelDynAttraction::channelOpen($a, $tags)) {
+        if ($a !== [] && !RelDynAttraction::channelOpen($a, $tags)) {
             return 'channel closed: ' . ($a['passion_channel'] ?? 'restricted') . ' passion only, tags ' . ($tags ? implode(',', $tags) : 'none');
         }
-        return 'at the MDD 1.4 passion ceiling ' . ($a['passion_ceiling'] ?? 'none');
+        if (is_numeric($a['passion_ceiling'] ?? null) && self::getPassion($dynamics) >= floatval($a['passion_ceiling'])) {
+            return 'at the MDD 1.4 passion ceiling ' . $a['passion_ceiling'];
+        }
+        return 'at ' . self::governorReason($dynamics);
+    }
+
+    /** The tier governor for a log line: "the <tier> tier's passion ceiling <points>[ (raised)]". */
+    private static function governorReason(array $dynamics): string
+    {
+        $g = RelDynGovernors::governor($dynamics);
+        return $g === null ? 'no governor' : sprintf("the %s tier's passion ceiling %s%s", $g['tier'], $g['ceiling'], $g['raised'] ? ' (raised)' : '');
     }
 
     /**
@@ -18307,6 +18351,8 @@ require_once __DIR__ . '/reldyn_resentment.php';
 require_once __DIR__ . '/reldyn_creatures.php';
 // Combat passion routing (core combat requests + core's death / bleedout eventlog rows)
 require_once __DIR__ . '/reldyn_combat.php';
+// Tiered governors: the relationship tier's passion floor and ceiling (MDD 8)
+require_once __DIR__ . '/reldyn_governors.php';
 // Natural exclusivity: the pull toward the player, NPC-NPC deflection, damped interest in suitors (decisions §17)
 require_once __DIR__ . '/reldyn_exclusivity.php';
 

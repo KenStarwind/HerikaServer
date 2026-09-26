@@ -70,6 +70,12 @@
  *                     'respect_mult' => respect-gain multiplier (0.5..2.0, 1 at the neutral pillar score),
  *                     'friendzoned' => bool (a label; no passion cap)]
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
+ *   governor         null | ['tier' => distant|friendly|crush|committed|hostile, 'passion_floor',
+ *                    'passion_ceiling' (passion points), 'raised' => bool] (MDD 8 tiered governors,
+ *                    RelDynGovernors::jev; null while they are off)
+ *   rescue           null | ['pending' => bool (her fall waits for the player's next exchange),
+ *                    'last_bonus' => ?passion points of the last caring response, 'last_gamets' => ?raw
+ *                    gamets of it] (MDD 3.3 rescue response, RelDynCombat)
  *   creature         null | ['type' => vampire|werewolf, 'state' => ?string (vampire_night|vampire_day|
  *                    werewolf_moon|werewolf_night|werewolf_day), 'moon' => ?string (Skyrim's phase),
  *                    'offsets' => [dim => points held now]] (RelDynCreatures::jev)
@@ -115,6 +121,8 @@ final class RelDynJev
         'resentment_arc.self_baseline_offsets' => 'baseline points', 'resentment_arc.guilt_bleed' => 'comfort points',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
         'creature.offsets' => 'dimension points held by the creature row',
+        'governor.passion_floor' => 'passion points', 'governor.passion_ceiling' => 'passion points',
+        'rescue.last_bonus' => 'passion points', 'rescue.last_gamets' => 'raw game gamets',
         'protocols.grief.memory_warmth' => 'warmth points 0..100 toward the deceased (idealized, then memorial)',
         'protocols.widow_ceiling' => 'core affinity points (the widow lock on new bonds)',
         'protocols.crisis.fraction' => '0..1 of the unstable window (game calendar)',
@@ -223,6 +231,8 @@ final class RelDynJev
             'exclusivity' => RelDynExclusivity::jev($dynamics, $now),
             'attraction' => $attraction,
             'place' => $place,
+            'governor' => RelDynGovernors::jev($dynamics),
+            'rescue' => RelDynCombat::jev($dynamics),
             'creature' => RelDynCreatures::jev($dynamics),
             'protocols' => RelDynProtocols::jev($dynamics),
             'goal' => $goal,

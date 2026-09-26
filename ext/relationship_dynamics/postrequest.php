@@ -249,6 +249,16 @@ if ($evalOwnsExchange) {
     }
 }
 
+// -------------------------------------------------------------------------
+// 2b. Rescue response (MDD 3.3): the player's first exchange with her after her fall. An
+// exchange the eval scores is claimed and its item decides (RelDynCombat::onEvalItem); one it
+// does not score is caring when she answered in a caring mood or the player hugged her.
+// -------------------------------------------------------------------------
+if ($reldynCfg['combat_enabled'] ?? true) {
+    RelDynCombat::onExchange($npcName, $dynamics, $evalOwnsExchange, $interactionLL, is_string($lastMood) ? $lastMood : null,
+        floatval($GLOBALS['gameRequest'][2] ?? 0) > 0 ? floatval($GLOBALS['gameRequest'][2]) : RelationshipDynamics::currentGamets());
+}
+
 // Store the topic read for the next context.php cycle (<topic_resonance>): the felt text
 // (a match, or a topic the NPC dislikes) lives one turn, then clears.
 if ($topicMatch) {
