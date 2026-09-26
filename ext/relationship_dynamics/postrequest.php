@@ -251,9 +251,10 @@ if ($evalOwnsExchange) {
 // interaction of the player pair answers her fall: her own line (core voicing her bleedout
 // comment, a radiant remark) neither claims nor decides it.
 // -------------------------------------------------------------------------
+$reldynRescue = null;
 if (($reldynCfg['combat_enabled'] ?? true)
     && RelationshipDynamics::isPairInteraction($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')))) {
-    RelDynCombat::onExchange($npcName, $dynamics, $evalOwnsExchange, $interactionLL, is_string($lastMood) ? $lastMood : null,
+    $reldynRescue = RelDynCombat::onExchange($npcName, $dynamics, $evalOwnsExchange, $interactionLL, is_string($lastMood) ? $lastMood : null,
         floatval($GLOBALS['gameRequest'][2] ?? 0) > 0 ? floatval($GLOBALS['gameRequest'][2]) : RelationshipDynamics::currentGamets());
 }
 
@@ -263,13 +264,14 @@ if (($reldynCfg['combat_enabled'] ?? true)
 // spike.retention_per_interaction of itself), then this one's triggers: what was observed (a
 // flirty reply, a topic she warms to, intimacy the plugin reports) whoever scores the exchange;
 // what the local classifier judged (her love language, a touch) only when no eval scores it
-// (its item's tags spike then, processEvalContractItem).
+// (its item's tags spike then, processEvalContractItem), and not when it was the care that
+// answered her fall (2b paid it as the rescue response).
 // -------------------------------------------------------------------------
 if (($reldynCfg['passion_enabled'] ?? true)
     && RelationshipDynamics::isPairInteraction($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')))) {
     RelDynPassion::decayInteraction($dynamics);
     $reldynSpikes = RelDynPassion::onExchange($npcName, $dynamics, $interactionLL, is_string($lastMood) ? $lastMood : null,
-        $topicMatch !== null, $reldynIntimate, $evalOwnsExchange);
+        $topicMatch !== null, $reldynIntimate, $evalOwnsExchange, !empty($reldynRescue['caring']));
     if ($reldynSpikes !== []) {
         // the blush reads the moment (reldyn_felt.php)
         $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($reldynSpikes), 2));

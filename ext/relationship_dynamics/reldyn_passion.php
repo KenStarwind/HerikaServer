@@ -339,10 +339,14 @@ final class RelDynPassion
      * exchange: a flirty reply mood, a topic she warms to, intimacy the plugin reports. What the
      * local classifier judged (her primary / secondary love language, a touch) spikes only when
      * the eval does not score the exchange ($evalOwns): its item's tags spike then (onEvalItem).
+     * $rescued: the exchange was the player's caring answer to her fall (RelDynCombat::onExchange
+     * paid the MDD 3.3 response): the classifier's reading that made it caring (her love
+     * language, a hug) is that response, no moment on top of it (one care, paid once); what was
+     * observed still spikes.
      * Returns trigger => spike points added.
      */
     public static function onExchange(string $npcName, array &$dynamics, ?string $interactionLL, ?string $mood, bool $topicMatch,
-                                      bool $reportedIntimacy, bool $evalOwns): array
+                                      bool $reportedIntimacy, bool $evalOwns, bool $rescued = false): array
     {
         $out = [];
         $add = function (string $trigger, ?array $tags) use ($npcName, &$dynamics, &$out): void {
@@ -353,7 +357,7 @@ final class RelDynPassion
         if ($topicMatch) $add('topic_match', null);
         $touched = $reportedIntimacy;
         if ($reportedIntimacy) $add('touch', ['touch']);
-        if (!$evalOwns && $interactionLL !== null) {
+        if (!$evalOwns && !$rescued && $interactionLL !== null) {
             $tags = RelDynAttraction::loveLanguageChannelTags($interactionLL);
             if ($interactionLL === ($dynamics['love_language_primary'] ?? null)) $add('love_language_primary', $tags);
             elseif ($interactionLL === ($dynamics['love_language_secondary'] ?? null)) $add('love_language_secondary', $tags);

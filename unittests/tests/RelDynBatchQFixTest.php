@@ -220,6 +220,23 @@ final class RelDynBatchQFixTest extends TestCase
         $this->assertGreaterThan(0.0, $m['love_language_primary'] ?? 0.0, 'time together is her love language, not the rescue');
     }
 
+    /**
+     * The same care, paid once, when no eval scores the exchange: the local classifier's reading
+     * that made it caring (a hug: her touch love language) is the rescue response, not also a
+     * moment on top of it. An observed fact still is (a flirty reply mood).
+     */
+    public function testTheLocalCareThatAnsweredHerFallIsNotAlsoAMoment(): void
+    {
+        $d = self::fighter('Guarded', 0.15, 0.15);
+        $d['love_language_primary'] = RelationshipDynamics::LL_TOUCH;
+        $this->assertSame([], RelDynPassion::onExchange('Ashe', $d, RelationshipDynamics::LL_TOUCH, 'grateful', false, false, false, true), 'the hug was the rescue');
+        $e = self::fighter('Guarded', 0.15, 0.15);
+        $e['love_language_primary'] = RelationshipDynamics::LL_TOUCH;
+        $this->assertArrayHasKey('touch', RelDynPassion::onExchange('Ashe', $e, RelationshipDynamics::LL_TOUCH, 'grateful', false, false, false, false), 'a hug that answered no fall');
+        $f = self::fighter('Guarded', 0.15, 0.15);
+        $this->assertArrayHasKey('flirty_mood', RelDynPassion::onExchange('Ashe', $f, RelationshipDynamics::LL_TOUCH, 'flirty', false, false, false, true), 'her flirty reply is its own moment');
+    }
+
     // ================================================================ affinity-rot
 
     /** Rot core points (<= 0) of the calendar [fromDay, toDay] (game days after T0), one step per game day, no contact. */
