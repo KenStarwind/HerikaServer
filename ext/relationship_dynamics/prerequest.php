@@ -174,6 +174,14 @@ if ($expiredCount > 0) {
     RelationshipDynamics::log("Consumable expiry: {$expiredCount} expired for {$npcName}");
 }
 
+// ========== AFTER AN ENCOUNTER (roadmap post-intimacy) ==========
+// The afterglow ends on the game calendar, the sober self's verdict lands once she is sober (after
+// the consumables that wore off above), a load from before the encounter undoes it.
+RelDynPostIntimacy::tick($npcName, $dynamics, RelationshipDynamics::currentGamets());
+// ========== AROUSAL / VALENCE SETTLE (roadmap arousal-valence) ==========
+// What events left on arousal and valence halves with time (held states stay until they end).
+RelDynMoodAxes::settle($dynamics, RelationshipDynamics::currentGamets());
+
 // Check reunion spike
 $npcAffection = 0; // Default — no relationship means no reunion spike
 try {
