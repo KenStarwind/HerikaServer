@@ -200,12 +200,26 @@ final class RelDynConfigStoreTest extends TestCase
 
     public function testSettingsPageFieldsMatchWhatTheSaveParses(): void
     {
-        $html = file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/settings.php');
-        preg_match_all('/<input type="hidden" name="([a-z_]+)" value="">\s*<input type="checkbox" name="\1"/', $html, $m);
-        $this->assertEqualsCanonicalizing(RelationshipDynamics::CONFIG_FORM_TOGGLES, $m[1],
-            'every checkbox has its hidden "" twin and is parsed as a toggle');
-        preg_match_all('/<input type="number"[^>]*name="([a-z_]+)"/', $html, $n);
-        $this->assertEqualsCanonicalizing(array_keys(RelationshipDynamics::CONFIG_FORM_NUMBERS), $n[1]);
+        // The hub (settings-page, Phase 5) generates the form from defaultConfig(): every old toggle is a
+        // checkbox after its hidden "" twin, every old number a number input with the old bounds, and the
+        // hub's parser reads them the way configFromForm() does.
+        require_once __DIR__ . '/../../ext/relationship_dynamics/reldyn_settings_view.php';
+        $fields = RelDynSettings::fields();
+        foreach (RelationshipDynamics::CONFIG_FORM_TOGGLES as $key) {
+            $code = RelDynSettings::encodePath([$key]);
+            $html = RelDynSettingsView::input($fields[$code], $code, true, 'x');
+            $this->assertMatchesRegularExpression('/<input type="hidden" name="f\[' . $code . '\]" value="">'
+                . '<input type="checkbox"[^>]*name="f\[' . $code . '\]"/', $html, $key);
+            $this->assertFalse(RelDynSettings::parse($fields[$code], ['', ''])['value'], "{$key}: hidden twin alone is off");
+            $this->assertTrue(RelDynSettings::parse($fields[$code], ['', '1'])['value'], "{$key}: ticked is on");
+        }
+        foreach (RelationshipDynamics::CONFIG_FORM_NUMBERS as $key => [$type, $min, $max]) {
+            $code = RelDynSettings::encodePath([$key]);
+            $html = RelDynSettingsView::input($fields[$code], $code, RelationshipDynamics::defaultConfig()[$key], 'x');
+            $this->assertMatchesRegularExpression('/<input type="number"[^>]*name="f\[' . $code . '\]"/', $html, $key);
+            $clamped = RelDynSettings::parse($fields[$code], (string) ($max + 1000))['value'];
+            $this->assertEquals(RelationshipDynamics::configFromForm([$key => (string) ($max + 1000)], [])[$key], $clamped, $key);
+        }
     }
 
     // ------------------------------------------------------------------

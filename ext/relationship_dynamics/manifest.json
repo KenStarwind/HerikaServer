@@ -1,5 +1,7 @@
 {
     "name": "Relationship Dynamics",
-    "description": "RelDyn: passion, love languages, temperaments and XYZ emotional dimensions layered on CHIM relationships.",
-    "version": "0.1.0"
+    "description": "RelDyn: how NPCs feel about the player and each other. Passion, trust, jealousy and resentment, personality traits and attachment, attraction and romance, fulfillment and neglect, and who knows the player (prompt gating), all reaching the prompt as felt subtext, never numbers.",
+    "version": "0.18.0",
+    "config_url": "/HerikaServer/ext/relationship_dynamics/settings.php",
+    "config_url_target": "_blank"
 }

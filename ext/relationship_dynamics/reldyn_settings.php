@@ -467,6 +467,19 @@ final class RelDynSettings
         return self::$fieldCache = $out;
     }
 
+    /** Per process: json(path prefix) => codes of the leaves under it (the page asks per table). */
+    private static $leafIndex = null;
+
+    public static function leafIndex(): array
+    {
+        if (self::$leafIndex !== null) return self::$leafIndex;
+        $index = [];
+        foreach (self::fields() as $code => $f) {
+            for ($n = 1; $n <= count($f['path']); $n++) $index[json_encode(array_slice($f['path'], 0, $n))][] = $code;
+        }
+        return self::$leafIndex = $index;
+    }
+
     private static function collect(array $path, $value, array &$out): void
     {
         if (self::isAssoc($value)) {

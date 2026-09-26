@@ -109,7 +109,9 @@ final class RelDynStandaloneBootstrapTest extends TestCase
             $this->assertIsString($manifest[$key] ?? null, "manifest.json missing {$key}");
             $this->assertNotSame('', trim($manifest[$key]));
         }
-        $this->assertArrayNotHasKey('config_url', $manifest, 'config_url UI is out of scope for the runtime port');
+        // Phase 5 (settings-page): the Server Plugins button opens the RelDyn hub, a page this test boots
+        $this->assertSame('/HerikaServer/ext/relationship_dynamics/settings.php', $manifest['config_url'] ?? null);
+        $this->assertContains('settings.php', self::PAGES);
     }
 
     private static function runPhp(array $args): array
