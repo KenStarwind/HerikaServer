@@ -13,7 +13,8 @@
  * buffered by the fulfillment band (§9), and stops at the NPC's neglect ceiling. The bond break
  * is the moment that absence turns intentional: on the return, when the absence decay of
  * affinity (processAffinityDecay) has carried the bond below its bond type's threshold, after an
- * absence longer than the neglect grace. Once per absence, it
+ * absence longer than her neglect grace x break_after_grace_mult (short = life happens, long =
+ * feels intentional, to her: the grace is who she is). Once per absence, it
  *   - adds resentment through the SAME neglect buffer and ceiling (chargeNeglectResentment):
  *       raw = base_raw x rate_mult (getNeglectProfile: 1/maturity x attachment x pride)
  *             x bond_severity[bond type] x duration_scale x trust_scale
@@ -32,7 +33,9 @@
  *       confront  everyone else, anxious protest first: it spills out on the return ("where WERE
  *                 you?").
  *     Walkaway and the MDD 15.5 confrontation stay the existing thresholds on resentment: the
- *     break only feeds them. The line is said to the player's face (takeFeltLines).
+ *     break only feeds them. The line is said to the player's face (takeFeltLines), and a
+ *     break that hurts (strain_modes) strains the bond until the first warm exchange after it
+ *     (strains(): no romantic or social impulse toward him next to her hurt).
  *
  * AFFINITY ROT (roadmap affinity-rot; MDD 6.5 "prolonged low Passion or unresolved Conflict ->
  * permanent Affinity bleeds"; pipeline MDD 6.5: -1 per day after 7+ days with no positive
@@ -107,6 +110,15 @@ class RelDynAbsence
             'trust_base' => 6.0,                // trust points at severity 1 and duration_scale 1
             'withdraw_at' => 0.55,              // guardedness (0..1) from which the walls go back up
             'protest_at' => 0.5,                // anxiety axis (0..1) from which fear of abandonment protests instead
+            // Short = life happens, long = feels intentional (memory): the grace is where the daily
+            // neglect starts (decisions §2), the break needs the absence past her own grace times
+            // this (unitless, >= 1). Serene's starting value: intentional once the absence has run
+            // as long again as she would excuse.
+            'break_after_grace_mult' => 2.0,
+            // Break modes whose hurt strains the bond from the break to the first positive
+            // interaction after it (strains(): no romantic or social impulse toward the player,
+            // the attraction says nothing, RelDynFelt). The mature modes reach out to talk.
+            'strain_modes' => ['confront', 'withdraw'],
             'felt_text' => [
                 'confront' => "{NAME} was left alone far too long, and now that {PLAYER} is back it spills out before they can stop it: "
                     . "where were they, did {NAME} even cross their mind? The hurt comes out as accusation, raw and close to the surface.",
@@ -262,11 +274,14 @@ class RelDynAbsence
         $old = $beforeDecay - self::rotSinceContact($dynamics, $since);   // core points as the absence began
         if (!($old >= $threshold && $new < $threshold)) return null;
 
-        // Short = life happens: only an absence past the NPC's neglect grace (same grace as the
-        // daily neglect: bond type x who they are x the fulfillment band) can break the bond.
-        $graceEnd = RelationshipDynamics::neglectGraceEndGamets($dynamics);   // counted from this contact
-        if ($graceEnd === null) return null;
-        $graceGamets = $graceEnd - $last;
+        // Short = life happens, long = feels intentional: only an absence past the NPC's neglect
+        // grace (same grace as the daily neglect: bond type x who they are x the fulfillment band)
+        // x break_after_grace_mult can break the bond. Who she is and how long he was gone decide,
+        // not only how close the number sat to the line. The grace is the one the absence ran
+        // under (the band the contact before it left), not one the absence itself shortened.
+        $graceDays = RelationshipDynamics::neglectGraceGameDays($dynamics, true);
+        if ($graceDays === null) return null;
+        $graceGamets = $graceDays * RelationshipDynamics::GAMETS_PER_DAY * max(1.0, floatval($cfg['break_after_grace_mult']));
         $absentGamets = $last - $since;
         if ($absentGamets <= $graceGamets) return null;
         $absentDays = $absentGamets / RelationshipDynamics::GAMETS_PER_DAY;
@@ -300,6 +315,22 @@ class RelDynAbsence
             . round($old, 1) . ' -> ' . round($new, 1) . " < {$threshold}) mode {$m['mode']}: raw " . round($m['raw'], 2)
             . ', resentment +' . round($felt, 2) . ', comfort ' . round($comfort, 2) . ', trust ' . round($trust, 2));
         return $record;
+    }
+
+    /**
+     * A bond that broke (a strain_modes break: the hurt of it) is strained from the break until the
+     * first positive interaction after it (markPositive later than the break's game time; the
+     * return's own exchange is the one she is hurt in). RelDynFelt reads it with open conflict, the
+     * Ick and high resentment / jealousy: no romantic or social impulse rises toward the player and
+     * the attraction says nothing next to her hurt. Pure.
+     */
+    public static function strains(array $dynamics, ?array $cfg = null): bool
+    {
+        $cfg = $cfg ?? self::breakConfig();
+        $b = $dynamics[self::BREAK_KEY] ?? null;
+        if (!is_array($b) || !in_array((string) ($b['mode'] ?? ''), (array) ($cfg['strain_modes'] ?? []), true)) return false;
+        $at = floatval($b['at_gamets'] ?? 0);   // raw gamets of the break
+        return $at > 0 && floatval($dynamics['_last_positive_gamets'] ?? 0) <= $at;
     }
 
     /** One 'neglect' grievance (kind 'bond_break') per break, so the confrontation can name it. */

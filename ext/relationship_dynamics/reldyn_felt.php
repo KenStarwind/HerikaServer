@@ -114,7 +114,8 @@ final class RelDynFelt
             // The attraction read (RelDynAttraction::feltText) against the bond it sits in:
             // strained = open conflict, an active ick, resentment from strain_resentment_min
             // (points; the 'Frustrated' band: "kind words from them no longer land") or jealousy
-            // from strain_jealousy_min (points; the 'hurt' band): the pull says nothing then.
+            // from strain_jealousy_min (points; the 'hurt' band), or a bond break that hurt with no
+            // warm exchange since (RelDynAbsence::strains): the pull says nothing then.
             // Flirtation is answered from context tier flirt_min_tier (2 = friend) or passion
             // flirt_passion_min (points; the 'warm' band), or inside a romance; below that the
             // pull shows only as looks (MDD 8.1: at Unknown / Acquaintance romantic gestures
@@ -557,11 +558,13 @@ final class RelDynFelt
         // --- Attraction (the request's Attraction Matrix read): a first-sight read is fine
         // at tier 0; it follows the bond it sits in and the tier (attraction config) ---
         $ac = (array) $cfg['attraction'];
-        // The bond strained (open conflict, the ick, frustration, hurt): the pull says nothing, and
-        // no romantic or social impulse rises toward the player
+        // The bond strained (open conflict, the ick, frustration, hurt, a bond that broke while he was
+        // away and has not had a warm moment since): the pull says nothing, and no romantic or
+        // social impulse rises toward the player
         $strained = !empty($dynamics['in_conflict']) || !empty($env['ick']) || !empty($dynamics['_ick_tracker']['ick_active'])
             || floatval($dims['resentment']['x'] ?? 0) >= floatval($ac['strain_resentment_min'] ?? 51.0)
-            || $jealousy >= floatval($ac['strain_jealousy_min'] ?? 60.0);
+            || $jealousy >= floatval($ac['strain_jealousy_min'] ?? 60.0)
+            || RelDynAbsence::strains($dynamics);
         $attraction = RelDynAttraction::feltText($npc, (array) ($dynamics['_attraction'] ?? []), [
             'player' => $player,
             'tier' => $tier,

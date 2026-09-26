@@ -4611,12 +4611,17 @@ class RelationshipDynamics
      * behind, _fulfillment.contact_band, -1..+1): grace x 2^(g x band), rate x 2^(r x band),
      * g / r = fulfillment.absence_band_log2. 1 and 1 when no band is known or fulfillment is off.
      *
+     * $endedAbsence: the band the absence that this contact just ended ran under (absence_band,
+     * the band the contact before it left; advanceFulfillment keeps it), not the band after it:
+     * the absence must not shorten its own grace.
+     *
      * @return array ['grace' => multiplier, 'rate' => multiplier, 'band' => ?float]
      */
-    public static function absenceBandFactors(array $dynamics): array
+    public static function absenceBandFactors(array $dynamics, bool $endedAbsence = false): array
     {
         $out = ['grace' => 1.0, 'rate' => 1.0, 'band' => null];
-        $band = RelDynFulfillment::pairState($dynamics)['contact_band'] ?? null;   // the player pair
+        $state = RelDynFulfillment::pairState($dynamics) ?? [];   // the player pair
+        $band = ($endedAbsence && is_numeric($state['absence_band'] ?? null)) ? $state['absence_band'] : ($state['contact_band'] ?? null);
         if (!is_numeric($band) || !RelDynFulfillment::enabled()) return $out;
         $band = max(-1.0, min(1.0, floatval($band)));
         $l = (array) RelDynFulfillment::config()['absence_band_log2'];
@@ -4633,11 +4638,22 @@ class RelationshipDynamics
     {
         $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);   // raw gamets
         if ($lastContact <= 0) return null;
+        $graceDays = self::neglectGraceGameDays($dynamics);
+        return $graceDays === null ? null : $lastContact + $graceDays * self::GAMETS_PER_DAY;
+    }
+
+    /**
+     * The bond's neglect grace in game days: grace_game_days of its bond type x the NPC's
+     * grace_mult x the fulfillment band factor; $endedAbsence: the band the absence this contact
+     * ended ran under (absenceBandFactors), which is what the bond break measures that absence
+     * against. Null when the bond's neglect does not matter (neglectBond).
+     */
+    public static function neglectGraceGameDays(array $dynamics, bool $endedAbsence = false): ?float
+    {
         $bond = self::neglectBond($dynamics);
         if ($bond === null) return null;
-        $graceDays = floatval($bond['grace_game_days'] ?? 0) * self::getNeglectProfile($dynamics)['grace_mult']
-            * self::absenceBandFactors($dynamics)['grace'];
-        return $lastContact + $graceDays * self::GAMETS_PER_DAY;
+        return floatval($bond['grace_game_days'] ?? 0) * self::getNeglectProfile($dynamics)['grace_mult']
+            * self::absenceBandFactors($dynamics, $endedAbsence)['grace'];
     }
 
     /**
@@ -4758,6 +4774,9 @@ class RelationshipDynamics
         $band = RelDynFulfillment::bandAt($state, $now);
         $out['band'] = $band;
         if ($contact) {
+            // the band the time since the previous contact ran under (the bond break measures an
+            // absence against its own grace, absenceBandFactors), then the one this contact leaves
+            if (is_numeric($state['contact_band'] ?? null)) $state['absence_band'] = $state['contact_band'];
             $state['contact_band'] = $band;
             RelDynFulfillment::setPairState($dynamics, RelDynFulfillment::PLAYER, $state);
             $out['changed'] = true;
