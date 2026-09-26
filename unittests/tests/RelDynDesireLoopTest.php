@@ -127,6 +127,11 @@ final class RelDynDesireLoopTest extends TestCase
         $light = RelDynPassion::flirtValence('Tester', $a, 1.0);
         $open = RelDynPassion::flirtValence('Tester', $b, 3.0);
         $this->assertEqualsWithDelta(3.0, $open / $light, 0.05);
+        // While the Ick lasts a romantic move warms nothing, even from the one she has a crush on
+        $ick = $this->npc('crush', 40, 30, 10);
+        $ick['_ick_tracker'] = ['ick_active' => true];
+        $this->assertSame(0.0, RelDynPassion::flirtValence('Tester', $ick, 3.0));
+        $this->assertSame(0.0, floatval($ick['dimensions']['valence']['x']));
         // The eval's romantic_intent reaches it once per applied item
         $c = $this->npc('neutral', 0, 5, 10);
         RelationshipDynamics::applyEvalExtraFields('Tester', ['romantic_intent' => 3, 'gamets' => 1000, 'reply_mood' => 'default', 'tags' => []], $c, 1000.0);

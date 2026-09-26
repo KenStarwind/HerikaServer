@@ -349,6 +349,11 @@ final class RelDynPassion
         $type = (string) RelationshipDynamics::getRelationshipType($npcName, $dynamics);
         $table = (array) $c['flirt_valence'];
         $points = floatval(array_key_exists($type, $table) ? $table[$type] : $c['flirt_valence_default']) * $intent / $max;
+        // While the Ick lasts (MDD 6.3) a romantic move warms nothing, whatever the bond
+        if ($points > 0.0 && !empty($dynamics['_ick_tracker']['ick_active']) && !empty(RelationshipDynamics::configValue('ick_system_enabled'))) {
+            RelationshipDynamics::log(sprintf('[DESIRE] %s: a flirt from the player while the Ick lasts warms nothing', $npcName));
+            return 0.0;
+        }
         if (abs($points) < 1e-6) {
             RelationshipDynamics::log(sprintf('[DESIRE] %s: a flirt from the player (%s bond) is shrugged off', $npcName, $type));
             return 0.0;
