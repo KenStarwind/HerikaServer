@@ -375,6 +375,8 @@ final class RelDynCombat
                     }
                     $gain *= floatval($cfg['shared_mult']);
                     RelationshipDynamics::log("Shared combat confirmed ({$npc} fought): " . $cfg['shared_mult'] . 'x');
+                    // The first fight side by side is an anchor of the bond (Addendum 12, reldyn_memory.php)
+                    RelDynMemory::noteAnchor($npc, $dynamics, 'first_combat', $at > 0 ? $at : RelationshipDynamics::currentGamets());
                 }
             }
 

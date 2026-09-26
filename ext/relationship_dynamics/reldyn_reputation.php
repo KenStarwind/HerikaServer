@@ -36,6 +36,12 @@
  * Not in CHIM 3.4.1 core, so not here: thane titles, faction ranks, rumours (the cascade
  * network would carry them).
  *
+ * The player mirror (reldyn_mirror.php, player-profile design "Reputation modifier"): the player's
+ * trust rating, from how every NPC's eval scored the player's word, travels too: its trust points
+ * (RelDynMirror::reputationTrustOffset, +-5..+-15 outside the neutral band) join the raw trust
+ * offset at the first contact, within the same caps; a rating alone is enough to be heard of
+ * (the 'reliable' / 'unreliable' felt line when no fame or infamy speaks).
+ *
  * The prompt-gating port (who knows the player, reldyn_gating.php) reads fameScores() for its fame
  * axis: the 'fames' table (renown and notoriety from the fame / infamy tables above, and the
  * questline fames), each with the hold it spreads from and how far. This layer gives the tone (a
@@ -77,7 +83,12 @@ final class RelDynReputation
                 'fame' => '{NAME} has heard stories of what {PLAYER} has done and meets them with a respectful curiosity: the benefit of the doubt, for now',
                 'infamy' => '{NAME} has heard dark things said about {PLAYER} and keeps a careful, watchful distance until they show otherwise',
                 'both' => '{NAME} has heard stories about {PLAYER}, some admiring and some dark, and has not made up their mind',
+                // the player mirror's trust rating travelling on its own (no fame or infamy to tell)
+                'reliable' => '{NAME} has heard that {PLAYER} keeps their word, and meets them with an easy, open trust',
+                'unreliable' => "{NAME} has heard that {PLAYER}'s word is worth little, and keeps a hand on the purse around them",
             ],
+            // trust points (dimension) from which the mirror's rating alone speaks in the felt line
+            'felt_min_mirror_trust' => 5.0,
             // What the player is known for, and where (prompt gating's fame axis, reldyn_gating.php;
             // the April fame keys on core data). key => evidence: a table in the RelDynPlayer
             // evidence format, or 'fame' / 'infamy' (this layer's own tables); min_score: the score
@@ -170,8 +181,11 @@ final class RelDynReputation
             'status' => round(floatval($status ?? 0), 4), 'known' => $fame !== null || $infamy !== null || $status !== null];
     }
 
-    /** Offsets (dimension points) for these scores and her preferences, capped. */
-    public static function offsets(array $scores, array $prefs, ?array $cfg = null): array
+    /**
+     * Offsets (dimension points) for these scores and her preferences, capped. $mirrorTrust: the
+     * player mirror's trust points (RelDynMirror::reputationTrustOffset), added to trust before the cap.
+     */
+    public static function offsets(array $scores, array $prefs, ?array $cfg = null, float $mirrorTrust = 0.0): array
     {
         $cfg = $cfg ?? self::config();
         $full = max(1e-9, floatval($cfg['pull_full']));
@@ -183,7 +197,7 @@ final class RelDynReputation
         $o = [
             'respect' => $fame * floatval($cfg['fame_respect']) + $infamy * floatval($cfg['infamy_respect']) * $power
                 + $status * floatval($cfg['wealth_respect']) * $statusPull,
-            'trust' => $fame * floatval($cfg['fame_trust']) - $infamy * floatval($cfg['infamy_trust']),
+            'trust' => $fame * floatval($cfg['fame_trust']) - $infamy * floatval($cfg['infamy_trust']) + $mirrorTrust,
             'comfort' => -$infamy * floatval($cfg['infamy_comfort']),
         ];
         foreach (RelationshipDynamics::REPUTATION_CAPS as $dim => $caps) {
@@ -239,12 +253,15 @@ final class RelDynReputation
                 $state['raw'] = array_fill_keys(self::DIMS, 0.0);   // met before anything was known
             } else {
                 $scores = self::scores();
-                if (!$scores['known']) return;   // nothing known yet: ask again on the next load
-                $state['raw'] = self::offsets($scores, RelDynFacets::preferences($dynamics, $npcName), $cfg);
+                // The player mirror's trust rating travels too (0 until it has the evidence)
+                $mirrorTrust = RelDynMirror::reputationTrustOffset();
+                if (!$scores['known'] && abs($mirrorTrust) < 1e-9) return;   // nothing known yet: ask again on the next load
+                $state['raw'] = self::offsets($scores, RelDynFacets::preferences($dynamics, $npcName), $cfg, $mirrorTrust);
                 $state['fame'] = $scores['fame'];
                 $state['infamy'] = $scores['infamy'];
                 $state['status'] = $scores['status'];
-                RelationshipDynamics::log("[RelDyn-REPUTATION] {$npcName}: heard of the player (fame {$scores['fame']}, infamy {$scores['infamy']}, status {$scores['status']}) -> " . json_encode($state['raw']));
+                $state['mirror_trust'] = $mirrorTrust;
+                RelationshipDynamics::log("[RelDyn-REPUTATION] {$npcName}: heard of the player (fame {$scores['fame']}, infamy {$scores['infamy']}, status {$scores['status']}, mirror trust {$mirrorTrust}) -> " . json_encode($state['raw']));
             }
         }
         $w = self::weight($state, $cfg);
@@ -297,6 +314,9 @@ final class RelDynReputation
         $fame = floatval($s['fame'] ?? 0) >= $min;
         $infamy = floatval($s['infamy'] ?? 0) >= $min;
         $key = $fame && $infamy ? 'both' : ($fame ? 'fame' : ($infamy ? 'infamy' : null));
+        // No fame or infamy to tell: the mirror's trust rating, when it travelled far enough
+        $mt = floatval($s['mirror_trust'] ?? 0);
+        if ($key === null && abs($mt) >= floatval($cfg['felt_min_mirror_trust'] ?? 5.0)) $key = $mt > 0 ? 'reliable' : 'unreliable';
         $text = $key !== null ? ($cfg['felt_text'][$key] ?? null) : null;
         return is_string($text) && $text !== '' ? strtr($text, ['{NAME}' => $npcName, '{PLAYER}' => $playerRef]) : null;
     }
@@ -308,6 +328,8 @@ final class RelDynReputation
         if (!is_array($s) || !is_array($s['raw'] ?? null)) return null;
         return ['fame' => round(floatval($s['fame'] ?? 0), 3), 'infamy' => round(floatval($s['infamy'] ?? 0), 3),
             'weight' => round(self::weight($s), 3), 'meaningful' => intval($s['meaningful'] ?? 0),
-            'offsets' => array_map(fn($v) => round(floatval($v), 2), (array) ($s['effective'] ?? []))];
+            'offsets' => array_map(fn($v) => round(floatval($v), 2), (array) ($s['effective'] ?? []))]
+            // the player mirror's trust points in the first impression, when it had any
+            + (abs(floatval($s['mirror_trust'] ?? 0)) > 1e-9 ? ['mirror_trust' => round(floatval($s['mirror_trust']), 2)] : []);
     }
 }

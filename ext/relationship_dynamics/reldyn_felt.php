@@ -580,6 +580,16 @@ final class RelDynFelt
                 $attraction, ['tier0' => true]);
         }
 
+        // --- Semantic anchors (Addendum 12): back where a moment of the bond was made, the memory
+        // comes back (the sting form while the bond is strained), with its passion moment ---
+        $anchorTurn = RelDynMemory::contextTurn($npc, $player, $dynamics, is_array($placeTurn['ctx'] ?? null) ? $placeTurn['ctx'] : null,
+            $now > 0 ? $now : RelationshipDynamics::currentGamets(), $tier, $strained, !empty($env['player_addressed']));
+        if ($anchorTurn['changed']) $changed = true;
+        if ($anchorTurn['text'] !== null) {
+            $lines[] = self::line('anchor', self::SCOPE_BOND, self::LANE_TURN,
+                floatval(RelDynMemory::config()['anchors']['revisit']['salience']), (string) $anchorTurn['text']);
+        }
+
         // --- Duty (MDD 9): the quest's business, coldly; it stands in for her refusal below ---
         $onDuty = floatval($env['duty_factor'] ?? 1.0) < 1.0;
         if ($onDuty) {
@@ -790,6 +800,13 @@ final class RelDynFelt
             // the first impression speaks loudest at the first meeting and fades with it
             $lines[] = self::line('reputation', self::SCOPE_BOND, self::LANE_CORE,
                 floatval($sal['reputation']) * RelDynReputation::weight((array) $dynamics[RelDynReputation::KEY]), $heard, ['tier0' => true]);
+        }
+
+        // --- The player mirror (reldyn_mirror.php, opt-in): how the player tends to come across ---
+        $mirror = RelDynMirror::feltText($npc, $player, $tier);
+        if ($mirror !== null) {
+            $lines[] = self::line('player_mirror', self::SCOPE_BOND, self::LANE_CORE,
+                floatval(RelDynMirror::config()['prompt']['salience']), $mirror, ['tier0' => true]);
         }
 
         // --- Director goal (what the NPC is set on) ---
