@@ -184,7 +184,7 @@ if (($e = $error($jev)) !== null) echo $e;
 elseif (!is_array($jev['exclusivity'] ?? null)) echo "(none)\n";
 else foreach ($jev['exclusivity'] as $k => $v) echo $line((string) $k, $v);
 
-echo "\n--- Gating (what she knows of the player) ---\n";
+echo "\n--- Gating (what this NPC knows of the player) ---\n";
 if (($e = $error($gating)) !== null) echo $e;
 else foreach (['level', 'name', 'bio', 'relationship', 'speech', 'core_aff', 'peak_core_aff', 'hold', 'fames'] as $k) echo $line($k, $gating[$k] ?? null);
 
