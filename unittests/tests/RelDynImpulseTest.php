@@ -83,8 +83,10 @@ final class RelDynImpulseTest extends TestCase
         foreach ($expected as $preset => $style) {
             $this->assertSame($style, RelDynImpulse::style(RelDynTraits::presetPoint($preset)), $preset);
         }
-        // Anxious with confidence grown: no more false starts
-        $this->assertNotSame('anxious', RelDynImpulse::style(['C' => 0.6] + RelDynTraits::presetPoint('Anxious')));
+        // Anxious grown confident and steadier: no more false starts
+        $this->assertNotSame('anxious', RelDynImpulse::style(['C' => 0.9, 'L' => 0.6] + RelDynTraits::presetPoint('Anxious')));
+        // It reads the expression traits only: guard and warmth do not move it
+        $this->assertSame('bold', RelDynImpulse::style(['G' => 0.95, 'W' => 0.05] + RelDynTraits::presetPoint('Bold')));
         // Anxious calmed (low reactivity): no more false starts either
         $this->assertNotSame('anxious', RelDynImpulse::style(['L' => 0.4] + RelDynTraits::presetPoint('Anxious')));
     }
@@ -159,8 +161,8 @@ final class RelDynImpulseTest extends TestCase
         $env = ['now' => self::T0, 'place' => 'Mzinchaleft', 'facets' => $ruin];
         $a = RelDynImpulse::drives($d, $env + ['prefs' => $scholar], $nurse)['levels']['curiosity'];
         $b = RelDynImpulse::drives($d, $env + ['prefs' => $hunter], $nurse)['levels']['curiosity'];
-        $this->assertEqualsWithDelta(80.0 * (0.3 + 0.7 * 0.54), $a, 1e-9);
-        $this->assertEqualsWithDelta(80.0 * 0.3, $b, 1e-9, 'a hunter only glances around a ruin');
+        $this->assertEqualsWithDelta(100.0 * (0.3 + 0.7 * 0.54), $a, 1e-9);
+        $this->assertEqualsWithDelta(100.0 * 0.3, $b, 1e-9, 'a hunter only glances around a ruin');
         $this->assertSame(0.0, RelDynImpulse::drives($d, $env + ['prefs' => $scholar, 'seen' => self::T0 - self::DAY], $nurse)['levels']['curiosity'],
             'seen yesterday: nothing new');
         $this->assertGreaterThan(0.0, RelDynImpulse::drives($d, $env + ['prefs' => $scholar, 'seen' => self::T0 - 31 * self::DAY], $nurse)['levels']['curiosity'],

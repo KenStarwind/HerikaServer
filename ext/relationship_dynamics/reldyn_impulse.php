@@ -22,21 +22,26 @@
  *     curiosity   a place new to her (never seen, or not for revisit_after_game_days), x its appeal
  *                 (base_appeal + her strongest liking among the curiosity facets it carries)
  *   level = max(level decayed, drive): a sustained source holds the level, an event spikes it,
- *   and without stimulus it falls with a half-life of half_life_play_minutes on her play clock
- *   (feedback_timer_design: impulse decay runs on the play-gamets clock; a play minute is
- *   GAMETS_PER_REAL_SECOND x 60 play gamets, the same convention as the combat windows). A gap on
- *   the game calendar of reset_after_game_hours or more (a sleep, a wait, a long trip), or a
- *   calendar that went back (a load), starts the short band over.
+ *   and without stimulus it falls with a half-life of half_life_play_minutes (a play minute is
+ *   GAMETS_PER_REAL_SECOND x 60 gamets, the same convention as the combat windows). The time is
+ *   her play clock (feedback_timer_design: impulse decay on the play-gamets clock, so alt-tabbing
+ *   drains nothing) or the game calendar since her last turn, whichever moved more: a wait is
+ *   time in the world without stimulus too (MDD 14.5: "without player stimulus, short-band
+ *   impulse returns to baseline"). A calendar gap of reset_after_game_hours or more (a sleep, a
+ *   long trip), or a calendar that went back (a load), starts the short band over.
  *
  * THRESHOLD (MDD 13.1, traits design §2.5): the exact fit through Bold 30 / Guarded 70 /
  *   Anxious 40 on the trait engine, threshold = 14 + 69 G - 8 C (impulse points, clamped
  *   [min, max]): Stoic 55, Proud 57, Playful 24, the base vector 45. An impulse FIRES at or above
  *   it and STIRS (leaks without her knowing) within stir_margin under it.
  *
- * EXPRESSION (MDD 13.1 table, the D1 band approach on E, D, C, Pd; Anxious false starts from high
- *   L and low C): the first matching rule of config 'styles' (trait bands), else default_style.
- *   On the 13 presets: Bold/Defiant bold, Guarded guarded, Stoic/Independent stoic, Proud proud,
- *   Playful playful, Anxious/Jealous anxious (false starts), the rest gentle.
+ * EXPRESSION (MDD 13.1 table; traits design §2.5: expression reads E, D, C, Pd, and Anxious false
+ *   starts come from high L and low C): the preset nearest to her on those traits only
+ *   (style_traits), mapped to its MDD 13.1 row (preset_style): Bold/Defiant bold, Guarded guarded,
+ *   Stoic/Independent stoic, Proud proud, Playful playful, Anxious/Jealous anxious (false starts),
+ *   Romantic/Gentle/Humble/Nurturing gentle. Exact at the presets; in between, the nearest
+ *   expression wins (the traits engine's rule for label-valued surfaces), read from her own
+ *   traits, never her temperament label.
  *
  * MOTIVATION (MDD 13.2, long band): her intrinsic goals (RelDynGoals, tier 1: backstory,
  *   trajectory, stage, interests, self-worth; days-to-weeks priority decay) are her motivations,
@@ -75,8 +80,8 @@ final class RelDynImpulse
     {
         return [
             'enabled' => true,
-            // Decay: half-life in minutes of play on her play clock (feedback_timer_design); a
-            // game-calendar gap of reset_after_game_hours (or a calendar that went back) resets
+            // Decay: half-life in minutes of play (her play clock or the calendar, whichever moved
+            // more); a game-calendar gap of reset_after_game_hours (or a calendar that went back) resets
             'half_life_play_minutes' => 5.0,
             'reset_after_game_hours' => 8.0,
             // Threshold = base + G x guard + C x confidence (impulse points), clamped [min, max]
@@ -108,7 +113,7 @@ final class RelDynImpulse
                 'states' => ['cold' => 45.0, 'snowing' => 45.0, 'raining' => 10.0],
             ],
             'curiosity' => [
-                'max' => 80.0,
+                'max' => 100.0,
                 'base_appeal' => 0.3,             // 0..1: anyone looks around a new place a little
                 'facets' => ['scholarly', 'enchanting', 'adventure', 'spiritual', 'alchemy', 'crafting'],
                 'revisit_after_game_days' => 30.0,
@@ -116,17 +121,13 @@ final class RelDynImpulse
             ],
             // drive x (1 + k (trait - 0.5)) per type (unitless)
             'trait_gain' => ['protective' => ['Pr' => 1.0], 'social' => ['W' => 1.0]],
-            // Expression style: the first rule whose trait bands all hold (0..1), else default_style
-            'styles' => [
-                ['style' => 'anxious', 'when' => ['L' => ['min' => 0.75], 'C' => ['max' => 0.35]]],
-                ['style' => 'proud',   'when' => ['Pd' => ['min' => 0.70]]],
-                ['style' => 'playful', 'when' => ['E' => ['min' => 0.75], 'D' => ['max' => 0.25]]],
-                ['style' => 'stoic',   'when' => ['E' => ['max' => 0.25], 'D' => ['min' => 0.75]]],
-                ['style' => 'stoic',   'when' => ['E' => ['max' => 0.35], 'C' => ['min' => 0.65]]],
-                ['style' => 'guarded', 'when' => ['E' => ['max' => 0.40], 'D' => ['min' => 0.55]]],
-                ['style' => 'bold',    'when' => ['C' => ['min' => 0.50], 'D' => ['max' => 0.40]]],
+            // Expression style: the preset nearest on these traits (unitless 0..1), and its MDD 13.1 row
+            'style_traits' => ['E', 'D', 'C', 'Pd', 'L'],
+            'preset_style' => [
+                'Bold' => 'bold', 'Defiant' => 'bold', 'Guarded' => 'guarded', 'Stoic' => 'stoic', 'Independent' => 'stoic',
+                'Proud' => 'proud', 'Playful' => 'playful', 'Anxious' => 'anxious', 'Jealous' => 'anxious',
+                'Romantic' => 'gentle', 'Gentle' => 'gentle', 'Humble' => 'gentle', 'Nurturing' => 'gentle',
             ],
-            'default_style' => 'gentle',
             // Trait codes used when the NPC has no vector yet (the base vector)
             'default_traits' => ['G' => 0.5, 'E' => 0.5, 'C' => 0.5, 'Pd' => 0.5, 'Rs' => 0.5, 'L' => 0.5,
                 'W' => 0.5, 'D' => 0.5, 'Po' => 0.5, 'Pr' => 0.5],
@@ -140,13 +141,13 @@ final class RelDynImpulse
             // Alignment -1..+1 of an impulse with a motivation ('director': the director goal);
             // at or below conflict_at_or_below they disagree
             'alignment' => [
-                'romantic'   => ['bond_seeking' => 1.0, 'purpose' => -1.0, 'mastery' => -0.5, 'safety' => -0.5, 'independence' => -1.0,
-                                 'revenge' => -1.0, 'self_worth_recovery' => -0.5, 'director' => -1.0],
-                'protective' => ['bond_seeking' => 1.0, 'purpose' => -0.5, 'mastery' => 0.0, 'safety' => 0.5, 'independence' => 0.0,
-                                 'revenge' => 0.0, 'self_worth_recovery' => 0.0, 'director' => -0.5],
-                'social'     => ['bond_seeking' => 1.0, 'purpose' => -0.5, 'mastery' => -0.5, 'safety' => 0.0, 'independence' => -1.0,
+                'romantic'   => ['bond_seeking' => 1.0, 'purpose' => -1.0, 'mastery' => 0.0, 'safety' => -0.5, 'independence' => -1.0,
+                                 'revenge' => -1.0, 'self_worth_recovery' => 0.0, 'director' => -1.0],
+                'protective' => ['bond_seeking' => 1.0, 'purpose' => 0.0, 'mastery' => 0.0, 'safety' => 0.5, 'independence' => 0.0,
+                                 'revenge' => 0.0, 'self_worth_recovery' => 0.0, 'director' => 0.0],
+                'social'     => ['bond_seeking' => 1.0, 'purpose' => -0.5, 'mastery' => 0.0, 'safety' => 0.0, 'independence' => -1.0,
                                  'revenge' => -0.5, 'self_worth_recovery' => 0.0, 'director' => -0.5],
-                'survival'   => ['bond_seeking' => 0.0, 'purpose' => -1.0, 'mastery' => -0.5, 'safety' => 1.0, 'independence' => 0.0,
+                'survival'   => ['bond_seeking' => 0.0, 'purpose' => -1.0, 'mastery' => 0.0, 'safety' => 1.0, 'independence' => 0.0,
                                  'revenge' => -1.0, 'self_worth_recovery' => 0.0, 'director' => -1.0],
                 'curiosity'  => ['bond_seeking' => -0.5, 'purpose' => 1.0, 'mastery' => 1.0, 'safety' => -1.0, 'independence' => 0.5,
                                  'revenge' => -0.5, 'self_worth_recovery' => 0.0, 'director' => -0.5],
@@ -156,6 +157,9 @@ final class RelDynImpulse
             'strength' => ['strong' => 15.0, 'overwhelming' => 30.0],
             // Salience (0..1) of the felt lines
             'salience' => ['impulse' => 0.7, 'inner_conflict' => 0.9, 'stirring' => 0.45],
+            // Styles whose impulse line takes the intensity formatting (CAPS, '!'); the contained
+            // ones (stoic, guarded, proud, gentle) keep their restraint in the text itself
+            'intense_styles' => ['bold', 'anxious', 'playful'],
             // Felt text: {NAME} {PLAYER} {URGE} {STRENGTH} {MOTIVE} {RESOLUTION} {PURSUIT} {SUBJECT} {GOAL}.
             // The NPC is named, never a pronoun (the <subtext> header's "them" is the player).
             'urge' => [
@@ -207,7 +211,7 @@ final class RelDynImpulse
         $stored = RelationshipDynamics::configValue('impulse');
         if (!is_array($stored)) return $defaults;
         $cfg = array_replace($defaults, $stored);
-        foreach (['threshold', 'romantic', 'protective', 'social', 'survival', 'curiosity', 'resolution', 'dignity', 'motivation',
+        foreach (['threshold', 'romantic', 'protective', 'social', 'survival', 'curiosity', 'resolution', 'dignity', 'motivation', 'preset_style',
                      'strength', 'salience', 'urge', 'style_text', 'strength_text', 'motive_text', 'resolution_text', 'default_traits'] as $merged) {
             $cfg[$merged] = array_replace($defaults[$merged], is_array($stored[$merged] ?? null) ? $stored[$merged] : []);
         }
@@ -246,23 +250,24 @@ final class RelDynImpulse
         return max(floatval($t['min']), min(floatval($t['max']), $v));
     }
 
-    /** Expression style: the first 'styles' rule whose bands all hold, else default_style. */
+    /**
+     * Expression style: the preset nearest to her on style_traits (Euclidean, unitless), mapped by
+     * preset_style; 'gentle' for a preset the map lacks. Ties: the MDD 1.3 order of the presets.
+     */
     public static function style(array $x, ?array $cfg = null): string
     {
         $cfg = $cfg ?? self::config();
-        foreach ((array) $cfg['styles'] as $rule) {
-            if (!is_array($rule) || !in_array($rule['style'] ?? null, self::STYLES, true)) continue;
-            $holds = true;
-            foreach ((array) ($rule['when'] ?? []) as $code => $band) {
-                $v = floatval($x[$code] ?? 0.5);
-                if ((isset($band['min']) && $v < floatval($band['min'])) || (isset($band['max']) && $v > floatval($band['max']))) {
-                    $holds = false;
-                    break;
-                }
+        $best = null;
+        $bestD = INF;
+        foreach (RelDynTraits::points() as $name => $p) {
+            $d = 0.0;
+            foreach ((array) $cfg['style_traits'] as $code) {
+                $d += (floatval($x[$code] ?? 0.5) - floatval($p[$code] ?? 0.5)) ** 2;
             }
-            if ($holds) return (string) $rule['style'];
+            if ($d < $bestD - 1e-12) { $bestD = $d; $best = $name; }
         }
-        return in_array($cfg['default_style'], self::STYLES, true) ? (string) $cfg['default_style'] : 'gentle';
+        $style = $best !== null ? ($cfg['preset_style'][$best] ?? null) : null;
+        return in_array($style, self::STYLES, true) ? (string) $style : 'gentle';
     }
 
     /** Half-life in play gamets (half_life_play_minutes x 60 x GAMETS_PER_REAL_SECOND). */
@@ -277,9 +282,10 @@ final class RelDynImpulse
     // =====================================================================
 
     /**
-     * Her stored levels decayed to play clock $play and calendar $now (0 = unknown): the play
-     * time since the last update halves them every half-life; a calendar gap of
-     * reset_after_game_hours or more, or a calendar behind the stored one (a load), resets them.
+     * Her stored levels decayed to play clock $play and calendar $now (0 = unknown): the time since
+     * the last update (play clock or calendar, whichever moved more; gamets) halves them every
+     * half-life; a calendar gap of reset_after_game_hours or more, or a calendar behind the stored
+     * one (a load), resets them.
      */
     public static function decayed(array $state, float $play, float $now, ?array $cfg = null): array
     {
@@ -291,6 +297,7 @@ final class RelDynImpulse
             return $levels;
         }
         $dt = max(0.0, $play - floatval($state['play_gamets'] ?? $play));
+        if ($now > 0 && $last > 0) $dt = max($dt, $now - $last);   // a wait passes in the world too
         $half = self::halfLifePlayGamets($cfg);
         $f = $half > 0 ? pow(0.5, $dt / $half) : 0.0;
         foreach (self::TYPES as $type) {
@@ -644,7 +651,7 @@ final class RelDynImpulse
             $style = (string) ($s['style'] ?? 'gentle');
             $text = strtr((string) ($cfg['style_text'][$style] ?? $cfg['style_text']['gentle']), $vars + ['{URGE}' => $urge]);
             return [['key' => 'impulse', 'scope' => $scope($top), 'salience' => min(1.0, floatval($sal['impulse']) + max(0.0, $margin) / 100.0),
-                'text' => $text, 'tag' => null, 'intense' => true, 'motivation' => null]];
+                'text' => $text, 'tag' => null, 'intense' => in_array($style, (array) $cfg['intense_styles'], true), 'motivation' => null]];
         }
         $stir = $s['stirring'] ?? null;
         if (is_string($stir) && in_array($stir, self::TYPES, true)) {
