@@ -665,6 +665,51 @@ final class RelDynBatchQFixTestBedsPostgresTest extends TestCase
         $this->assertClean();
     }
 
+    // ------------------------------------------------------------------ the moment
+
+    /**
+     * passion x attraction x time. Four partners with the same earned floor (30, above the spark)
+     * are held by the player. The moment is the size who she is makes it (temperament, floor,
+     * arousal), not crushed by the decisions §13 uphill: the guarded ones feel it less, and none of
+     * them feels nothing for being below her floors (before the review Ashe's was a tenth of a
+     * point). Then ten minutes of play pass in quiet: the moment halves with time as well as with
+     * each exchange, so the next small talk finds far less of it than the exchange alone would leave.
+     */
+    public function testTheMomentIsWhoSheIsAndFadesInQuiet(): void
+    {
+        $this->seed(60);
+        $t = $this->hello();
+        $this->floors(30.0);
+        $t = $this->play($t + 600, 10.0);
+        $beds = array_keys(self::BEDS);
+        $t = $this->round('Come here, let me hold you.', $t + 600, 'hug');
+        $spike = $size = [];
+        foreach ($beds as $npc) {
+            $d = $this->dynamics($npc);
+            $spike[$npc] = RelDynPassion::spike($d);
+            $size[$npc] = RelDynPassion::spikeSize($d, floatval(RelDynPassion::config()['spike']['triggers']['touch']));
+        }
+        $log = (string) file_get_contents($this->errorLog);
+        $why = json_encode(compact('spike', 'size'));
+        $this->probe('moment', compact('spike', 'size'));
+        foreach ($beds as $npc) {
+            $this->assertGreaterThan(1.0, $spike[$npc], "{$npc}: her heart races {$why}");
+            $this->assertMatchesRegularExpression('/\[ATTRACTION\] ' . preg_quote($npc, '/') . ': spike:touch passion \+[0-9.]+ at [0-9.]+ x1\.0000 \(a moment: no uphill\)/', $log, "{$npc}: no uphill on the moment");
+        }
+        $this->assertCount(4, array_unique(array_map(fn($v) => round($v, 3), $spike)), "four women, four moments {$why}");
+
+        // ten minutes of quiet play, then small talk
+        $t = $this->play($t + 600, 10.0);
+        $this->round('Hm.', $t + 600, 'quiet');
+        $after = [];
+        foreach ($beds as $npc) {
+            $after[$npc] = RelDynPassion::spike($this->dynamics($npc));
+            $retention = floatval(RelDynPassion::config()['spike']['retention_per_interaction']);
+            $this->assertLessThan(0.5 * $retention * $spike[$npc], $after[$npc], "{$npc}: time took the moment as well as the exchange " . json_encode($after));
+        }
+        $this->assertClean();
+    }
+
     // ------------------------------------------------------------------ her own line
 
     /**

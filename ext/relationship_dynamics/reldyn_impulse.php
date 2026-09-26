@@ -10,7 +10,8 @@
  *   Each turn with the player (the felt compose) reads a DRIVE per type from her sources:
  *     romantic    passion (raw) x privacy (fewer people around = more private), + the glow after a
  *                 fight she shared; nothing when the pull is platonic (the Attraction Matrix), after
- *                 a step-back, or while the bond is strained (open conflict, the ick, hurt)
+ *                 a step-back, or while the bond is strained (open conflict, the ick, hurt, a
+ *                 bond that broke while he was away)
  *     protective  the player falling in a fight now, the player hurt, fighting beside the player,
  *                 the glow after a fight, her protective worry (concern points) x concern_weight;
  *                 x (1 + k (Pr - 0.5)) (trait_gain)
@@ -331,7 +332,8 @@ final class RelDynImpulse
      *   present bool            the player is with her (default true: compose runs for her turns with the player)
      *   audience int            people around besides her and the player
      *   tier int                context tier 0..3
-     *   strained bool           the bond is strained (open conflict, the ick, resentment / jealousy high)
+     *   strained bool           the bond is strained (open conflict, the ick, resentment / jealousy high,
+     *                           a fresh bond break: RelDynAbsence::strains)
      *   platonic bool           the pull is not that kind (Attraction Matrix, step-back)
      *   place ?string, facets array, prefs array   the place read this turn, her preferences
      *   place_valence ?float    her appraisal of it (-1..1)
