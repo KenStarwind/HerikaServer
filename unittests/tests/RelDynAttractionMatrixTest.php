@@ -579,9 +579,9 @@ final class RelDynAttractionMatrixTest extends TestCase
     }
 
     /** Aela with the attraction of this request recorded (prerequest's updateAttraction). */
-    private function aelaFor(string $kind, array $extra = []): array
+    private function aelaFor(string $kind, array $extra = [], float $coreAff = 20.0): array
     {
-        $d = $this->npc(self::AELA, $extra, 20.0);
+        $d = $this->npc(self::AELA, $extra, $coreAff);
         RelationshipDynamics::updateAttraction(self::AELA, $d, self::player($kind));
         return $d;
     }
@@ -627,7 +627,9 @@ final class RelDynAttractionMatrixTest extends TestCase
     {
         $this->storeConfig(['log_enabled' => true]);
         $warrior = $this->aelaFor('warrior');
-        $bard = $this->aelaFor('bard');
+        // the bard a friend (MDD 8.1 Friendly row, 40): at Acquaintance the row holds an
+        // unattracted NPC at 20, the tier's business (RelDynGovernors), not the attraction's
+        $bard = $this->aelaFor('bard', [], 40.0);
         $this->assertTrue($bard['_attraction']['friendzoned']);
         RelationshipDynamics::setPassion($warrior, 15.0);
         RelationshipDynamics::setPassion($bard, 19.5);   // just under the spark
@@ -655,7 +657,7 @@ final class RelDynAttractionMatrixTest extends TestCase
     /** Decisions §13 retired the MDD 6.2 hard cap of 20: no passion writer holds a friendzoned NPC at it. */
     public function testNoAttractionCapOnAnyPassionWriter(): void
     {
-        $d = $this->aelaFor('bard');
+        $d = $this->aelaFor('bard', [], 40.0);   // a friend: the Friendly row (40), not the Acquaintance row (20)
         $this->assertTrue($d['_attraction']['friendzoned']);
         RelationshipDynamics::addPassion($d, 30.0, 'love_match');
         $this->assertSame(30.0, RelationshipDynamics::getPassion($d), 'addPassion (the writer after the factor)');

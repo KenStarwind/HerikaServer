@@ -3,6 +3,22 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## After reldyn-v0.17 (batch-Q review, untagged) — Hurt that holds her back, care paid once, and a moment that is hers
+A bond breaks while you are away only once the absence feels intentional to her: past what she would excuse (who she is,
+and how fulfilled the bond was when you left), and as long again. A few days break the fearful and the anxious; the
+secure and the mature give you longer, even when the days have worn the bond thin. When it does break, the hurt holds
+her back on the return: she does not reach for you or show the pull beside it until you have been warm to her since.
+A romance gone cold wears the bond down between the two of you, while you are there without warmth, not again while you
+are away (the absence already costs what it costs). A partner held at the coldest her commitment allows is cold, and a
+marriage without attraction is loveless by nature, not rotting; an open fight still rots through any absence.
+When she goes down, her own words about it are not your answer; yours are. Care after her fall is the rescue itself,
+paid once, by who she is. The moment on top of the bond (a touch, a flirt) is the size her temperament makes it, not
+shrunk by how far you are from her type; only what she will never feel, and the caps of her tier, hold it. It halves
+within minutes of quiet, not only with each exchange. Her warmth feels each held state once at its own weight (a grief,
+an overcast mood), fades while you are away by who she is and comes back with warm moments, and a catastrophe that
+breaks her closes it to anyone but her partner for a while. An acquaintance who is not drawn to you stops at the spark
+(the MDD row as written); only attraction raises it before you are friends.
+
 ## reldyn-v0.17 — The moment on top of the bond, the urge she acts on, and what time away does to it
 Passion now has two parts. The floor is what you have earned with her and changes slowly; on top of it, a moment (a
 touch, a flirt, a topic she loves, being helped up after a fall) makes her heart race for a little while and then
