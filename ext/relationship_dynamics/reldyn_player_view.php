@@ -262,6 +262,68 @@ final class RelDynPlayerView
             : null];
     }
 
+    // =====================================================================
+    // DATA ACCESS for player.php (reads, and the page's one write)
+    // =====================================================================
+
+    /**
+     * Game time now (raw gamets): the request's, else core's newest eventlog time, else the newest
+     * mirror observation's; 0 when none is known (then no trend is read).
+     */
+    public static function gameNow(array $state = []): float
+    {
+        $now = RelationshipDynamics::currentGamets();
+        if ($now > 0) return $now;
+        $db = $GLOBALS['db'] ?? null;
+        if ($db) {
+            try {
+                $row = $db->fetchOne('SELECT MAX(gamets) AS g FROM eventlog WHERE gamets > 0');
+                if (is_array($row) && is_numeric($row['g'] ?? null) && floatval($row['g']) > 0) return floatval($row['g']);
+            } catch (\Throwable $e) {
+                RelationshipDynamics::logError('player page game time', $e);
+            }
+        }
+        $g = 0.0;
+        foreach ((array) ($state['obs'] ?? []) as $o) if (is_array($o) && is_numeric($o['g'] ?? null)) $g = max($g, floatval($o['g']));
+        return $g;
+    }
+
+    /** NPCs RelDyn keeps state for (core_npc_master.plugin_extended_data.reldyn.dynamics), by name. */
+    public static function bondNames(int $limit = 500): array
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) return [];
+        try {
+            $rows = $db->fetchAll("SELECT npc_name FROM core_npc_master
+                WHERE jsonb_typeof(plugin_extended_data -> 'reldyn' -> 'dynamics') = 'object'
+                ORDER BY lower(npc_name), id LIMIT " . max(1, min(2000, $limit)));
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('player page bond list', $e);
+            return [];
+        }
+        $names = [];
+        foreach ((array) $rows as $r) {
+            $n = trim((string) ($r['npc_name'] ?? ''));
+            if ($n !== '' && !in_array(mb_strtolower($n), array_map('mb_strtolower', $names), true)) $names[] = $n;
+        }
+        return $names;
+    }
+
+    /**
+     * Rangroo's opt-in: whether NPCs sense the profile (player_mirror.prompt.enabled, the felt line,
+     * words only). Written into the stored config row through saveConfig() (known keys, schema
+     * stamp), keeping everything else the row holds.
+     */
+    public static function savePromptEnabled(bool $on): bool
+    {
+        $stored = RelationshipDynamics::loadStoredConfig();
+        $pm = is_array($stored['player_mirror'] ?? null) ? $stored['player_mirror'] : [];
+        $pm['prompt'] = is_array($pm['prompt'] ?? null) ? $pm['prompt'] : [];
+        $pm['prompt']['enabled'] = $on;
+        $stored['player_mirror'] = $pm;
+        return RelationshipDynamics::saveConfig($stored);
+    }
+
     /** The shareable card's model (RelDynUiCharts::card). NPC names never go on the card. */
     public static function card(array $view, string $playerName, bool $showName = true): array
     {
