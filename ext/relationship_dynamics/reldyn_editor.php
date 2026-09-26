@@ -126,6 +126,7 @@ final class RelDynEditor
         try {
             $rel = RelationshipDynamics::getPlayerRelationship($npc);
         } catch (Throwable $e) {
+            RelationshipDynamics::logError("editor core affinity for {$npc}", $e);
             return 0.0;
         }
         return is_array($rel) && is_numeric($rel['aff'] ?? null) ? max(-100.0, min(100.0, floatval($rel['aff']))) : 0.0;
