@@ -1283,6 +1283,10 @@ class RelationshipDynamics
             // Physical / emotional axes from a trait combo, fulfillment axes, deprivation text
             // (reldyn_intimacy.php, RelDynIntimacy::configDefaults()).
             'intimacy_need' => RelDynIntimacy::configDefaults(),
+            // ===== Impulse (short band) and motivation (long band): the want layer (MDD 13-14) =====
+            // Drives, decay, trait threshold / style, the inner conflict with her motivation, felt
+            // text (reldyn_impulse.php, RelDynImpulse::configDefaults()).
+            'impulse' => RelDynImpulse::configDefaults(),
             // ===== Creature moodifications (feedback_creature_moodifications, decisions §7) =====
             // Detection, Skyrim's moon cycle, the night / day / moon rows, the return from
             // beast form, felt text (reldyn_creatures.php, RelDynCreatures::configDefaults()).
@@ -9090,6 +9094,8 @@ class RelationshipDynamics
         // interaction against what she had heard of the player (reputation-layer)
         RelDynGoals::onEvalItem((string) $npcName, $dynamics, $n, $itemGamets);
         RelDynReputation::countInteraction($dynamics, floatval($n['significance']));
+        // A meaningful exchange meets her social impulse and starts its loneliness timer over (MDD 13.1)
+        RelDynImpulse::noteMeaningful($dynamics, floatval($n['significance']), $itemGamets);
         // Betrayal by a bonded partner (Divine Intervention) and the exchange's kind in the
         // parasite ledger (reldyn_protocols.php)
         RelDynProtocols::onEvalItem((string) $npcName, $n, $dynamics);
@@ -18486,6 +18492,9 @@ require_once __DIR__ . '/reldyn_quests.php';
 
 // Intrinsic goals, tier 1 (MDD 14.2; intrinsic-goals)
 require_once __DIR__ . '/reldyn_goals.php';
+// Impulse (short band) and motivation (long band), the inner conflict (MDD 13-14; impulse-short-band,
+// motivation-inner-conflict); its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_impulse.php';
 
 // Reputation: the pre-contact baseline (reputation-layer)
 require_once __DIR__ . '/reldyn_reputation.php';

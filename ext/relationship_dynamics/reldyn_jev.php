@@ -93,6 +93,16 @@
  *                    self_worth_recovery, 'priority' => 0..1, 'progress' => 0..1, 'source' => string,
  *                    'phase' => ?string (self-worth: change|maintain), 'keywords' => string[]]
  *                    (RelDynGoals, MDD 14.2), highest priority first
+ *   impulse          null | ['levels' => type => impulse points 0..100 (romantic, protective, social,
+ *                    survival, curiosity; MDD 13.1, as of her last turn on her play clock),
+ *                    'threshold' => impulse points (14 + 69 G - 8 C), 'style' => bold|guarded|anxious|
+ *                    playful|stoic|proud|gentle, 'false_start' => bool, 'firing' => types at or above
+ *                    the threshold, strongest first, 'top' => ?type, 'source' => ?string (what drives
+ *                    the top one), 'motivations' => [['type' => goal type, 'weight' => 0..1]] (the long
+ *                    band, top 3), 'conflict' => null | ['impulse' => type, 'motivation' => goal type |
+ *                    'director', 'weight' => 0..1, 'alignment' => -1..1, 'resolution' => impulse|
+ *                    impulse_soft|motivation|freeze|dignity_motivation|dignity_impulse|dignity_neither]]
+ *                    (RelDynImpulse, MDD 13.3)
  *   reputation       null | ['fame' => 0..1, 'infamy' => 0..1, 'weight' => 0..1 (fades with meaningful
  *                    interactions), 'meaningful' => int, 'offsets' => dimension => points held now]
  *   duty             null | ['quest' => ?string, 'factor' => 0..1 on negative eval signals, 'hostile' => ?string]
@@ -134,6 +144,8 @@ final class RelDynJev
         'protocols.crisis.fraction' => '0..1 of the unstable window (game calendar)',
         'protocols.gift_share' => '0..1 of the exchanges in the parasite ledger',
         'intrinsic_goals.priority' => '0..1', 'intrinsic_goals.progress' => '0..1',
+        'impulse.levels' => 'impulse points 0..100', 'impulse.threshold' => 'impulse points 0..100',
+        'impulse.motivations.weight' => '0..1', 'impulse.conflict.weight' => '0..1', 'impulse.conflict.alignment' => '-1..1',
         'reputation.fame' => '0..1', 'reputation.infamy' => '0..1', 'reputation.weight' => '0..1',
         'reputation.offsets' => 'dimension points held now', 'duty.factor' => 'multiplier on negative eval signals',
         'autonomy.score' => '0..100',
@@ -247,6 +259,7 @@ final class RelDynJev
             'protocols' => RelDynProtocols::jev($dynamics),
             'goal' => $goal,
             'intrinsic_goals' => RelDynGoals::jev($dynamics),
+            'impulse' => RelDynImpulse::jev($dynamics),
             'reputation' => RelDynReputation::jev($dynamics),
             'duty' => RelDynQuests::jev($dynamics),
             'autonomy' => self::autonomy($dynamics),
@@ -368,6 +381,18 @@ final class RelDynJev
         }
         foreach ((array) ($s['intrinsic_goals'] ?? []) as $g) {
             $parts[] = "intrinsic={$g['type']}(" . number_format($g['priority'], 2, '.', '') . ' progress ' . number_format($g['progress'], 2, '.', '') . ')';
+        }
+        if (($s['impulse'] ?? null) !== null) {
+            $im = $s['impulse'];
+            // compact: "impulse=<top> <level>/<threshold> <style>" ('-' when nothing fires; anxious = false starts)
+            $parts[] = 'impulse=' . ($im['top'] !== null ? $im['top'] . ' ' . $f($im['levels'][$im['top']]) : '-')
+                . '/' . $f($im['threshold']) . " {$im['style']}"
+                . ($im['source'] !== null ? " from={$im['source']}" : '')
+                . (count($im['firing']) > 1 ? ' also=' . implode(',', array_slice($im['firing'], 1)) : '');
+            if ($im['conflict'] !== null) {
+                $c = $im['conflict'];
+                $parts[] = "inner_conflict={$c['impulse']} vs {$c['motivation']}(" . number_format($c['weight'], 2, '.', '') . ") -> {$c['resolution']}";
+            }
         }
         if (($s['reputation'] ?? null) !== null) {
             $r = $s['reputation'];

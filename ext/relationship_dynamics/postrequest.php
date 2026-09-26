@@ -303,6 +303,8 @@ RelationshipDynamics::recordInteraction($dynamics);
 // layer's fade (the eval counts its own items, at their significance)
 if (!$evalOwnsExchange && $interactionLL !== null) {
     RelDynReputation::countInteraction($dynamics, 1.0);
+    // ... and it meets her social impulse (the loneliness timer starts over, MDD 13.1)
+    RelDynImpulse::noteMeaningful($dynamics, 1.0, RelationshipDynamics::currentGamets());
 }
 
 // -------------------------------------------------------------------------

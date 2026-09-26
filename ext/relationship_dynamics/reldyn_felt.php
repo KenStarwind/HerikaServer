@@ -366,7 +366,7 @@ final class RelDynFelt
         return array_merge([
             'key' => $key, 'scope' => $scope, 'lane' => $lane,
             'salience' => max(0.0, min(1.0, $salience)), 'must' => false, 'intense' => false,
-            'handwritten' => false, 'tier0' => false, 'text' => trim($text),
+            'handwritten' => false, 'tier0' => false, 'tag' => null, 'text' => trim($text),
         ], $extra);
     }
 
@@ -505,6 +505,7 @@ final class RelDynFelt
         }
 
         // --- Place appraisal (decisions §6): runs here, after core set CACHE_LOCATION ---
+        $placeTurn = null;
         if (!empty($rd['ambient_enabled'])) {
             $placeTurn = RelDynFacets::contextTurn($npc, $dynamics, $now, (bool) ($env['pair'] ?? !empty($env['player_addressed'])));
             if ($placeTurn['changed']) $changed = true;
@@ -539,8 +540,10 @@ final class RelDynFelt
                     self::fill((string) $t['combat'][$k], $vars), ['intense' => true]);
             }
         }
+        $aftermath = false;
         if (!$combat || empty($combat['in_combat'])) {
             if (RelationshipDynamics::getRecentCombatSummary($npc)) {
+                $aftermath = true;
                 $lines[] = self::line('post_combat', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['post_combat']),
                     self::fill((string) $t['combat']['after'], $vars));
             }
@@ -554,13 +557,16 @@ final class RelDynFelt
         // --- Attraction (the request's Attraction Matrix read): a first-sight read is fine
         // at tier 0; it follows the bond it sits in and the tier (attraction config) ---
         $ac = (array) $cfg['attraction'];
+        // The bond strained (open conflict, the ick, frustration, hurt): the pull says nothing, and
+        // no romantic or social impulse rises toward the player
+        $strained = !empty($dynamics['in_conflict']) || !empty($env['ick']) || !empty($dynamics['_ick_tracker']['ick_active'])
+            || floatval($dims['resentment']['x'] ?? 0) >= floatval($ac['strain_resentment_min'] ?? 51.0)
+            || $jealousy >= floatval($ac['strain_jealousy_min'] ?? 60.0);
         $attraction = RelDynAttraction::feltText($npc, (array) ($dynamics['_attraction'] ?? []), [
             'player' => $player,
             'tier' => $tier,
             'passion' => $passion,
-            'strained' => !empty($dynamics['in_conflict']) || !empty($env['ick']) || !empty($dynamics['_ick_tracker']['ick_active'])
-                || floatval($dims['resentment']['x'] ?? 0) >= floatval($ac['strain_resentment_min'] ?? 51.0)
-                || $jealousy >= floatval($ac['strain_jealousy_min'] ?? 60.0),
+            'strained' => $strained,
             'romantic' => in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) $cfg['romantic_types'], true),
             'stepped_back' => $steppedBack,
             'flirt_min_tier' => intval($ac['flirt_min_tier'] ?? 2),
@@ -737,8 +743,38 @@ final class RelDynFelt
             if ($memory !== null) $lines[] = self::line('memory', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['memory']), $memory);
         }
 
+        // --- Impulse (MDD 13.1, the short band) and the inner conflict with her motivation (MDD
+        // 13.2-13.3): this turn's drives from what is around her; a conflict speaks for the
+        // impulse and for the motivation it names (one voice: their own lines stand down) ---
+        $voiced = null;
+        if (RelDynImpulse::enabled()) {
+            $fight = is_array($combat) || $aftermath;
+            $before = $dynamics[RelDynImpulse::KEY] ?? null;
+            RelDynImpulse::update($npc, $dynamics, [
+                'now' => $now, 'present' => true, 'tier' => $tier, 'strained' => $strained, 'platonic' => $platonic,
+                'audience' => count(self::audience((array) ($env['people'] ?? []), $npc, $bond)),
+                'place' => is_array($placeTurn) ? $placeTurn['place'] : null,
+                'facets' => is_array($placeTurn) ? (array) $placeTurn['facets'] : [],
+                'prefs' => is_array($placeTurn) ? RelDynFacets::preferences($dynamics, $npc) : [],
+                'place_valence' => is_array($placeTurn) && is_array($dynamics['_place_appraisal'] ?? null)
+                    ? floatval($dynamics['_place_appraisal']['valence'] ?? 0) : null,
+                'combat' => is_array($combat) ? $combat : null, 'aftermath' => $aftermath,
+                'player_bleeding_out' => $fight && RelationshipDynamics::coreCombatState($bond)['bleeding_out'],
+                'physical' => (array) ($env['physical'] ?? []),
+                'concern' => RelDynConcern::enabled() ? RelDynConcern::level($dynamics) : 0.0,
+                'goal' => is_array($env['goal'] ?? null) ? $env['goal'] : null,
+            ]);
+            if (($dynamics[RelDynImpulse::KEY] ?? null) !== $before) $changed = true;
+            foreach (RelDynImpulse::feltLines($npc, $player, $dynamics) as $l) {
+                $lines[] = self::line($l['key'], $l['scope'] === 'bond' ? self::SCOPE_BOND : self::SCOPE_SELF, self::LANE_TURN,
+                    floatval($l['salience']), (string) $l['text'], ['intense' => !empty($l['intense']), 'tag' => $l['tag']]);
+                if ($l['motivation'] !== null) $voiced = $l['motivation'];
+            }
+        }
+
         // --- Intrinsic goal (MDD 13.2 / 14.2: what she wants from life, her own) ---
         $intrinsic = RelDynGoals::feltText($npc, $player, $dynamics);
+        if ($voiced !== null && $voiced === (RelDynGoals::active($dynamics)[0]['type'] ?? null)) $intrinsic = null;
         if ($intrinsic !== null) {
             $top = RelDynGoals::active($dynamics)[0] ?? [];
             $lines[] = self::line('intrinsic_goal', self::SCOPE_SELF, self::LANE_CORE,
@@ -755,7 +791,7 @@ final class RelDynFelt
 
         // --- Director goal (what the NPC is set on) ---
         $goal = $env['goal'] ?? null;
-        if (is_array($goal) && trim((string) ($goal['text'] ?? '')) !== '') {
+        if (is_array($goal) && trim((string) ($goal['text'] ?? '')) !== '' && $voiced !== 'director') {
             $p = floatval($goal['priority'] ?? 0.5);
             $lines[] = self::line('goal', self::SCOPE_SELF, self::LANE_TURN, $p,
                 self::fill((string) $t['goal'][$p >= 0.8 ? 'strong' : ($p >= 0.5 ? 'mind' : 'background')],
@@ -769,6 +805,13 @@ final class RelDynFelt
             return $l;
         }, $lines), fn($l) => $l['text'] !== ''));
         return ['lines' => $lines, 'changed' => $changed, 'tier' => $tier, 'player_ref' => $player, 'knowledge' => $knowledge];
+    }
+
+    /** The people around (core's CACHE_PEOPLE names) besides the NPC and the player. */
+    public static function audience(array $people, string $npc, string $player): array
+    {
+        $skip = [strtolower(trim($npc)), strtolower(trim($player))];
+        return array_values(array_filter(array_map('trim', $people), fn($p) => $p !== '' && !in_array(strtolower($p), $skip, true)));
     }
 
     /** "the player" / "The player" in a felt line -> the player reference (name or 'this stranger'). */
@@ -1029,7 +1072,12 @@ final class RelDynFelt
         $bond = false;
         foreach ($lines as $l) if ($l['scope'] === self::SCOPE_BOND) $bond = true;
         $header = strtr((string) $cfg['text'][$bond ? 'header_bond' : 'header_self'], ['{NAME}' => $npc, '{PLAYER}' => $player]);
-        return "<subtext>\n{$header}\n" . implode("\n", array_map(fn($l) => '- ' . $l['text'], $lines)) . "\n</subtext>";
+        // A tagged line (the impulse layer's <inner_conflict>) is its own element after the list
+        $plain = array_filter($lines, fn($l) => empty($l['tag']));
+        $tagged = array_filter($lines, fn($l) => !empty($l['tag']));
+        $body = implode("\n", array_merge(array_map(fn($l) => '- ' . $l['text'], $plain),
+            array_map(fn($l) => "<{$l['tag']}>\n{$l['text']}\n</{$l['tag']}>", $tagged)));
+        return "<subtext>\n{$header}\n{$body}\n</subtext>";
     }
 
     /**
@@ -1352,6 +1400,8 @@ final class RelDynFelt
             'people' => array_values(array_filter(array_map('trim', explode('|', (string) ($GLOBALS['CACHE_PEOPLE'] ?? ''))))),
             'goal' => !empty($cfg['director_goals_enabled'])
                 ? ($GLOBALS['RELDYN_DIRECTOR_GOAL'] ?? RelationshipDynamics::getActiveDirectorGoal($dynamics)) : null,
+            // the prerequest's physical states (the player hurt, cold, rain), for the impulse drives
+            'physical' => is_array($GLOBALS['RELDYN_ACTIVE_PHYS_STATES'] ?? null) ? $GLOBALS['RELDYN_ACTIVE_PHYS_STATES'] : [],
         ];
     }
 
