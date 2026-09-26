@@ -30,6 +30,8 @@ $rdAttachment   = $rdDynamics['profile_overrides']['attachment_style'] ?? '';   
 $rdSensitivity  = $rdDynamics['social_sensitivity_curve'] ?? '';
 $rdHomeLocation = $rdDynamics['home_location'] ?? '';
 $rdPassion      = floatval($rdDynamics['passion'] ?? 0);
+// Passion floor + spike (roadmap passion-floor-spike): the moment on top of the earned floor, read-only
+$rdPassionSpike = class_exists('RelDynPassion') ? RelDynPassion::spike($rdDynamics) : 0.0;
 $rdJealousy     = floatval($rdDynamics['jealousy_anger'] ?? 0);
 $rdStage        = $rdDynamics['stage'] ?? 'early';
 $rdTotalPos     = intval($rdDynamics['total_positive_interactions'] ?? 0);
@@ -573,10 +575,13 @@ if ($rdUiPos !== false) {
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px;">
             <div>
                 <label style="font-weight:600; color:#9fb1c9; display:block; margin-bottom:4px; font-size:0.8em;">
-                    Passion (RPM) — <?= round($rdPassion, 1) ?>/100
+                    Passion (RPM) — <?= round($rdPassion, 1) ?>/100<?php if ($rdPassionSpike > 0.05): ?>
+                        <span style="color:#fbbf24; font-weight:400;" title="The spike: the moment on top of the earned floor; it fades with every exchange (read-only)"> + <?= round($rdPassionSpike, 1) ?> in the moment</span>
+                    <?php endif; ?>
                 </label>
-                <div style="background:#1a1a1a; border:1px solid #3a3a3a; border-radius:4px; height:20px; overflow:hidden;">
+                <div style="background:#1a1a1a; border:1px solid #3a3a3a; border-radius:4px; height:20px; overflow:hidden; display:flex;">
                     <div style="height:100%; width:<?= min(100, $rdPassion) ?>%; background:linear-gradient(90deg, #22c55e, #fbbf24 50%, #ef4444); border-radius:4px; transition:width 0.3s;"></div>
+                    <div style="height:100%; width:<?= max(0, min(100 - min(100, $rdPassion), $rdPassionSpike)) ?>%; background:repeating-linear-gradient(45deg, #fbbf24, #fbbf24 4px, #b45309 4px, #b45309 8px); opacity:0.8;"></div>
                 </div>
             </div>
             <div>

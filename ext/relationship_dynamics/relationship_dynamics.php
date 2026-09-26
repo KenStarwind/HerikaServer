@@ -1114,6 +1114,9 @@ class RelationshipDynamics
             'passion_absence_grace_game_hours' => 24,
             'passion_absence_fade_per_game_day' => 3.0,
             'passion_absence_attachment_mult' => ['anxious' => 2.0, 'avoidant' => 0.5, 'secure' => 1.0, 'toxic' => 1.0],
+            // Passion floor + spike, the desire loop, derived warmth (roadmap passion-floor-spike,
+            // desire-loop, derived-warmth; reldyn_passion.php, RelDynPassion::configDefaults()).
+            'passion_dynamics' => RelDynPassion::configDefaults(),
             // The fall of bleedout (A2, traits phase 3; design §2.5, MDD 1.3 combat notes and the MDD
             // bleedout section; RelDynTraits::bleedout): net = fight - fear (unitless), with
             //   fight = rage_weight x C Rs L (1 - D)                      (Bold / Defiant / Aela: RAGE)
@@ -4352,7 +4355,7 @@ class RelationshipDynamics
     public static function advanceCalendar(array &$dynamics, float $fromGamets, float $toGamets): array
     {
         $out = ['game_days' => 0.0, 'resentment_raw' => 0.0, 'resentment' => 0.0, 'jealousy_resentment_raw' => 0.0,
-                'neglect_days' => 0.0, 'neglect_ceiling' => null, 'passion_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
+                'neglect_days' => 0.0, 'neglect_ceiling' => null, 'passion_fade' => 0.0, 'spike_fade' => 0.0, 'warmth_fade' => 0.0, 'bond_type' => null];
         if ($fromGamets <= 0 || $toGamets <= $fromGamets) {
             return $out;
         }
@@ -4432,6 +4435,8 @@ class RelationshipDynamics
                     self::setPassion($dynamics, $new);
                     $out['passion_fade'] = $passion - $new;
                 }
+                // The moment does not outlast the absence either (a spike, RelDynPassion)
+                $out['spike_fade'] = RelDynPassion::fadeWithAbsence($dynamics, $absentDays, $mult);
             }
 
             // Warmth (0..100) above its baseline fades at its own rate, grace and rate scaled
@@ -4892,7 +4897,7 @@ class RelationshipDynamics
             $step = self::advanceCalendar($dyn, $from, $now);
             $result['calendar'] = $step;
             $changed = $changed || $step['resentment_raw'] > 0 || $step['jealousy_resentment_raw'] > 0
-                || $step['passion_fade'] > 0 || $step['warmth_fade'] > 0;
+                || $step['passion_fade'] > 0 || $step['spike_fade'] > 0 || $step['warmth_fade'] > 0;
         }
         // Fulfillment (rulings §9): day-end samples, unfulfilled neglect and the mature boundary
         // move with the calendar for every bond that has a fulfillment state, talked to or not.
@@ -8952,6 +8957,14 @@ class RelationshipDynamics
                 self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $anchor, $bondName, $itemGamets);
             }
         }
+        // The moment on top of the floor (passion spike, RelDynPassion): her love language, a touch,
+        // a rescue, the exchange's passion; after the signals, so it stacks on the floor they left
+        $spikes = RelDynPassion::onEvalItem((string) $npcName, $n, $dynamics);
+        if ($spikes !== []) {
+            // the blush reads the moment (reldyn_felt.php)
+            $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($spikes), 2));
+            self::log("[SPIKE] {$npcName} eval item gamets={$n['gamets']}: " . json_encode($spikes));
+        }
         // Interaction significance for the diary's defining_moment trigger, on the legacy 1..3
         // level scale: contract significance 0..1 x 3, rounded (0.33, "normal +-10 of 30" -> 1;
         // 1.0 -> 3). The strongest item of this request counts.
@@ -9978,12 +9991,13 @@ class RelationshipDynamics
      * row, a physical state, the place) are states, not the bond: the multiplier scales the value
      * without them and they are added back as they are, so a partner's guilt still shows (a
      * saturating multiplier swallowed it). A $value passed in is read as it is.
+     * Passion's stored value is the effective passion (floor + spike, RelDynPassion::effective).
      */
     public static function getEffectiveDimensionValue(array $dynamics, string $dimensionId, ?float $value = null, ?string $relationshipType = null): ?float
     {
         $held = 0.0;
         if ($value === null) {
-            $x = $dimensionId === 'passion' ? self::getPassion($dynamics) : ($dynamics['dimensions'][$dimensionId]['x'] ?? null);
+            $x = $dimensionId === 'passion' ? self::getEffectivePassion($dynamics) : ($dynamics['dimensions'][$dimensionId]['x'] ?? null);
             if (!is_numeric($x)) {
                 return null;
             }
@@ -14126,21 +14140,22 @@ class RelationshipDynamics
      * passion_mult (the uphill), 0 for a hard zero (RelDynAttraction::gainFactor). Uses this
      * request's summary; evaluates first when the NPC has none yet. Logged per gain ($source).
      */
-    public static function attractionPassionFactor(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
+    public static function attractionPassionFactor(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null, ?float $atPassion = null): float
     {
         if (!is_array($dynamics['_attraction'] ?? null)) {
             self::updateAttraction($npcName, $dynamics);
         }
-        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}", $tags);
+        return self::loggedPassionFactor($dynamics, $raw, "{$npcName}: {$source}", $tags, $atPassion);
     }
 
     /**
-     * RelDynAttraction::gainFactor on the stored summary at the current passion, logged ($label:
-     * who / which path; $tags: the gain's eval tags, its channel, decisions §15).
+     * RelDynAttraction::gainFactor on the stored summary at the current passion ($atPassion:
+     * passion points to read it at instead, a spike's effective passion), logged ($label: who /
+     * which path; $tags: the gain's eval tags, its channel, decisions §15).
      */
-    private static function loggedPassionFactor(array $dynamics, float $raw, string $label, ?array $tags = null): float
+    private static function loggedPassionFactor(array $dynamics, float $raw, string $label, ?array $tags = null, ?float $atPassion = null): float
     {
-        $passion = self::getPassion($dynamics);
+        $passion = $atPassion ?? self::getPassion($dynamics);
         $a = (array) ($dynamics['_attraction'] ?? []);
         $factor = RelDynAttraction::gainFactor($a, $passion, $raw, $tags);
         self::log(sprintf('[ATTRACTION] %s passion +%.4f at %.2f x%.4f%s', $label, $raw, $passion, $factor,
@@ -14162,19 +14177,43 @@ class RelationshipDynamics
      * A passion GAIN of $raw passion points from $source, through the attraction (decisions
      * §13: raw x attractionPassionFactor; a hard zero adds exactly 0), then addPassion (stage
      * ceiling). $tags: the gain's eval tags (its channel, decisions §15; null = no channel).
-     * Returns the gain asked of addPassion (points).
+     * $spike: a passion spike (RelDynPassion, roadmap passion-floor-spike): the attraction factor
+     * is read at the effective passion (floor + spike, what the moment stacks on), the gain goes
+     * to the spike instead of the floor, and while the Ick lasts there is no spike at all (the
+     * floor path turns the exchange's gains into losses). Returns the gain asked of addPassion
+     * (points), or the spike points added.
      */
-    public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
+    public static function gainPassion(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null, bool $spike = false): float
     {
         if ($raw <= 0.0) {
             return 0.0;
         }
-        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source, $tags);
+        if ($spike && !empty($dynamics['_ick_tracker']['ick_active']) && !empty(self::getConfig()['ick_system_enabled'] ?? true)) {
+            self::log("[ICK] {$npcName}: {$source} no spike while the Ick lasts");
+            return 0.0;
+        }
+        $gain = $raw * self::attractionPassionFactor($npcName, $dynamics, $raw, $source, $tags,
+            $spike ? RelDynPassion::effective($dynamics) : null);
         if ($gain <= 0.0) {
             return 0.0;
         }
+        if ($spike) {
+            $added = RelDynPassion::storeSpike($dynamics, $gain, $source);
+            self::log(sprintf('[SPIKE] %s %s +%.4f (spike %.2f, floor %.2f)', $npcName, $source, $added,
+                RelDynPassion::spike($dynamics), self::getPassion($dynamics)));
+            return $added;
+        }
         self::addPassion($dynamics, $gain, $source);
         return $gain;
+    }
+
+    /**
+     * Effective passion (points): the floor (getPassion) + the spike + the weather's pull on
+     * passion (RelDynPassion::effective). What display, desire and the context read.
+     */
+    public static function getEffectivePassion(array $dynamics): float
+    {
+        return RelDynPassion::effective($dynamics);
     }
 
     /**
@@ -15320,6 +15359,17 @@ class RelationshipDynamics
         foreach ($modifiers as $dimId => $delta) {
             self::applyDelta($dimId, $dynamics, floatval($delta) * $scale, $temperament);
         }
+    }
+
+    /**
+     * The weather's pull held on $dimId now (points; weather-gravity-pull, _weather_gravity):
+     * written into x for the stored mood dimensions, read at display time for passion (the
+     * effective passion) and warmth (derived). 0 when none.
+     */
+    public static function weatherGravityOffset(array $dynamics, string $dimId): float
+    {
+        $o = $dynamics['_weather_gravity']['offsets'][$dimId] ?? null;
+        return is_numeric($o) ? floatval($o) : 0.0;
     }
 
     // ========== VAMPIRE/WEREWOLF MOODIFICATIONS (PR 13) ==========
@@ -18270,3 +18320,5 @@ require_once __DIR__ . '/reldyn_gating.php';
 require_once __DIR__ . '/reldyn_diary.php';
 // Divine Intervention, grief / widow's lock, the Ick's tuning, the Parasite (P3 protocols)
 require_once __DIR__ . '/reldyn_protocols.php';
+// Passion floor + spike, the desire loop, derived warmth; its defaults are part of defaultConfig().
+require_once __DIR__ . '/reldyn_passion.php';

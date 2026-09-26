@@ -16,7 +16,9 @@
  *   trust, comfort, respect, warmth, maturity, resentment, resentment_self, self_confidence
  *                    float  dimension points 0..100
  *   arousal          float  0..100      valence  float -100..100
- *   passion          float  0..100 (capped by the Attraction Matrix)
+ *   passion          float  0..100 the floor: passion earned through play (the Attraction Matrix's uphill)
+ *   passion_spike    float  0..100 the moment on top of it (roadmap passion-floor-spike: fades per exchange)
+ *   passion_effective float 0..100 floor + spike + the weather's pull (what she feels right now)
  *   jealousy         float  0..100      jealousy_rival ?string
  *   attachment       string secure|anxious|avoidant|toxic (the style region of the axes; toxic =
  *                           fearful, MDD Toxic/Disorganized)
@@ -96,7 +98,8 @@ final class RelDynJev
     const UNITS = [
         'affinity' => 'core units -100..100',
         'dimensions' => 'points 0..100 (valence -100..100)',
-        'passion' => 'points 0..100', 'jealousy' => 'points 0..100',
+        'passion' => 'points 0..100 (the floor)', 'passion_spike' => 'points 0..100', 'passion_effective' => 'points 0..100',
+        'jealousy' => 'points 0..100',
         'fulfillment.band' => '-1..1 (below fulfillment low_band = neglected)',
         'fulfillment.trend' => 'band change per game day',
         'exclusivity.pull' => '0..1 (pull toward the player)', 'exclusivity.suitor_interest' => 'interest points 0..100',
@@ -197,6 +200,8 @@ final class RelDynJev
             'resentment_self' => $num('resentment_self', 0.0), 'self_confidence' => $num('self_confidence', 50.0),
             'arousal' => $num('arousal', 10.0), 'valence' => $num('valence', 0.0),
             'passion' => round(RelationshipDynamics::getPassion($dynamics), 2),
+            'passion_spike' => round(RelDynPassion::spike($dynamics), 2),
+            'passion_effective' => round(RelationshipDynamics::getEffectivePassion($dynamics), 2),
             'jealousy' => round(floatval($dynamics['jealousy_anger'] ?? 0), 2),
             'jealousy_rival' => $rival !== '' ? $rival : null,
             'attachment' => RelationshipDynamics::attachmentStyleOf($axes['anxiety'], $axes['avoidance']),
@@ -252,6 +257,7 @@ final class RelDynJev
             "type={$s['relationship_type']}",
         ];
         foreach (['trust', 'comfort', 'respect', 'warmth', 'maturity', 'passion'] as $k) $parts[] = "{$k}=" . $f($s[$k]);
+        if ($s['passion_spike'] > 0) $parts[] = 'passion_spike=' . $f($s['passion_spike']);
         $parts[] = 'jealousy=' . $f($s['jealousy']) . ($s['jealousy_rival'] !== null ? "(rival {$s['jealousy_rival']})" : '');
         $parts[] = 'resentment=' . $f($s['resentment']);
         $parts[] = 'mood=' . $f($s['arousal']) . '/' . $f($s['valence']);

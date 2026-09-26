@@ -419,8 +419,10 @@ final class RelDynFelt
 
         // --- Passion toward the player, with the urge its love language gives it ---
         // (the band and its salience read passion as it shows in this bond: the per-bond display
-        // multiplier; the thresholds below, like every tension check, read the raw passion)
-        $passion = RelationshipDynamics::getPassion($dynamics);
+        // multiplier; the thresholds below, like every tension check, read the raw passion. Both
+        // are the effective passion: the floor and the moment on top of it, roadmap
+        // passion-floor-spike)
+        $passion = RelationshipDynamics::getEffectivePassion($dynamics);
         $shownPassion = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'passion') ?? $passion;
         $pBand = RelationshipDynamics::getPassionBand($shownPassion);
         // Not that kind of pull (the Attraction Matrix: not attracted, or a hard zero), outside
@@ -1063,7 +1065,7 @@ final class RelDynFelt
         $warmth = $v('warmth', 50.0);
         $trust = $v('trust', 50.0);
         $resentment = $v('resentment', 0.0);
-        $passion = RelationshipDynamics::getPassion($dynamics);
+        $passion = RelationshipDynamics::getEffectivePassion($dynamics);
         if ($passion >= floatval($b['drawn_passion_min']) && $warmth <= floatval($b['guarded_warmth_max'])) return 'drawn_but_guarded';
         if ($current >= 2 && $resentment >= floatval($b['worn_resentment_min'])) return 'worn_out';
         if ($current >= 2 && $warmth <= floatval($b['closed_warmth_max'])) return 'cares_but_closed';
@@ -1134,7 +1136,7 @@ final class RelDynFelt
         $arousal = $num('arousal', 10.0);
         $valence = $num('valence', 0.0);
         $maturity = $num('maturity', 60.0);
-        $passion = RelationshipDynamics::getPassion($dynamics);
+        $passion = RelationshipDynamics::getEffectivePassion($dynamics);   // the moment formats too
         $ic = (array) $cfg['intensity'];
 
         if (!$handwritten) $text = self::degrade($text, self::degradationLevel($maturity, $cfg), $cfg);

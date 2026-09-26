@@ -184,9 +184,7 @@ $GLOBALS['RELDYN_TOPIC_MATCH'] = $topicMatch;
 // -------------------------------------------------------------------------
 $flirtBonus = 1.0;
 if ($reldynCfg['flirt_bonus_enabled'] ?? true) {
-$flirtyMoods = ['flirty', 'romantic', 'playful', 'teasing', 'amused', 'charmed',
-                'smitten', 'coy', 'seductive', 'affectionate', 'bashful', 'flustered'];
-if (!empty($lastMood) && in_array(strtolower($lastMood), $flirtyMoods)) {
+if (RelDynPassion::isFlirtyMood(is_string($lastMood) ? $lastMood : null)) {
     // A place the NPC loves (fresh place appraisal at Point-of-Interest valence, MDD 1.5)
     $placeRead = RelDynFacets::freshPlaceAppraisal($dynamics, RelationshipDynamics::currentGamets());
     $hasLocationMatch = $placeRead !== null
@@ -216,19 +214,16 @@ if ($evalOwnsExchange) {
     $positiveExchange = $passionGain > 0;
 
     // ========== ATTRACTION: THE SPARK, THEN THE UPHILL x ATTACHMENT (decisions §13, rulings §9) ==========
-    // (the love language's eval tag is the gain's channel: decisions §15, an asexual NPC's
-    // passion grows only through the emotional ones)
-    $matrixPassionMult = $passionGain > 0
-        ? RelationshipDynamics::attractionPassionFactor($npcName, $dynamics, $passionGain, 'love_match',
-            RelDynAttraction::loveLanguageChannelTags($interactionLL)) : 1.0;
+    // gainPassion: raw x the attraction factor (the love language's eval tag is the gain's
+    // channel: decisions §15, an asexual NPC's passion grows only through the emotional ones)
+    $rawLoveMatch = $passionGain;
     if ($passionGain > 0) {
-        $passionGain *= $matrixPassionMult;
+        $passionGain = RelationshipDynamics::gainPassion($npcName, $dynamics, $passionGain, 'love_match',
+            RelDynAttraction::loveLanguageChannelTags($interactionLL));
     }
 
-    error_log("[RelDyn-POST] passionGain: npc={$npcName} LL={$interactionLL} raw={$rawPassionGain} topic={$topicBonus}x flirt={$flirtBonus}x matrix={$matrixPassionMult}x final={$passionGain} currentPassion={$dynamics['passion']}");
-    if ($passionGain > 0) {
-        RelationshipDynamics::addPassion($dynamics, $passionGain, 'love_match');
-    }
+    error_log("[RelDyn-POST] passionGain: npc={$npcName} LL={$interactionLL} raw={$rawPassionGain} topic={$topicBonus}x flirt={$flirtBonus}x "
+        . "attraction=" . ($rawLoveMatch > 0 ? round($passionGain / $rawLoveMatch, 4) : 1) . "x final={$passionGain} currentPassion={$dynamics['passion']}");
 
     if ($passionGain > 0) {
         // Store blush multiplier for next prerequest cycle
@@ -246,6 +241,26 @@ if ($evalOwnsExchange) {
 
         // Store passion delta for blush self-awareness in next context.php cycle
         $dynamics['_last_passion_delta'] = round($passionGain, 2);
+    }
+}
+
+// -------------------------------------------------------------------------
+// 2b. The passion spike (roadmap passion-floor-spike, RelDynPassion): the moment on top of the
+// floor. Every interaction of the player pair first takes the last moment down (it keeps
+// spike.retention_per_interaction of itself), then this one's triggers: what was observed (a
+// flirty reply, a topic she warms to, intimacy the plugin reports) whoever scores the exchange;
+// what the local classifier judged (her love language, a touch) only when no eval scores it
+// (its item's tags spike then, processEvalContractItem).
+// -------------------------------------------------------------------------
+if (($reldynCfg['passion_enabled'] ?? true)
+    && RelationshipDynamics::isPairInteraction($GLOBALS['gameRequest'], trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')))) {
+    RelDynPassion::decayInteraction($dynamics);
+    $reldynSpikes = RelDynPassion::onExchange($npcName, $dynamics, $interactionLL, is_string($lastMood) ? $lastMood : null,
+        $topicMatch !== null, $reldynIntimate, $evalOwnsExchange);
+    if ($reldynSpikes !== []) {
+        // the blush reads the moment (reldyn_felt.php)
+        $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($reldynSpikes), 2));
+        RelationshipDynamics::log("[SPIKE] {$npcName} exchange: " . json_encode($reldynSpikes) . ' spike=' . round(RelDynPassion::spike($dynamics), 2));
     }
 }
 

@@ -342,6 +342,7 @@ try {
 
             // Reset runtime state but keep configuration
             RelationshipDynamics::setPassion($dynamics, 0.0);
+            unset($dynamics[RelDynPassion::SPIKE_KEY], $dynamics[RelDynPassion::SPIKE_TRIGGER_KEY]);   // the moment goes with it
             $dynamics['passion_updated_at'] = 0;
             $dynamics['passion_sources'] = ['love_match' => 0, 'reunion' => 0, 'dramatic' => 0, 'repair' => 0];
             RelationshipDynamics::setJealousy($dynamics, 0.0);
