@@ -352,8 +352,9 @@ final class RelDynJev
         }
         if (($s['impulse'] ?? null) !== null) {
             $im = $s['impulse'];
-            $parts[] = 'impulse=' . ($im['top'] !== null ? $im['top'] . ' ' . $f($im['levels'][$im['top']]) : 'none')
-                . '/at ' . $f($im['threshold']) . "({$im['style']}" . ($im['false_start'] ? ', false starts' : '') . ')'
+            // compact: "impulse=<top> <level>/<threshold> <style>" ('-' when nothing fires; anxious = false starts)
+            $parts[] = 'impulse=' . ($im['top'] !== null ? $im['top'] . ' ' . $f($im['levels'][$im['top']]) : '-')
+                . '/' . $f($im['threshold']) . " {$im['style']}"
                 . ($im['source'] !== null ? " from={$im['source']}" : '')
                 . (count($im['firing']) > 1 ? ' also=' . implode(',', array_slice($im['firing'], 1)) : '');
             if ($im['conflict'] !== null) {

@@ -299,7 +299,7 @@ final class RelDynImpulseTest extends TestCase
         $this->assertNull($later['top']);
         $this->assertNull($later['conflict']);
         $text = RelDynJev::render(['impulse' => $jev] + self::jevSkeleton());
-        $this->assertMatchesRegularExpression('/impulse=romantic 72\/at 69\.\d\(guarded\) from=passion/', $text);
+        $this->assertMatchesRegularExpression('/impulse=romantic 72\/69\.\d guarded from=passion/', $text);
         $this->assertStringContainsString('inner_conflict=romantic vs purpose(0.70) -> motivation', $text);
     }
 
