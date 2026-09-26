@@ -532,7 +532,7 @@ final class RelDynCombat
             // The felt read after a rescue lasts this many minutes of real play
             'felt_play_minutes' => 5.0,
             // Felt text per response (decisions §3: behaviour, never numbers); the secure corner
-            // speaks as the nearest temperament row (secure_felt)
+            // speaks as the temperament row nearest her trait vector (secure_felt)
             'secure_felt' => ['Guarded' => 'walls', 'Bold' => 'nod', 'Independent' => 'grudging'],
             'felt_text' => [
                 'walls'    => "{PLAYER} pulled {NAME} back from the edge and stayed; something in {NAME}'s guard has cracked, softer with {PLAYER} and letting them closer than before",
@@ -620,8 +620,8 @@ final class RelDynCombat
     /**
      * Who this NPC is when the player answers her fall with care (pure): the bonus (passion
      * points) = sum over the attachment corners of weight x value (secure: secureBonus of her
-     * traits), the corner that speaks (the largest share; the secure one as its nearest
-     * temperament row) and the anxious lean (anxious + fearful weight) for the dependency.
+     * traits), the corner that speaks (the largest share; the secure one as the temperament row
+     * nearest her trait vector) and the anxious lean (anxious + fearful weight) for the dependency.
      *
      * @return array ['bonus', 'weights' => corner => 0..1, 'secure' => points, 'felt' => text key, 'anxious_lean' => 0..1]
      */
@@ -641,10 +641,14 @@ final class RelDynCombat
         arsort($share);
         $top = (string) array_key_first($share);
         if ($top === 'secure') {
+            // the temperament row she is nearest in trait space (without a vector: by value)
             $anchors = (array) ($cfg['secure_anchors'] ?? []);
             $nearest = null;
+            $best = INF;
             foreach ($anchors as $preset => $v) {
-                if ($nearest === null || abs($secure - floatval($v)) < abs($secure - floatval($anchors[$nearest]))) $nearest = (string) $preset;
+                $p = $x !== null ? RelDynTraits::presetPoint((string) $preset) : null;
+                $dist = $p !== null ? RelDynTraits::distance($x, $p) : abs($secure - floatval($v));
+                if ($dist < $best) [$best, $nearest] = [$dist, (string) $preset];
             }
             $felt = (string) (((array) ($cfg['secure_felt'] ?? []))[$nearest] ?? 'nod');
         } else {

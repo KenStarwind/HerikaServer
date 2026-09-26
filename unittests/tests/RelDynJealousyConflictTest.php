@@ -256,7 +256,8 @@ final class RelDynJealousyConflictTest extends TestCase
     /** Three positive interactions with jealousy below 20 resolve the conflict with a +20 passion burst. */
     public function testThreePositiveInteractionsRepairTheConflict(): void
     {
-        $d = $this->npc(['in_conflict' => true, 'conflict_positive_count' => 0, 'jealousy_anger' => 10.0]);
+        // a partner's quarrel (core romantic: the Committed row, MDD 8.1, lets the burst land in full)
+        $d = $this->npc(['in_conflict' => true, 'conflict_positive_count' => 0, 'jealousy_anger' => 10.0, '_core_rel_type' => 'romantic']);
         RelationshipDynamics::setPassion($d, 30.0);
         $positive = $this->item(['positive_interaction' => true, 'tags' => ['apology']]);
 

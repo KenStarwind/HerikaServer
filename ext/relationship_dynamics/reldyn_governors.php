@@ -36,8 +36,9 @@
  *
  * The ceiling bounds GAINS (factor): a gain never lifts passion past it; passion already above
  * it (the bond fell a tier) is not cut, it decays as it would. The floor is where decay stops
- * (RelationshipDynamics::passionStageFloor, through the attraction like every floor), never
- * above the ceiling. Passion writers in exempt_sources are not bounded (the hoover: the toxic
+ * once passion has reached it (RelationshipDynamics::passionStageFloor, through the attraction
+ * like every floor): it never lifts passion below it (MDD 8.3: a political marriage is committed
+ * and loveless) and is never above the ceiling. RelDyn's parasite overlay reads as distant. Passion writers in exempt_sources are not bounded (the hoover: the toxic
  * NPC's own snap, "Hoover protocols active" in the Divorced / Hostile row).
  *
  * Units: floors and ceilings in passion points (0..passion_max); core affinity -100..100 read
@@ -70,6 +71,9 @@ final class RelDynGovernors
                              'romantic' => 'committed', 'ex' => 'hostile'],
             // RelDyn bond types (getRelationshipType) that are the hostile row
             'hostile_types' => ['hostile'],
+            // RelDyn's own overlays (getRelationshipType) read as a tier whatever core's type says:
+            // a parasite (MDD 6.2, the player as a wallet) is no partner's bond, its floor included
+            'overlay_types' => ['parasite' => 'distant'],
             // RelDyn depth tier (core affinity, capped at the attraction ceiling) -> governor tier
             'depth' => ['hostile' => 'hostile', 'stranger' => 'distant', 'acquaintance' => 'distant',
                         'friend' => 'friendly', 'close_friend' => 'friendly', 'bonded' => 'friendly', 'devoted' => 'friendly'],
@@ -111,6 +115,8 @@ final class RelDynGovernors
         if (is_string($byCore) && $byCore === self::HOSTILE) return self::HOSTILE;
         $type = (string) RelationshipDynamics::getRelationshipType('', $dynamics);
         if (in_array($type, (array) ($cfg['hostile_types'] ?? []), true)) return self::HOSTILE;
+        $overlay = ((array) ($cfg['overlay_types'] ?? []))[$type] ?? null;
+        if (is_string($overlay) && self::rowOf($overlay, $cfg) !== null) return $overlay;
         if (is_string($byCore) && self::rowOf($byCore, $cfg) !== null && !in_array($core, $blocked, true)) return $byCore;
         $depth = RelationshipDynamics::attractionCappedTier($dynamics);
         $t = ((array) ($cfg['depth'] ?? []))[$depth] ?? 'distant';

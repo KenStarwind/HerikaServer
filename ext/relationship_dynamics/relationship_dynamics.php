@@ -3670,15 +3670,20 @@ class RelationshipDynamics
      * (passion_mult of at least 1: at or past her floors), since above the spark she only
      * warms as fast as the uphill allows; never above the MDD 1.4 passion ceiling. A summary
      * from before the spark: 0 when its passion_mult is 0.
-     * The relationship tier's floor (MDD 8.1 tiered governors, RelDynGovernors) joins it: the
-     * higher of the two, never above the tier's ceiling (Divorced / Hostile holds no floor).
+     * The relationship tier's floor (MDD 8.1 tiered governors, RelDynGovernors) joins it once
+     * passion has reached it: it holds passion there, it never lifts passion that is below it
+     * (MDD 8.3, the decoupling principle: "low passion, high tier" is a real bond, the political
+     * marriage). The higher of the two, never above the tier's ceiling (Divorced / Hostile: none).
      */
     public static function passionStageFloor(array $dynamics): float
     {
         $stage = $dynamics['stage'] ?? self::STAGE_EARLY;
         $floor = floatval(self::STAGE_PARAMS[$stage]['floor'] ?? 0);
         $gov = RelDynGovernors::governor($dynamics);
-        if ($gov !== null) $floor = min(max($floor, $gov['floor']), $gov['ceiling']);
+        if ($gov !== null) {
+            $held = self::getPassion($dynamics) >= $gov['floor'] ? $gov['floor'] : 0.0;
+            $floor = min(max($floor, $held), $gov['ceiling']);
+        }
         $a = $dynamics['_attraction'] ?? null;
         if ($floor <= 0.0 || !is_array($a)) return $floor;
         $sparkMult = $a['spark_mult'] ?? ($a['passion_mult'] ?? 1.0);

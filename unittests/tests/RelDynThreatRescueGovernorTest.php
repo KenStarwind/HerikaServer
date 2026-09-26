@@ -292,12 +292,22 @@ final class RelDynThreatRescueGovernorTest extends TestCase
     public function testTheTierFloorJoinsTheStageFloorNeverAboveTheCeiling(): void
     {
         $partner = self::npc('Bold', 0.15, 0.15, 80.0, 'romantic');
+        RelationshipDynamics::setPassion($partner, 25.0);
         $this->assertSame(20.0, RelationshipDynamics::passionStageFloor($partner), 'Committed: 20');
+        RelationshipDynamics::setPassion($partner, 5.0);
+        $this->assertSame(0.0, RelationshipDynamics::passionStageFloor($partner),
+            'the floor holds what was reached, it lifts nothing (MDD 8.3: committed and loveless is a real bond)');
         $crush = self::npc('Bold', 0.15, 0.15, 60.0, 'crush');
+        RelationshipDynamics::setPassion($crush, 12.0);
         $this->assertSame(10.0, RelationshipDynamics::passionStageFloor($crush));
+        $parasite = $partner + ['_relationship_type_override' => 'parasite'];
+        RelationshipDynamics::setPassion($parasite, 25.0);
+        $this->assertSame('distant', RelDynGovernors::governor($parasite)['tier'], 'a parasite is no partner (MDD 6.2)');
+        $this->assertSame(0.0, RelationshipDynamics::passionStageFloor($parasite));
         $ex = self::npc('Bold', 0.15, 0.15, 40.0, 'ex') + ['stage' => RelationshipDynamics::STAGE_DEEP];
         $this->assertSame(0.0, RelationshipDynamics::passionStageFloor($ex), 'Divorced: no floor, whatever the stage');
         $friend = self::npc('Bold', 0.15, 0.15, 40.0) + ['stage' => RelationshipDynamics::STAGE_DEEP];
+        RelationshipDynamics::setPassion($friend, 30.0);
         $this->assertSame(15.0, RelationshipDynamics::passionStageFloor($friend), 'the deep stage floor 15 is the higher one');
     }
 }
