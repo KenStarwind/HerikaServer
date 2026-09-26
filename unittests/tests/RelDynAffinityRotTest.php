@@ -230,4 +230,18 @@ final class RelDynAffinityRotTest extends TestCase
         $this->assertEqualsWithDelta(self::T0 + 2 * self::DAY, $r[RelDynAbsence::BREAK_KEY]['since_gamets'], 1e-6, 'earlier stamps stay');
         $this->assertLessThanOrEqual($T, $r[RelDynAbsence::BREAK_KEY]['at_gamets']);
     }
+
+    public function testAGrievingPartnersLowPassionIsHerLossNotTheBond(): void
+    {
+        $d = $this->bond('romantic', 60.0, 5.0);
+        $d['_grief_held'] = ['comfort' => -15.0, 'warmth' => -10.0];
+        $this->assertEqualsWithDelta(0.0, $this->calendar($d, 0, 12.0)['rot'], 1e-9, 'the cold romance pauses while she grieves');
+        $this->conflict($d);
+        $this->assertLessThan(0.0, $this->calendar($d, 12.0, 22.0)['rot'], 'an open fight still rots');
+        $e = $this->bond('romantic', 60.0, 5.0);
+        $e['_grief_held'] = ['comfort' => -15.0];
+        $this->calendar($e, 0, 5.0);
+        unset($e['_grief_held']);   // the acute grief lifts
+        $this->assertLessThan(0.0, $this->calendar($e, 5.0, 14.0)['rot'], 'then the romance gone cold rots again');
+    }
 }

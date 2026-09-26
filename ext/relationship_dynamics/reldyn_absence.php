@@ -40,7 +40,8 @@
  * (rotStep, from advanceCalendar), for a bond that existed (context-tier high-water mark >=
  * walkaway_affinity_min_tier), not walking away:
  *   conditions: 'conflict'    an open conflict (in_conflict), any bond that decays;
- *               'low_passion' passion below low_passion_below in a romance (core romantic/crush);
+ *               'low_passion' passion below low_passion_below in a romance (core romantic/crush),
+ *                             paused while a grief's acute offsets are held (her loss, not the bond);
  *   clock:      a condition's rot starts grace_game_days after the later of its onset and the
  *               last positive interaction (markPositive: an eval-scored positive exchange, a
  *               local positive exchange); time alone never resets it, contact does;
@@ -131,6 +132,9 @@ class RelDynAbsence
             ],
             'low_passion_below' => 20.0,         // passion points: the spark level (decisions §13)
             'low_passion_core_types' => ['romantic', 'crush'],   // core Player.type: a romance
+            // While a grief's acute offsets are held (reldyn_protocols.php, _grief_held) her passion is
+            // low for her loss, not for the bond: the cold-romance rot pauses (an open fight still rots)
+            'low_passion_grief_pause' => true,
         ];
     }
 
@@ -370,7 +374,8 @@ class RelDynAbsence
         $gate = RelationshipDynamics::TIER_FLOOR_GATES[$bondType] ?? 'none';
         if (!empty($dynamics['in_conflict']) && $gate !== 'no_decay') $out['conflict'] = true;
         $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
-        if (in_array($core, (array) $cfg['low_passion_core_types'], true)
+        $grieving = !empty($cfg['low_passion_grief_pause']) && is_array($dynamics['_grief_held'] ?? null) && $dynamics['_grief_held'] !== [];
+        if (!$grieving && in_array($core, (array) $cfg['low_passion_core_types'], true)
             && RelationshipDynamics::getPassion($dynamics) < floatval($cfg['low_passion_below'])) {
             $out['low_passion'] = true;
         }
