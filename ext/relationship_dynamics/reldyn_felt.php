@@ -99,7 +99,7 @@ final class RelDynFelt
                 'hoover' => 0.8, 'ick' => 0.8, 'conflict' => 0.75, 'll_reaction' => 0.7, 'parasite' => 0.7,
                 'emergent' => 0.65, 'place' => 0.6, 'gift' => 0.6, 'intimacy' => 0.6, 'unmet' => 0.6,
                 'creature' => 0.6, 'mask_drop' => 0.6, 'topic' => 0.55, 'attraction' => 0.5,
-                'post_combat' => 0.5, 'duty' => 0.9, 'charisma' => 0.45, 'memory' => 0.45, 'weather' => 0.4,
+                'post_combat' => 0.5, 'rescue' => 0.8, 'duty' => 0.9, 'charisma' => 0.45, 'memory' => 0.45, 'weather' => 0.4,
                 'intrinsic_goal' => 1.0, 'reputation' => 0.9,   // x the goal's priority (as the director goal) / x the first impression's weight
             ],
             'passion_salience_offset' => 0.1,    // passion line salience = passion / 100 + this
@@ -542,6 +542,11 @@ final class RelDynFelt
                 $lines[] = self::line('post_combat', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['post_combat']),
                     self::fill((string) $t['combat']['after'], $vars));
             }
+        }
+        // --- The rescue answered with care (MDD 3.3): who she is when the player saved her ---
+        $rescue = RelDynCombat::rescueFeltText($dynamics, $vars, $now > 0 ? $now : RelationshipDynamics::currentGamets());
+        if ($rescue !== null) {
+            $lines[] = self::line('rescue', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['rescue'] ?? 0.8), $rescue);
         }
 
         // --- Attraction (the request's Attraction Matrix read): a first-sight read is fine

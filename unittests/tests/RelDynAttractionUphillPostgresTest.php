@@ -338,6 +338,20 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         ]));
     }
 
+    /**
+     * The tier governors (MDD 8, RelDynGovernors) off: for the tests that pin the attraction
+     * factor alone at passion levels past what Aela's tier would let a gain reach (they are the
+     * governors' own tests' business: RelDynThreatRescueGovernorTest, the combat lane test beds).
+     */
+    private function governorsOff(): void
+    {
+        $row = pg_fetch_assoc(pg_query_params($this->db->link, 'SELECT value FROM conf_opts WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID]));
+        $cfg = json_decode($row['value'], true);
+        $cfg['governors'] = ['enabled' => false] + RelDynGovernors::configDefaults();
+        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID, json_encode($cfg)]);
+        RelationshipDynamics::clearConfigCache();
+    }
+
     /** Aela's attraction for the player as the core rows stand now (RelDynPlayer::profile()). */
     private function attractionNow(array &$d): array
     {
@@ -1209,6 +1223,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
      */
     public function testTheMdd14CeilingForAPillarBelowItsBar(): void
     {
+        $this->governorsOff();   // the MDD 1.4 ceiling alone (80 at high openness is past her tier's)
         $this->bardWith(15);
         $this->turn('A song for the Huntress?');
         $d = $this->dynamics();
@@ -1359,6 +1374,7 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
      */
     public function testEveryPassionPathUsesTheSameFactor(): void
     {
+        $this->governorsOff();   // the attraction factor alone (the Matrix-off run would meet her tier's 40)
         $this->bardWith(30);
         $this->setCoreAff(60);
         $this->turn('A song for the Huntress?');
@@ -1411,7 +1427,8 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         [$this->gamets, $this->realTs] = [$g0, $r0];
         pg_query($this->db->link, 'DELETE FROM moods_issued');
         pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID,
-            json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true, 'attraction_matrix_enabled' => false]))]);
+            json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true, 'attraction_matrix_enabled' => false,
+                'governors' => ['enabled' => false] + RelDynGovernors::configDefaults()]))]);
         RelationshipDynamics::clearConfigCache();
         $off = $evening();
 
