@@ -114,7 +114,7 @@ final class RelDynNpcEditorTest extends TestCase
             ['axis' => 'words', 'label' => 'kind words', 'need' => 2.0, 'coverage' => 3.0],
         ];
         $svg = RelDynEditor::spiderSvg($axes, 200);
-        $this->assertStringStartsWith('<svg viewBox="0 0 200 200" role="img"', $svg);
+        $this->assertStringStartsWith('<svg viewBox="-70 0 340 200" role="img"', $svg);
         $this->assertStringEndsWith('</svg>', $svg);
         $this->assertSame(4 + 2, substr_count($svg, '<polygon'), 'rings + need + coverage');
         $this->assertSame(3, substr_count($svg, '<text'));

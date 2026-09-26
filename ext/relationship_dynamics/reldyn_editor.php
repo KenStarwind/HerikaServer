@@ -79,7 +79,7 @@ final class RelDynEditor
 
     const STATE_LABELS = [
         'override' => 'override', 'derived' => 'derived', 'preset' => 'preset', 'edited' => 'edited', 'state' => 'state',
-        'core' => 'core', 'legacy' => 'April editor', 'readonly' => 'read-only',
+        'core' => 'core', 'legacy' => 'April editor', 'readonly' => 'read-only', 'differs' => 'not derived',
     ];
 
     // =====================================================================
@@ -396,7 +396,8 @@ final class RelDynEditor
                 $resetDims[] = 'passion';
                 continue;
             }
-            $bState = is_numeric($baseline) && abs(floatval($baseline) - $derived) > 1e-6 ? 'edited' : 'derived';
+            // a stored baseline off the derivation: edited, drifted, or seeded before the traits moved
+            $bState = is_numeric($baseline) && abs(floatval($baseline) - $derived) > 0.005 ? 'differs' : 'derived';
             $fields[] = self::field("dim:{$dim}:x", $label, 'number', is_numeric($x) ? round(floatval($x), 2) : null, $common + [
                 'col' => 'x', 'state' => 'state', 'min' => $min, 'max' => $max, 'step' => 0.1,
                 'derived' => is_numeric($baseline) ? floatval($baseline) : $derived,
@@ -836,6 +837,19 @@ final class RelDynEditor
             },
             'reset' => function (array &$dd) { self::clearAttraction($dd, 'passion_pillars', 'passion_pillars'); },
         ]);
+        $markers = [];
+        foreach ((array) $def['status_markers'] as $k => $spec) $markers[] = (string) $k;
+        $fields[] = self::field('attr:status_markers', 'Status markers', 'readonly', $markers ? implode(', ', $markers) : 'none',
+            ['state' => 'readonly', 'hint' => 'from her factions (' . (string) ($def['sources']['status_markers'] ?? '?') . '); set per NPC in the attraction config']);
+        $lens = [];
+        foreach ((array) $def['lens'] as $p => $table) {
+            arsort($table);
+            $top = [];
+            foreach (array_slice($table, 0, 3, true) as $arch => $w) $top[] = $arch . ' ' . self::num($w, 2);
+            $lens[] = $p . ': ' . implode(', ', $top);
+        }
+        $fields[] = self::field('attr:lens', 'Lens (what counts as strength / competence)', 'readonly', $lens ? implode('; ', $lens) : 'none',
+            ['state' => 'readonly', 'hint' => 'player archetypes she values, derived from her facet preferences (edit those)']);
         $rig = RelDynAttraction::RIGIDITIES;
         foreach ($pillars as $p) {
             $fields[] = self::field("attr:rigidity:{$p}", ucfirst($p), 'select', $def['rigidity'][$p], [
@@ -1419,7 +1433,7 @@ html, body { background: #1a1a1a; }
 .rd-meta { flex: 1 1 100%; font-size: .76em; color: #7d7d7d; }
 .rd-badge { display: inline-block; font-size: .72em; padding: 1px 7px; border-radius: 9px; border: 1px solid #555; color: #aaa; white-space: nowrap; }
 .rd-badge.override { border-color: rgb(242,124,17); color: rgb(242,124,17); }
-.rd-badge.edited { border-color: #d6a44a; color: #d6a44a; }
+.rd-badge.edited, .rd-badge.differs { border-color: #d6a44a; color: #d6a44a; }
 .rd-badge.preset { border-color: #6a9fd8; color: #8ab8ea; }
 .rd-badge.core { border-color: #a07ad0; color: #c2a2ea; }
 .rd-badge.legacy { border-color: #c06060; color: #e08a8a; }
@@ -1440,7 +1454,7 @@ table.rd-table td.num { font-family: Consolas, monospace; white-space: nowrap; }
 table.rd-table input[type=number] { width: 84px; }
 .rd-quote { font-style: italic; color: #d8d8d8; }
 .rd-spider { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; margin: 8px 0 14px; }
-.rd-spider svg { width: 280px; max-width: 100%; height: auto; flex: 0 0 auto; }
+.rd-spider svg { width: 360px; max-width: 100%; height: auto; flex: 0 0 auto; }
 .rd-spider .rd-scroll { flex: 1 1 280px; }
 .rd-search { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .rd-search input { flex: 1 1 200px; background: #1a1a1a; border: 1px solid #4a4a4a; color: #f0f0f0; padding: 7px 10px; border-radius: 6px; }
@@ -1503,7 +1517,7 @@ CSS;
 
     private static function resetButton(array $f): string
     {
-        if (empty($f['resettable'])) return '';
+        if (empty($f['resettable']) || $f['state'] === 'derived') return '';   // nothing to clear
         return '<button type="submit" class="rd-reset" name="op" value="' . self::h('reset_field|' . $f['id']) . '" formnovalidate '
             . 'title="Reset this field" aria-label="Reset ' . self::h($f['label']) . '">reset</button>';
     }
@@ -1545,14 +1559,18 @@ CSS;
 
     private static function derivedText(array $f): string
     {
-        if ($f['derived'] === null || $f['derived'] === '' || $f['state'] === 'derived' && self::sameDisplay($f['value'], $f['derived'])) return '';
+        if ($f['derived'] === null || $f['derived'] === '' || self::sameDisplay($f, $f['value'], $f['derived'])) return '';
         $d = $f['derived'];
         return 'derived: ' . (is_float($d) || is_int($d) ? self::num($d, 3) : (is_bool($d) ? ($d ? 'on' : 'off') : (string) $d));
     }
 
-    private static function sameDisplay($a, $b): bool
+    /** Equal as the field shows them (numbers at the field's step). */
+    private static function sameDisplay(array $f, $a, $b): bool
     {
-        if (is_numeric($a) && is_numeric($b)) return abs(floatval($a) - floatval($b)) < 1e-6;
+        if (is_numeric($a) && is_numeric($b)) {
+            $tol = is_numeric($f['step']) ? floatval($f['step']) / 2 : 1e-6;
+            return abs(floatval($a) - floatval($b)) < $tol + 1e-9;
+        }
         return (string) $a === (string) $b;
     }
 
@@ -1733,7 +1751,8 @@ CSS;
             $a = -M_PI / 2 + 2 * M_PI * $i / $n;
             return [round($c + cos($a) * $r * $f, 1), round($c + sin($a) * $r * $f, 1)];
         };
-        $svg = '<svg viewBox="0 0 ' . $size . ' ' . $size . '" role="img" aria-label="Fulfillment spider graph">';
+        $pad = 70;   // room for the axis labels left and right of the rim
+        $svg = '<svg viewBox="' . (-$pad) . ' 0 ' . ($size + 2 * $pad) . ' ' . $size . '" role="img" aria-label="Fulfillment spider graph">';
         foreach ([0.25, 0.5, 0.75, 1.0] as $ring) {
             $pts = [];
             for ($i = 0; $i < $n; $i++) $pts[] = implode(',', $pt($i, $ring));
@@ -1744,10 +1763,10 @@ CSS;
         foreach (array_values($axes) as $i => $a) {
             [$x, $y] = $pt($i, 1.0);
             $svg .= '<line x1="' . $c . '" y1="' . $c . '" x2="' . $x . '" y2="' . $y . '" stroke="#333" stroke-width="1"/>';
-            [$lx, $ly] = $pt($i, 1.16);
+            [$lx, $ly] = $pt($i, 1.12);
             $anchor = abs($lx - $c) < 4 ? 'middle' : ($lx < $c ? 'end' : 'start');
             $svg .= '<text x="' . $lx . '" y="' . $ly . '" fill="#aaa" font-size="9" text-anchor="' . $anchor . '" dominant-baseline="middle">'
-                . self::h(mb_strimwidth((string) ($a['label'] ?? $a['axis']), 0, 22, '…')) . '</text>';
+                . self::h(mb_strimwidth((string) ($a['label'] ?? $a['axis']), 0, 26, '…')) . '</text>';
             $need[] = implode(',', $pt($i, max(0.0, min(1.0, floatval($a['need'] ?? 0)))));
             $cov[] = implode(',', $pt($i, (max(-1.0, min(1.0, floatval($a['coverage'] ?? 0))) + 1) / 2));
         }

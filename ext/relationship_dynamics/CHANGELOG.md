@@ -3,6 +3,19 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Untagged (P5 editor lane) — Every part of her, on one page
+CHIM's plugin page now opens RelDyn's own NPC editor. Pick an NPC from the list (or search) and everything RelDyn
+holds for her is there: each dimension as stored, where it rests, how it reads toward you and what a passing state is
+holding on it; her ten traits with the preset picker and, beside each trait, where it came from (the line of her bio it
+was read from, her class and voice, a preset, or a vector set by hand, whose bio is never read); her attachment, love
+languages, what she loves and hates, her intimacy need, what she finds attractive and how high her bar is, jealousy,
+resentment and its record, the fulfillment spider of each relationship, her switches and clocks, and the states she is
+in (grief, worry, a boundary, a walkaway, the afterglow, the drink). Every value shows whether it is her own derivation
+or an edit; changing one stores an override, leaving it alone keeps it derived, and each field, each section or the
+whole NPC can be put back. Opening the page changes nothing and asks for no reading of her bio; every save goes through
+the same merge the game's own writers use, and only from the page itself. The April editor, which nothing opened any
+more, is gone.
+
 ## reldyn-v0.18 — Her own drink and the morning after, what follows a night, memories that keep what she felt, and the mirror
 A bond breaks while you are away only once the absence feels intentional to her, past what she would excuse given who
 she is and how fulfilled the bond was when you left: the fearful and the anxious break sooner, the secure and the

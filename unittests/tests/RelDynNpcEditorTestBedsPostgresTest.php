@@ -515,7 +515,7 @@ final class RelDynNpcEditorTestBedsPostgresTest extends TestCase
         $this->assertEqualsWithDelta(55.0, RelationshipDynamics::getCoreAffinity($d), 1e-6, 'core affinity moves through the mirror (committed on her next turn)');
 
         $m2 = RelDynEditor::model(self::LYNLY);
-        $this->assertSame('edited', $this->field($m2, 'dimensions', 'dim:comfort:baseline')['state']);
+        $this->assertSame('differs', $this->field($m2, 'dimensions', 'dim:comfort:baseline')['state']);
         $html = $this->get(['npc' => self::LYNLY])['body'];
         $this->assertStringContainsString('name="f[dim:trust:x]" value="71.5"', $html);
 
