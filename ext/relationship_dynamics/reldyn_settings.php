@@ -846,6 +846,7 @@ final class RelDynSettings
         try {
             $row = $db->fetchOne('SELECT id FROM conf_opts WHERE id = $1 LIMIT 1', [RelationshipDynamics::CONFIG_ROW_ID]);
         } catch (\Throwable $e) {
+            RelationshipDynamics::logError('settings: config row check', $e);
             return false;
         }
         return is_array($row) && !empty($row['id']);
