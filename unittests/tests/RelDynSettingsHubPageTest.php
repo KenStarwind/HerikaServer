@@ -355,6 +355,8 @@ PHP);
         foreach (array_keys($d['prompt_gating']['text']['note']) as $k) {
             $this->assertArrayHasKey('f[' . self::code('prompt_gating', 'text', 'note', $k) . ']', $names);
         }
+        $this->assertSame(0, $x->query('//section[@id="rd-gating-tiers" or @id="rd-gating-fames"]//details[contains(@class,"rd-depth-1") or contains(@class,"rd-depth-2")][not(@open)]')->length,
+            'the fragments are open for editing, not folded away');
         $tier = $x->query('//select[@name="f[' . self::code('prompt_gating', 'name_min_tier') . ']"]/option');
         $this->assertSame(array_keys(RelationshipDynamics::RELATIONSHIP_TIERS), array_map(fn($o) => $o->getAttribute('value'), iterator_to_array($tier)));
         // the preview: at friend affinity she knows him, by name

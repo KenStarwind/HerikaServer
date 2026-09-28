@@ -191,7 +191,7 @@ final class RelDynSettingsView
     }
 
     /** A node's fields: a leaf row, or a collapsible table of its children. */
-    public static function node(array $path, array $display, array $overlay, string $form, int $depth = 0): string
+    public static function node(array $path, array $display, array $overlay, string $form, int $depth = 0, bool $forceOpen = false): string
     {
         $default = RelDynSettings::valueAt(RelDynSettings::defaults(), $path);
         if (!RelDynSettings::isAssoc($default)) {
@@ -205,7 +205,7 @@ final class RelDynSettingsView
             return self::fieldRow($code, $field, $d, $s, $form);
         }
         $changed = self::changedUnder($path, $overlay);
-        $open = $depth === 0 || $changed > 0 || count(self::leavesUnder($path)) <= 6;
+        $open = $forceOpen || $depth === 0 || $changed > 0 || count(self::leavesUnder($path)) <= 6;
         $out = '<details class="rd-node rd-depth-' . min($depth, 4) . '"' . ($open ? ' open' : '') . '>'
             . '<summary><span class="rd-node-name">' . self::h(RelDynSettings::humanize((string) end($path))) . '</span>'
             . ' <code class="rd-path">' . self::h(implode('.', array_map('strval', $path))) . '</code>'
@@ -235,8 +235,9 @@ final class RelDynSettingsView
             . '<input type="hidden" name="_complete" value="1"></form>';
     }
 
-    /** A form with the given paths (nodes or leaves) rendered in order. */
-    public static function pathsForm(array $paths, array $display, array $overlay, string $action, string $csrf, string $formKey): string
+    /** A form with the given paths (nodes or leaves) rendered in order ($open: their tables start open). */
+    public static function pathsForm(array $paths, array $display, array $overlay, string $action, string $csrf, string $formKey,
+                                     bool $open = false): string
     {
         $out = self::formOpen($action, $csrf);
         foreach ($paths as $p) {
@@ -245,7 +246,7 @@ final class RelDynSettingsView
                 // a whole section: its card has the title, its tables open below it
                 foreach (array_keys($node) as $k) $out .= self::node(array_merge($p, [$k]), $display, $overlay, $formKey, 1);
             } else {
-                $out .= self::node($p, $display, $overlay, $formKey, count($p) - 1);
+                $out .= self::node($p, $display, $overlay, $formKey, count($p) - 1, $open);
             }
         }
         return $out . self::formClose();
@@ -399,7 +400,7 @@ final class RelDynSettingsView
         foreach (self::gatingCards() as $id => [$title, $blurb, $paths]) {
             $out .= '<section class="rd-section" id="rd-gating-' . self::h($id) . '"><div class="rd-section-head"><h2>' . self::h($title) . '</h2></div>'
                 . '<p class="rd-blurb">' . self::h($blurb) . '</p>'
-                . self::pathsForm($paths, $display, $overlay, $action, $csrf, "gating-{$id}") . '</section>';
+                . self::pathsForm($paths, $display, $overlay, $action, $csrf, "gating-{$id}", $id !== 'holds') . '</section>';
         }
         return $out;
     }
