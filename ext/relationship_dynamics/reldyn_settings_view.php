@@ -12,6 +12,8 @@ final class RelDynSettingsView
     /** Pages other lanes build (agreed paths, relative to this page). */
     const NPC_PAGE = 'npc.php';
     const PLAYER_PAGE = 'player.php';
+    const DRY_RUN_PAGE = 'debug_pipeline.php';
+    const STATE_DUMP_PAGE = 'debug_compose.php';
 
     /** Sections with more settings than this render on request (?open=section). */
     const LAZY_LEAVES = 400;
@@ -467,6 +469,10 @@ final class RelDynSettingsView
         $out = '<section class="rd-section"><div class="rd-section-head"><h2>Player profile</h2></div>'
             . '<p class="rd-blurb">How NPCs experience the player: the behavioural mirror, and the shareable spider-graph card.</p>'
             . '<a class="rd-link-card" href="' . self::h(self::PLAYER_PAGE) . '">Open the player profile</a></section>';
+        $out .= '<section class="rd-section"><div class="rd-section-head"><h2>Debug tools</h2></div>'
+            . '<p class="rd-blurb">Read-only: run an evaluation through the pipeline without saving it, or dump one NPC\'s current state as text.</p>'
+            . '<a class="rd-link-card" href="' . self::h(self::DRY_RUN_PAGE) . '">Pipeline dry run</a> '
+            . '<a class="rd-link-card" href="' . self::h(self::STATE_DUMP_PAGE) . '">NPC state dump</a></section>';
         $out .= '<section class="rd-section"><div class="rd-section-head"><h2>NPC editor</h2></div>'
             . '<p class="rd-blurb">Every RelDyn parameter of one NPC: dimensions, baselines, traits, attachment, love languages, interests, jealousy, resentment, flags and timers.</p>'
             . '<form method="get" action="' . self::h(self::NPC_PAGE) . '" class="rd-preview-form">'

@@ -49,6 +49,10 @@ $section = function (string $name, callable $fn) {
     }
 };
 
+// a dump queues nothing: one request scope for the whole dump, with the NPC's trait read looked
+// up without enqueueing first, so getDynamics' profile resolution finds it memoized (as npc.php does)
+RelationshipDynamics::beginRequest();
+$section('trait read lookup', fn() => RelDynTraitRead::stateFor($npcName, false));
 $now = RelDynPlayerView::gameNow();
 $cfg = RelationshipDynamics::getConfig();
 $dyn = RelationshipDynamics::getDynamics($npcName);

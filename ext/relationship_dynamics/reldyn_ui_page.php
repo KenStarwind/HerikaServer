@@ -81,10 +81,11 @@ final class RelDynUiPage
     public static function nav(string $current): string
     {
         $pages = [
+            'settings.php' => 'RelDyn hub',
+            'npc.php' => 'NPC editor',
             'player.php' => 'Player profile',
             'debug_pipeline.php' => 'Pipeline dry run',
             'debug_compose.php' => 'NPC state dump',
-            'settings.php' => 'Settings',
         ];
         $out = '<nav class="rd-nav" aria-label="Relationship Dynamics pages">';
         foreach ($pages as $file => $label) {

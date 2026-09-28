@@ -94,10 +94,16 @@ foreach ($bonds as $b) {
 }
 $graph = null;
 if ($selected !== null) {
+    // a page view queues nothing: the NPC's trait read is looked up without enqueueing inside
+    // one request scope, so getDynamics' profile resolution finds it memoized (as npc.php does)
+    RelationshipDynamics::beginRequest();
     try {
+        RelDynTraitRead::stateFor($selected, false);
         $graph = RelationshipDynamics::fulfillmentGraph($selected, $now > 0 ? $now : null);
     } catch (\Throwable $e) {
         RelationshipDynamics::logError("player page fulfillment for {$selected}", $e);
+    } finally {
+        RelationshipDynamics::endRequest();
     }
 }
 

@@ -1488,7 +1488,8 @@ CSS;
     public static function renderListPage(array $list, string $search, ?array $flash = null): string
     {
         $out = self::styles() . '<div class="rd-wrap"><div class="rd-header"><h1>Relationship Dynamics: NPCs</h1>'
-            . '<p>Pick an NPC to see and edit every RelDyn parameter. <a href="settings.php">Global settings</a></p></div>';
+            . '<p>Pick an NPC to see and edit every RelDyn parameter. <a href="settings.php">Global settings</a> · '
+            . '<a href="player.php">Player profile</a> · <a href="debug_pipeline.php">Pipeline dry run</a></p></div>';
         $out .= self::flashHtml($flash);
         $out .= '<form method="get" action="' . self::h(self::PAGE) . '" class="rd-search" role="search">'
             . '<input type="search" name="q" value="' . self::h($search) . '" placeholder="Search NPC names" aria-label="Search NPC names">'
@@ -1592,6 +1593,8 @@ CSS;
         $npc = $model['npc'];
         $out = self::styles() . '<div class="rd-wrap"><div class="rd-header"><h1>' . self::h($npc) . '</h1>'
             . '<p><a href="' . self::h(self::pageUrl()) . '">All NPCs</a> · <a href="settings.php">Global settings</a> · '
+            . '<a href="' . self::h('debug_pipeline.php?npc=' . rawurlencode($npc)) . '">Dry run</a> · '
+            . '<a href="' . self::h('debug_compose.php?npc=' . rawurlencode($npc)) . '">State dump</a> · '
             . ($model['tracked'] ? 'RelDyn has state for this NPC' : 'RelDyn has not seen this NPC yet: values shown are derived, a save stores them') . '</p></div>';
         $out .= self::flashHtml($flash);
         $out .= '<nav class="rd-nav" aria-label="Sections">';
