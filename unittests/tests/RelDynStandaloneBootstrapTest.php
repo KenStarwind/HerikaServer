@@ -110,10 +110,12 @@ final class RelDynStandaloneBootstrapTest extends TestCase
             $this->assertIsString($manifest[$key] ?? null, "manifest.json missing {$key}");
             $this->assertNotSame('', trim($manifest[$key]));
         }
-        // P5 (decisions 2026-09-23 §4): 3.4.1 has no NPC editor hooks, so the editor is the plugin's
-        // config page, opened in its own tab like Sharmat's (ext/aiagent_nsfw/manifest.json)
-        $this->assertSame('/HerikaServer/ext/relationship_dynamics/npc.php', $manifest['config_url'] ?? null);
+        // Phase 5: the Server Plugins button opens the RelDyn hub (settings.php), a page this test boots;
+        // the hub links the NPC editor, the player profile and the debug pages. Opened in its own tab like
+        // Sharmat's (ext/aiagent_nsfw/manifest.json)
+        $this->assertSame('/HerikaServer/ext/relationship_dynamics/settings.php', $manifest['config_url'] ?? null);
         $this->assertSame('_blank', $manifest['config_url_target'] ?? null);
+        $this->assertContains('settings.php', self::PAGES);
         $this->assertFileExists(self::engineRoot() . '/ext/relationship_dynamics/' . basename($manifest['config_url']));
     }
 

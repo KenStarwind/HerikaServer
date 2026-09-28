@@ -1,12 +1,18 @@
 <?php
 /**
- * Relationship Dynamics — Global Settings Page
+ * Relationship Dynamics — the RelDyn hub (roadmap settings-page, prompt-gating-admin).
  *
- * Tuning knobs for passion, diminishing returns, warmth curves,
- * jealousy, conflict/repair, stages, and reunion.
+ * Opened from Server Plugins (manifest.json config_url). Tabs:
+ *   Settings       every config key RelDyn has, generated from defaultConfig() and grouped by
+ *                  subsystem, with its default, whether the stored row overrides it, and a reset
+ *   Prompt gating  who knows the player: switches, tier and fame fragments, the hold map, and a
+ *                  read-only preview for one NPC at her real bond or any affinity
+ *   NPCs & player  links to the per-NPC editor (npc.php?npc=<name>) and the player profile (player.php)
+ *   Reference      formulas and the built-in tables
  *
- * Embeddable in config_hub.php or standalone.
- * Reads/writes conf_opts key 'relationship_dynamics_config'.
+ * Reads/writes conf_opts 'relationship_dynamics_config' through RelDynSettings (saveConfig, schema
+ * stamp). Writes are POST only with the session CSRF token; GET never writes. ?embed=1 drops the
+ * CHIM chrome.
  */
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -25,30 +31,48 @@ chimRuntimeBootstrapIfNeeded($enginePath, [
 ]);
 
 require_once __DIR__ . '/relationship_dynamics.php';
+require_once __DIR__ . '/reldyn_settings.php';
+require_once __DIR__ . '/reldyn_settings_view.php';
 
-// Web root for assets
-$scriptPath = $_SERVER['SCRIPT_NAME'];
+// Web root for assets (as core pages find it)
+$scriptPath = (string) ($_SERVER['SCRIPT_NAME'] ?? '');
 $extPos = strpos($scriptPath, '/ext/');
-$webRoot = ($extPos !== false) ? substr($scriptPath, 0, $extPos) : '';
-$webRoot = rtrim($webRoot, '/');
+$webRoot = rtrim(($extPos !== false) ? substr($scriptPath, 0, $extPos) : '', '/');
 
 $embed = isset($_GET['embed']);
+$tab = (string) ($_GET['tab'] ?? 'settings');
+if (!in_array($tab, ['settings', 'gating', 'people', 'reference'], true)) $tab = 'settings';
+$group = (string) ($_GET['group'] ?? 'features');
+if (!isset(RelDynSettings::GROUPS[$group])) $group = 'features';
+$openSection = isset($_GET['open']) && is_string($_GET['open']) && array_key_exists($_GET['open'], RelDynSettings::defaults())
+    ? $_GET['open'] : null;
+$previewNpc = trim((string) ($_GET['npc'] ?? ''));
+$previewAff = (isset($_GET['aff']) && is_numeric($_GET['aff'])) ? max(-100.0, min(100.0, floatval($_GET['aff']))) : null;
+
+$csrfToken = RelDynSettings::csrfToken();
 
 // =========================================================================
-// Handle POST save
+// POST: save or reset (CSRF-checked inside); GET never writes
 // =========================================================================
-$saveMsg = '';
-$saveOk = false;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_reldyn'])) {
-    // Parsing, clamping and the known-key filter live in the engine (configFromForm):
-    // each checkbox follows a hidden "" input, so its value decides on/off, not isset().
-    $saveOk = RelationshipDynamics::saveConfigFromForm($_POST);
-    $saveMsg = $saveOk ? 'Settings saved.' : 'Settings could not be saved (see the server log).';
+$result = [];
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    $result = RelDynSettings::handlePost($_POST);
+    if (!$result['ok'] && !RelDynSettings::csrfValid($_POST['csrf_token'] ?? null) && !headers_sent()) {
+        http_response_code(403);
+    }
 }
 
-// Load current config
-$cfg = RelationshipDynamics::getConfig();
+// One request scope for the render (after any save, which closes the scope it clears): the config
+// row and the player profile the preview reads are fetched once, not once per section / tier.
+RelationshipDynamics::beginRequest();
+$display = RelDynSettings::effective();
+$overlay = RelDynSettings::storedOverlay();
+$action = RelDynSettingsView::url(['tab' => $tab, 'group' => $tab === 'settings' ? $group : null,
+    'open' => $tab === 'settings' ? $openSection : null], $embed);
+$npcNames = in_array($tab, ['gating', 'people'], true) ? RelDynSettings::npcNames() : [];
+$manifest = json_decode((string) @file_get_contents(__DIR__ . '/manifest.json'), true);
+$version = is_array($manifest) ? (string) ($manifest['version'] ?? '') : '';
+$h = [RelDynSettingsView::class, 'h'];
 
 // =========================================================================
 // HTML
@@ -57,690 +81,244 @@ if (!$embed) {
     $TITLE = "Relationship Dynamics";
     ob_start();
     include $enginePath . 'ui/tmpl/head.html';
+    echo '<link rel="stylesheet" href="' . $h($webRoot) . '/ui/css/main.css">';
     include $enginePath . 'ui/tmpl/navbar.php';
 }
 ?>
-
-<?php if (!$embed): ?>
-<link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css">
-<?php endif; ?>
-
 <style>
-html, body {
-    background: #1a1a1a;
-}
 .rd-wrap {
-    padding: <?php echo $embed ? '20px' : '80px 10% 40px'; ?>;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    color: #e0e0e0;
-    max-width: 960px;
+    --rd-accent: rgb(242, 124, 17);
+    --rd-panel: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
+    --rd-border: #3a3a3a;
+    --rd-text: #e0e0e0;
+    --rd-muted: #9a9a9a;
+    box-sizing: border-box;
+    padding: <?php echo $embed ? '16px' : '80px 16px 48px'; ?>;
+    max-width: 1100px;
     margin: 0 auto;
-    background: #1a1a1a;
+    color: var(--rd-text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
-.rd-header {
-    background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(28, 28, 28, 0.98));
-    padding: 20px 24px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-    border: 1px solid #3a3a3a;
+.rd-wrap *, .rd-wrap *::before, .rd-wrap *::after { box-sizing: border-box; }
+.rd-header { background: var(--rd-panel); padding: 18px 20px; border-radius: 10px; border: 1px solid var(--rd-border); margin-bottom: 14px; }
+.rd-header h1 { font-family: 'MagicCards', serif; color: var(--rd-accent); margin: 0 0 4px; font-size: 1.6em; letter-spacing: 1px; }
+.rd-header p { color: #9fb1c9; margin: 0; font-size: 0.9em; }
+.rd-version { color: var(--rd-muted); font-size: 0.55em; letter-spacing: 0; margin-left: 6px; }
+.rd-tabs, .rd-groups { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.rd-tab, .rd-pill { display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--rd-border); background: #242424; color: #cfcfcf; text-decoration: none; font-size: 0.92em; }
+.rd-pill { padding: 5px 11px; border-radius: 16px; font-size: 0.85em; }
+.rd-tab.active, .rd-pill.active { border-color: var(--rd-accent); color: #fff; background: rgba(242, 124, 17, 0.18); }
+.rd-tab:hover, .rd-pill:hover { color: #fff; border-color: rgba(242, 124, 17, 0.6); }
+.rd-pill-count { background: var(--rd-accent); color: #111; border-radius: 10px; padding: 0 6px; font-size: 0.8em; margin-left: 4px; }
+.rd-section { background: var(--rd-panel); padding: 16px 18px; border-radius: 10px; border: 1px solid var(--rd-border); margin-bottom: 14px; }
+.rd-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 10px; border-bottom: 1px solid rgba(242, 124, 17, 0.2); padding-bottom: 8px; }
+.rd-section h2 { font-family: 'MagicCards', serif; color: var(--rd-accent); font-size: 1.15em; margin: 0; letter-spacing: 1px; }
+.rd-section h3 { color: #f0c090; font-size: 1em; margin: 14px 0 8px; }
+.rd-section h4 { color: #d8d8d8; font-size: 0.9em; margin: 12px 0 4px; }
+.rd-count { color: var(--rd-muted); font-size: 0.82em; }
+.rd-blurb { color: var(--rd-muted); font-size: 0.86em; margin: 0 0 10px; }
+.rd-path { color: #7fa7c9; font-size: 0.78em; background: transparent; word-break: break-all; }
+.rd-field { display: grid; grid-template-columns: minmax(180px, 30%) 1fr; gap: 4px 14px; padding: 8px 0; border-bottom: 1px solid #2c2c2c; }
+.rd-field-head { grid-row: span 2; min-width: 0; }
+.rd-field-head label { display: block; color: #d6d6d6; font-size: 0.9em; margin: 0; }
+.rd-field-body, .rd-field-meta, .rd-hint { min-width: 0; }
+.rd-field-meta { font-size: 0.78em; color: var(--rd-muted); }
+.rd-hint { grid-column: 2; font-size: 0.78em; color: #7d7d7d; }
+.rd-field.rd-changed { background: rgba(242, 124, 17, 0.06); }
+.rd-field.rd-changed .rd-field-head label { color: #ffcf9f; }
+.rd-wrap input[type="text"], .rd-wrap input[type="number"], .rd-wrap input[type="search"], .rd-wrap select, .rd-wrap textarea {
+    background: #1a1a1a; border: 1px solid #4a4a4a; color: #f0f0f0; padding: 6px 9px; border-radius: 6px; font-size: 0.9em; max-width: 100%;
 }
-.rd-header h1 {
-    font-family: 'MagicCards', serif;
-    color: rgb(242, 124, 17);
-    margin: 0 0 4px;
-    font-size: 1.6em;
-    letter-spacing: 1px;
-}
-.rd-header p {
-    color: #9fb1c9;
-    margin: 0;
-    font-size: 0.9em;
-}
-.rd-section {
-    background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-    padding: 20px 24px;
-    border-radius: 10px;
-    border: 1px solid #3a3a3a;
-    margin-bottom: 16px;
-}
-.rd-section h2 {
-    font-family: 'MagicCards', serif;
-    color: rgb(242, 124, 17);
-    font-size: 1.15em;
-    margin: 0 0 14px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid rgba(242, 124, 17, 0.2);
-    letter-spacing: 1px;
-}
-.rd-row {
-    display: flex;
-    align-items: center;
-    margin-bottom: 10px;
-    gap: 12px;
-}
-.rd-row label {
-    flex: 0 0 280px;
-    font-size: 0.88em;
-    color: #c8c8c8;
-}
-.rd-row input[type="number"],
-.rd-row input[type="text"] {
-    background: #1a1a1a;
-    border: 1px solid #4a4a4a;
-    color: #f0f0f0;
-    padding: 6px 10px;
-    border-radius: 6px;
-    width: 120px;
-    font-size: 0.9em;
-}
-.rd-row input[type="number"]:focus,
-.rd-row input[type="text"]:focus {
-    border-color: rgb(242, 124, 17);
-    outline: none;
-    box-shadow: 0 0 4px rgba(242, 124, 17, 0.3);
-}
-.rd-row .rd-hint {
-    font-size: 0.78em;
-    color: #777;
-    flex: 1;
-}
-.rd-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-}
-.rd-toggle input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    accent-color: rgb(242, 124, 17);
-}
-.rd-toggle label {
-    font-size: 0.88em;
-    color: #c8c8c8;
-    cursor: pointer;
-}
-.rd-save-bar {
-    position: sticky;
-    bottom: 0;
-    background: linear-gradient(180deg, rgba(28, 28, 28, 0.95), rgba(20, 20, 20, 0.98));
-    padding: 14px 24px;
-    border-radius: 10px;
-    border: 1px solid #3a3a3a;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-top: 8px;
-}
-.rd-save-bar button {
-    background: linear-gradient(180deg, rgb(242, 124, 17), rgb(200, 95, 5));
-    color: #fff;
-    border: none;
-    padding: 10px 28px;
-    border-radius: 8px;
-    font-size: 1em;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    letter-spacing: 0.5px;
-}
-.rd-save-bar button:hover {
-    background: linear-gradient(180deg, rgb(255, 140, 30), rgb(242, 124, 17));
-    box-shadow: 0 2px 8px rgba(242, 124, 17, 0.4);
-}
-.rd-msg {
-    font-size: 0.9em;
-    padding: 8px 14px;
-    border-radius: 6px;
-    margin-bottom: 16px;
-}
+.rd-wrap input[type="text"], .rd-wrap textarea, .rd-wrap select { width: 100%; }
+.rd-wrap input.rd-num { width: 160px; }
+.rd-wrap textarea { font-family: inherit; resize: vertical; }
+.rd-wrap textarea.rd-json, .rd-pre { font-family: Consolas, 'Courier New', monospace; font-size: 0.82em; }
+.rd-wrap input:focus, .rd-wrap textarea:focus, .rd-wrap select:focus { border-color: var(--rd-accent); outline: none; box-shadow: 0 0 4px rgba(242, 124, 17, 0.3); }
+.rd-check { width: 20px; height: 20px; accent-color: var(--rd-accent); }
+.rd-badge { background: rgba(242, 124, 17, 0.2); color: #ffb870; border: 1px solid rgba(242, 124, 17, 0.5); border-radius: 10px; padding: 0 7px; font-size: 0.9em; }
+.rd-note { color: #9fd0ff; }
+.rd-default pre { white-space: pre-wrap; margin: 4px 0; color: #bbb; }
+.rd-default summary { cursor: pointer; }
+.rd-reset { background: #2d2d2d; color: #ffcf9f; border: 1px solid #5a4630; border-radius: 6px; padding: 1px 9px; font-size: 0.95em; cursor: pointer; }
+.rd-reset:hover { border-color: var(--rd-accent); }
+.rd-node { margin: 6px 0; border-left: 2px solid #333; padding-left: 10px; }
+.rd-node > summary { cursor: pointer; color: #f0c090; padding: 4px 0; }
+.rd-node-name { font-weight: 600; }
+.rd-save-bar { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--rd-border); background: rgba(20, 20, 20, 0.97); z-index: 5; }
+.rd-save { background: linear-gradient(180deg, rgb(242, 124, 17), rgb(200, 95, 5)); color: #fff; border: none; padding: 8px 22px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+.rd-save:hover { background: linear-gradient(180deg, rgb(255, 140, 30), rgb(242, 124, 17)); }
+.rd-save-note { font-size: 0.8em; color: #7d7d7d; }
+.rd-form-inline { display: inline; margin-left: auto; }
+.rd-msg { font-size: 0.9em; padding: 8px 14px; border-radius: 6px; margin-bottom: 10px; }
 .rd-msg.ok { background: rgba(40, 167, 69, 0.15); color: #5ddf7e; border: 1px solid rgba(40, 167, 69, 0.3); }
 .rd-msg.err { background: rgba(220, 53, 69, 0.15); color: #f08090; border: 1px solid rgba(220, 53, 69, 0.3); }
-.rd-curve-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 8px;
-    font-size: 0.85em;
-}
-.rd-curve-table th {
-    text-align: left;
-    padding: 6px 10px;
-    color: rgb(242, 124, 17);
-    border-bottom: 1px solid #4a4a4a;
-    font-weight: 600;
-}
-.rd-curve-table td {
-    padding: 5px 10px;
-    border-bottom: 1px solid #2a2a2a;
-    color: #b0b0b0;
-}
-.rd-curve-table tr:hover td {
-    color: #e0e0e0;
-    background: rgba(242, 124, 17, 0.05);
-}
-.rd-formula {
-    background: #1a1a1a;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
-    padding: 10px 14px;
-    font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 0.85em;
-    color: #d4d4d4;
-    margin: 8px 0;
-    white-space: pre-wrap;
+.rd-filter { margin: 0 0 12px; }
+.rd-filter input { width: 100%; }
+.rd-switches .rd-switch { position: relative; }
+.rd-switch.rd-off .rd-field-head label { color: #9a9a9a; }
+.rd-ships-off-tag { position: absolute; right: 0; top: 8px; font-size: 0.72em; color: #9fd0ff; border: 1px solid #36506a; border-radius: 10px; padding: 0 6px; }
+.rd-status { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px; }
+.rd-status li { font-size: 0.9em; }
+.rd-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; background: #666; }
+.rd-status li.on .rd-dot { background: #5ddf7e; }
+.rd-status li.off .rd-dot { background: #f08090; }
+.rd-preview-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.rd-preview-form input[type="text"] { width: auto; flex: 1 1 200px; }
+.rd-preview-form input[type="number"] { width: 110px; }
+.rd-pre { white-space: pre-wrap; background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 8px 10px; color: #d4d4d4; margin: 0 0 8px; }
+.rd-scroll { overflow-x: auto; }
+.rd-table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+.rd-table th { text-align: left; padding: 6px 10px; color: var(--rd-accent); border-bottom: 1px solid #4a4a4a; font-weight: 600; }
+.rd-table td { padding: 5px 10px; border-bottom: 1px solid #2a2a2a; color: #c0c0c0; vertical-align: top; }
+.rd-kv th { width: 34%; color: #bbb; }
+.rd-formula { background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 6px; padding: 10px 14px; font-family: Consolas, 'Courier New', monospace; font-size: 0.85em; color: #d4d4d4; margin: 8px 0; white-space: pre-wrap; overflow-x: auto; }
+.rd-npc-links { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
+.rd-npc-links a, .rd-link-card { color: #9fd0ff; text-decoration: none; }
+.rd-npc-links a:hover, .rd-link-card:hover { text-decoration: underline; }
+.rd-link-card { display: inline-block; padding: 8px 14px; border: 1px solid #36506a; border-radius: 8px; }
+.rd-hidden { display: none !important; }
+.rd-default-submit { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+@media (max-width: 640px) {
+    .rd-wrap { padding: <?php echo $embed ? '10px' : '70px 10px 40px'; ?>; }
+    .rd-field { grid-template-columns: 1fr; }
+    .rd-field-head { grid-row: auto; }
+    .rd-hint { grid-column: 1; }
+    .rd-wrap input.rd-num { width: 100%; }
+    .rd-ships-off-tag { position: static; display: inline-block; margin-bottom: 4px; }
+    .rd-section { padding: 12px 10px; }
 }
 </style>
-
-<div class="rd-wrap">
+<main class="rd-wrap" id="rd-hub">
     <div class="rd-header">
-        <h1>Relationship Dynamics</h1>
-        <p>RPM / Speed / Gears &mdash; passion drives affinity gain, diminishing returns enforce multi-day pacing</p>
+        <h1>Relationship Dynamics<?php if ($version !== ''): ?><span class="rd-version">v<?php echo $h($version); ?></span><?php endif; ?></h1>
+        <p>How NPCs feel about the player and each other. Every setting here has a default; only what you change is stored.</p>
     </div>
+    <?php echo RelDynSettingsView::tabs($tab, $embed); ?>
+    <?php echo RelDynSettingsView::messages($result); ?>
 
-    <?php if ($saveMsg): ?>
-        <div class="rd-msg <?php echo $saveOk ? 'ok' : 'err'; ?>"><?php echo htmlspecialchars($saveMsg); ?></div>
+<?php if ($tab === 'settings'): ?>
+    <?php echo RelDynSettingsView::groupNav($group, $overlay, $embed); ?>
+    <p class="rd-blurb"><?php echo $h(RelDynSettings::GROUPS[$group][1]); ?></p>
+    <?php echo RelDynSettingsView::filterBox(); ?>
+    <?php if ($group === 'features'): ?>
+        <section class="rd-section" id="rd-features"><div class="rd-section-head"><h2>Feature switches</h2></div>
+        <?php echo RelDynSettingsView::featuresPanel($display, $overlay, $action, $csrfToken); ?>
+        </section>
+    <?php else: ?>
+        <?php echo RelDynSettingsView::groupPanel($group, $display, $overlay, $action, $csrfToken, $openSection, $embed); ?>
     <?php endif; ?>
 
-    <form method="post" action="">
+<?php elseif ($tab === 'gating'): ?>
+    <?php echo RelDynSettingsView::gatingPreviewPanel($previewNpc, $previewAff, $npcNames, $embed); ?>
+    <?php echo RelDynSettingsView::filterBox(); ?>
+    <?php echo RelDynSettingsView::gatingPanel($display, $overlay, $action, $csrfToken); ?>
 
-    <!-- General -->
-    <div class="rd-section">
-        <h2>General</h2>
-        <div class="rd-toggle">
-            <input type="hidden" name="enabled" value="">
-            <input type="checkbox" name="enabled" id="rd_enabled" <?php if (!empty($cfg['enabled'])) echo 'checked'; ?>>
-            <label for="rd_enabled">System Enabled</label>
-        </div>
-        <div class="rd-toggle">
-            <input type="hidden" name="log_enabled" value="">
-            <input type="checkbox" name="log_enabled" id="rd_log" <?php if (!empty($cfg['log_enabled'])) echo 'checked'; ?>>
-            <label for="rd_log">Debug Logging</label>
-        </div>
-    </div>
+<?php elseif ($tab === 'people'): ?>
+    <?php echo RelDynSettingsView::peoplePanel($npcNames, $embed); ?>
 
-    <!-- Subsystem Toggles -->
-    <div class="rd-section">
-        <h2>Subsystem Toggles</h2>
-        <p style="color:#888; font-size:0.85em; margin-bottom:12px;">Enable or disable individual systems. All default to ON. Disabling a subsystem skips its processing entirely — zero overhead.</p>
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
-            <div class="rd-toggle">
-                <input type="hidden" name="passion_enabled" value="">
-                <input type="checkbox" name="passion_enabled" id="rd_passion" <?php if ($cfg['passion_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_passion" title="Passion accumulation from interactions (RPM engine)">Passion / RPM</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="ambient_enabled" value="">
-                <input type="checkbox" name="ambient_enabled" id="rd_ambient" <?php if ($cfg['ambient_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_ambient" title="Environmental resonance — passive warmth in matching locations">Ambient / POI</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="combat_enabled" value="">
-                <input type="checkbox" name="combat_enabled" id="rd_combat" <?php if ($cfg['combat_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_combat" title="Combat events classified as acts of service / combat failure">Combat Events</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="jealousy_enabled" value="">
-                <input type="checkbox" name="jealousy_enabled" id="rd_jealousy" <?php if ($cfg['jealousy_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_jealousy" title="Jealousy triggers from flirting with others while committed NPC is nearby">Jealousy</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="reunion_enabled" value="">
-                <input type="checkbox" name="reunion_enabled" id="rd_reunion" <?php if ($cfg['reunion_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_reunion" title="Passion spike when reuniting with an NPC after in-game separation">Reunion Spike</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="conflict_enabled" value="">
-                <input type="checkbox" name="conflict_enabled" id="rd_conflict" <?php if ($cfg['conflict_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_conflict" title="Conflict entry from affinity drops or high jealousy, repair bonus from positive interactions">Conflict / Repair</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="topic_bonus_enabled" value="">
-                <input type="checkbox" name="topic_bonus_enabled" id="rd_topic" <?php if ($cfg['topic_bonus_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_topic" title="Bonus passion when conversation topic matches NPC interests (via Oghma vector similarity)">Topic Talk Bonus</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="flirt_bonus_enabled" value="">
-                <input type="checkbox" name="flirt_bonus_enabled" id="rd_flirt" <?php if ($cfg['flirt_bonus_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_flirt" title="Stacking bonus when NPC mood is flirty AND location or topic matches">Flirt-in-Context</label>
-            </div>
-            <div class="rd-toggle">
-                <input type="hidden" name="type_filter_enabled" value="">
-                <input type="checkbox" name="type_filter_enabled" id="rd_typefilter" <?php if ($cfg['type_filter_enabled'] ?? true) echo 'checked'; ?>>
-                <label for="rd_typefilter" title="Relationship preference gates which relationship types are available (demisexual, asexual, etc)">Type Filter</label>
-            </div>
-        </div>
-    </div>
-
-    <!-- XYZ Dimension Engine -->
-    <div class="rd-section">
-        <h2>XYZ Dimension Engine</h2>
-        <p style="color:#888; font-size:0.85em; margin-bottom:12px;">Multi-dimensional relationship physics. Each dimension tracks X (value), Y (resistance/plasticity), Z (rubber band strength). Requires Chunks 1-3 integrated.</p>
-        <div class="rd-formula">actual_delta = raw_eval_delta * Y_resistance * Z_distance_decay
-  Z_decay(away)  = 1 / (1 + |X - baseline| / Z)    Z_decay(toward) = min(3.0, 1 + |X - baseline| / Z)</div>
-        <div class="rd-toggle">
-            <input type="hidden" name="dimension_engine_enabled" value="">
-            <input type="checkbox" name="dimension_engine_enabled" id="rd_dim_engine" <?php if (!empty($cfg['dimension_engine_enabled'])) echo 'checked'; ?>>
-            <label for="rd_dim_engine" title="Master toggle for the XYZ dimension framework (trust, comfort, respect, maturity, resentment, M/F, arousal/valence)">Dimension Engine Enabled</label>
-        </div>
-        <div class="rd-toggle">
-            <input type="hidden" name="dimension_context_enabled" value="">
-            <input type="checkbox" name="dimension_context_enabled" id="rd_dim_ctx" <?php if (!empty($cfg['dimension_context_enabled'])) echo 'checked'; ?>>
-            <label for="rd_dim_ctx" title="Inject dimension band keywords (e.g. 'suspicious, watches for deception') into the LLM context prompt">Context Keyword Injection</label>
-        </div>
-        <div class="rd-toggle">
-            <input type="hidden" name="dimension_debug_logging" value="">
-            <input type="checkbox" name="dimension_debug_logging" id="rd_dim_debug" <?php if (!empty($cfg['dimension_debug_logging'])) echo 'checked'; ?>>
-            <label for="rd_dim_debug" title="Verbose logging of applyDelta() calculations, band lookups, and plasticity profile resolution">Dimension Debug Logging</label>
-        </div>
-        <div class="rd-row" style="margin-top:10px;">
-            <label>Diary Reflection Mode</label>
-            <div style="display:flex; gap:18px; align-items:center;">
-                <label style="font-weight:normal; cursor:pointer;">
-                    <input type="radio" name="diary_reflection_mode" value="baseline" <?php if (($cfg['diary_reflection_mode'] ?? 'baseline') === 'baseline') echo 'checked'; ?>>
-                    Baseline <span style="color:#888; font-size:0.85em;">(Cheap &mdash; math only)</span>
-                </label>
-                <label style="font-weight:normal; cursor:pointer;">
-                    <input type="radio" name="diary_reflection_mode" value="trajectory" <?php if (($cfg['diary_reflection_mode'] ?? 'baseline') === 'trajectory') echo 'checked'; ?>>
-                    Trajectory <span style="color:#888; font-size:0.85em;">(Rich &mdash; LLM call)</span>
-                </label>
-            </div>
-            <span class="rd-hint">Baseline: compares dimensional snapshots with math. Trajectory: one LLM call reads the NPC's recent entries in core's diary.</span>
-        </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
-            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 10: Behavioral Systems</p>
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
-                <div class="rd-toggle">
-                    <input type="hidden" name="divine_intervention_enabled" value="">
-                    <input type="checkbox" name="divine_intervention_enabled" id="rd_divine" <?php if ($cfg['divine_intervention_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_divine" title="Divine Intervention: automatic corrective events when relationships stagnate or spiral">Divine Intervention</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="grief_system_enabled" value="">
-                    <input type="checkbox" name="grief_system_enabled" id="rd_grief" <?php if ($cfg['grief_system_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_grief" title="Grief system: NPC death creates grief bonds, widow's lock caps new affinity">Grief System</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="attachment_style_enabled" value="">
-                    <input type="checkbox" name="attachment_style_enabled" id="rd_attach" <?php if ($cfg['attachment_style_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_attach" title="Attachment styles: secure/avoidant/anxious/toxic modify decay, resentment, and absence behavior">Attachment Styles</label>
-                </div>
-            </div>
-        </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
-            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 11: Attraction Matrix</p>
-            <div class="rd-toggle">
-                <input type="hidden" name="attraction_matrix_enabled" value="">
-                <input type="checkbox" name="attraction_matrix_enabled" id="rd_attraction_matrix" <?php if (!empty($cfg['attraction_matrix_enabled'])) echo 'checked'; ?>>
-                <label for="rd_attraction_matrix" title="Attraction Matrix: pre-filter tier gating based on NPC attraction profile (beauty keywords, intimacy gate, gender preference)">Attraction Matrix</label>
-            </div>
-            <div class="rd-row">
-                <label for="rd_attraction_eval_interval">Re-evaluate every N interactions</label>
-                <input type="number" step="1" min="1" max="50" id="rd_attraction_eval_interval" name="attraction_eval_interval"
-                       value="<?php echo intval($cfg['attraction_eval_interval'] ?? 10); ?>">
-                <span class="rd-hint">How often to recalculate the attraction matrix (default: 10)</span>
-            </div>
-        </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
-            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 12: Affinity Network</p>
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
-                <div class="rd-toggle">
-                    <input type="hidden" name="cascade_network_enabled" value="">
-                    <input type="checkbox" name="cascade_network_enabled" id="rd_cascade" <?php if (!empty($cfg['cascade_network_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_cascade" title="Cascading Affinity: actions ripple to bonded NPCs based on bond strength">Cascading Affinity</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="duty_override_enabled" value="">
-                    <input type="checkbox" name="duty_override_enabled" id="rd_duty" <?php if (!empty($cfg['duty_override_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_duty" title="Duty Override: quest dialogue protection dampens negative eval deltas during obligation interactions">Duty Override</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="parasite_detection_enabled" value="">
-                    <input type="checkbox" name="parasite_detection_enabled" id="rd_parasite" <?php if (!empty($cfg['parasite_detection_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_parasite" title="Parasite Detection: gift-only relationship warning when NPC detects transactional pattern">Parasite Detection</label>
-                </div>
-            </div>
-        </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
-            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 13: Environmental Quirks</p>
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
-                <div class="rd-toggle">
-                    <input type="hidden" name="significance_scaling_enabled" value="">
-                    <input type="checkbox" name="significance_scaling_enabled" id="rd_significance" <?php if (!empty($cfg['significance_scaling_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_significance" title="Interaction Significance Scaling: 1-3x delta bands based on interaction weight">Significance Scaling</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="baseline_drift_enabled" value="">
-                    <input type="checkbox" name="baseline_drift_enabled" id="rd_drift" <?php if (!empty($cfg['baseline_drift_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_drift" title="Baseline Drift: sustained behavior shifts the rubber band center over time">Baseline Drift</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="internal_weather_enabled" value="">
-                    <input type="checkbox" name="internal_weather_enabled" id="rd_weather" <?php if (!empty($cfg['internal_weather_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_weather" title="Internal Weather: interest deprivation mood system (sunny/overcast/stormy)">Internal Weather</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="creature_moodifications_enabled" value="">
-                    <input type="checkbox" name="creature_moodifications_enabled" id="rd_creature" <?php if (!empty($cfg['creature_moodifications_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_creature" title="Vampire/Werewolf Moodifications: night/moon dimension modifiers for creature NPCs">Vampire/Werewolf Moodifications</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="emergent_emotions_enabled" value="">
-                    <input type="checkbox" name="emergent_emotions_enabled" id="rd_emergent" <?php if (!empty($cfg['emergent_emotions_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_emergent" title="Emergent Emotion Labeling: detect complex emotional states from dimension combinations">Emergent Emotions</label>
-                </div>
-            </div>
-        </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
-            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 14: Social Masking + Autonomous Diary</p>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-                <div class="rd-toggle">
-                    <input type="hidden" name="social_masking_enabled" value="">
-                    <input type="checkbox" name="social_masking_enabled" id="rd_masking" <?php if (!empty($cfg['social_masking_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_masking" title="Social Masking: dual-state public/private behavior">Social Masking</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="autonomous_diary_enabled" value="">
-                    <input type="checkbox" name="autonomous_diary_enabled" id="rd_diary_auto" <?php if (!empty($cfg['autonomous_diary_enabled'])) echo 'checked'; ?>>
-                    <label for="rd_diary_auto" title="Autonomous Diary: NPC-driven reflection triggers">Autonomous Diary</label>
-                </div>
-            </div>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px;">
-                <div class="rd-row">
-                    <label for="rd_diary_gap">Diary interaction gap</label>
-                    <input type="number" step="1" min="5" max="50" id="rd_diary_gap" name="diary_interaction_gap"
-                           value="<?php echo intval($cfg['diary_interaction_gap'] ?? 15); ?>">
-                </div>
-                <div class="rd-row">
-                    <label for="rd_mask_cost">Masking maturity cost</label>
-                    <input type="number" step="0.05" min="0" max="1" id="rd_mask_cost" name="mask_maturity_cost"
-                           value="<?php echo floatval($cfg['mask_maturity_cost'] ?? 0.15); ?>">
-                </div>
-            </div>
-        </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
-            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 15: Social Sensitivity + Ick + Charisma</p>
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
-                <div class="rd-toggle">
-                    <input type="hidden" name="social_sensitivity_enabled" value="">
-                    <input type="checkbox" name="social_sensitivity_enabled" id="rd_sensitivity" <?php if ($cfg['social_sensitivity_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_sensitivity" title="Social Sensitivity: bond-weighted impact curves. Inner Circle NPCs ignore strangers, Open Heart NPCs are hurt by everyone.">Social Sensitivity</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="ick_system_enabled" value="">
-                    <input type="checkbox" name="ick_system_enabled" id="rd_ick" <?php if ($cfg['ick_system_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_ick" title="Ick/Desperation Tracker: spamming romance while NPC is unreceptive triggers passion inversion. Maturity gates detection threshold.">Ick Tracker</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="charisma_detection_enabled" value="">
-                    <input type="checkbox" name="charisma_detection_enabled" id="rd_charisma" <?php if ($cfg['charisma_detection_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_charisma" title="Charisma Archetypes: detects player style (Rock/Catalyst/Charmer) and adjusts effectiveness per NPC personality traits and maturity.">Charisma Detection</label>
-                </div>
-            </div>
-            <div class="rd-row" style="margin-top:8px;">
-                <label for="rd_ick_threshold">Ick base threshold</label>
-                <input type="number" step="0.05" min="0.2" max="0.9" id="rd_ick_threshold" name="ick_base_threshold"
-                       value="<?php echo floatval($cfg['ick_base_threshold'] ?? 0.5); ?>">
-                <span class="rd-hint">Romantic attempt ratio in 10-interaction window that triggers ick (default: 0.5). Maturity multiplies this.</span>
-            </div>
-        </div>
-        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(242,124,17,0.15);">
-            <p style="color:#888; font-size:0.85em; margin-bottom:10px;">PR 16: Autonomy Override + Walkaway + Hoover</p>
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
-                <div class="rd-toggle">
-                    <input type="hidden" name="autonomy_enabled" value="">
-                    <input type="checkbox" name="autonomy_enabled" id="rd_autonomy" <?php if ($cfg['autonomy_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_autonomy" title="Autonomy Override: personality-gated command refusal spectrum (compliant → resistant → refusing → walkaway)">Autonomy Override</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="walkaway_enabled" value="">
-                    <input type="checkbox" name="walkaway_enabled" id="rd_walkaway" <?php if ($cfg['walkaway_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_walkaway" title="Walkaway Protocol: NPC self-dismisses, travels home, boundary test window determines recovery or permanent departure">Walkaway Protocol</label>
-                </div>
-                <div class="rd-toggle">
-                    <input type="hidden" name="hoover_enabled" value="">
-                    <input type="checkbox" name="hoover_enabled" id="rd_hoover" <?php if ($cfg['hoover_enabled'] ?? true) echo 'checked'; ?>>
-                    <label for="rd_hoover" title="Hoover Protocol: Toxic NPCs return after walkaway with charm offensive (dimensional snap). Maturity > 40 permanently disables.">Hoover Protocol</label>
-                </div>
-            </div>
-        </div>
-        <table class="rd-curve-table" style="margin-top:10px;">
-            <thead>
-                <tr>
-                    <th>Dimension</th>
-                    <th>Range</th>
-                    <th>Z (Rubber Band)</th>
-                    <th>Scope</th>
-                    <th>Special</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr><td>Affinity</td><td>0-100</td><td>25 (wide)</td><td>Per-bond</td><td>Existing, eval-scored</td></tr>
-                <tr><td>Passion</td><td>0-100</td><td>10 (tight)</td><td>Per-bond</td><td>Existing, event-driven</td></tr>
-                <tr><td>Warmth</td><td>0-100</td><td>20</td><td>Per-bond</td><td>Existing, trajectory-derived</td></tr>
-                <tr><td>Trust</td><td>0-100</td><td>30 (wide)</td><td>Per-bond</td><td>New, slow to build</td></tr>
-                <tr><td>Comfort</td><td>0-100</td><td>20</td><td>Per-bond</td><td>New, boundary-sensitive</td></tr>
-                <tr><td>Respect</td><td>0-100</td><td>25 (wide)</td><td>Per-bond</td><td>New, asymmetric Y</td></tr>
-                <tr><td>Maturity</td><td>0-100</td><td>20</td><td>Global</td><td>New, asymmetric plasticity</td></tr>
-                <tr><td>Resentment</td><td>0-100</td><td>8 (tight)</td><td>Per-bond</td><td>New, inverted rubber band</td></tr>
-                <tr><td>M/F Coords</td><td>-100 to +100</td><td>15</td><td>Global</td><td>Two-axis behavioral mode</td></tr>
-                <tr><td>Arousal/Valence</td><td>0-100 / -100 to +100</td><td>8-12</td><td>Global</td><td>Two-axis, fast decay</td></tr>
-            </tbody>
-        </table>
-    </div>
-
-        <!-- Passion / RPM -->
-    <div class="rd-section">
-        <h2>Passion (RPM)</h2>
+<?php else: ?>
+    <section class="rd-section" id="rd-reference">
+        <div class="rd-section-head"><h2>Passion (RPM)</h2></div>
         <div class="rd-formula">affinity_gain_mult = 0.3 + (passion / 100) x 1.7
   passion 0  = x0.3 (idling)    passion 50 = x1.15 (cruising)    passion 100 = x2.0 (redline)</div>
-        <div class="rd-row">
-            <label for="rd_bpg">Base Passion Gain</label>
-            <input type="number" step="0.1" min="0.1" max="10" id="rd_bpg" name="base_passion_gain"
-                   value="<?php echo htmlspecialchars($cfg['base_passion_gain']); ?>">
-            <span class="rd-hint">Per interaction before multipliers (default: 2.0)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_pmax">Passion Maximum</label>
-            <input type="number" step="1" min="10" max="200" id="rd_pmax" name="passion_max"
-                   value="<?php echo htmlspecialchars($cfg['passion_max']); ?>">
-            <span class="rd-hint">Hard cap (default: 100)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_dmh">Between-Session Decay (hours)</label>
-            <input type="number" step="0.5" min="0" max="168" id="rd_dmh" name="decay_max_hours"
-                   value="<?php echo htmlspecialchars($cfg['decay_max_hours'] ?? 0); ?>">
-            <span class="rd-hint">0 = passion frozen when offline (default). Set > 0 for persistent server / sim scenarios.</span>
-        </div>
-    </div>
+        <div class="rd-section-head"><h2>Dimensions</h2></div>
+        <div class="rd-formula">actual_delta = raw_eval_delta * Y_resistance * Z_distance_decay
+  Z_decay(away)  = 1 / (1 + |X - baseline| / Z)    Z_decay(toward) = min(3.0, 1 + |X - baseline| / Z)</div>
+        <div class="rd-scroll"><table class="rd-table">
+            <thead><tr><th>Dimension</th><th>Range</th><th>Z (rubber band)</th><th>Scope</th><th>Special</th></tr></thead>
+            <tbody>
+                <tr><td>Affinity</td><td>0-100</td><td>25 (wide)</td><td>Per-bond</td><td>Eval-scored</td></tr>
+                <tr><td>Passion</td><td>0-100</td><td>10 (tight)</td><td>Per-bond</td><td>Floor + spike, event-driven</td></tr>
+                <tr><td>Warmth</td><td>0-100</td><td>20</td><td>Per-bond</td><td>Trajectory-derived</td></tr>
+                <tr><td>Trust</td><td>0-100</td><td>30 (wide)</td><td>Per-bond</td><td>Slow to build</td></tr>
+                <tr><td>Comfort</td><td>0-100</td><td>20</td><td>Per-bond</td><td>Boundary-sensitive</td></tr>
+                <tr><td>Respect</td><td>0-100</td><td>25 (wide)</td><td>Per-bond</td><td>Asymmetric Y</td></tr>
+                <tr><td>Maturity</td><td>0-100</td><td>20</td><td>Global</td><td>Asymmetric plasticity</td></tr>
+                <tr><td>Resentment</td><td>0-100</td><td>8 (tight)</td><td>Per-bond</td><td>Inverted rubber band</td></tr>
+                <tr><td>M/F coords</td><td>-100 to +100</td><td>15</td><td>Global</td><td>Two-axis behavioural mode</td></tr>
+                <tr><td>Arousal / valence</td><td>0-100 / -100 to +100</td><td>8-12</td><td>Global</td><td>Two-axis, fast decay</td></tr>
+            </tbody>
+        </table></div>
 
-    <!-- Warmth Curves (read-only reference) -->
-    <div class="rd-section">
-        <h2>Warmth Curves</h2>
-        <p style="font-size:0.85em; color:#888; margin:0 0 8px;">Per-NPC curve set in the NPC editor; otherwise the curve of the NPC's nearest personality preset (guard sets how slowly warmth is won). These are the built-in presets:</p>
-        <table class="rd-curve-table">
-            <thead>
-                <tr>
-                    <th>Curve</th>
-                    <th>Nearest personality presets</th>
-                    <th>Decay Rate</th>
-                    <th>Half-Life</th>
-                    <th>Passion Decay</th>
-                    <th>Target Days</th>
-                </tr>
-            </thead>
+        <div class="rd-section-head"><h2>Warmth curves</h2></div>
+        <p class="rd-blurb">Per-NPC curve set in the NPC editor; otherwise the curve of the NPC's nearest personality preset (guard sets how slowly warmth is won).</p>
+        <?php $curve = fn(string $c) => RelationshipDynamics::CURVE_PARAMS[$c]; ?>
+        <div class="rd-scroll"><table class="rd-table">
+            <thead><tr><th>Curve</th><th>Nearest personality presets</th><th>Decay rate</th><th>Half-life</th><th>Passion decay</th></tr></thead>
             <tbody>
                 <tr>
                     <td>slow_burn</td>
                     <td>Romantic, Gentle, Jealous</td>
-                    <td>0.10/int</td>
-                    <td>10h</td>
-                    <td>2.5/hr</td>
-                    <td>3 IRL days</td>
+                    <td><?php echo $h($curve('slow_burn')['decay_rate']); ?>/int</td><td><?php echo $h($curve('slow_burn')['half_life']); ?>h</td><td><?php echo $h($curve('slow_burn')['passion_decay']); ?>/hr</td>
                 </tr>
                 <tr>
                     <td>moderate</td>
                     <td>Bold, Humble, Nurturing (and the default)</td>
-                    <td>0.08/int</td>
-                    <td>8h</td>
-                    <td>3.0/hr</td>
-                    <td>2 days</td>
+                    <td><?php echo $h($curve('moderate')['decay_rate']); ?>/int</td><td><?php echo $h($curve('moderate')['half_life']); ?>h</td><td><?php echo $h($curve('moderate')['passion_decay']); ?>/hr</td>
                 </tr>
                 <tr>
                     <td>quick_warmth</td>
                     <td>Anxious, Playful</td>
-                    <td>0.06/int</td>
-                    <td>6h</td>
-                    <td>4.0/hr</td>
-                    <td>1.5 days</td>
+                    <td><?php echo $h($curve('quick_warmth')['decay_rate']); ?>/int</td><td><?php echo $h($curve('quick_warmth')['half_life']); ?>h</td><td><?php echo $h($curve('quick_warmth')['passion_decay']); ?>/hr</td>
                 </tr>
                 <tr>
                     <td>guarded</td>
                     <td>Proud, Defiant, Guarded, Independent, Stoic</td>
-                    <td>0.12/int</td>
-                    <td>12h</td>
-                    <td>5.0/hr</td>
-                    <td>4+ days</td>
+                    <td><?php echo $h($curve('guarded')['decay_rate']); ?>/int</td><td><?php echo $h($curve('guarded')['half_life']); ?>h</td><td><?php echo $h($curve('guarded')['passion_decay']); ?>/hr</td>
                 </tr>
             </tbody>
-        </table>
-    </div>
+        </table></div>
 
-    <!-- Jealousy -->
-    <div class="rd-section">
-        <h2>Jealousy</h2>
-        <div class="rd-row">
-            <label for="rd_jmax">Jealousy Maximum</label>
-            <input type="number" step="1" min="10" max="200" id="rd_jmax" name="jealousy_max"
-                   value="<?php echo htmlspecialchars($cfg['jealousy_max']); ?>">
-            <span class="rd-hint">Hard cap (default: 100)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_jdec">Jealousy Decay (per hour)</label>
-            <input type="number" step="0.1" min="0.1" max="10" id="rd_jdec" name="jealousy_decay_per_hour"
-                   value="<?php echo htmlspecialchars($cfg['jealousy_decay_per_hour']); ?>">
-            <span class="rd-hint">Anger fades slower than joy (default: 1.5)</span>
-        </div>
-    </div>
-
-    <!-- Conflict / Repair -->
-    <div class="rd-section">
-        <h2>Conflict / Repair Cycle</h2>
-        <div class="rd-row">
-            <label for="rd_ctad">Affinity Drop to Trigger Conflict</label>
-            <input type="number" step="1" min="1" max="50" id="rd_ctad" name="conflict_threshold_affinity_drop"
-                   value="<?php echo htmlspecialchars($cfg['conflict_threshold_affinity_drop']); ?>">
-            <span class="rd-hint">Points of affinity lost in session (default: 10)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_ctj">Jealousy to Trigger Conflict</label>
-            <input type="number" step="1" min="5" max="100" id="rd_ctj" name="conflict_threshold_jealousy"
-                   value="<?php echo htmlspecialchars($cfg['conflict_threshold_jealousy']); ?>">
-            <span class="rd-hint">Jealousy anger threshold (default: 40)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_crpc">Positive Interactions to Resolve</label>
-            <input type="number" step="1" min="1" max="20" id="rd_crpc" name="conflict_resolution_positive_count"
-                   value="<?php echo htmlspecialchars($cfg['conflict_resolution_positive_count']); ?>">
-            <span class="rd-hint">Kind acts needed to end conflict (default: 3)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_crpb">Repair Passion Burst</label>
-            <input type="number" step="1" min="1" max="50" id="rd_crpb" name="conflict_repair_passion_burst"
-                   value="<?php echo htmlspecialchars($cfg['conflict_repair_passion_burst']); ?>">
-            <span class="rd-hint">Passion gained on resolution (default: 20)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_crpm">Repair Passion Multiplier</label>
-            <input type="number" step="0.1" min="1.0" max="3.0" id="rd_crpm" name="conflict_repair_passion_mult"
-                   value="<?php echo htmlspecialchars($cfg['conflict_repair_passion_mult']); ?>">
-            <span class="rd-hint">Bonus on positive acts during conflict (default: 1.5x)</span>
-        </div>
-    </div>
-
-    <!-- Reunion -->
-    <div class="rd-section">
-        <h2>Reunion Spike</h2>
-        <div class="rd-row">
-            <label for="rd_rmh">Minimum Hours Apart</label>
-            <input type="number" step="1" min="1" max="48" id="rd_rmh" name="reunion_min_hours"
-                   value="<?php echo htmlspecialchars($cfg['reunion_min_hours']); ?>">
-            <span class="rd-hint">Game-calendar hours apart before reunion fires; waiting and sleeping count, but some real play must happen in between (default: 8)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_rma">Minimum Affection</label>
-            <input type="number" step="1" min="-100" max="100" id="rd_rma" name="reunion_min_affection"
-                   value="<?php echo htmlspecialchars($cfg['reunion_min_affection']); ?>">
-            <span class="rd-hint">Core affinity required, -100..100 (default: 40)</span>
-        </div>
-        <p style="font-size:0.82em; color:#777; margin:8px 0 0;">
-            8-16h = +5 | 16-24h = +8 | 24-48h = +12 | 48-72h = +18 | 72h+ = +25 passion.
-            Bypasses diminishing returns.
-        </p>
-    </div>
-
-    <!-- Stages -->
-    <div class="rd-section">
-        <h2>Relationship Stages</h2>
-        <div class="rd-row">
-            <label for="rd_set">Established Threshold</label>
-            <input type="number" step="1" min="10" max="500" id="rd_set" name="stage_established_threshold"
-                   value="<?php echo htmlspecialchars($cfg['stage_established_threshold']); ?>">
-            <span class="rd-hint">Positive interactions to reach Established (default: 50)</span>
-        </div>
-        <div class="rd-row">
-            <label for="rd_sdt">Deep Threshold</label>
-            <input type="number" step="1" min="50" max="2000" id="rd_sdt" name="stage_deep_threshold"
-                   value="<?php echo htmlspecialchars($cfg['stage_deep_threshold']); ?>">
-            <span class="rd-hint">Positive interactions to reach Deep (default: 200)</span>
-        </div>
-        <table class="rd-curve-table" style="margin-top:10px;">
-            <thead>
-                <tr>
-                    <th>Stage</th>
-                    <th>Passion Floor</th>
-                    <th>Passion Ceiling</th>
-                    <th>Gain Mult</th>
-                    <th>DR Mult</th>
-                    <th>Character</th>
-                </tr>
-            </thead>
+        <div class="rd-section-head"><h2>Relationship stages</h2></div>
+        <div class="rd-scroll"><table class="rd-table">
+            <thead><tr><th>Stage</th><th>Passion floor</th><th>Passion ceiling</th><th>Gain mult</th><th>DR mult</th></tr></thead>
             <tbody>
-                <tr><td>Early</td><td>0</td><td>100</td><td>1.3x</td><td>0.8x</td><td>Butterflies, high highs</td></tr>
-                <tr><td>Established</td><td>5</td><td>70</td><td>1.0x</td><td>1.2x</td><td>Comfortable, routine</td></tr>
-                <tr><td>Deep</td><td>15</td><td>50</td><td>0.8x</td><td>1.0x</td><td>Resilient, hard to break</td></tr>
+            <?php foreach (RelationshipDynamics::STAGE_PARAMS as $stage => $p): ?>
+                <tr><td><?php echo $h(ucfirst($stage)); ?></td><td><?php echo $h($p['floor']); ?></td><td><?php echo $h($p['ceiling']); ?></td><td><?php echo $h($p['gain_mult']); ?>x</td><td><?php echo $h($p['dr_mult']); ?>x</td></tr>
+            <?php endforeach; ?>
             </tbody>
-        </table>
-    </div>
+        </table></div>
 
-    <!-- PR 39: Director-Assigned Goals -->
-    <div class="rd-section">
-        <h2>Director-Assigned Goals (PR 39)</h2>
-        <div class="rd-row">
-            <div class="rd-toggle">
-                <input type="hidden" name="director_goals_enabled" value="">
-                <input type="checkbox" name="director_goals_enabled" id="rd_director_goals" <?php if ($cfg['director_goals_enabled'] ?? false) echo 'checked'; ?>>
-                <label for="rd_director_goals" title="Allow the Director/Background Life to assign contextual goals to NPCs (e.g. 'Find shelter before the storm hits')">Enable Director-Assigned Goals</label>
-            </div>
-            <span class="rd-hint">Allow the Director/Background Life to assign contextual goals to NPCs. Goals expire after a configurable game-time window and influence NPC behavior through context steering.</span>
-        </div>
-    </div>
-
-    <!-- Save -->
-    <div class="rd-save-bar">
-        <button type="submit" name="save_reldyn" value="1">Save Settings</button>
-        <span style="font-size:0.82em; color:#777;">Changes apply immediately to all NPCs.</span>
-    </div>
-
-    </form>
-</div>
-
+        <div class="rd-section-head"><h2>Relationship tiers (core affinity)</h2></div>
+        <div class="rd-scroll"><table class="rd-table">
+            <thead><tr><th>Tier</th><th>From</th><th>To</th></tr></thead>
+            <tbody>
+            <?php foreach (RelationshipDynamics::RELATIONSHIP_TIERS as $tier => $r): ?>
+                <tr><td><?php echo $h($tier); ?></td><td><?php echo $h($r['min']); ?></td><td><?php echo $h($r['max']); ?></td></tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table></div>
+    </section>
+<?php endif; ?>
+</main>
+<script>
+(function () {
+    function filter(inputId, rowSelector, scope) {
+        var input = document.getElementById(inputId);
+        if (!input) return;
+        input.addEventListener('input', function () {
+            var q = input.value.trim().toLowerCase();
+            (scope || document).querySelectorAll(rowSelector).forEach(function (row) {
+                var hit = q === '' || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
+                row.classList.toggle('rd-hidden', !hit);
+                if (hit && q !== '') {
+                    for (var p = row.parentElement; p; p = p.parentElement) {
+                        if (p.tagName === 'DETAILS') p.open = true;
+                    }
+                }
+            });
+        });
+    }
+    filter('rd-filter', '.rd-field');
+    filter('rd-npc-filter', '#rd-npc-list li');
+})();
+</script>
 <?php
+RelationshipDynamics::endRequest();
 if (!$embed) {
     include $enginePath . 'ui/tmpl/footer.html';
     $buffer = ob_get_contents();
     ob_end_clean();
-    $title = $TITLE;
-    $buffer = preg_replace('/(<title>)(.*?)(<\/title>)/i', '$1' . $title . '$3', $buffer);
+    $buffer = preg_replace('/(<title>)(.*?)(<\/title>)/i', '$1' . $TITLE . '$3', $buffer);
     echo $buffer;
 }
-?>
