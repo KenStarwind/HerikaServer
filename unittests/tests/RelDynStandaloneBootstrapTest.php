@@ -13,7 +13,8 @@ use PHPUnit\Framework\TestCase;
  */
 final class RelDynStandaloneBootstrapTest extends TestCase
 {
-    private const PAGES = ['settings.php', 'install.php', 'api_save_npc.php', 'debug_compose.php'];
+    // npc.php: the P5 per-NPC editor (manifest config_url); the April api_save_npc.php it replaces is retired
+    private const PAGES = ['settings.php', 'install.php', 'npc.php', 'debug_compose.php'];
 
     private static function engineRoot(): string
     {
@@ -79,7 +80,7 @@ final class RelDynStandaloneBootstrapTest extends TestCase
     {
         $expect = [
             'install.php'       => 'Relationship Dynamics config',
-            'api_save_npc.php'  => 'Missing NPC name',
+            'npc.php'           => 'Relationship Dynamics: NPCs',
             'debug_compose.php' => '=== Relationship Dynamics Debug',
             'settings.php'      => '<',
         ];
@@ -109,7 +110,11 @@ final class RelDynStandaloneBootstrapTest extends TestCase
             $this->assertIsString($manifest[$key] ?? null, "manifest.json missing {$key}");
             $this->assertNotSame('', trim($manifest[$key]));
         }
-        $this->assertArrayNotHasKey('config_url', $manifest, 'config_url UI is out of scope for the runtime port');
+        // P5 (decisions 2026-09-23 §4): 3.4.1 has no NPC editor hooks, so the editor is the plugin's
+        // config page, opened in its own tab like Sharmat's (ext/aiagent_nsfw/manifest.json)
+        $this->assertSame('/HerikaServer/ext/relationship_dynamics/npc.php', $manifest['config_url'] ?? null);
+        $this->assertSame('_blank', $manifest['config_url_target'] ?? null);
+        $this->assertFileExists(self::engineRoot() . '/ext/relationship_dynamics/' . basename($manifest['config_url']));
     }
 
     private static function runPhp(array $args): array

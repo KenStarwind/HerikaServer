@@ -1,5 +1,7 @@
 {
     "name": "Relationship Dynamics",
     "description": "RelDyn: passion, love languages, temperaments and XYZ emotional dimensions layered on CHIM relationships.",
-    "version": "0.1.0"
+    "version": "0.1.0",
+    "config_url": "/HerikaServer/ext/relationship_dynamics/npc.php",
+    "config_url_target": "_blank"
 }

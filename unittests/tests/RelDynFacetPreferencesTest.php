@@ -288,15 +288,22 @@ final class RelDynFacetPreferencesTest extends TestCase
         $this->assertLessThan(0.0, RelDynFacets::preferences($dyn, 'Test Huntress')['scholarly'], 'derived again');
     }
 
-    /** The editor and the endpoint use them: no Save path writes all 11 any more. */
+    /**
+     * No Save path writes all 11 any more. The April editor and endpoint (npc_editor_section.php,
+     * api_save_npc.php) are retired; the P5 editor (reldyn_editor.php, npc.php) writes a facet only
+     * when its posted value differs from the value in effect, one setPreferenceOverride() per moved
+     * facet (the round trip: RelDynNpcEditorTestBedsPostgresTest).
+     */
     public function testTheEditorPostsOnlyMovedSlidersAndTheEndpointUsesTheFilter(): void
     {
-        $api = (string) file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/api_save_npc.php');
-        $this->assertStringContainsString('RelDynFacets::applyInterestSliders(', $api);
-        $this->assertStringContainsString('RelDynFacets::clearInterestOverrides(', $api);
-        $this->assertStringNotContainsString("foreach (\$input['interests'] as \$act => \$mult)", $api);
-        $editor = (string) file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/npc_editor_section.php');
-        $this->assertMatchesRegularExpression('/movedInterests\.has\(int\)/', $editor, 'collectData posts moved sliders only');
+        $dir = __DIR__ . '/../../ext/relationship_dynamics/';
+        $this->assertFileDoesNotExist($dir . 'api_save_npc.php');
+        $this->assertFileDoesNotExist($dir . 'npc_editor_section.php');
+        $editor = (string) file_get_contents($dir . 'reldyn_editor.php');
+        $this->assertStringContainsString('RelDynFacets::setPreferenceOverride($dd, $facet, floatval($val))', $editor);
+        $this->assertStringContainsString('RelDynFacets::setPreferenceOverride($dd, $facet, null)', $editor, 'reset clears the override');
+        $this->assertMatchesRegularExpression('/if \(self::sameValue\(\$f, \$v\)\) continue;/', $editor, 'an unchanged value is no edit');
+        $this->assertStringNotContainsString("foreach (\$input['interests'] as \$act => \$mult)", $editor);
     }
 
     public function testInterestSliderValuesMapBackToPreferences(): void
