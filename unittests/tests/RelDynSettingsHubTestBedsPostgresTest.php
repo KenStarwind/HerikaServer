@@ -227,6 +227,10 @@ final class RelDynSettingsHubTestBedsPostgresTest extends TestCase
             $this->assertSame(array_keys(RelationshipDynamics::RELATIONSHIP_TIERS), array_keys($tiers));
             $this->assertTrue($tiers['devoted']['knowledge']['name']);
         }
+        // a hostile name from the query string is data, never SQL
+        $odd = RelDynSettings::gatingPreview("Ashe'); DELETE FROM conf_opts; --");
+        $this->assertSame('renowned', $odd['knowledge']['level']);
+        $this->assertSame('none', $odd['state']);
         // an override below her peak: Ashe still remembers him (you can only be unknown once)
         $this->assertSame('lapsed', RelDynSettings::gatingPreview('Ashe', 0.0)['knowledge']['level']);
         $this->assertSame([], $this->db->writes());

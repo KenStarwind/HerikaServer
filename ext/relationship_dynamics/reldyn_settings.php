@@ -742,13 +742,17 @@ final class RelDynSettings
                 $res['errors'][] = 'The form names a setting this RelDyn does not have (reload the page). Nothing was saved.';
                 return $res;
             }
+            $now = self::valueAt($display, $field['path'], $found);
+            // posted back exactly as the form showed it: not an edit, whatever the value (a stored value
+            // outside today's choices or bounds does not block saving the fields around it)
+            $text = str_replace("\r\n", "\n", (string) (is_array($raw) ? end($raw) : $raw));
+            if ($found && $field['kind'] !== 'bool' && $text === self::formValue($field, $now)) continue;
             $p = self::parse($field, $raw);
             if (!$p['ok']) {
                 $res['errors'][] = "{$field['dotted']} {$p['error']}.";
                 continue;
             }
             if ($p['note'] !== null) $res['messages'][] = "{$field['dotted']}: {$p['note']}.";
-            $now = self::valueAt($display, $field['path'], $found);
             if ($found && self::valuesEqual($now, $p['value'])) continue;
             $edits[] = [$field['path'], $p['value']];
         }

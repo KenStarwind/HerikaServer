@@ -440,6 +440,28 @@ final class RelDynSettingsHubTest extends TestCase
         $this->assertFalse($r['ok'], 'a field code the defaults do not know');
     }
 
+    public function testAStoredValueOutsideTheChoicesDoesNotBlockTheFieldsAroundIt(): void
+    {
+        // a row written by hand (or by an older RelDyn) with a mode today's choices do not have
+        $this->storeRow(['diary_reflection_mode' => 'legacy_mode', 'base_passion_gain' => 50.0, 'config_schema' => 3]);
+        $fields = RelDynSettings::fields();
+        $display = RelDynSettings::effective();
+        $shown = fn(string $key) => RelDynSettings::formValue($fields[self::code($key)], $display[$key]);
+        $r = RelDynSettings::handlePost($this->post([
+            'diary_reflection_mode' => $shown('diary_reflection_mode'),   // posted back as shown
+            'base_passion_gain' => $shown('base_passion_gain'),           // outside today's bounds, as shown
+            'diary_interaction_gap' => '20',
+        ]));
+        $this->assertTrue($r['ok'] && $r['saved'], implode(' ', $r['errors']));
+        $row = $this->db->row();
+        $this->assertSame('legacy_mode', $row['diary_reflection_mode'], 'kept as it was');
+        $this->assertEquals(50.0, $row['base_passion_gain'], 'kept as it was, not clamped behind the user\'s back');
+        $this->assertSame(20, $row['diary_interaction_gap']);
+        // changing it does go through the choices
+        $r = RelDynSettings::handlePost($this->post(['diary_reflection_mode' => 'other_legacy']));
+        $this->assertFalse($r['ok']);
+    }
+
     public function testPostResetTouchesOnlyThatKey(): void
     {
         RelDynSettings::apply([[['prompt_gating', 'fame_max_lines'], 5], [['prompt_gating', 'token_budget'], 99]], []);

@@ -177,6 +177,7 @@ if (!$embed) {
 .rd-npc-links a:hover, .rd-link-card:hover { text-decoration: underline; }
 .rd-link-card { display: inline-block; padding: 8px 14px; border: 1px solid #36506a; border-radius: 8px; }
 .rd-hidden { display: none !important; }
+.rd-default-submit { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
 @media (max-width: 640px) {
     .rd-wrap { padding: <?php echo $embed ? '10px' : '70px 10px 40px'; ?>; }
     .rd-field { grid-template-columns: 1fr; }

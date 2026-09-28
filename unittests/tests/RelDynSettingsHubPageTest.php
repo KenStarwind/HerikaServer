@@ -148,7 +148,10 @@ PHP);
                 $last = $el;
             }
             $token = $x->query('.//input[@name="csrf_token"]', $form)->item(0);
+            $firstButton = $x->query('.//button[@type="submit"]', $form)->item(0);
             $forms[] = ['names' => $names, 'token' => $token ? $token->getAttribute('value') : null,
+                        'class' => $form->getAttribute('class'),
+                        'first_button' => $firstButton ? $firstButton->getAttribute('name') . '=' . $firstButton->getAttribute('value') : null,
                         'last' => $last ? $last->getAttribute('name') . '=' . $last->getAttribute('value') : null,
                         'action' => $form->getAttribute('action')];
         }
@@ -193,6 +196,9 @@ PHP);
                 $this->assertSame('_complete=1', $form['last'], "{$group}: the sentinel is the form's last input");
                 $this->assertLessThanOrEqual(RelDynSettings::MAX_FORM_VARS + 4, count($form['names']), "{$group}: under max_input_vars");
                 $this->assertStringStartsWith('settings.php?', $form['action']);
+                if ($form['class'] === 'rd-form') {
+                    $this->assertSame('save=1', $form['first_button'], "{$group}: Enter in a field saves, it never resets the row above");
+                }
                 foreach ($form['names'] as $name) {
                     if (preg_match('/^f\[([A-Za-z0-9_-]+)\]$/', $name, $m)) $seen[$m[1]] = true;
                 }

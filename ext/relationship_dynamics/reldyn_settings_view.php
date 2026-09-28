@@ -216,9 +216,14 @@ final class RelDynSettingsView
         return $out . '</div></details>';
     }
 
+    /**
+     * A POST form with the session token. A save form starts with an off-screen Save button: Enter in a
+     * field submits the form's first button, which must be Save, not the Reset of a row above it.
+     */
     public static function formOpen(string $action, string $csrf, string $class = 'rd-form'): string
     {
         return '<form method="post" action="' . self::h($action) . '" class="' . self::h($class) . '">'
+            . ($class === 'rd-form' ? '<button type="submit" name="save" value="1" class="rd-default-submit" tabindex="-1" aria-hidden="true">Save</button>' : '')
             . '<input type="hidden" name="csrf_token" value="' . self::h($csrf) . '">';
     }
 
