@@ -1,7 +1,7 @@
 {
     "name": "Relationship Dynamics",
     "description": "RelDyn: how NPCs feel about the player and each other. Passion, trust, jealousy and resentment, personality traits and attachment, attraction and romance, fulfillment and neglect, and who knows the player (prompt gating), all reaching the prompt as felt subtext, never numbers.",
-    "version": "0.18.0",
+    "version": "0.19.0",
     "config_url": "/HerikaServer/ext/relationship_dynamics/settings.php",
     "config_url_target": "_blank"
 }
