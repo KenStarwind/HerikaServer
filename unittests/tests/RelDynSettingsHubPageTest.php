@@ -402,6 +402,12 @@ PHP);
         $r = self::request('GET', ['tab' => 'reference']);
         $this->assertStringContainsString('<!DOCTYPE', $r['html']);
         $this->assertStringContainsString('<title>Relationship Dynamics</title>', $r['html']);
+        // core's chrome (head.html's viewport, main.css, the navbar) and the page's phone layout
+        $this->assertStringContainsString('name="viewport" content="width=device-width, initial-scale=1"', $r['html']);
+        $this->assertStringContainsString('/HerikaServer/ui/css/main.css', $r['html']);
+        $this->assertStringContainsString('@media (max-width: 640px)', $r['html']);
+        $this->assertDoesNotMatchRegularExpression('#(src|href)="https?://(?!cdn\.jsdelivr\.net|unpkg\.com|fonts\.)#', $r['html'],
+            'no external assets beyond the ones core\'s head already loads');
     }
 }
 

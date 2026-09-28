@@ -62,6 +62,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
+// One request scope for the render (after any save, which closes the scope it clears): the config
+// row and the player profile the preview reads are fetched once, not once per section / tier.
+RelationshipDynamics::beginRequest();
 $display = RelDynSettings::effective();
 $overlay = RelDynSettings::storedOverlay();
 $action = RelDynSettingsView::url(['tab' => $tab, 'group' => $tab === 'settings' ? $group : null,
@@ -310,6 +313,7 @@ if (!$embed) {
 })();
 </script>
 <?php
+RelationshipDynamics::endRequest();
 if (!$embed) {
     include $enginePath . 'ui/tmpl/footer.html';
     $buffer = ob_get_contents();
