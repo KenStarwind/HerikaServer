@@ -78,6 +78,7 @@ final class RelDynSettingsText
         'affinity_rot' => 'Core affinity bleeding away in a romance with open conflict or low passion and no positive contact.',
         'affinity_tag_love_language' => 'Which love language each kind of evaluated event counts as.',
         'jealousy_bystander_commitment' => 'How much more jealous bystanders get, by their bond type, when the player is intimate with someone else.',
+        'jealousy_bystander' => 'Who the rival is and who the bystander is: how much more it stings when the rival is close to the player (threat, from her affinity, bond type and passion), and how maturity softens it, by the same curve that blunts a mature NPC\'s hurt, never to nothing.',
         'power_gap_core_types' => 'How little she can leave, by bond type (servant, fanatical, indebted, fearful).',
         'place_facets' => 'How places (by tag, name, inside or outside, time of day, weather) map onto the interests.',
         'physical_states' => 'When the player reads as injured, which states (hunger, rest, dirt, a fire) have no game signal and stay inert, and the trust an NPC earns by healing the player.',
@@ -106,7 +107,7 @@ final class RelDynSettingsText
         'mood_axes' => 'The M and F coordinates, and arousal and valence as live state: how they are derived, settle and are fed.',
         'post_intimacy' => 'Aftermath states: afterglow, regret, the sober correction, and their words.',
         'gift_delta' => 'How a gift moves affinity: the base points, love language, and the stolen and re-gifted cases.',
-        'cascade' => 'The cascading affinity network: who hears of what the player did to an NPC (how strong her bond to that NPC must be, enemies inverted), what counts as a defining moment, and the felt line she says when she hears.',
+        'cascade' => 'The cascading affinity network: who hears of what the player did to an NPC (how strong her bond to that NPC must be, enemies inverted), what counts as a defining moment, how long the news takes to reach someone who was not there (by hold distance and bond), and the felt line she says when she hears.',
         'npc_npc_facts' => 'Which personality facts the NPC-to-NPC evaluation of core is told, by how well the player knows each NPC: where the tiers start, how many trait words, how much of her speech style.',
     ];
 
@@ -199,7 +200,7 @@ final class RelDynSettingsText
         'attraction_status_weight' => 'How much status counts in what she finds attractive (1 = normal).',
         'attraction_competence_weight' => 'How much competence counts in what she finds attractive (1 = normal).',
         'cascade_threshold' => 'How big a change in core affinity (points) must be before it ripples to NPCs bonded to her.',
-        'cascade_decay' => 'The fraction (0 to 1) of a change that passes on to the next NPC in the ripple.',
+        'cascade_decay' => 'The fraction (0 to 1) of a ripple that survives being told rather than seen: what a witness saw is not damped, what she was told or heard of later is multiplied by this.',
         'social_sensitivity_signals' => 'Which evaluated signals are scaled by how deep the bond is (how much the player\'s words land); one per line.',
         'walkaway_return_grace_contacts' => 'How many of the player\'s contacts she waits through, after a resolved boundary test, before she may walk away again while still resentful.',
         'walkaway_parting_game_minutes' => 'Game minutes after she walks away in which the player\'s lines count as the parting conversation.',

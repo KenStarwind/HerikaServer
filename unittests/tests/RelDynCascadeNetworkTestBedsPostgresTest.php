@@ -539,9 +539,11 @@ final class RelDynCascadeNetworkTestBedsPostgresTest extends TestCase
         $this->assertSame(self::AELA, $farkas['source']);
         $this->assertSame('ally_hurt', $farkas['kind']);
         $this->assertSame(rtrim(self::SUMMARY, '.'), $farkas['anchor'], 'the reason anchor travels, cleaned of its full stop');
-        // ripple = change x bond/100 x decay: Farkas (60) hears more than Lynly (45), more than Ashe (35); Muiri (-50) the inverse, weaker
+        // ripple = change x bond/100 (everyone was in the room here, so none of it is hearsay: rulings 2026-10-01 §20 #13,
+        // was x 0.3): Farkas (60) hears more than Lynly (45), more than Ashe (35); Muiri (-50) the inverse, weaker
         $ripple = fn(string $npc) => floatval($this->inbox($npc)[0]['delta']);
-        $this->assertEqualsWithDelta(-$lost * 0.60 * 0.3, $ripple(self::FARKAS), 0.6);
+        $this->assertEqualsWithDelta(-$lost * 0.60, $ripple(self::FARKAS), 0.6);
+        $this->assertSame('witnessed', $farkas['via'], 'in the room: told at once');
         $this->assertLessThan($ripple(self::LYNLY), $ripple(self::FARKAS), 'a closer friend hears more (more negative)');
         $this->assertLessThan($ripple(self::ASHE), $ripple(self::LYNLY));
         $this->assertGreaterThan(0.0, $ripple(self::MUIRI), 'an enemy of hers is glad: the ripple is inverted');
@@ -664,7 +666,12 @@ final class RelDynCascadeNetworkTestBedsPostgresTest extends TestCase
         $this->assertSame('ally_helped', $this->inbox(self::FARKAS)[0]['kind']);
         $this->assertTrue($this->inbox(self::FARKAS)[0]['defining']);
         $this->assertCount(1, $this->inbox(self::LYNLY));
-        $this->assertSame([], $this->inbox(self::MUIRI), 'the inverted ripple of an enemy at this size is under a point');
+        // the inverted ripple of an enemy now clears a point (rulings §20 #13: it was under one at x 0.3), and is weaker than a friend's
+        $this->assertCount(1, $this->inbox(self::MUIRI), 'Muiri hears it too');
+        $muiri = $this->inbox(self::MUIRI)[0];
+        $this->assertSame('rival_helped', $muiri['kind']);
+        $this->assertLessThan(0.0, $muiri['delta'], 'and resents it');
+        $this->assertLessThan(abs(floatval($this->inbox(self::FARKAS)[0]['delta'])), abs(floatval($muiri['delta'])));
         $this->kit->turn(self::FARKAS, 'Well met.', $this->t(2), 'hear');
         $this->assertGreaterThan(40, $this->kit->coreAff(self::FARKAS), 'Farkas thinks better of the player');
         $this->assertStringContainsString('thinks better', $this->kit->felt[self::FARKAS]['hear']['cascade_ally_helped']);

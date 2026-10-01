@@ -3,6 +3,18 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Unreleased (u-social lane) — news that travels, and jealousy that knows who the rival is
+Word no longer travels by telepathy, and it travels with more of its weight. What you do to one person still reaches the
+people who care about them, but now it arrives the way news does. Someone who was in the room hears it at once, as
+someone who saw it, with the whole of the weight the design asked for (a friend at 80 loses about 8 of a 10 drop, where
+it was about 2). Anyone else gets it after the time it takes to cross the map, sooner when they live close by and
+sooner when they are close to whoever it happened to; a fight in Solitude is not known in Whiterun an hour later. If the
+two actually talk to each other first, the word is out at once. What is only passed on is told a little softer than what
+was seen, and each person still takes it in through who they are.
+Jealousy over a flirt you make in front of someone who loves you now remembers who the rival is: a rival who is close to
+you stings about twice as much as a stranger, whoever is watching. How settled the watcher is softens it by the same
+curve that blunts a mature NPC's hurt (one curve, not two on top of each other), and never to nothing: no one is immune.
+
 ## reldyn-v0.22 — let in, and pulling back
 "Closed off" is no longer a permanent verdict. Two things replace it. Being let in is earned and lasting: it grows with
 comfort and trust in any kind of bond, friendship and family as much as romance, and a guarded NPC simply earns it

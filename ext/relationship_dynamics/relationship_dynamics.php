@@ -963,7 +963,10 @@ class RelationshipDynamics
             // PR 12: Affinity Network + Relationship Types
             'cascade_network_enabled' => true,
             'cascade_threshold' => 15,               // core affinity points (|delta| that ripples)
-            'cascade_decay' => 0.3,                  // fraction
+            // Hearsay damping (rulings 2026-10-01 §20 #13): the fraction of a ripple that survives being TOLD rather
+            // than seen. Leans to the MDD §10 example (Farkas at 80 loses about 8 of a 10 drop): 0.3 left almost
+            // nothing of it. What a witness saw is not damped (RelDynCascade::rippleFor).
+            'cascade_decay' => 0.9,                  // fraction
             // Cascade: who hears, the defining moments, her felt line (reldyn_cascade.php)
             'cascade' => RelDynCascade::configDefaults(),
             // Tiered personality facts for core's NPC-to-NPC eval (reldyn_npc_facts.php)
@@ -1278,6 +1281,23 @@ class RelationshipDynamics
             // game minutes.
             'jealousy_scene_cooldown_game_minutes' => 30,
             'jealousy_bystander_commitment' => ['romantic' => 1.0, 'obsessed' => 1.5, 'crush' => 0.8],
+            // Who the rival is, and who the bystander is (rulings 2026-10-01 §20 #7), on top of the commitment above:
+            //   gain x threat(how close the rival is to the player) x maturity softening
+            // threat: linear in the rival's closeness to the player, 0 (a stranger) .. 1 (the player's dearest), from
+            //   at0 to at100, so a rival of middling closeness (0.5) is the old fixed rate. Closeness is the largest of:
+            //   her core affinity toward the player / 100, her core bond type's floor (type_closeness), and her own
+            //   passion for the player / 100 x passion_weight.
+            // maturity: ONE curve, the affinity_modifiers row maturity_modifier_row (default 'maturity_losses': 1.5 at
+            //   maturity 0, 1.0 at 50, 0.5 at 100), the same softening that blunts a mature NPC's hurt, applied here
+            //   to the jealousy gain instead of stacked on top of it. It never takes the gain below maturity_floor
+            //   (a share of the unsoftened gain): no one is immune.
+            'jealousy_bystander' => [
+                'threat' => ['at0' => 0.6, 'at100' => 1.4],
+                'type_closeness' => ['romantic' => 0.85, 'obsessed' => 0.85, 'crush' => 0.65, 'friend' => 0.5],
+                'passion_weight' => 0.8,
+                'maturity_modifier_row' => 'maturity_losses',
+                'maturity_floor' => 0.4,
+            ],
             // MDD 6.5: jealousy (0..100) at or above this -> walkaway.
             'jealousy_walkaway_at' => 100,
             // Power gap (decisions §5), 0..1: how little the NPC can leave. The largest matching
@@ -10130,6 +10150,79 @@ class RelationshipDynamics
         return self::jealousyEventGain($observerDynamics, 1, $commitment);
     }
 
+    /** Defaults for config 'jealousy_bystander' laid under what is stored, one level down. */
+    private static function bystanderConfig(): array
+    {
+        $defaults = self::defaultConfig()['jealousy_bystander'];
+        $stored = self::configValue('jealousy_bystander');
+        if (!is_array($stored)) return $defaults;
+        $cfg = array_replace($defaults, $stored);
+        foreach (['threat', 'type_closeness'] as $k) {
+            $cfg[$k] = is_array($stored[$k] ?? null) ? array_replace($defaults[$k], $stored[$k]) : $defaults[$k];
+        }
+        return $cfg;
+    }
+
+    /**
+     * How close the rival is to the player, 0..1 (rulings 2026-10-01 §20 #7), from the rival's own core relationship
+     * to the player ('aff' core points -100..100, 'type') and her own RelDyn state (her passion for the player):
+     * the largest of aff / 100, her bond type's floor (jealousy_bystander.type_closeness) and
+     * passion / 100 x passion_weight. A stranger, or no data at all: 0. Pure.
+     *
+     * @param array|null $coreRel   her core relationships.Player entry
+     * @param array|null $rivalDynamics her RelDyn state, when she has one
+     */
+    public static function rivalCloseness(?array $coreRel, ?array $rivalDynamics = null): float
+    {
+        $cfg = self::bystanderConfig();
+        $closeness = is_numeric($coreRel['aff'] ?? null) ? max(0.0, min(1.0, floatval($coreRel['aff']) / 100.0)) : 0.0;
+        $type = strtolower(trim((string) ($coreRel['type'] ?? '')));
+        if ($type !== '' && is_numeric(((array) $cfg['type_closeness'])[$type] ?? null)) {
+            $closeness = max($closeness, max(0.0, min(1.0, floatval($cfg['type_closeness'][$type]))));
+        }
+        if (is_array($rivalDynamics)) {
+            $passion = floatval($rivalDynamics['dimensions']['passion']['x'] ?? $rivalDynamics['passion'] ?? 0.0);
+            $closeness = max($closeness, max(0.0, min(1.0, $passion / 100.0)) * floatval($cfg['passion_weight']));
+        }
+        return $closeness;
+    }
+
+    /**
+     * Threat multiplier of a rival of this closeness (0..1): from jealousy_bystander.threat at0 to at100, linear.
+     * null closeness (the rival is not known) is the old fixed rate, 1.0. Pure.
+     */
+    public static function bystanderThreat(?float $closeness): float
+    {
+        if ($closeness === null) return 1.0;
+        $t = (array) self::bystanderConfig()['threat'];
+        $at0 = floatval($t['at0']);
+        return max(0.0, $at0 + (floatval($t['at100']) - $at0) * max(0.0, min(1.0, $closeness)));
+    }
+
+    /**
+     * Maturity's softening of a bystander's jealousy: ONE curve, the affinity_modifiers row jealousy_bystander
+     * .maturity_modifier_row (the loss curve, 1.5 at maturity 0 to 0.5 at 100), evaluated at the observer's maturity
+     * by the same code that blunts a mature NPC's hurt, so editing that row moves both and nothing is applied twice.
+     * Never below jealousy_bystander.maturity_floor: a mature NPC is steadier, not immune. A table without the row: 1.0.
+     */
+    public static function bystanderMaturityFactor(array $observerDynamics): float
+    {
+        $cfg = self::bystanderConfig();
+        $rows = self::affinityModifiers($observerDynamics, -1.0, [])['rows'];
+        $row = (string) $cfg['maturity_modifier_row'];
+        if (!isset($rows[$row])) return 1.0;
+        return max(max(0.0, floatval($cfg['maturity_floor'])), floatval($rows[$row]));
+    }
+
+    /**
+     * What multiplies a bystander's jealousy gain besides her commitment (rulings 2026-10-01 §20 #7): the rival's
+     * threat and her own maturity's (floored) softening. $closeness null = the rival is unknown (threat 1.0). Pure.
+     */
+    public static function bystanderJealousyFactor(array $observerDynamics, ?float $closeness): float
+    {
+        return self::bystanderThreat($closeness) * self::bystanderMaturityFactor($observerDynamics);
+    }
+
     /**
      * NPCs near $npcName (CHIM's CACHE_PEOPLE, '|'-delimited) watched the player be intimate
      * with $npcName (an eval item for $npcName with romantic_exposure). Each committed
@@ -10141,6 +10234,7 @@ class RelationshipDynamics
         $cachePeople = $cachePeople ?? (string) ($GLOBALS['CACHE_PEOPLE'] ?? '');
         $added = [];
         $seen = [];
+        $closeness = null;   // how close the rival is to the player: read once, when somebody is committed enough to mind
         foreach (explode('|', $cachePeople) as $name) {
             $name = trim($name);
             $key = strtolower($name);
@@ -10149,7 +10243,14 @@ class RelationshipDynamics
             if (self::loadStoredDynamics($name) === null) continue;   // no bond state: not jealous of anyone
 
             $dyn = self::getDynamics($name);
-            $gain = self::bystanderJealousyGain($dyn);
+            $base = self::bystanderJealousyGain($dyn);
+            if ($base <= 0) continue;
+            if ($closeness === null) {
+                $rival = self::loadStoredDynamics($npcName);
+                $closeness = self::rivalCloseness(self::getPlayerRelationship($npcName), is_array($rival) ? $rival : null);
+            }
+            // Who the rival is to the player, and how steady the bystander is (§20 #7); never zero
+            $gain = $base * self::bystanderJealousyFactor($dyn, $closeness);
             if ($gain <= 0) continue;
             self::addJealousy($dyn, $gain, $npcName);
             // A 'rival' incident for the bystander's values path (traits design §1.5)
@@ -10162,7 +10263,8 @@ class RelationshipDynamics
                 continue;
             }
             $added[$name] = $gain;
-            self::log("Bystander jealousy: {$name} +" . round($gain, 2) . " (saw the player with {$npcName})");
+            self::log("Bystander jealousy: {$name} +" . round($gain, 2) . " (saw the player with {$npcName}; rival closeness " . round($closeness, 2)
+                . ' x threat ' . round(self::bystanderThreat($closeness), 2) . ' x maturity ' . round(self::bystanderMaturityFactor($dyn), 2) . ')');
         }
         return $added;
     }

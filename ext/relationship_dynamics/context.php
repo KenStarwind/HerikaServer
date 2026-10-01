@@ -16,7 +16,8 @@
  * NPC-to-NPC exchanges (a radiant round, or a rechat whose previous speaker is another NPC) get
  * no player-directed steering from here, but natural exclusivity (decisions §17): when that NPC
  * is making a romantic move on this one, a <subtext> line of how she turns it aside, in her own
- * way, by her pull toward the player (RelDynExclusivity::onNpcExchange).
+ * way, by her pull toward the player (RelDynExclusivity::onNpcExchange). The same exchange is word of mouth for the
+ * cascade (RelDynCascade::noteTalk): news the player made that waits for either of them from the other is delivered.
  */
 
 $npcName = $GLOBALS['HERIKA_NAME'] ?? '';
@@ -59,4 +60,14 @@ try {
     }
 } catch (Throwable $e) {
     RelationshipDynamics::logError('exclusivity NPC exchange', $e);
+}
+
+// Word of mouth (rulings 2026-10-01 §20 #14): two NPCs actually talking is how news the player made reaches
+// someone who was not there (cascade ripples wait for a witness, a talk with their source, or travel time)
+try {
+    if ($reldynNpcExchange && isset($reldynSuitor) && $reldynSuitor !== null) {
+        RelDynCascade::noteTalk($npcName, $reldynSuitor, RelationshipDynamics::currentGamets());
+    }
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('cascade word of mouth', $e);
 }
