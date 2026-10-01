@@ -1254,6 +1254,15 @@ class RelationshipDynamics
             // (tags below, positive interaction), NPCs nearby whose core Player.type is listed
             // gain jealousy_eval_gain x this commitment multiplier (x the same multipliers).
             'jealousy_bystander_tags' => ['intimacy', 'touch'],
+            // ... and courting words count as exposure too (the spec's "touch or words"): an eval
+            // item whose romantic_intent (0..3, 2 = clear flirting or courting) is at least this,
+            // whether or not she welcomed it. Not a tag: needs no positive exchange.
+            'jealousy_romantic_intent_min' => 2,
+            // Intimacy the plugin reports (a Sharmat / OStim scene, a VR touch: an observed fact) makes
+            // the committed witnesses in CACHE_PEOPLE jealous at the request itself, not through the
+            // eval. A scene's many stages are one scene: at most one such scan per NPC in this many
+            // game minutes.
+            'jealousy_scene_cooldown_game_minutes' => 30,
             'jealousy_bystander_commitment' => ['romantic' => 1.0, 'obsessed' => 1.5, 'crush' => 0.8],
             // MDD 6.5: jealousy (0..100) at or above this -> walkaway.
             'jealousy_walkaway_at' => 100,
@@ -5314,9 +5323,12 @@ class RelationshipDynamics
             return self::LL_TOUCH;
         }
 
-        // Gifts (MARAS gift sync)
-        if ($type === 'maras_sync' && stripos($action, 'gift') !== false) {
-            return self::LL_GIFTS;
+        // An item handed over (give / trade) is what the action proves, so it comes before any
+        // guess from her mood: food, drink and potions are looking after her (acts of service),
+        // anything else a gift (handoverLoveLanguage). Items the eventlog reports as handed to
+        // her are delivered separately, once per row (processGift, RelDynGifts::noteHandover).
+        if (self::isHandoverAction($action)) {
+            return RelDynGifts::handoverLoveLanguage(self::handoverItemOfAction($action));
         }
 
         // Words of affirmation (flirty/loving mood)
@@ -5326,16 +5338,9 @@ class RelationshipDynamics
         }
 
         // Acts of service (combat/quest/protective context)
-        if ($type === 'maras_sync' && stripos($action, 'promotion') !== false) {
-            return self::LL_SERVICE;
-        }
         // Combat-together events — fighting alongside = acts of service
         $combatTypes = ['combatend', 'combatendmighty', 'bleedout'];
         if (in_array($type, $combatTypes)) {
-            return self::LL_SERVICE;
-        }
-        // Give/trade item actions — providing for someone = acts of service
-        if (stripos($action, 'ExtCmdGiveItem') !== false || stripos($action, 'ExtCmdTradeItem') !== false) {
             return self::LL_SERVICE;
         }
         // Post-combat dialogue — talking after fighting together
@@ -5356,6 +5361,21 @@ class RelationshipDynamics
             return self::LL_TIME;
         }
 
+        return null;
+    }
+
+    /** Is this request action an item handover (ExtCmdGiveItem / ExtCmdTradeItem)? */
+    public static function isHandoverAction($action): bool
+    {
+        return is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item/i', $action) === 1;
+    }
+
+    /** The item a handover action names (ExtCmdGiveItem@Name, ExtCmdTradeItem@Name), or null when it names none. */
+    public static function handoverItemOfAction($action): ?string
+    {
+        if (is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item@([^:\r\n]+)/i', $action, $m) && trim($m[1]) !== '') {
+            return trim($m[1]);
+        }
         return null;
     }
 
@@ -5399,11 +5419,7 @@ class RelationshipDynamics
         if (is_array($llmResponse) && is_string($llmResponse['item'] ?? null) && trim($llmResponse['item']) !== '') {
             return trim($llmResponse['item']);
         }
-        $action = $GLOBALS['gameRequest'][3] ?? '';
-        if (is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item@([^:\r\n]+)/i', $action, $m)) {
-            return trim($m[1]);
-        }
-        return null;
+        return self::handoverItemOfAction($GLOBALS['gameRequest'][3] ?? '');
     }
 
     /**
@@ -8357,6 +8373,9 @@ class RelationshipDynamics
                     if (empty($f['romantic_exposure'])) {
                         continue;
                     }
+                    if (!empty($f['scanned_at_request'])) {
+                        continue;   // intimacy the plugin reported: its request scanned the room (scanReportedIntimacy)
+                    }
                     if (!is_array($f['witnesses'] ?? null)) {
                         self::log("Bystander jealousy for {$npcName}: the eval item recorded no witnesses; nobody is made jealous");
                         continue;
@@ -8807,6 +8826,17 @@ class RelationshipDynamics
         // shared, 0.5x-2.0x by its appraisal and 0.7x on a bad date. The love language comes
         // from the first tag that maps to one.
         if ($signal === 'passion' && $raw > 0) {
+            // Conflict repair (conflict-repair): a positive passion gain while a conflict is open lands
+            // conflict_repair_passion_mult x, as the local classifier's does (calculatePassionGain).
+            // The two never meet: an exchange the eval scores is the eval's alone (postrequest's
+            // $evalOwnsExchange), one it does not is the classifier's.
+            if (!empty($dynamics['in_conflict']) && self::configValue('conflict_enabled')) {
+                $rm = floatval(self::configValue('conflict_repair_passion_mult'));
+                if ($rm > 0 && abs($rm - 1.0) > 0.001) {
+                    $raw *= $rm;
+                    $steps .= sprintf(' repair x%.2f', $rm);
+                }
+            }
             $ll = null;
             $tagLL = (array) self::configValue('affinity_tag_love_language');
             foreach ($tags as $t) {
@@ -9275,8 +9305,16 @@ class RelationshipDynamics
         }
         // What the exchange gave against the NPC's needs (rulings §9 fulfillment; its physical /
         // emotional intimacy axes, rulings §10), at its game time.
-        RelDynFulfillment::deliver($dynamics, RelDynFulfillment::evalItemAmounts($n),
-            floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
+        // A 'gift' or 'help' the player's handover row already delivered (processGift) is that
+        // delivery, not a second one (RelDynGifts::noteHandover).
+        $deliverAt = floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets();
+        $delivered = [];
+        foreach (['gift', 'help'] as $handoverTag) {
+            if (in_array($handoverTag, $n['tags'], true) && RelDynGifts::noteHandover($dynamics, 'request', $handoverTag, $deliverAt)) {
+                $delivered[] = $handoverTag;
+            }
+        }
+        RelDynFulfillment::deliver($dynamics, RelDynFulfillment::evalItemAmounts($n, null, $delivered), $deliverAt);
         // A romantic moment or a setback, for the romance promotion after the inbox (rulings §9)
         RelDynRomance::noteMoment($dynamics, $n);
         // Betrayal / a lie are attachment experiences (decisions §12), x the exchange's significance
@@ -9829,6 +9867,14 @@ class RelationshipDynamics
             $out['romantic_exposure'] = count(array_intersect($tags,
                 array_map('strtolower', (array) self::configValue('jealousy_bystander_tags')))) > 0;
         }
+        // Courting words in front of the room (jealousy-core): open flirting is seen whether or not
+        // she welcomed it, so no positive exchange is needed
+        if (intval($item['romantic_intent'] ?? 0) >= max(1, intval(self::configValue('jealousy_romantic_intent_min')))) {
+            $out['romantic_exposure'] = true;
+        }
+        // Intimacy the plugin reported already made its witnesses jealous at its request
+        // (scanReportedIntimacy): this item must not scan them a second time
+        $out['scanned_at_request'] = is_string($item['reported_intimacy'] ?? null) && trim($item['reported_intimacy']) !== '';
         return $out;
     }
 
@@ -9926,6 +9972,31 @@ class RelationshipDynamics
             self::log("Bystander jealousy: {$name} +" . round($gain, 2) . " (saw the player with {$npcName})");
         }
         return $added;
+    }
+
+    /**
+     * Intimacy the plugin reports with the player (a Sharmat / OStim scene, a VR touch: an observed
+     * fact, RelDynIntimacy::requestKind) makes the committed NPCs in CACHE_PEOPLE jealous at the
+     * request itself, whether or not the eval scores the exchange (the eval's own scan skips such an
+     * item: applyEvalFeelings' scanned_at_request). A scene reports itself at every stage, so this
+     * is at most one scan per NPC in jealousy_scene_cooldown_game_minutes of game time; the stamp
+     * ($dynamics['_bystander_scan_gamets']) is saved with her state. $npcName is the rival (the one
+     * the player is with). Returns bystander => jealousy points added.
+     */
+    public static function scanReportedIntimacy(string $npcName, array &$dynamics, float $now, ?string $cachePeople = null): array
+    {
+        if (!self::configValue('jealousy_enabled')) {
+            return [];
+        }
+        $cooldown = max(0.0, floatval(self::configValue('jealousy_scene_cooldown_game_minutes'))) * self::GAMETS_PER_DAY / 1440.0;
+        $last = floatval($dynamics['_bystander_scan_gamets'] ?? 0);
+        if ($now > 0 && $last > 0 && $now >= $last && $now - $last < $cooldown) {
+            return [];   // the same scene: its stages do not make the room jealous again
+        }
+        if ($now > 0) {
+            $dynamics['_bystander_scan_gamets'] = $now;
+        }
+        return self::scanBystanderJealousy($npcName, $cachePeople);
     }
 
     /**
@@ -13444,9 +13515,21 @@ class RelationshipDynamics
         }
 
         $giftCfg = RelDynGifts::config();
+        // The handover as a delivery to fulfillment (interaction-classification): once per row. A gift
+        // (a food or potion is service) already delivered from the request's side (the eval's tag, or
+        // the local classifier's reading of a give / trade action) is that delivery. An inverted gift
+        // (stolen, a re-gift) is no gift: it delivers nothing, and a 'gift' tag the eval gave the same
+        // exchange is not one either.
+        $handoverAt = isset($event['gamets']) && is_numeric($event['gamets']) && floatval($event['gamets']) > 0
+            ? floatval($event['gamets']) : self::currentGamets();
+        $handoverTag = RelDynGifts::handoverTag((string) $itemName);
         $inverted = self::invertedGift($dynamics, (string) $itemName, (string) $giverName, $temperament, (string) ($npcName ?? ''), $event, $giftCfg);
         if ($inverted !== null) {
+            RelDynGifts::noteHandover($dynamics, 'row', $handoverTag, $handoverAt, $giftCfg);
             return $inverted;
+        }
+        if ($handoverAt > 0 && !RelDynGifts::noteHandover($dynamics, 'row', $handoverTag, $handoverAt, $giftCfg)) {
+            RelDynGifts::deliverHandover($dynamics, (string) $itemName, $handoverAt, $giftCfg);
         }
 
         $baseValue = RelDynGifts::base(isset($event['value']) && is_numeric($event['value']) ? intval($event['value']) : null, $giftCfg);
@@ -13657,7 +13740,7 @@ class RelationshipDynamics
             // NPC name matched literally: its % and _ are escaped, not LIKE wildcards
             $escapedNpc = $db->escape(self::escapeLike($npcName));
             $rows = $db->fetchAll(
-                "SELECT rowid, data FROM eventlog WHERE type='itemfound' "
+                "SELECT rowid, data, gamets FROM eventlog WHERE type='itemfound' "
                 . "AND data LIKE '%gave%to%{$escapedNpc}%' ESCAPE '\\' "
                 . "AND {$since} "
                 . "{$order} LIMIT {$limit}"
@@ -13675,6 +13758,8 @@ class RelationshipDynamics
                     'value'  => isset($gm[5]) && $gm[5] !== '' ? intval($gm[5]) : null,
                     'stolen' => $stolen,
                     'rowid'  => isset($row['rowid']) ? intval($row['rowid']) : null,
+                    // when the player handed it over (raw game time of the row), for the delivery to fulfillment
+                    'gamets' => is_numeric($row['gamets'] ?? null) && floatval($row['gamets']) > 0 ? floatval($row['gamets']) : null,
                 ];
             }
         } catch (\Throwable $e) {

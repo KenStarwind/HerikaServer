@@ -144,12 +144,30 @@ if ($reldynIntimate) {
     // afterglow, the sober self later (RelDynPostIntimacy; Sharmat's state is never touched)
     RelDynPostIntimacy::onIntimateRequest($npcName, $dynamics, $GLOBALS['gameRequest'], (string) ($GLOBALS['PLAYER_NAME'] ?? ''),
         RelationshipDynamics::currentGamets());
+    // The room saw it: the committed NPCs near her (CACHE_PEOPLE) are jealous of her, whether or not
+    // the eval scores this exchange (jealousy-core; the eval's own scan skips an item that carries
+    // reported_intimacy)
+    try {
+        $reldynRoom = RelationshipDynamics::scanReportedIntimacy($npcName, $dynamics, RelationshipDynamics::currentGamets());
+        if ($reldynRoom !== []) {
+            RelationshipDynamics::log("[JEALOUSY] {$npcName}: the plugin reported intimacy; jealous witnesses " . json_encode($reldynRoom));
+        }
+    } catch (Throwable $e) {
+        RelationshipDynamics::logError('postrequest reported-intimacy witnesses', $e);
+    }
 }
 // The exchange as a love-language delivery to fulfillment (rulings §9; a hug or a kiss also
 // feeds the intimacy axes, rulings §10, unless the request fed them itself above), unless the
 // eval scores it (its tags deliver then, in processEvalContractItem).
 if (!$evalOwnsExchange) {
-    RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets(), !$reldynIntimate);
+    // A give / trade request is a handover: one the eventlog row of the same handover delivered
+    // already (processGift) is not delivered twice (RelDynGifts::noteHandover)
+    $handoverPaired = RelationshipDynamics::isHandoverAction($GLOBALS['gameRequest'][3] ?? '') && $interactionLL !== null
+        && RelDynGifts::noteHandover($dynamics, 'request',
+            $interactionLL === RelationshipDynamics::LL_GIFTS ? 'gift' : 'help', RelationshipDynamics::currentGamets());
+    if (!$handoverPaired) {
+        RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets(), !$reldynIntimate);
+    }
 }
 RelationshipDynamics::log("POST classify: npc={$npcName} type={$reqType} mood={$lastMood} LL=" . ($interactionLL ?? 'NULL'));
 

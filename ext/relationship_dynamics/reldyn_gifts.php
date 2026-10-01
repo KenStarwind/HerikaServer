@@ -61,6 +61,14 @@ final class RelDynGifts
             // whole words of an item name that make it fungible (besides every consumable): money
             // and ammunition, one coin or arrow is any other
             'regift_fungible_words' => ['gold', 'septim', 'septims', 'coin', 'coins', 'arrow', 'arrows', 'bolt', 'bolts', 'lockpick', 'lockpicks'],
+            // The handover as a delivery to fulfillment (interaction-classification): a gift row (or
+            // a give / trade request) delivers the 'gift' tag of fulfillment.tag_delivery (food,
+            // drink and potions deliver 'help': service) once, at this significance (0..1: the
+            // eval's units scale, fulfillment.significance_floor).
+            'handover_significance' => 0.5,
+            // Game hours within which a handover row and the same tag from the request's side (the
+            // eval's tag, or the local classifier) are one handover, not two deliveries.
+            'eval_pair_game_hours' => 1.0,
             'felt_text' => [
                 'stolen' => '{NAME} knows stolen goods on sight: the {THING} is held at arm\'s length, and the thanks never comes.',
                 'regift' => '{NAME} knows whose {THING} this was; the smile thins and the gift is set aside.',
@@ -127,6 +135,113 @@ final class RelDynGifts
             if ($w !== '' && preg_match('/(?<![a-z])' . preg_quote($w, '/') . '(?![a-z])/', $name)) return false;
         }
         return true;
+    }
+
+    // =====================================================================
+    // THE HANDOVER AS A DELIVERY TO FULFILLMENT (roadmap interaction-classification)
+    // =====================================================================
+
+    /** Dynamics key of the handover ledger: id => ['at' => raw gamets, 'src' => 'row'|'request', 'tag' => 'gift'|'help', 'paired' => bool]. */
+    const LEDGER_KEY = '_handover_ledger';
+
+    /** Most entries the ledger keeps (the oldest go first). */
+    const LEDGER_KEEP = 8;
+
+    /**
+     * Is $item something she would eat, drink or take as medicine (any CONSUMABLE_EFFECTS keyword,
+     * whole words: 'Dragonscale' is no ale, a plural is the same word)? Pure.
+     */
+    public static function isConsumable(string $item): bool
+    {
+        $name = strtolower(trim($item));
+        if ($name === '') return false;
+        foreach (RelationshipDynamics::CONSUMABLE_EFFECTS as $entry) {
+            foreach ((array) ($entry['keywords'] ?? []) as $kw) {
+                $kw = strtolower(trim((string) $kw));
+                if ($kw !== '' && preg_match('/(?<![a-z])' . preg_quote($kw, '/') . '(?:s|es)?(?![a-z])/', $name) === 1) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The love language an item handed to her speaks: food, drink and potions look after her (acts
+     * of service), anything else is a gift. A handover that names no item keeps the old reading,
+     * service. Pure.
+     */
+    public static function handoverLoveLanguage(?string $item): string
+    {
+        if ($item === null || trim($item) === '') return RelationshipDynamics::LL_SERVICE;
+        return self::isConsumable($item) ? RelationshipDynamics::LL_SERVICE : RelationshipDynamics::LL_GIFTS;
+    }
+
+    /** The eval contract tag the handover of $item stands for: 'gift' or, for food and potions, 'help'. Pure. */
+    public static function handoverTag(?string $item): string
+    {
+        return self::handoverLoveLanguage($item) === RelationshipDynamics::LL_GIFTS ? 'gift' : 'help';
+    }
+
+    /**
+     * One handover is one delivery, whoever sees it first (the eventlog row of the player's
+     * handover, or the request's side: the eval's tag, or the local classifier's reading of the
+     * give / trade action). Each calls this before it delivers $tag at raw game time $at, with its
+     * $source ('row' | 'request'): true = the other side already delivered it (an unpaired entry of
+     * the other source, the same tag, within eval_pair_game_hours: now paired, deliver nothing);
+     * false = nobody has, deliver it (an unpaired entry of this source is kept for the other side).
+     * The ledger is a keyed map, so two writers' saves merge entry by entry. Pure on $dynamics.
+     */
+    public static function noteHandover(array &$dynamics, string $source, string $tag, float $at, ?array $cfg = null): bool
+    {
+        $cfg = $cfg ?? self::config();
+        $window = max(0.0, floatval($cfg['eval_pair_game_hours'])) * RelationshipDynamics::GAMETS_PER_DAY / 24.0;
+        $ledger = is_array($dynamics[self::LEDGER_KEY] ?? null) ? $dynamics[self::LEDGER_KEY] : [];
+        $best = null;
+        $bestGap = null;
+        foreach ($ledger as $id => $e) {
+            if (!is_array($e) || !empty($e['paired']) || ($e['src'] ?? '') === $source || ($e['tag'] ?? '') !== $tag) continue;
+            $gap = abs(floatval($e['at'] ?? 0) - $at);
+            if ($gap <= $window && ($bestGap === null || $gap < $bestGap)) { $best = (string) $id; $bestGap = $gap; }
+        }
+        if ($best !== null) {
+            $ledger[$best]['paired'] = true;
+            $paired = true;
+        } else {
+            $n = 0;
+            do { $id = $source . ':' . $tag . ':' . intval($at) . ($n > 0 ? '.' . $n : ''); $n++; } while (isset($ledger[$id]));
+            $ledger[$id] = ['at' => $at, 'src' => $source, 'tag' => $tag, 'paired' => false];
+            $paired = false;
+        }
+        // keep the newest entries of the last game day
+        $newest = $at;
+        foreach ($ledger as $e) { $newest = max($newest, floatval($e['at'] ?? 0)); }
+        foreach ($ledger as $id => $e) {
+            if ($newest - floatval($e['at'] ?? 0) > RelationshipDynamics::GAMETS_PER_DAY) unset($ledger[$id]);
+        }
+        if (count($ledger) > self::LEDGER_KEEP) {
+            uasort($ledger, fn($a, $b) => floatval($a['at'] ?? 0) <=> floatval($b['at'] ?? 0));
+            $ledger = array_slice($ledger, -self::LEDGER_KEEP, null, true);
+        }
+        $dynamics[self::LEDGER_KEY] = $ledger;
+        return $paired;
+    }
+
+    /**
+     * Deliver the handover of $item at raw game time $at to the player pair's fulfillment: the
+     * 'gift' (or, for food, drink and potions, 'help') row of fulfillment.tag_delivery at
+     * handover_significance. Returns axis => units applied ([] without a fulfillment state).
+     */
+    public static function deliverHandover(array &$dynamics, ?string $item, float $at, ?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        $fc = RelDynFulfillment::config();
+        $row = (array) (((array) $fc['tag_delivery'])[self::handoverTag($item)] ?? []);
+        $floor = max(0.0, min(1.0, floatval($fc['significance_floor'])));
+        $scale = $floor + (1.0 - $floor) * max(0.0, min(1.0, floatval($cfg['handover_significance'])));
+        $amounts = [];
+        foreach ($row as $axis => $units) {
+            if (is_numeric($units) && floatval($units) > 0) $amounts[$axis] = floatval($units) * $scale;
+        }
+        return $amounts === [] ? [] : RelDynFulfillment::deliver($dynamics, $amounts, $at);
     }
 
     /**

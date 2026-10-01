@@ -492,8 +492,11 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
      */
     public function testTheSameKissFeelsDifferentByTheBond(): void
     {
-        // The mood alone: no weather's pull and no hour of the day moving it between the rounds
+        // The mood alone: no weather's pull and no hour of the day moving it between the rounds, and no
+        // jealousy: the same kiss is asked of all four in one room, and the partner would be jealous of
+        // the other three (open courting is seen, jealousy-core); that is its own test, not the mood's
         $this->patchConfig(['internal_weather_enabled' => false, 'environment_modifiers_enabled' => false, 'creature_moodifications_enabled' => false,
+            'jealousy_enabled' => false,
             'facet_appraisal' => array_replace(RelDynFacets::appraisalDefaults(), ['mood_per_game_hour' => 0.0])]);
         $t = $this->hello('romantic', 60, ['Ashe' => ['crush', 40], 'Muiri' => ['none', 0], self::LYNLY => ['professional', 20]]);
         $all = array_keys(self::BEDS);
