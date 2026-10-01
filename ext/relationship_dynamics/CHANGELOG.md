@@ -3,7 +3,7 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## Unreleased (batch T, traits and bodies)
+## Unreleased — batch T
 Diary moments stopped for good at a steady pace. The diary's "fifteen talks since the last moment", the ick window and the
 parasite ledger's stamps counted on `interaction_count`, which is the diminishing-returns factor: it decays over play time
 before each talk adds one, so at ten talks per play hour it settles near 116 and a gap measured on it never opened again
@@ -28,6 +28,22 @@ Creatures: back in her own skin a werewolf gets the maturity the full moon or ni
 Companions member cured of the blood ("Purity"): "not a creature".
 Combat: April's flat "party defeated" cost is retired for good. 3.4.1 has no defeat event and her own fall already drains or
 fires her by who she is (the bleedout response); the player's fall in a fight costs nobody a flat defeat.
+Things handed to her are read by what they are: food, drink and potions are help, anything else is a gift, and the
+handover itself outranks the mood guess. A gift delivers its love language once, whether the row, the local reading or the
+eval saw it first. The repair boost after a quarrel now reaches the eval path too, and open flirting or a plugin scene makes
+the committed people in the room jealous at the request itself. The eval is shown a plain anchor for each dimension so its
+scores land on a shared scale.
+Felt lines: the love-language hint and the blush now ride on the gesture the player just made, spent on the next word, and a
+matching language is brighter and held longer instead of gating the blush. Reunion prose names the NPC instead of a
+gendered pronoun and honours the configured minimum. The emergent emotions follow the design draft's inputs, with a short
+window for the ones that need a recent change, and at most the two deepest speak.
+Word of what the player did to someone now travels: a large change, or a defining moment, queues a ripple for the people
+who care about that NPC, applied lazily at their own next turn (hearsay only damps, enemies invert, one hop) with a
+once-said line. NPC-to-NPC evaluations get tiered facts about each NPC from RelDyn, deeper as her bond to the player grows,
+registered idempotently beside other extensions' sources and switchable.
+Prompt gating learns more fame: the civil war sides, the Bards College, the Volkihar, a thane of Whiterun, and the Dawnguard
+as its own side only. Two tools join the repo: a replay tool for captured prompts (list, show, diff, replay with a block
+removed or patched) and a read-only seam check for the live pipeline.
 
 ## reldyn-v0.20 — love languages that work, and bio reads that are not inflated
 Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
