@@ -616,6 +616,41 @@ final class RelDynConsentTestBedsPostgresTest extends TestCase
         $this->assertNoDbFailures();
     }
 
+    /**
+     * The contract, end to end: Sharmat's local bridge (Sharmat-Alpha branch reldyn-consent, reldyn_consent_policy.php, a read-only
+     * reference like nsfw_data.php in the handoff test) reads from the real database exactly what RelDyn's real hooks published, for
+     * every bed, and its eligibility answer is RelDyn's. Skipped when that checkout is not on the branch. In its own process: the
+     * bridge's functions are global.
+     */
+    #[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+    public function testSharmatsBridgeReadsExactlyWhatRelDynPublished(): void
+    {
+        $bridge = __DIR__ . '/../../../Sharmat-Alpha/reldyn_consent_policy.php';
+        if (!is_file($bridge)) {
+            $this->markTestSkipped('Sharmat-Alpha is not on its local branch reldyn-consent next to this worktree (' . $bridge . ')');
+        }
+        require_once $bridge;
+        $c = $this->allBeds();
+        foreach (array_keys(self::BEDS) as $npc) {
+            aiagentNsfwRelDynConsentReset();
+            $read = aiagentNsfwRelDynConsentDecision($npc);
+            $this->assertNotNull($read, "{$npc}: the bridge finds RelDyn's decision");
+            $this->assertSame($c[$npc]['allow'], $read['allow'], $npc);
+            $this->assertSame($c[$npc]['stance'], $read['stance'], $npc);
+            $this->assertSame($c[$npc]['reasons'], $read['reasons'], $npc);
+            $this->assertSame((string) $c[$npc]['felt'], $read['felt'], $npc);
+            $this->assertSame($c[$npc]['allow'], aiagentNsfwRelDynConsentEligibility($npc), "{$npc}: Sharmat's answer is RelDyn's");
+            $this->assertSame(!$c[$npc]['allow'], aiagentNsfwRelDynRefuses($npc), $npc);
+        }
+        $this->assertTrue($c['Aela the Huntress']['allow']);
+        $this->assertFalse($c['Ashe']['allow'], 'the beds differ, and Sharmat follows each');
+        // RelDyn off: the bridge goes inert
+        $this->storeConfig(['enabled' => false]);
+        aiagentNsfwRelDynConsentReset();
+        $this->assertNull(aiagentNsfwRelDynConsentDecision('Aela the Huntress'), 'RelDyn switched off in its config: no decision');
+        $this->assertNoDbFailures();
+    }
+
     public function testTheTextNeverAssumesAPronounWhateverTheNPCsGender(): void
     {
         $npc = 'Aela the Huntress';
