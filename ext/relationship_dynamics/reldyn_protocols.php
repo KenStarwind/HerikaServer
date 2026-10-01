@@ -604,6 +604,7 @@ final class RelDynProtocols
             $type = RelationshipDynamics::getRelationshipType($npc, $dynamics);
             if (in_array($type, (array) $d['betrayal_bond_types'], true)) {
                 RelationshipDynamics::log("[DIVINE] {$npc}: betrayal by a bonded partner ({$type}): " . ($n['summary'] ?? ''));
+                RelDynTraitReingest::noteMilestone($dynamics, 'betrayal', self::calendarNow($dynamics));   // the bio re-ingest looks again soon
                 // The one who betrayed her is no anchor: not in the fork, not in the window
                 RelationshipDynamics::triggerDivineIntervention($npc, 'betrayal', intval($d['betrayal_severity']), $dynamics,
                     [RelationshipDynamics::PLAYER_RELATIONSHIP_KEY]);

@@ -152,6 +152,15 @@ if ($gametsDelta > 0) {
 // Auto-generate love language if missing
 RelationshipDynamics::ensureLoveLanguage($npcName, $dynamics);
 
+// ========== BIO RE-INGEST (decisions 2026-10-01 §21 #10) ==========
+// Every ~90 game days or after a milestone: has this NPC's live bio changed since it was read? Only a changed
+// bio queues a read (no model call here); a finished one is settled into the vector by the profile resolution.
+try {
+    RelDynTraitReingest::onPrerequest($npcName, $dynamics);
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('bio re-ingest check', $e);
+}
+
 // Load config toggles
 $reldynCfg = RelationshipDynamics::getConfig();
 

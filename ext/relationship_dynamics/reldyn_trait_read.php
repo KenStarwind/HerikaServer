@@ -23,8 +23,13 @@
  * Skip list (trait_reader.skip, template keys): never read, never enqueued, no quote stored.
  * Ashe is on it: her vector is the hand-set conclusion in config npc_overrides.
  *
+ * The same table and worker also carry the bio re-ingest (reldyn_trait_reingest.php): a changed live
+ * bio queues a row keyed `live:<npc name>`, read from core_npc_master instead of a template.
+ *
  * Units: trait values and confidences 0..1 (rounded to 0.05); maturity_start 0..100 (rounded to 5).
  */
+
+require_once __DIR__ . '/reldyn_trait_reingest.php';
 
 final class RelDynTraitRead
 {
@@ -164,7 +169,14 @@ final class RelDynTraitRead
             'temperature'  => 0.3,    // a rating task; determinism comes from the cache (design §4.2)
             'autostart_worker' => true,
             'skip'         => ['ashe'],   // template keys never read (spoiler screen, hand-set vectors)
+            'reingest'     => RelDynTraitReingest::defaultConfig(),   // the bio re-ingest (reldyn_trait_reingest.php)
         ];
+    }
+
+    /** trait_reader.reingest over its defaults (a stored partial row keeps the other defaults), read fresh. */
+    public static function reingestConfig(): array
+    {
+        return self::config()['reingest'];
     }
 
     /** RelDyn config key 'trait_reader' over defaultConfig(); read fresh. */
@@ -172,6 +184,10 @@ final class RelDynTraitRead
     {
         $stored = class_exists('RelationshipDynamics') ? (RelationshipDynamics::getConfig()['trait_reader'] ?? []) : [];
         $cfg = array_merge(self::defaultConfig(), is_array($stored) ? $stored : []);
+        // a stored partial reingest row keeps the other defaults (array_merge above is shallow)
+        $row = is_array($cfg['reingest']) ? $cfg['reingest'] : [];
+        $cfg['reingest'] = array_merge(RelDynTraitReingest::defaultConfig(), $row);
+        $cfg['reingest']['milestones'] = array_values(array_intersect(RelDynTraitReingest::MILESTONE_KINDS, array_map('strval', (array) $cfg['reingest']['milestones'])));
         // Ashe is always screened, whatever the stored list says.
         $cfg['skip'] = array_values(array_unique(array_merge(['ashe'], array_map(fn($k) => strtolower(trim((string) $k)), (array) $cfg['skip']))));
         return $cfg;
@@ -180,7 +196,7 @@ final class RelDynTraitRead
     public static function isSkipped(string $templateKey, ?array $cfg = null): bool
     {
         $cfg = $cfg ?? self::config();
-        $k = strtolower(trim($templateKey));
+        $k = strtolower(trim(RelDynTraitReingest::baseKey($templateKey)));   // a live re-ingest key is its NPC's
         foreach ((array) $cfg['skip'] as $s) {
             if ($k === $s || self::matchKey($k) === self::matchKey((string) $s)) return true;
         }
@@ -664,7 +680,7 @@ TXT;
     {
         $db = self::db();
         $row = $db->fetchOne('SELECT to_regclass($1) IS NOT NULL AS present', [self::TABLE]);
-        if (self::isTrue($row['present'] ?? null)) return;
+        if (self::isTrue($row['present'] ?? null)) { self::$tables[spl_object_id($db) . ':' . self::TABLE] = true; return; }
         $db->fetchOne('CREATE TABLE IF NOT EXISTS ' . self::TABLE . " (
             template_key text NOT NULL,
             src_hash text NOT NULL,
@@ -681,6 +697,7 @@ TXT;
         if (!self::isTrue($check['present'] ?? null)) {
             throw new RuntimeException('RelDynTraitRead: could not create ' . self::TABLE);
         }
+        self::$tables[spl_object_id($db) . ':' . self::TABLE] = true;   // the existence memo may hold an earlier "no"
     }
 
     /** The committed seed: ['meta' => ..., 'reads' => [template_key => entry]] ([] when absent/invalid). */
@@ -859,10 +876,10 @@ TXT;
      * ?array, 'error' => ?string, 'model' => ?string]. The LLM callable returns a string or
      * ['text' => string, 'model' => string]. $gender: the NPC's (screen rule S); null = looked up.
      */
-    public static function readOnce(string $templateKey, array $fields, callable $llm, array $cfg, ?string $gender = null): array
+    public static function readOnce(string $templateKey, array $fields, callable $llm, array $cfg, ?string $gender = null, ?string $displayName = null): array
     {
         if (self::isSkipped($templateKey, $cfg)) return ['ok' => false, 'result' => null, 'error' => 'skip-listed', 'model' => null];
-        $out = $llm(self::buildMessages(self::displayName($templateKey), $fields), self::callParams($cfg));
+        $out = $llm(self::buildMessages($displayName ?? self::displayName($templateKey), $fields), self::callParams($cfg));
         $model = is_array($out) ? ($out['model'] ?? null) : null;
         $text = is_array($out) ? ($out['text'] ?? null) : $out;
         if (!is_string($text) || trim($text) === '') return ['ok' => false, 'result' => null, 'error' => 'empty response', 'model' => $model];
@@ -898,6 +915,7 @@ TXT;
         if (!self::isTrue($lock['got'] ?? null)) { $stats['locked'] = true; return $stats; }
         try {
             $llm = $llm ?? self::$llm ?? self::defaultLlm();
+            $reingestOn = RelDynTraitReingest::enabled();   // off: live-bio re-reads stay queued, untouched
             $tried = [];
             while ($stats['processed'] < max(1, intval($cfg['jobs_per_run']))) {
                 if ($pause()) {
@@ -906,7 +924,8 @@ TXT;
                     break;
                 }
                 $row = $db->fetchOne('SELECT template_key, src_hash, attempts FROM ' . self::TABLE . "
-                     WHERE status = 'pending' AND NOT ((template_key || '|' || src_hash) = ANY(\$1::text[]))
+                     WHERE status = 'pending' AND NOT ((template_key || '|' || src_hash) = ANY(\$1::text[]))"
+                     . ($reingestOn ? '' : " AND left(template_key, " . strlen(RelDynTraitReingest::LIVE_PREFIX) . ") <> '" . RelDynTraitReingest::LIVE_PREFIX . "'") . "
                      ORDER BY created, template_key LIMIT 1", [self::pgTextArray($tried)]);
                 if (!isset($row['template_key'])) break;
                 $key = (string) $row['template_key'];
@@ -939,6 +958,20 @@ TXT;
         $error = null;
         $res = null;
         try {
+            if (RelDynTraitReingest::isLiveKey($key)) {
+                // a bio re-ingest: the NPC's own live bio (core_npc_master), not a template
+                $bio = RelDynTraitReingest::sourceFor($key, $db);
+                if ($bio === null) {
+                    $error = 'npc gone';
+                } elseif (self::srcHash($bio['fields']) !== $hash) {
+                    $error = 'bio changed since queued';   // the next check queues the new hash
+                    $attempts = PHP_INT_MAX - 1;
+                } else {
+                    $res = self::readOnce($key, $bio['fields'], $llm, $cfg, $bio['gender'], $bio['npc']);
+                    if (!$res['ok']) $error = $res['error'];
+                }
+                return self::finishRow($key, $hash, $attempts, $error, $res, $cfg);
+            }
             $tplRow = $db->fetchOne('SELECT npc_name, ' . implode(', ', self::FIELDS) . ' FROM combined_bio_templates WHERE lower(npc_name) = lower($1) LIMIT 1', [$key]);
             if (!isset($tplRow['npc_name'])) {
                 $error = 'template gone';
@@ -956,6 +989,13 @@ TXT;
             $error = get_class($e) . ': ' . $e->getMessage();
             error_log("[RelDyn-TRAITS] trait read for {$key} threw: " . substr($error, 0, 200));
         }
+        return self::finishRow($key, $hash, $attempts, $error, $res, $cfg);
+    }
+
+    /** Store a row's outcome: done with the result, or one more attempt (dead at max_attempts). @return string 'done' | 'failed' | 'dead' */
+    private static function finishRow(string $key, string $hash, int $attempts, ?string $error, ?array $res, array $cfg): string
+    {
+        $db = self::db();
         if ($error === null) {
             $db->fetchOne('UPDATE ' . self::TABLE . " SET status = 'done', attempts = attempts + 1, result = \$3::jsonb, model = \$4, last_error = NULL, updated = now()
                            WHERE template_key = \$1 AND src_hash = \$2",

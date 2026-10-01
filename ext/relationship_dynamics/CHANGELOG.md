@@ -27,6 +27,14 @@ as a need for room, never as shame. Anyone can feel a trace of it; few cross the
 Fighting side by side is now contact: the neglect and the absence count from the fight, not from the last word. It is still
 time together by how much the NPC enjoys a fight, and for one who does not it also takes a little off the things they do
 enjoy ("I wish it was something I enjoy"). An NPC's own standing is a field in the editor, shown with the value derived for it.
+## Unreleased — the bio read keeps up
+An NPC's personality is read from their bio once, but CHIM's dynamic profile keeps rewriting bios as the story goes on. Now
+every ~90 game days, or soon after a milestone (a romance, a bond break, a betrayal, a marriage), RelDyn checks whether the
+NPC's bio actually changed. Only a changed bio is read again, in the same background queue as the first read; an unchanged
+one costs nothing. The new read moves the personality instead of replacing it, by who the NPC is: someone set in their ways
+moves less, someone volatile or still finding themselves moves more, and nobody is immune. A trait the first read knew
+nothing about simply fills in. Hand-set vectors and presets chosen in the editor are never re-read. The editor shows when the
+profile was last read, what moved, and has a "Read again" button. One switch and the cadence live in the trait reader config.
 
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or

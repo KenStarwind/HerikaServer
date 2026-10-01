@@ -3317,7 +3317,7 @@ class RelationshipDynamics
 
         $sharmatStyle = self::getSharmatSpeechStyle($npcName);
         $sharmatTemp = is_string($sharmatStyle) ? self::validTemperament(self::speechStyleToTemperament($sharmatStyle)) : null;
-        $traitIn = $readMode ? self::traitAssignmentFor($npcName, $row, $sharmatTemp) : null;
+        $traitIn = $readMode ? self::traitAssignmentFor($npcName, $row, $sharmatTemp, $dynamics) : null;
         $profile = self::deriveNpcProfile($npcName, $row, [
             'overrides' => $overrides,
             'sharmat_style' => is_string($sharmatStyle) ? $sharmatStyle : null,
@@ -3334,6 +3334,8 @@ class RelationshipDynamics
             // Personality traits phase 2 (design §4.6): the auto vector and its provenance; the
             // stored trait_vector is composed from it by syncStored (editor preset, per-trait override)
             $dynamics['_trait_vector_src'] = $traitIn['src'];
+            // The bio re-ingest (reldyn_trait_reingest.php): a settled re-read moved the drift, or the shipped template changed
+            if ($traitIn['reingest'] !== null) $dynamics[RelDynTraitReingest::KEY] = $traitIn['reingest'];
         }
         // Personality traits: trait_vector (read: composed from the auto vector; label: the label's preset point)
         $dynamics = RelDynTraits::syncStored($dynamics);
@@ -3422,6 +3424,10 @@ class RelationshipDynamics
             && RelDynTraitRead::stateFor($npcName)['status'] === 'done') {
             return true;
         }
+        // a bio re-read queued by the re-ingest is done (or dead) now: settled into the vector
+        if (RelDynTraitReingest::settleDue($npcName, $dynamics)) {
+            return true;
+        }
         // priors from an incomplete core row (the game had not sent race / class yet): resolved
         // again once it has (one core row read per request until then)
         if (($src['prior']['complete'] ?? true) === false) {
@@ -3462,7 +3468,7 @@ class RelationshipDynamics
      * npc_templates_v2, class / factions / top skill / race from the core row).
      * Returns ['auto' => RelDynTraitAssign::resolve(), 'src' => _trait_vector_src].
      */
-    private static function traitAssignmentFor(string $npcName, array $row, ?string $sharmatTemp): array
+    private static function traitAssignmentFor(string $npcName, array $row, ?string $sharmatTemp, array $dynamics = []): array
     {
         $cfg = self::getTemperamentAutogenConfig();
         $preset = (array) (((array) ($cfg['npc_overrides'] ?? []))[strtolower(trim($npcName))] ?? []);
@@ -3482,7 +3488,7 @@ class RelationshipDynamics
         $voice = RelDynTraitRead::voiceFor($state['key'], $npcName, is_string($row['voiceid'] ?? null) ? $row['voiceid'] : null);
         $screened = $state['status'] === 'skip';
         $presetLabel = $cfgPreset ?? ($hand === null ? $sharmatTemp : null);
-        $auto = RelDynTraitAssign::resolve([
+        $resolveIn = [
             'preset'         => $presetLabel,
             'preset_source'  => $cfgPreset !== null ? 'preset' : 'sharmat',
             'hand_set'       => $hand,
@@ -3491,7 +3497,20 @@ class RelationshipDynamics
                                  'skills' => (array) ($meta['skills'] ?? []), 'race' => $row['race'] ?? null],
             'read'           => $screened ? null : $state['result'],
             'screened'       => $screened,
-        ]);
+        ];
+        // The bio re-ingest's drift rides on the first read and the priors; a re-read that finished since is settled in
+        $re = RelDynTraitReingest::anchored(RelDynTraitReingest::state($dynamics), $state['hash']);
+        $resolve = fn(?array $drift) => RelDynTraitAssign::resolve($resolveIn + ['drift' => $drift]);
+        $auto = $resolve(RelDynTraitReingest::driftInput($re));
+        $reingest = (!$screened && is_array($dynamics[RelDynTraitReingest::KEY] ?? null)) ? $re : null;   // only an NPC the re-ingest has met
+        if (!$screened && RelDynTraitReingest::enabled() && is_array($re['pending'])
+            && RelDynTraitReingest::exemption($npcName, $dynamics) === null) {
+            $settled = RelDynTraitReingest::settle($npcName, $dynamics, $re, $auto, $state['result'], $resolve, RelDynTraitReingest::now($dynamics));
+            if ($settled !== null) {
+                $reingest = $settled['state'];
+                if ($settled['auto'] !== null) $auto = $settled['auto'];
+            }
+        }
         $src = [
             'assignment'   => 'read',
             'auto'         => RelDynTraits::toStored($auto['x']),
@@ -3505,7 +3524,7 @@ class RelationshipDynamics
             'prompt_v'     => RelDynTraitRead::PROMPT_V,
             'model'        => $state['model'],
         ];
-        return ['auto' => $auto, 'src' => $src];
+        return ['auto' => $auto, 'src' => $src, 'reingest' => $reingest];
     }
 
     /** Effective trait tags (lower-case). */
