@@ -1157,4 +1157,21 @@ PHP);
         $this->assertSame('npc.php?npc=Muiri#sec-jealousy', $r['location']);
         $this->assertSame([], $this->db->failures);
     }
+
+    /** creature-moodifications (batch T): a Circle member cured of the blood stays a werewolf by faction; the editor says how to settle it. */
+    public function testTheCreatureFieldTellsHowToSettleACuredCompanion(): void
+    {
+        $this->track(self::AELA);
+        $f = $this->field(RelDynEditor::model(self::AELA), 'flags', 'flag:creature_type');
+        $this->assertStringContainsString('Purity', (string) $f['hint']);
+        $this->assertStringContainsString('not a creature', (string) $f['hint']);
+        $this->assertArrayHasKey('none', $f['options'], 'the answer it names is an option');
+        $r = $this->get(['npc' => self::AELA]);
+        $this->assertStringContainsString('cured of the blood (&quot;Purity&quot;)', $r['body']);
+        // and it works: the editor's 'none' makes her no creature, with no code for the Purity case
+        $this->post(['npc' => self::AELA, 'op' => 'save', 'section' => 'flags', 'f' => ['flag:creature_type' => 'none']]);
+        $this->assertSame('none', $this->stored(self::AELA)['creature_type']);
+        $this->assertNull(RelDynCreatures::detect(self::AELA, $this->stored(self::AELA))['type']);
+        $this->assertSame([], $this->db->failures);
+    }
 }

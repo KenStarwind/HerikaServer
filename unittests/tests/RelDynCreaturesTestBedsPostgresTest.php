@@ -460,4 +460,59 @@ final class RelDynCreaturesTestBedsPostgresTest extends TestCase
         $this->assertStringContainsString('the day weighs on Serana', $this->felt['Serana']['day']['creature'] ?? '');
         $this->assertNoFailures();
     }
+
+    public function testBackInHerOwnSkinTheBeastsMaturityDropIsGivenBackAndTheBeastReturnsWithTheNextChange(): void
+    {
+        $beds = array_keys(self::BEDS);
+        $this->event('infoloc', self::OUTSIDE, self::at(self::FULL, 20.0), $this->people());
+        $this->round($beds, 'Evening.', self::at(self::FULL, 21.0), 'before');
+        $before = $this->dynamics(self::AELA);
+        $drop = floatval($before['_creature']['applied']['maturity'] ?? 0);
+        $this->assertLessThan(-1.0, $drop, 'the full moon is already on her composure');
+
+        // She changes at 23:00 and is still the beast when next spoken to: the drop holds
+        $this->form(self::AELA, 'werewolf', self::at(self::FULL, 23.0));
+        $this->poll(self::at(self::FULL, 23.1));
+        $this->turn(self::AELA, 'Easy.', self::at(self::FULL, 23.3), 'beast');
+        $beast = $this->dynamics(self::AELA);
+        $this->assertEqualsWithDelta($drop, $beast['_creature']['applied']['maturity'], 1e-9, 'held while she is the beast');
+
+        // Back in her skin by 23:40: the part of the drop the beast cost is given back (recovery 1.0), exactly
+        $this->form(self::AELA, 'normal', self::at(self::FULL, 23.67));
+        $this->poll(self::at(self::FULL, 23.7));
+        $this->round($beds, 'Are you all right?', self::at(self::FULL, 23.8), 'after');
+        $after = $this->dynamics(self::AELA);
+        $this->assertEqualsWithDelta(self::x($beast, 'maturity') - $drop, self::x($after, 'maturity'), 0.6, 'composure comes back with her skin');
+        $this->assertGreaterThan(self::x($beast, 'maturity') + 0.8 * abs($drop), self::x($after, 'maturity'));
+        $this->assertArrayNotHasKey('maturity', $after['_creature']['applied'], 'nothing of the drop is held any more');
+        $this->assertGreaterThan(self::x($before, 'resentment_self'), self::x($after, 'resentment_self'), 'the shame still lands');
+        foreach (['Ashe', 'Muiri', 'Lynly Star-Sung'] as $npc) {
+            $this->assertArrayNotHasKey('maturity', $this->dynamics($npc)['_creature']['applied'] ?? [], $npc);
+        }
+
+        // Quiet turns later the same night leave it alone (nothing is re-added, nothing is taken back twice)
+        $this->turn(self::AELA, 'Rest.', self::at(self::FULL, 23.9), 'rest');
+        $this->assertEqualsWithDelta(self::x($after, 'maturity'), self::x($this->dynamics(self::AELA), 'maturity'), 0.05);
+
+        // The moon is still up: the next change brings the beast's override back, and the next return gives it back again
+        $this->form(self::AELA, 'werewolf', self::at(self::FULL + 1, 0.5));
+        $this->poll(self::at(self::FULL + 1, 0.6));
+        $this->turn(self::AELA, 'Not again.', self::at(self::FULL + 1, 0.8), 'beast2');
+        $beast2 = $this->dynamics(self::AELA);
+        $this->assertLessThan(-1.0, floatval($beast2['_creature']['applied']['maturity'] ?? 0), 'the beast is back');
+        $this->assertLessThan(self::x($after, 'maturity') - 0.8 * abs($drop), self::x($beast2, 'maturity'));
+        $this->form(self::AELA, 'normal', self::at(self::FULL + 1, 1.2));
+        $this->poll(self::at(self::FULL + 1, 1.3));
+        $this->turn(self::AELA, 'There.', self::at(self::FULL + 1, 1.5), 'after2');
+        $this->assertArrayNotHasKey('maturity', $this->dynamics(self::AELA)['_creature']['applied']);
+        $this->assertGreaterThan(self::x($beast2, 'maturity') + 0.8 * abs($drop), self::x($this->dynamics(self::AELA), 'maturity'));
+
+        // By day the blood only simmers: the passive row is not "recovered" (it is her baseline, not the beast's override)
+        $this->turn(self::AELA, 'Morning.', self::at(self::FULL + 1, 10.0), 'day');
+        $day = $this->dynamics(self::AELA);
+        $this->assertSame('werewolf_day', $day['_creature']['state']);
+        $this->assertLessThan(0.0, $day['_creature']['applied']['maturity'], 'the passive beast blood keeps her baseline a little lower');
+        $this->assertGreaterThan($drop, $day['_creature']['applied']['maturity']);
+        $this->assertNoFailures();
+    }
 }

@@ -1092,6 +1092,7 @@ final class RelDynEditor
             self::field('flag:creature_type', 'Creature', 'select', is_string($creature) ? $creature : '', [
                 'options' => ['' => '(from the game)', 'none' => 'not a creature'] + array_combine(RelDynCreatures::TYPES, RelDynCreatures::TYPES),
                 'state' => $creature !== null ? 'override' : 'derived', 'derived' => '',
+                'hint' => 'a Companions member cured of the blood ("Purity") is still a werewolf by faction: choose "not a creature" for her',
                 'set' => function (array &$dd, $v): ?string {
                     if ($v !== '' && $v !== 'none' && !in_array($v, RelDynCreatures::TYPES, true)) return 'unknown creature';
                     $dd['creature_type'] = $v !== '' ? $v : null;
