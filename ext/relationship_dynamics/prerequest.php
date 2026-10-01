@@ -252,6 +252,19 @@ if (($reldynCfg['conflict_enabled'] ?? true) && $GLOBALS['RELDYN_PRE_AFF'] !== n
     RelationshipDynamics::observeCoreAffinity($dynamics, floatval($GLOBALS['RELDYN_PRE_AFF']), RelationshipDynamics::currentGamets());
 }
 
+// ========== CASCADE (roadmap cascade-network, MDD 10: lazy) ==========
+// What she has heard of the player's dealings with the NPCs who matter to her, queued when it
+// happened (reldyn_cascade.php), lands now: through her own social sensitivity curve, into core's
+// Player.aff (queued delta + commit), after the mirror above was read from core, so nothing refreshes
+// it away. A felt "heard what the player did to X" line waits for her next player-addressed turn.
+if (!empty($reldynCfg['dimension_engine_enabled'])) {
+    try {
+        RelDynCascade::onPrerequest($npcName, $dynamics);
+    } catch (Throwable $e) {
+        RelationshipDynamics::logError('cascade ripples on prerequest', $e);
+    }
+}
+
 // ========== FULFILLMENT (rulings 2026-09-24 §9: neglect = absence of fulfillment) ==========
 // Needs vector refreshed on contact, day-end samples, unfulfilled neglect, the mature boundary
 // (a failed probation steps core's type back), and the band this contact leaves behind for
@@ -571,6 +584,13 @@ if (!empty($reldynCfg['director_goals_enabled'] ?? true)) {
         RelationshipDynamics::expireDirectorGoal($dynamics);
     }
     $GLOBALS['RELDYN_DIRECTOR_GOAL'] = RelationshipDynamics::getActiveDirectorGoal($dynamics);
+}
+
+// The words core's NPC-to-NPC eval is told of her, by how well the player knows her (npc-npc-tiered-eval)
+try {
+    RelDynNpcFacts::refresh($dynamics);
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('npc-npc facts words', $e);
 }
 
 // Push RelDyn's affinity change (absence decay) to core as a locked delta

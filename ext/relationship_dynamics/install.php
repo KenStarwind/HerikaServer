@@ -34,6 +34,17 @@ try {
     echo "Trait reads: not installed (" . $e->getMessage() . "); they install on first use.\n";
 }
 
+// Tiered personality facts for core's NPC-to-NPC eval (npc-npc-tiered-eval): RelDyn's entry in
+// conf_opts chim_character_facts_sources, merged with whatever other extensions registered
+// (idempotent; follows the npc_npc_facts.enabled switch). Runs on every install, config row or not.
+try {
+    $factsStatus = RelDynNpcFacts::sync($db);
+    echo "NPC-NPC eval facts source: {$factsStatus}.\n";
+} catch (\Throwable $e) {
+    error_log('[RelDyn-FACTS] install: ' . $e->getMessage());
+    echo "NPC-NPC eval facts source: not registered (" . $e->getMessage() . ").\n";
+}
+
 // Check if already installed
 $existing = $db->fetchOne("SELECT id FROM conf_opts WHERE id = 'relationship_dynamics_config' LIMIT 1");
 if (!empty($existing)) {
