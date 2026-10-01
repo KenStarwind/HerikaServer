@@ -289,7 +289,7 @@ final class RelDynSettings
             'substances.drunk', 'substances.sober', 'substances.addiction',
             'facet_classifier.embedding', 'facet_classifier.build',
             'cascade.defining', 'cascade.felt', 'cascade.felt_text',
-            'creatures.post_transform',
+            'creatures.post_transform', 'creatures.vampire', 'creatures.vampire.rows', 'creatures.vampire.thirst',
         ]);
     }
 
