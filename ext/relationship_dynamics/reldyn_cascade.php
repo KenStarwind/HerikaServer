@@ -343,7 +343,7 @@ final class RelDynCascade
                 . ' -> ' . sprintf('%+.2f', $adj) . ' through her curve');
         }
         $dynamics[self::APPLIED_KEY] = array_slice($applied, -self::APPLIED_KEEP);
-        $dynamics[self::FELT_KEY] = array_slice($felt, -self::FELT_MAX);
+        if ($felt !== []) $dynamics[self::FELT_KEY] = array_slice($felt, -self::FELT_MAX);
         if (abs($total) > 0.0001) {
             RelationshipDynamics::queueAffinityDelta($dynamics, $total);
         }

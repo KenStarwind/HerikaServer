@@ -449,7 +449,7 @@ final class RelDynCascadeNetworkTestBedsPostgresTest extends TestCase
         if (isset($this->kit)) $this->kit->destroy();
     }
 
-    private function world(array $config = [], int $aelaAff = 30): RelDynNetworkBedsKit
+    private function world(array $config = [], int $aelaAff = 30, array $ysolda = ['Player' => [40, 'friend']]): RelDynNetworkBedsKit
     {
         $this->kit = new RelDynNetworkBedsKit((string) getenv('RELDYN_TEST_PG_DSN'), 'cascade', $config);
         $this->kit->seed([
@@ -459,7 +459,7 @@ final class RelDynCascadeNetworkTestBedsPostgresTest extends TestCase
             self::LYNLY => ['Player' => [40, 'friend'], self::AELA => [45, 'friend']],
             self::ASHE => ['Player' => [40, 'friend'], self::AELA => [35, 'neutral']],
             self::MUIRI => ['Player' => [40, 'friend'], self::AELA => [-50, 'rival']],
-            self::YSOLDA => ['Player' => [40, 'friend']],
+            self::YSOLDA => $ysolda,
             self::SVEN => ['Player' => [40, 'friend'], self::AELA => [20, 'neutral']],
         ]);
         $this->kit->event('infoloc', RelDynNetworkBedsKit::HOME, RelDynNetworkBedsKit::at(RelDynNetworkBedsKit::N0, 17.9));
@@ -669,6 +669,23 @@ final class RelDynCascadeNetworkTestBedsPostgresTest extends TestCase
         $this->assertGreaterThan(40, $this->kit->coreAff(self::FARKAS), 'Farkas thinks better of the player');
         $this->assertStringContainsString('thinks better', $this->kit->felt[self::FARKAS]['hear']['cascade_ally_helped']);
         $this->assertStringContainsString('pulled her out of the fire', $this->kit->felt[self::FARKAS]['hear']['cascade_ally_helped']);
+        $this->assertClean();
+    }
+
+    public function testSomeoneWhoHasNotMetThePlayerStillHearsButHasNothingToSayToThem(): void
+    {
+        // Ysolda holds a bond to Aela (60) and has never spoken to the player (affinity 0, a stranger's context tier)
+        $this->world([], 30, ['Player' => [0, 'neutral'], self::AELA => [60, 'friend']]);
+        $this->scoreInsult();
+        $this->insultAela($this->t(0));
+        $this->assertCount(1, $this->inbox(self::YSOLDA), 'the word reaches her');
+        $this->kit->turn(self::YSOLDA, 'Hello there.', $this->t(2), 'hear');
+        $this->assertLessThan(0, $this->kit->coreAff(self::YSOLDA), 'and counts for something: hearsay');
+        $this->assertSame([], $this->inbox(self::YSOLDA));
+        $this->assertCount(1, $this->kit->dynamics(self::YSOLDA)[RelDynCascade::APPLIED_KEY]);
+        $this->assertSame([], array_filter(array_keys($this->kit->felt[self::YSOLDA]['hear']), fn($k) => str_starts_with((string) $k, 'cascade_')),
+            'a stranger does not greet the player with it: nothing is kept to say');
+        $this->assertArrayNotHasKey(RelDynCascade::FELT_KEY, $this->kit->dynamics(self::YSOLDA));
         $this->assertClean();
     }
 
