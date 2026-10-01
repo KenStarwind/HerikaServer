@@ -82,6 +82,26 @@ function _relIsValidNpcTarget($name) {
 }
 
 /**
+ * Helper: Remove a leading "Speaker:" label from player input ("Name: Hello" -> "Hello").
+ * The game sends "<PlayerName>: <text>" and names are not always one ASCII word
+ * ("Aela the Huntress", "Lynly Star-Sung", "Éowyn"). The configured player name is stripped
+ * first; otherwise a short label of letters (any script), digits, spaces, apostrophes,
+ * hyphens or underscores is accepted, the same shape processor/comm.php uses to detect it.
+ */
+function _relStripSpeakerPrefix($text) {
+    $text = (string)$text;
+    $playerName = trim((string)($GLOBALS["PLAYER_NAME"] ?? ''));
+    if ($playerName !== '') {
+        $stripped = preg_replace('/^\s*' . preg_quote($playerName, '/') . '\s*:\s*/iu', '', $text, 1, $count);
+        if ($stripped !== null && $count > 0) {
+            return $stripped;
+        }
+    }
+    $stripped = preg_replace('/^[\p{L}\p{M}][\p{L}\p{M}0-9_\' -]{0,40}:\s*/u', '', $text, 1);
+    return $stripped ?? $text;
+}
+
+/**
  * Helper: Get NPC ID by name
  */
 function _relGetNpcIdByName($npcName) {
@@ -261,7 +281,7 @@ if ($useRelLLM && $npcId) {
     if (isset($gameRequest[0]) && in_array($gameRequest[0], $playerInputTypes) && !empty($gameRequest[3])) {
         $playerAction = $gameRequest[3];
         // Remove "PlayerName:" prefix if present (e.g., "PlayerName:Hello" -> "Hello")
-        $playerAction = preg_replace('/^[A-Za-z]+:\s*/', '', $playerAction);
+        $playerAction = _relStripSpeakerPrefix($playerAction);
         // Also remove "(Talking to everyone)" or similar tags
         $playerAction = preg_replace('/\s*\(Talking to [^)]+\)\s*$/i', '', $playerAction);
         $context['player_action'] = trim($playerAction);
@@ -291,9 +311,8 @@ if ($useRelLLM && $npcId) {
     // Clean up: If NPC response starts with player's text (echo bug), remove it
     // This happens when the main LLM accidentally echoes the player's input
     if (!empty($context['player_action']) && !empty($npcResponse)) {
+        // player_action already had its "Name:" prefix removed above
         $playerText = $context['player_action'];
-        // Remove "Name:" prefix from player text if present
-        $playerText = preg_replace('/^[A-Za-z]+:\s*/', '', $playerText);
         // If NPC response starts with player's words, strip them
         if (stripos($npcResponse, substr($playerText, 0, 50)) === 0) {
             // Find where player text ends and NPC response begins
