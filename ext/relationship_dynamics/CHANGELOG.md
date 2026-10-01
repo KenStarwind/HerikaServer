@@ -3,25 +3,16 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## Unreleased — let in, and pulling back
-"Closed off" is no longer a permanent verdict read off passion. The old line (derived warmth at or below the closed limit,
-at friend and above) made a devoted bond with no passion (a friend, a shield-sibling, family) read closed for good, and
-a romance could never close on a bad stretch. Two separate things replace it.
-How far she has let the player in is earned and lasting: sqrt(comfort x trust), in any bond type, no passion in it. A
-guarded NPC earns it slower through her own slower comfort and trust gains. While it is low she has not let them in
-yet (said so, as a "yet", at any tier).
-Pulling back is a temporary state, with hysteresis, that persists across turns. The internal weather (and the gravity it
-has built up), the relationship's unmet needs and unresolved resentment or an open conflict press on her; immaturity
-amplifies how hard the weather and mood drive it (a mature NPC is damped, never deaf), guard lowers the threshold, a
-deeper let-in raises it, and it fades as the inputs ease. A positive exchange that addresses it (most for a mature NPC who
-has voiced it) lets her reopen faster. How it shows is who she is, through the same expression the concern lane uses: a
-mature NPC says plainly what is missing and asks for it, an in-between one means to and it comes out sharp, an immature
-one pouts or picks a fight, and the attachment style colours it (anxious: protest and reassurance-seeking; avoidant:
-quiet and distant). It stands in the knowledge-of-player line once she is let in; entering and reopening are said once to
-the player's face. Jev, the NPC editor and the state dump carry let-in and the state. Every number is in the `pullback`
-settings; `pullback.enabled` off restores the old rule and its text exactly.
-The settings hub's gating preview now says its "At every tier" table changes only what she knows of the player and holds
-her current feelings fixed.
+## reldyn-v0.22 — let in, and pulling back
+"Closed off" is no longer a permanent verdict. Two things replace it. Being let in is earned and lasting: it grows with
+comfort and trust in any kind of bond, friendship and family as much as romance, and a guarded NPC simply earns it
+slower. Until then she hasn't let the player in yet, and the text says "yet".
+Pulling back is a mood that comes and goes, even deep into a bond. A stormy inner weather, needs that go unmet and
+unresolved hurt press on her; the less mature she is, the more her mood drives it, and it fades when things ease or when
+the player meets what she's missing. How it shows is who she is: a mature NPC says plainly what's missing and asks for
+it, an in-between one means to and it comes out sharp, an immature one pouts or picks a fight, and her attachment style
+colours it. The NPC editor, Jev and the state dump show both, and a switch restores the old behaviour.
+The gating preview now says its tier table changes only what she knows of the player, not how she feels.
 
 ## reldyn-v0.21 — gifts that count as gifts, ripples through her circle, the feelings that grow from the rest, and fame that follows what you joined
 What you hand her is read for what it is: food, drink and potions are help, anything else is a gift, and each handover
