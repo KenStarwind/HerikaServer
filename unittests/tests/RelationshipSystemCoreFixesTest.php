@@ -249,4 +249,51 @@ final class RelationshipSystemCoreFixesTest extends TestCase
         $this->assertSame(1, substr_count($user, 'You have my thanks, friend.'));
         $this->assertStringContainsString('[Lydia replied]: I will not forget this. You have my thanks, friend.', $user);
     }
+
+    public function testEvalSystemPromptAgreesWithTheUserPrompt(): void
+    {
+        [$system, $user] = $this->captureEvalPrompts(
+            'Thank you, truly.',
+            ['player_action' => 'I brought your sword back.', 'listener_name' => 'Player']
+        );
+
+        // The user prompt labels the two lines "[<listener> said]" and "[<speaker> replied]".
+        $this->assertStringContainsString('[Player said]: I brought your sword back.', $user);
+        $this->assertStringContainsString('[Lydia replied]: Thank you, truly.', $user);
+        $this->assertStringContainsString("how did Lydia's feelings toward Player change", $user);
+
+        // The system prompt must describe those labels, not tags that are never sent, and must not
+        // tell the model to ignore the speaker's own words while the user prompt asks for them.
+        $this->assertStringNotContainsString('[PLAYER]', $system);
+        $this->assertStringNotContainsString('[NPC]', $system);
+        $this->assertStringNotContainsString('Only evaluate based on what PLAYER did', $system);
+        $this->assertStringContainsString('said]', $system);
+        $this->assertStringContainsString('replied]', $system);
+        $this->assertStringContainsString("SPEAKER's feelings toward the LISTENER", $system);
+    }
+
+    public function testStoredEvalPromptWithTheOldAttributionBlockIsSuperseded(): void
+    {
+        // The default seeded by older migrations, plus a "type" mention so the other upgrade
+        // rules in getDynamicEvalPrompt() do not apply.
+        $GLOBALS['db']->prompts['rel_llm_evaluation'] =
+            "SPEAKER ATTRIBUTION:\n- [PLAYER] and [NPC] tags show who said what\n"
+            . "- Only evaluate based on what PLAYER did, not the NPC's own words\n"
+            . "OUTPUT: {\"changes\": {\"Player\": {\"delta\": 1, \"type\": \"crush\"}}}";
+
+        [$system] = $this->captureEvalPrompts('Hello.', ['listener_name' => 'Player']);
+
+        $this->assertStringNotContainsString('[PLAYER] and [NPC] tags', $system);
+        $this->assertStringContainsString("SPEAKER's feelings toward the LISTENER", $system);
+    }
+
+    public function testCustomEvalPromptWithoutTheOldBlockIsLeftAlone(): void
+    {
+        $custom = "Judge this like a bard. Be kind.\nOUTPUT: {\"changes\": {\"Player\": {\"delta\": 1, \"type\": \"crush\"}}}";
+        $GLOBALS['db']->prompts['rel_llm_evaluation'] = $custom;
+
+        [$system] = $this->captureEvalPrompts('Hello.', ['listener_name' => 'Player']);
+
+        $this->assertSame($custom, $system);
+    }
 }

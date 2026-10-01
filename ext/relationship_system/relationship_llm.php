@@ -1294,8 +1294,11 @@ PROMPT;
 You are a behavioral psychologist. Evaluate interactions and provide BRIEF insight.
 
 SPEAKER ATTRIBUTION:
-- [PLAYER] and [NPC] tags show who said what
-- Only evaluate based on what PLAYER did, not the NPC's own words
+- The header names the SPEAKER (the NPC whose feelings are recorded) and the LISTENER.
+- "[<listener> said]" is what the LISTENER said or did; "[<speaker> replied]" is the SPEAKER's reply.
+- The change is how the SPEAKER's feelings toward the LISTENER moved. Judge it by what the
+  LISTENER did to the SPEAKER and by how the SPEAKER's own reply shows it landed.
+- The SPEAKER's own words are evidence of their feelings, not actions by the LISTENER.
 
 AFFINITY SCALE (-100 to +100):
 - +/-1: Normal chat
@@ -1343,6 +1346,13 @@ PROMPT;
         // "romantic") and the sex-eligibility gates never matched. Supersede any prompt (seeded
         // default or stale custom) still teaching that wording with the corrected fallback.
         if (strpos($prompt, 'romance, betrayal') !== false) {
+            return $fallback;
+        }
+        // Older defaults told the model to read [PLAYER]/[NPC] tags that are never sent and to
+        // judge only the player's behavior, while the user prompt asks for the speaking NPC's own
+        // feelings. Supersede any prompt still carrying that contradictory attribution block.
+        if (strpos($prompt, '[PLAYER] and [NPC] tags') !== false
+            || strpos($prompt, 'Only evaluate based on what PLAYER did') !== false) {
             return $fallback;
         }
         return $prompt;
