@@ -35,12 +35,13 @@ final class RelDynCascadeNetworkTest extends TestCase
 
     // ------------------------------------------------------------------ who hears, and how much
 
-    public function testTheRippleIsTheChangeTimesTheBondTimesTheDecay(): void
+    public function testTheRippleIsTheChangeTimesTheBond(): void
     {
-        // the MDD's Farkas: bonded to Aela at 80, she loses 10 with the player: he hears 10 x 0.8 x 0.3
-        $this->assertEqualsWithDelta(-2.4, RelDynCascade::rippleFor(-10.0, 80.0), 1e-9);
-        $this->assertEqualsWithDelta(-3.0, RelDynCascade::rippleFor(-20.0, 50.0), 1e-9);
-        $this->assertEqualsWithDelta(3.0, RelDynCascade::rippleFor(20.0, 50.0), 1e-9, 'good news travels the same way');
+        // the MDD's Farkas: bonded to Aela at 80, she loses 10 with the player: he loses 8 (rulings 2026-10-01 §20 #13;
+        // was x 0.3 for everyone, -2.4). What is only told is damped by cascade_decay (RelDynRippleDeliveryTest).
+        $this->assertEqualsWithDelta(-8.0, RelDynCascade::rippleFor(-10.0, 80.0), 1e-9);
+        $this->assertEqualsWithDelta(-10.0, RelDynCascade::rippleFor(-20.0, 50.0), 1e-9);
+        $this->assertEqualsWithDelta(10.0, RelDynCascade::rippleFor(20.0, 50.0), 1e-9, 'good news travels the same way');
         // a closer friend hears more
         $this->assertLessThan(RelDynCascade::rippleFor(-20.0, 40.0), RelDynCascade::rippleFor(-20.0, 90.0));
     }
@@ -63,12 +64,12 @@ final class RelDynCascadeNetworkTest extends TestCase
         $this->assertNull(RelDynCascade::rippleFor(-30.0, 30.0), 'a bond of exactly 30 does not hear');
         $this->assertNull(RelDynCascade::rippleFor(-30.0, -30.0));
         $this->assertNotNull(RelDynCascade::rippleFor(-30.0, 31.0));
-        $this->assertNull(RelDynCascade::rippleFor(-5.0, 60.0), 'a ripple under a point is not carried (5 x 0.6 x 0.3 = 0.9)');
-        $this->assertNotNull(RelDynCascade::rippleFor(-6.0, 60.0));
+        $this->assertNull(RelDynCascade::rippleFor(-1.5, 60.0), 'a ripple under a point is not carried (1.5 x 0.6 = 0.9; was -5 at x 0.3)');
+        $this->assertNotNull(RelDynCascade::rippleFor(-2.0, 60.0));
         // the config moves both
         $cfg = array_replace(RelDynCascade::config(), ['min_bond' => 10.0, 'min_ripple' => 0.5]);
-        $this->assertNotNull(RelDynCascade::rippleFor(-5.0, 40.0, $cfg), '5 x 0.4 x 0.3 = 0.6, over a minimum of half a point');
-        $this->assertNull(RelDynCascade::rippleFor(-5.0, 40.0), 'and not over the default minimum');
+        $this->assertNotNull(RelDynCascade::rippleFor(-1.5, 40.0, $cfg), '1.5 x 0.4 = 0.6, over a minimum of half a point (was -5 at x 0.3)');
+        $this->assertNull(RelDynCascade::rippleFor(-1.5, 40.0), 'and not over the default minimum');
         $this->assertNotNull(RelDynCascade::rippleFor(-30.0, 15.0, $cfg), 'a bond of 15 hears once the filter is 10');
         $this->assertNull(RelDynCascade::rippleFor(-30.0, 15.0), 'and not at the default filter');
         $this->assertSame(RelationshipDynamics::CASCADE_MAX_TARGETS, RelDynCascade::config()['max_targets']);
