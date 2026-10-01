@@ -182,6 +182,51 @@ final class RelDynFameKeysTest extends TestCase
         $this->assertSame(['MQ104' => 160], RelDynReputation::configDefaults()['thane_holds']['Whiterun Hold']['quests']);
     }
 
+    /**
+     * Review fix (prompt-gating-fame): a fames table the settings hub stored whole (it is no keys node) before
+     * these fames existed. One that still holds every fame the first port shipped is an older full snapshot, not a
+     * deliberate selection: it gains the fames added since, and a legacy entry it holds untouched is brought up to the
+     * current evidence (the Dawnguard of every DLC1 quest rumoured a Volkihar player; the side-less civil war
+     * never gave way to a side). What the player edited stands.
+     */
+    public function testAnOlderFullFameSnapshotGainsTheNewFamesAndTheCorrectedLegacyEntries(): void
+    {
+        $legacy = array_diff_key(self::fames(), array_flip(['civil_war_imperial', 'civil_war_stormcloak', 'volkihar', 'bards_college', 'thane_whiterun']));
+        $legacy['civil_war'] = ['evidence' => ['stat:Civil War Quests Completed' => [4, 1.0], 'questline:civil_war' => [4, 0.6]],
+            'min_score' => 0.3, 'home' => null, 'reach' => 9,
+            'text' => '{NAME} has heard that {PLAYER} has fought in the war between the Legion and the Stormcloaks.'];
+        $legacy['dawnguard'] = ['evidence' => ['stat:Dawnguard Quests Completed' => [3, 1.0], 'questline:dawnguard' => [3, 0.6]],
+            'min_score' => 0.3, 'home' => 'The Rift', 'reach' => 3,
+            'text' => '{NAME} has heard that {PLAYER} hunts vampires with the Dawnguard.'];
+        $legacy['renown']['text'] = 'The player edited this one.';
+        $db = new RelDynFameKeysConfigDb();
+        $db->value = json_encode(['reputation' => ['fames' => $legacy]]);
+        $GLOBALS['db'] = $db;
+        RelationshipDynamics::clearConfigCache();
+        $fames = RelDynReputation::config()['fames'];
+        foreach (['civil_war_imperial', 'civil_war_stormcloak', 'volkihar', 'bards_college', 'thane_whiterun'] as $new) {
+            $this->assertArrayHasKey($new, $fames, "{$new} reaches a stored table");
+            $this->assertEquals(self::fames()[$new], $fames[$new]);
+        }
+        $this->assertEquals(self::fames()['dawnguard'], $fames['dawnguard'], 'untouched legacy Dawnguard: the side only');
+        $this->assertSame(['civil_war_imperial', 'civil_war_stormcloak'], $fames['civil_war']['superseded_by']);
+        $this->assertSame('The player edited this one.', $fames['renown']['text'], 'what was edited stands');
+        // an edited legacy entry is the player's, not corrected
+        $legacy['dawnguard']['reach'] = 5;
+        $db->value = json_encode(['reputation' => ['fames' => $legacy]]);
+        RelationshipDynamics::clearConfigCache();
+        $this->assertSame(5, RelDynReputation::config()['fames']['dawnguard']['reach']);
+        $this->assertArrayHasKey('stat:Dawnguard Quests Completed', RelDynReputation::config()['fames']['dawnguard']['evidence']);
+        // and a table that dropped one of the first port's fames is a deliberate selection (kept, plus the thane keys)
+        unset($legacy['thieves_guild']);
+        $db->value = json_encode(['reputation' => ['fames' => $legacy]]);
+        RelationshipDynamics::clearConfigCache();
+        $kept = RelDynReputation::config()['fames'];
+        $this->assertArrayNotHasKey('thieves_guild', $kept);
+        $this->assertArrayNotHasKey('volkihar', $kept);
+        $this->assertArrayHasKey('thane_whiterun', $kept);
+    }
+
     /** A stored fames table (saved before these keys existed) still gets the thane keys. */
     public function testAStoredFameTableGainsTheThaneKeys(): void
     {

@@ -189,10 +189,52 @@ final class RelDynReputation
         return $out;
     }
 
+    /**
+     * The fames the first port shipped, as they were before the batch T keys (the entries the player may have
+     * stored whole from the settings hub: 'reputation.fames' is no keys node). dawnguard counted every DLC1
+     * quest and a side-less stat (a Volkihar player was rumoured to hunt vampires); civil_war had no
+     * superseded_by.
+     */
+    const LEGACY_FAME_KEYS = ['dragonborn', 'renown', 'notoriety', 'companions', 'college', 'thieves_guild',
+        'dark_brotherhood', 'civil_war', 'dawnguard'];
+
+    /** The legacy default of the entries batch T corrected (key => entry as it was shipped). */
+    public static function legacyFameEntries(): array
+    {
+        return [
+            'civil_war' => ['evidence' => ['stat:Civil War Quests Completed' => [4, 1.0], 'questline:civil_war' => [4, 0.6]],
+                'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                'text' => '{NAME} has heard that {PLAYER} has fought in the war between the Legion and the Stormcloaks.'],
+            'dawnguard' => ['evidence' => ['stat:Dawnguard Quests Completed' => [3, 1.0], 'questline:dawnguard' => [3, 0.6]],
+                'min_score' => 0.3, 'home' => 'The Rift', 'reach' => 3,
+                'text' => '{NAME} has heard that {PLAYER} hunts vampires with the Dawnguard.'],
+        ];
+    }
+
+    /**
+     * A fames table stored whole (it is read whole) reaches the fames added since. One that still holds every
+     * fame the first port shipped (LEGACY_FAME_KEYS) is an older full snapshot, not a deliberate selection:
+     * it gains the default fames it lacks, and a legacy entry it holds exactly as it was shipped
+     * (legacyFameEntries) is the current default. An edited entry stands, and so does a table that dropped
+     * one of the first port's fames (a deliberate selection; it still gets the thane keys, below).
+     */
+    private static function upgradedFames(array $stored, array $defaults): array
+    {
+        if (array_diff(self::LEGACY_FAME_KEYS, array_keys($stored)) !== []) return $stored;
+        foreach (self::legacyFameEntries() as $key => $legacy) {
+            if (isset($stored[$key], $defaults[$key]) && is_array($stored[$key]) && $stored[$key] == $legacy) $stored[$key] = $defaults[$key];
+        }
+        return $stored + $defaults;
+    }
+
     public static function config(): array
     {
         $stored = RelationshipDynamics::configValue('reputation');
-        $cfg = array_replace(self::configDefaults(), is_array($stored) ? $stored : []);
+        $defaults = self::configDefaults();
+        $cfg = array_replace($defaults, is_array($stored) ? $stored : []);
+        if (is_array($stored) && is_array($stored['fames'] ?? null)) {
+            $cfg['fames'] = self::upgradedFames($stored['fames'], (array) $defaults['fames']);
+        }
         // a stored fames table, saved before the thane keys, still gets them (from the thane table in force)
         $cfg['fames'] = (array) $cfg['fames'] + self::thaneFames((array) ($cfg['thane_holds'] ?? []));
         return $cfg;

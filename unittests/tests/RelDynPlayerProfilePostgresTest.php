@@ -655,6 +655,70 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
     }
 
     /**
+     * Review fix (prompt-gating-fame): the side a player joined outlives its quest. The plugin sends
+     * only ACTIVE quests, so a finished side quest (or a save load, which empties the journal) is gone
+     * from the journal table; the insert-only stage log still has it. Stormcloak side quests and a
+     * finished Dawnguard hunter line, journal empty: the sides are still known (the coarse lines are
+     * not: they are unknown, as an empty journal always made them) and rumoured.
+     */
+    public function testASideSurvivesItsQuestsLeavingTheJournal(): void
+    {
+        $this->skills([]);
+        foreach ([['CW01B', 20], ['CW02B', 200], ['DLC1VQ03Hunter', 10], ['DLC1VQ03Hunter', 255]] as [$q, $stage]) {
+            $this->questlogUpdate($q, $stage, 'Objective');
+        }
+        $p = $this->profile();
+        $lines = $p['facts']['questlines']['value'];
+        $this->assertSame(2, $lines['civil_war_stormcloak']);
+        $this->assertSame(0, $lines['civil_war_imperial']);
+        $this->assertSame(1, $lines['dawnguard_hunter']);
+        $this->assertSame(0, $lines['volkihar']);
+        $this->assertNull($lines['civil_war'], 'the coarse lines are not read from the stage log');
+        $this->assertNull($p['facts']['questlines']['journal_quests']);
+        $this->assertStringContainsString('questlog', $p['facts']['questlines']['source']);
+        $scores = RelDynReputation::fameScores($p);
+        $this->assertEqualsWithDelta(0.6667, $scores['civil_war_stormcloak'], 1e-3);
+        $this->assertSame(0.0, $scores['civil_war_imperial']);
+        $this->assertEqualsWithDelta(0.5, $scores['dawnguard'], 1e-3, 'a finished Dawnguard line is still the Dawnguard');
+        $this->assertSame(0.0, $scores['volkihar']);
+        $this->assertNoSqlFailures();
+    }
+
+    /** A side quest in the journal and in the stage log is one quest; a journal quest the log never saw still counts. */
+    public function testASideQuestInTheJournalAndTheLogCountsOnce(): void
+    {
+        $this->skills([]);
+        $this->journalQuest('CW02A', 10);
+        $this->questlogUpdate('CW02A', 10, 'Objective');
+        $this->questlogUpdate('CW01A', 20, 'Objective');
+        $this->journalQuest('BardsCollegeLute', 10);
+        $p = $this->profile();
+        $lines = $p['facts']['questlines']['value'];
+        $this->assertSame(2, $lines['civil_war_imperial'], 'CW02A once, CW01A from the log');
+        $this->assertSame(1, $lines['civil_war'], 'the coarse line counts the journal only: CW02A');
+        $this->assertSame(1, $lines['bards_college']);
+        $this->assertSame(2, $p['facts']['questlines']['journal_quests']);
+        $this->assertNoSqlFailures();
+    }
+
+    /**
+     * The stage log also holds quests the engine starts on its own (stage 0 / 1): a side quest that
+     * never left that is not a side taken, and with nothing else known the lines stay unknown.
+     */
+    public function testBackgroundStagedSideQuestsAreNotASideTaken(): void
+    {
+        $this->skills([]);
+        foreach (['DLC1RH01', 'CW02A', 'DLC1VampireBaseIntro'] as $q) {
+            $this->questlogUpdate($q, 0, 'Return to <Alias.ShortName=Questgiver>');
+            $this->questlogUpdate($q, 1, 'Return to <Alias.ShortName=Questgiver>');
+        }
+        $p = $this->profile();
+        $this->assertNull($p['facts']['questlines']['value']);
+        $this->assertNull(RelDynReputation::fameScores($p)['civil_war_imperial']);
+        $this->assertNoSqlFailures();
+    }
+
+    /**
      * prompt-gating-fame, thane: no core source for titles, so the stage of the quest that grants it:
      * Dragon Rising (MQ104) stage 160, the Jarl names the Dragonborn Thane of Whiterun. The stage log
      * (questlog) is the history and the journal row the last stage sent; unknown while neither holds a quest.

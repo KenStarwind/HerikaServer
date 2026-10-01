@@ -169,7 +169,12 @@ final class RelDynCreatures
     {
         $defaults = self::configDefaults();
         $stored = RelationshipDynamics::configValue('creatures');
-        return is_array($stored) ? array_replace($defaults, $stored) : $defaults;
+        if (!is_array($stored)) return $defaults;
+        $cfg = array_replace($defaults, $stored);
+        // post_transform is laid over its defaults key by key: a table stored whole before a key existed
+        // (the maturity recovery) still has it
+        if (is_array($stored['post_transform'] ?? null)) $cfg['post_transform'] = array_replace($defaults['post_transform'], $stored['post_transform']);
+        return $cfg;
     }
 
     public static function enabled(): bool

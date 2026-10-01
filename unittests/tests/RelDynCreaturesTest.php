@@ -271,6 +271,28 @@ final class RelDynCreaturesTest extends TestCase
         $this->assertArrayNotHasKey('thirst', $cfg);
     }
 
+    /**
+     * Review fix (creature-moodifications): a post_transform table the settings hub stored whole (it is read key
+     * by key now) still has the keys it was saved without: the maturity recovery added in batch T.
+     */
+    public function testAStoredPostTransformTableKeepsTheRecoveryItWasSavedWithout(): void
+    {
+        $this->db->config = ['creatures' => ['post_transform' => [
+            'rows' => ['werewolf' => ['resentment_self' => 12.0, 'comfort' => -10.0]], 'scale' => 'flat', 'felt_game_hours' => 6.0]]];
+        RelationshipDynamics::clearConfigCache();
+        $pt = RelDynCreatures::config()['post_transform'];
+        // (the stored row went through json: 12.0 comes back 12, equal as a config number)
+        $this->assertEquals(['resentment_self' => 12.0, 'comfort' => -10.0], $pt['rows']['werewolf'], 'what the player stored stands');
+        $this->assertEquals(6.0, $pt['felt_game_hours']);
+        $this->assertSame(['werewolf' => ['maturity' => 1.0]], $pt['recovery'], 'the key it never had comes from the defaults');
+        // and what it did store wins, whole: a stored recovery is the player's
+        $this->db->config = ['creatures' => ['post_transform' => ['recovery' => ['werewolf' => ['maturity' => 0.5]]]]];
+        RelationshipDynamics::clearConfigCache();
+        $pt = RelDynCreatures::config()['post_transform'];
+        $this->assertSame(['werewolf' => ['maturity' => 0.5]], $pt['recovery']);
+        $this->assertSame(['werewolf' => ['resentment_self' => 8.0, 'comfort' => -10.0]], $pt['rows'], 'the rows it never stored come from the defaults');
+    }
+
     public function testFeltTextIsFeelingNotNumbers(): void
     {
         $vars = ['{NAME}' => 'Serana', '{PLAYER}' => 'Kaida'];

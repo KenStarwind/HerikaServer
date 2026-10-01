@@ -160,6 +160,10 @@ class RelDynPlayer
                 'volkihar'             => ['DLC1VQ03Vampire', 'DLC1VampireBase', 'DLC1RV'],
                 'bards_college'        => ['BardsCollege'],
             ],
+            // The stage a side quest of questlines_fine must have reached in the stage log (questlog) to
+            // count once it has left the journal: journal-visible objectives start at stage 10; the
+            // engine's own background quests sit at 0 / 1.
+            'questlines_fine_log_min_stage' => 10,
             'archetypes' => [
                 'warrior' => [
                     'skills' => ['onehanded' => 1.0, 'twohanded' => 1.0, 'block' => 0.8, 'heavyarmor' => 0.8], 'top' => 2,
@@ -521,7 +525,8 @@ class RelDynPlayer
         $facts['eventlog_dragon_kills'] = self::fact($kills['dragons'] ?? null, 'eventlog death "(powerful DRAGON)"', $killNote);
 
         // journal: questlines the player has taken up
-        $facts['questlines'] = self::questlines($db, (array) $cfg['questlines'], (array) ($cfg['questlines_fine'] ?? []));
+        $facts['questlines'] = self::questlines($db, (array) $cfg['questlines'], (array) ($cfg['questlines_fine'] ?? []),
+            intval($cfg['questlines_fine_log_min_stage'] ?? 10));
 
         // quest stages the fame evidence names ('quest:<editor id>@<stage>'): reached or not, null while no quest row is known
         foreach (self::questStages($db) as $key => $reached) {
@@ -763,9 +768,15 @@ class RelDynPlayer
     /**
      * Distinct journal quests per questline (quests.id_quest = editor id). Unknown until the
      * journal has a row. Only ACTIVE quests are in the journal table (the plugin skips completed
-     * ones), so finished questlines are counted by the "<Guild> Quests Completed" tracked stats.
+     * ones, and a save load empties it), so finished questlines are counted by the "<Guild> Quests
+     * Completed" tracked stats. The finer (side) lines also read the insert-only stage log
+     * (questlog): a side quest that reached a journal-visible stage ($fineLogMinStage) counts once
+     * for good, so a joined side is still known when its quest is done or the journal is rebuilt. The
+     * log alone is not trusted for the coarse lines (the engine also stages background quests at stage
+     * 0 / 1 there); a journal with no row but side-quest stages in the log gives the side lines and
+     * leaves the coarse ones unknown.
      */
-    private static function questlines($db, array $lines, array $fine = []): array
+    private static function questlines($db, array $lines, array $fine = [], int $fineLogMinStage = 10): array
     {
         $unknown = ['value' => null, 'source' => null, 'journal_quests' => null];
         if (!$db) return $unknown;
@@ -775,8 +786,24 @@ class RelDynPlayer
             RelationshipDynamics::logError('RelDynPlayer quests journal', $e);
             return $unknown;
         }
-        if (!$rows) return $unknown;
-        $counts = array_fill_keys(array_keys($lines), 0) + array_fill_keys(array_keys($fine), 0);
+        $logged = self::fineQuestlogIds($db, $fine, $fineLogMinStage);
+        if (!$rows && !$logged) return $unknown;
+        $rows = (array) $rows;
+        $counts = ($rows ? array_fill_keys(array_keys($lines), 0) : array_fill_keys(array_keys($lines), null)) + array_fill_keys(array_keys($fine), 0);
+        // side quests the stage log holds that the journal no longer shows
+        $journalIds = [];
+        foreach ($rows as $r) $journalIds[strtoupper((string) $r['id_quest'])] = true;
+        foreach ($logged as $id) {
+            if (isset($journalIds[$id])) continue;
+            foreach ($fine as $line => $prefixes) {
+                foreach ((array) $prefixes as $prefix) {
+                    if ($prefix !== '' && strpos($id, strtoupper((string) $prefix)) === 0) {
+                        $counts[$line]++;
+                        continue 2;
+                    }
+                }
+            }
+        }
         foreach ($rows as $r) {
             $id = strtoupper((string) $r['id_quest']);
             // the finer lines count beside the coarse ones
@@ -797,7 +824,31 @@ class RelDynPlayer
                 }
             }
         }
-        return ['value' => $counts, 'source' => 'quests (active journal quests, distinct editor ids)', 'journal_quests' => count($rows)];
+        return ['value' => $counts, 'source' => 'quests (active journal quests, distinct editor ids)'
+            . ($logged ? ' + questlog (side quests that reached stage ' . $fineLogMinStage . ')' : ''), 'journal_quests' => $rows ? count($rows) : null];
+    }
+
+    /**
+     * Editor ids (upper case) of the stage log's side quests (any prefix of the finer questlines) that
+     * reached $minStage. [] when the log holds none, is missing or fails to read (logged).
+     */
+    private static function fineQuestlogIds($db, array $fine, int $minStage): array
+    {
+        $prefixes = [];
+        foreach ($fine as $list) {
+            foreach ((array) $list as $prefix) if (is_string($prefix) && $prefix !== '') $prefixes[] = $prefix;
+        }
+        if (!$prefixes) return [];
+        try {
+            $present = $db->fetchOne('SELECT to_regclass($1) IS NOT NULL AS present', ['questlog']);
+            if (!in_array($present['present'] ?? null, ['t', true], true)) return [];
+            $any = implode(' OR ', array_map(fn($p) => "id_quest ILIKE '" . $db->escape(RelationshipDynamics::escapeLike($p)) . "%' ESCAPE '\\'", $prefixes));
+            $rows = $db->fetchAll("SELECT DISTINCT id_quest FROM questlog WHERE id_quest IS NOT NULL AND stage >= " . intval($minStage) . " AND ({$any}) LIMIT 2000");
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('RelDynPlayer questlog side quests', $e);
+            return [];
+        }
+        return array_values(array_unique(array_map(fn($r) => strtoupper((string) $r['id_quest']), (array) $rows)));
     }
 
     /**
