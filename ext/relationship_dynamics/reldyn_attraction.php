@@ -2117,6 +2117,8 @@ class RelDynAttraction
             'visceral_met' => $r['visceral_met'] ?? true,
             'passion' => $r['passion'] ?? null, 'respect_mult' => $r['respect_mult'] ?? 1.0,
             'respect_rate' => $r['respect_rate'] ?? null,
+            // decisions §20.1: how far a passion moment skips the uphill, and why (spikeFactor, Jev)
+            'spike_open' => $r['spike_open'] ?? 1.0, 'spike_prereq' => $r['spike_prereq'] ?? null,
             'ceiling_tier' => $r['ceiling_tier'], 'allowed_tier' => $r['allowed_tier'],
             'romance' => $r['romance'], 'blocked_types' => $r['blocked_types'],
             'pending' => $r['pending'] !== null,

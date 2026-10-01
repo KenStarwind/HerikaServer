@@ -8,7 +8,7 @@
  * player, and who she is decides how much of it she carries.
  *
  *   fear   0..1 (stored, it follows its target on the game calendar: up fast, down slowly)
- *   target = stakes x disposition x (baseline + (1 - baseline) x threat)
+ *   target = gain x stakes^exponent x disposition x (baseline + (1 - baseline) x threat)
  *     stakes       what there is to lose: the bond's depth (core affinity) and how far she has let
  *                  the player in (RelDynPullback::letIn), each 0..1 between its from and full.
  *     disposition  who she is: her attachment corners (secure small, never zero; anxious and above
@@ -87,6 +87,10 @@ class RelDynKeeping
             // the share of stakes x disposition she carries with no threat at all (the paranoia that
             // nothing is wrong yet)
             'baseline' => 0.2,
+            // fear = gain x stakes^stakes_exponent x disposition x (baseline + (1 - baseline) x threat), at most 1.
+            // The root keeps a moderate bond from counting for nothing (what there is to lose is not linear
+            // in how deep it is yet); the gain lets a mostly-toxic NPC at a deep bond with a clear threat reach 1
+            'gain' => 1.5, 'stakes_exponent' => 0.5,
 
             // --- the fear follows its target on the game calendar: this share of the gap per game hour ---
             'rates' => ['rise_per_game_hour' => 0.10, 'fall_per_game_hour' => 0.04, 'max_step_game_hours' => 72.0],
@@ -227,11 +231,13 @@ class RelDynKeeping
         return $in;
     }
 
-    /** The fear the state pulls toward (0..1): stakes x disposition x (baseline + (1 - baseline) x threat). */
+    /** The fear the state pulls toward (0..1): gain x stakes^exponent x disposition x (baseline + (1 - baseline) x threat). */
     public static function target(float $stakes, float $disposition, float $threat, ?array $cfg = null): float
     {
-        $b = self::clamp01(floatval(($cfg ?? self::config())['baseline']));
-        return self::clamp01($stakes * $disposition * ($b + (1.0 - $b) * self::clamp01($threat)));
+        $cfg = $cfg ?? self::config();
+        $b = self::clamp01(floatval($cfg['baseline']));
+        return self::clamp01(max(0.0, floatval($cfg['gain'])) * pow(self::clamp01($stakes), max(0.0, floatval($cfg['stakes_exponent'])))
+            * $disposition * ($b + (1.0 - $b) * self::clamp01($threat)));
     }
 
     /** The fear after $hours game hours toward $target: up at rise_per_game_hour, down at fall_per_game_hour. */
