@@ -46,6 +46,18 @@ mood, a guarded one needs to be let in further, a bold one has a lower bar than 
 with little confidence or maturity, an anxious attachment and a deep fear of losing the player may say yes when they
 should not, up to a limit; RelDyn models the person and never judges the player. The answer is published for the mod
 to read and is the same words for every gender: the NPC's name, never a pronoun. A switch restores the mod's own rules.
+## Unreleased — the world around them: hunger and fires, vampire days
+What the party's body is going through now reaches the NPCs, when the game can say it. A small reporter on the AIAgent
+fork (a local branch, not sent upstream) reads Last Seed, Frostfall, Campfire, Dirt and Blood and the Survival Mode
+creation, whichever are installed, and tells the server; none installed or no recent report and nothing is assumed. A
+hungry or thirsty party takes a little of its composure and comfort, a worn-out one more, a rested one a lift, and the
+cold and the wet weigh on those who travel with the player. A fire the player built warms the bond (the warmth and a
+little closeness go to whoever made it warm); a fire somebody else kept only warms the room. The player's grime and blood
+are seen by anyone in the conversation, or an NPC's own (the proud mind the dirt more, the fighters respect the blood).
+Vampires keep an inverted sleep schedule: cranky from about dawn to dusk wherever they are, ascendant from dusk to dawn.
+Not feeding makes it worse, and direct sunlight (outdoors, by day, under a clear sky) worse still. Thirst grows with every
+game day without feeding and a feeding sates it; with no game signal for feeding yet, a night in which the vampire fought
+and killed stands in for it, and a feeding mod can be wired in by adding its signal to a list in the settings.
 
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or

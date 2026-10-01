@@ -261,14 +261,16 @@ final class RelDynCreaturesTest extends TestCase
     }
 
     /** The design's post-transformation row: shame (resentment_self), a comfort crash, and a maturity recovery of the beast's drop (batch T). */
-    public function testThePostTransformRowHasAMaturityRecoveryAndThirstStaysUnbuilt(): void
+    public function testThePostTransformRowHasAMaturityRecoveryAndBloodThirstLivesInItsOwnTable(): void
     {
         $cfg = RelDynCreatures::configDefaults();
         $this->assertSame(['maturity' => 1.0], $cfg['post_transform']['recovery']['werewolf']);
         $this->assertSame(['resentment_self' => 8.0, 'comfort' => -10.0], $cfg['post_transform']['rows']['werewolf']);
-        // blood thirst / fed vs starving has no core signal: no row, no setting, nothing detects it
+        // blood thirst (built 2026-10-01, Ken's §21; RelDynVampireScheduleTest) lives in the vampire table on a configurable
+        // feeding signal, not as a row of the design's table or a top-level setting
         foreach (array_keys($cfg['rows']) as $row) $this->assertStringNotContainsString('thirst', $row);
         $this->assertArrayNotHasKey('thirst', $cfg);
+        $this->assertArrayHasKey('thirst', $cfg['vampire']);
     }
 
     /**

@@ -81,7 +81,7 @@ final class RelDynSettingsText
         'jealousy_bystander' => 'Who the rival is and who the bystander is: how much more it stings when the rival is close to the player (threat, from her affinity, bond type and passion), and how maturity softens it, by the same curve that blunts a mature NPC\'s hurt, never to nothing.',
         'power_gap_core_types' => 'How little she can leave, by bond type (servant, fanatical, indebted, fearful).',
         'place_facets' => 'How places (by tag, name, inside or outside, time of day, weather) map onto the interests.',
-        'physical_states' => 'When the player reads as injured, which states (hunger, rest, dirt, a fire) have no game signal and stay inert, and the trust an NPC earns by healing the player.',
+        'physical_states' => 'When the player reads as injured, which states (hunger, rest, dirt, a fire) core cannot see and so stay inert unless the AIAgent survival report supplies them, how that report is read (levels, age, how near the fire), and the trust an NPC earns by healing the player.',
         'environment_facet_effects' => 'What certain kinds of place (danger, dark) do to anyone\'s dimensions.',
         'environment_time_effects' => 'What the hour (dawn, dusk...) does to anyone\'s dimensions.',
         'facet_classifier' => 'The tables that sort places, things, creatures, activities and spells into interests: keywords, priors and the text-matching settings.',
@@ -95,7 +95,7 @@ final class RelDynSettingsText
         'resentment_arc' => 'Resentment\'s turning points: when she confronts the player, resentment toward herself, guilt bleeding into other bonds.',
         'intimacy_need' => 'How much physical and emotional closeness she needs (from her traits), and what deprivation does.',
         'impulse' => 'The want layer: short-term urges (romantic, protective, social, survival, curiosity), how they decay, and how she acts on them.',
-        'creatures' => 'Vampire and werewolf mood changes: detection, the moon, night and day, the return from beast form.',
+        'creatures' => 'Vampire and werewolf mood changes: detection, the moon, night and day, an inverted vampire schedule (cranky from dawn to dusk, worse unfed and in direct sunlight) and blood thirst with its feeding signals, the return from beast form.',
         'combat' => 'Combat as bonding: witness, shared and danger multipliers, kill streaks, rescue. There is no flat cost for a defeat: her own fall in a fight (the bleedout response) drains or fires her by who she is.',
         'governors' => 'The passion floor and ceiling of each bond tier, and the attracted NPC\'s raise.',
         'exclusivity' => 'The natural pull toward the player (drive, disposition, title), how suitors change it, and the words between NPCs.',
@@ -143,6 +143,7 @@ final class RelDynSettingsText
         'player_mirror.prompt.enabled' => 'NPCs sense the player\'s profile: the most telling bands reach their prompts as one felt line, in words. Ships off (opt-in); the Player profile page has the same switch.',
         'trait_reader.reingest.enabled' => 'Every ~90 game days, or after a milestone (romance, bond break, betrayal, marriage), checks whether the live bio of an NPC changed (the dynamic profile of CHIM rewrites bios). Only a changed bio is read again, in the same background queue, and the new read moves the traits by an amount set by who the NPC is: set-in-their-ways NPCs move less, nobody is immune. Hand-set vectors and editor presets are exempt. Off: no check, no re-read.',
         'trait_reader.reingest.every_game_days' => 'Game days between bio checks (a milestone checks sooner, never within min_gap_days of the last check).',
+        'creatures.vampire.thirst.enabled' => 'Blood thirst: a vampire grows thirstier for every game day without feeding, and the thirst makes the cranky day worse (and the night restless). A feeding signal sates it: by default a night in which the vampire fought and killed, and a feeding mod can be wired in by adding a signal to the list. Off: no thirst, only the day and the sun.',
         'trait_reader.enabled' => 'Reads each NPC\'s bio once with a model to set her traits (a background queue that runs after the evaluation). Off: no bio is read.',
         'attachment.drift.enabled' => 'Lived experience slowly moves her attachment axes (earned security, and the slingshot back).',
         'passion_dynamics.spike.enabled' => 'Passion spikes: fast, event-driven passion on top of the slowly earned floor. Off: only the floor.',
@@ -317,10 +318,8 @@ final class RelDynSettingsText
         ['/half_life/', 'Time for the effect to fall by half.'],
     ];
 
-    // =====================================================================
-    // LABELS
-    // =====================================================================
-
+    // ==============================================================    // LABELS
+    // ==============================================================
     /** One key in words. $path is the whole path, $i the key's position in it. */
     public static function segment(string $seg, array $path, int $i): string
     {
@@ -411,10 +410,8 @@ final class RelDynSettingsText
         return implode(' › ', array_slice($segs, -max(1, $depth)));
     }
 
-    // =====================================================================
-    // HINTS
-    // =====================================================================
-
+    // ==============================================================    // HINTS
+    // ==============================================================
     /** Is there a hint written for this exact setting (not one composed from its section)? */
     public static function isExplicit(string $dotted): bool
     {

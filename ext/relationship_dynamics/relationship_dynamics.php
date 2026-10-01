@@ -1434,10 +1434,13 @@ class RelationshipDynamics
             // the scene reads as 'injured' (April's vitals rule).
             // inert: the states CHIM 3.4.1 core has no signal for (no hunger, rest, dirt, blood or fire
             // report in lib/processor/gamedata.php): their rows stay in PHYSICAL_STATE_MODIFIERS, and
-            // detectPhysicalStates never reports one of these ("unknown, never assumed", as with creature
-            // thirst). Hunger has no row at all (the design's maturity -3 / resentment x1.3 is unbuilt).
-            // Take a state out of this list only when a plugin-side sensor for it exists (review queue
-            // 2026-09-30: ask Ken before building one on the AIAgent fork).
+            // detectPhysicalStates never reports one of these from core ("unknown, never assumed"). They go live
+            // only through the survival report of the AIAgent fork (RelDynSurvival, Ken 2026-10-01 §21: Last Seed,
+            // Frostfall, Campfire, Dirt and Blood, Survival Mode CC): with no fresh report they stay inert, so
+            // this list stays the set of states core cannot see. The hungry row is the design's maturity -3 plus
+            // a little discomfort (its resentment x1.3 is unbuilt).
+            // survival: how a report is read (RelDynSurvival::configDefaults): the thresholds on the mods' 0..5
+            // scales, how old a report may be, how near the player a fire must be.
             // healer_*: the trust an NPC earns by healing the player ('injured' trust +3, April): a
             // heal spell she casts on the player (eventlog npcspellcast "<NPC> casts <spell> on <player>",
             // spell name containing one of heal_spells) inside heal_max_age_game_hours, at most once per
@@ -1445,6 +1448,7 @@ class RelationshipDynamics
             'physical_states' => [
                 'injured_health_ratio' => 0.3,
                 'inert' => ['hungry', 'warm_fire', 'well_rested', 'exhausted', 'dirty', 'bloody'],
+                'survival' => RelDynSurvival::configDefaults(),
                 'healer_trust' => 3.0,
                 'heal_spells' => ['heal', 'close wounds', 'restore health'],
                 'heal_max_age_game_hours' => 12.0,
@@ -13329,10 +13333,19 @@ class RelationshipDynamics
      * "respect_warrior" and "respect_proud" are NOT real dimensions: they are remapped to 'respect'
      * only for an NPC the trait engine puts on that side (the A23 warrior gate for a 'bloody' row,
      * pride for a 'dirty' row: Pd of 0.5 or more, "dirty: respect -2 for Proud/Noble").
+     *
+     * The survival rows come alive through the AIAgent fork's survival report (RelDynSurvival):
+     * 'warm_fire' is a fire the PLAYER built (the warmth and the passion go to the one who made it
+     * warm), 'warm_fire_other' a lit fire someone else made (cosy, nobody in particular to thank:
+     * comfort only), 'hungry' is hunger or thirst, 'wet' a drenching that is not already the weather's
+     * 'raining'.
      */
     const PHYSICAL_STATE_MODIFIERS = [
         'cold'        => ['comfort' => -10, 'arousal' => +20, 'valence' => -15],
         'warm_fire'   => ['comfort' => +10, 'warmth' => +5, 'passion' => +5],
+        'warm_fire_other' => ['comfort' => +10],
+        'hungry'      => ['maturity' => -3, 'comfort' => -4],
+        'wet'         => ['comfort' => -3],
         'injured'     => ['arousal' => +30, 'valence' => -20, 'maturity' => -5],
         'well_rested' => ['maturity' => +2, 'comfort' => +5],
         'exhausted'   => ['maturity' => -5, 'comfort' => -8],
@@ -13354,9 +13367,12 @@ class RelationshipDynamics
      * the plugin reports and whether the player is inside) and apply only outside:
      *   rain -> raining; snow -> snowing + cold; night with known clear/pleasant weather ->
      *   clear_night.
-     * Not detected (no CHIM 3.4.1 core source; config physical_states.inert): hunger, dirty / bloody
-     * (April: Dirt and Blood), warm_fire; exhausted / well_rested were April's player-stamina proxy
-     * (stamina is a combat resource that refills in seconds, not rest), left unknown pending a rest signal.
+     * Not detected from core (no CHIM 3.4.1 core source; config physical_states.inert): hunger, dirty /
+     * bloody (April: Dirt and Blood), warm_fire; exhausted / well_rested were April's player-stamina proxy
+     * (stamina is a combat resource that refills in seconds, not rest), left unknown without a rest signal.
+     * Those come from the AIAgent fork's survival report when there is a fresh one (RelDynSurvival::statesFor:
+     * hungry, exhausted, well_rested, warm_fire / warm_fire_other, dirty, bloody, and cold / wet from Frostfall's
+     * exposure), and stay unknown otherwise.
      *
      * @param string $npcName    The NPC being spoken to
      * @param string $playerName The player character name (the injured read is the player's)
@@ -13371,9 +13387,13 @@ class RelationshipDynamics
             $states[] = 'injured';
         }
 
+        // The survival report's states (inert without a fresh report): the body and the fire, indoors or out
+        $survival = RelDynSurvival::statesFor((string) $npcName, RelDynSurvival::latest());
+
         $place = RelDynFacets::currentPlaceContext((string) $npcName);
         if (empty($place['known']) || $place['is_interior'] !== false) {
-            return self::activePhysicalStates($states, $cfg);   // indoors (or unknown): the weather outside does not reach the NPC
+            // indoors (or unknown): the weather outside does not reach the NPC
+            return self::withSurvivalStates(self::activePhysicalStates($states, $cfg), $survival);
         }
 
         $weather = (array) $place['weather'];
@@ -13384,12 +13404,21 @@ class RelationshipDynamics
             $states[] = 'snowing';
             $states[] = 'cold';
         }
-        $clearSky = !empty($weather) && empty(array_intersect($weather, ['rain', 'snow', 'cloudy', 'fog']));
-        if ($clearSky && $place['time_of_day'] === 'night') {
+        if (RelDynFacets::skyIsClear($weather) && $place['time_of_day'] === 'night') {
             $states[] = 'clear_night';
         }
 
-        return self::activePhysicalStates($states, $cfg);
+        return self::withSurvivalStates(self::activePhysicalStates($states, $cfg), $survival);
+    }
+
+    /**
+     * The core-seen states plus the survival report's, each once. A drenching that is already the weather's
+     * rain is not counted twice ('wet' yields to 'raining').
+     */
+    private static function withSurvivalStates(array $states, array $survival): array
+    {
+        if (in_array('raining', $states, true)) $survival = array_values(array_diff($survival, ['wet']));
+        return array_values(array_unique(array_merge($states, $survival)));
     }
 
     /** The states without the inert ones (config physical_states.inert: no game signal; whatever names one, it is unknown). */
@@ -19692,6 +19721,8 @@ require_once __DIR__ . '/reldyn_consent.php';
 require_once __DIR__ . '/reldyn_resentment.php';
 // Creature moodifications (vampires, werewolves; Skyrim's moon cycle)
 require_once __DIR__ . '/reldyn_creatures.php';
+// The survival reader: the AIAgent fork's survival report as physical states (the inert rows made live)
+require_once __DIR__ . '/reldyn_survival.php';
 // Combat passion routing (core combat requests + core's death / bleedout eventlog rows)
 require_once __DIR__ . '/reldyn_combat.php';
 // Tiered governors: the relationship tier's passion floor and ceiling (MDD 8)

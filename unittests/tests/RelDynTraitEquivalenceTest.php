@@ -58,6 +58,13 @@ final class RelDynTraitEquivalenceTest extends TestCase
         'physical_healer_and_pride' => ['*/physical/injured/injured/trust', '*/physical/dirty/dirty/respect'],
     ];
 
+    /**
+     * Rows the survival reporter added to the physical-state table (Ken 2026-10-01 §21: hungry, a fire someone else built,
+     * wet; asserted by RelDynSurvivalReportTest). They are new keys, not changed values: every row the fixture has is still
+     * compared in full, and no other key may appear.
+     */
+    private const ADDED_PHYSICAL_ROWS = ['warm_fire_other', 'hungry', 'wet'];
+
     /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */
     private array $changed = [];
 
@@ -132,7 +139,9 @@ final class RelDynTraitEquivalenceTest extends TestCase
                     unset($keys[$i]);
                 }
             }
-            $this->assertSame(array_values($keys), array_keys($actual), "{$path}: keys");
+            $actualKeys = array_keys($actual);
+            if (str_ends_with($path, '/physical')) $actualKeys = array_values(array_diff($actualKeys, self::ADDED_PHYSICAL_ROWS));
+            $this->assertSame(array_values($keys), $actualKeys, "{$path}: keys");
             foreach ($expected as $k => $v) {
                 if (in_array($k, $keys, true)) $this->assertSameShape($v, $actual[$k], "{$path}/{$k}");
             }
