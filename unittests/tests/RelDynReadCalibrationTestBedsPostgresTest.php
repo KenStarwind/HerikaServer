@@ -336,6 +336,38 @@ final class RelDynReadCalibrationTestBedsPostgresTest extends TestCase
         $this->assertNotSame($pairs[self::AELA], $pairs[self::LYNLY], "Lynly's are not Aela's");
     }
 
+    /**
+     * Decisions §20 #11 / #12 on the beds: Muiri (toxic, used through love) is reassurance-driven: she asks in words
+     * (reactive and expressive), and the same woman with a possessive, proud vector asks for proof (acts of service)
+     * instead. The other three beds do not seek reassurance (anxious + toxic corner weights under 0.5), so attachment
+     * does not choose their language: they diverge on their own temperaments.
+     */
+    public function testReassuranceSeekingMuiriAsksInWordsOrProofByHerTraitsAndTheOtherBedsAreNotForcedIntoIt(): void
+    {
+        $LL = fn(string $c) => constant("RelationshipDynamics::{$c}");
+        $seek = fn(array $d) => array_sum(array_intersect_key(RelationshipDynamics::attachmentWeights($d), ['anxious' => 1, 'toxic' => 1]));
+        $muiri = $this->profile('Muiri');
+        $this->assertGreaterThanOrEqual(0.5, $seek($muiri['d']));
+        $this->assertSame($LL('LL_WORDS'), $muiri['ll'][0], 'reactive and expressive (E .66, L .62) over possessive and proud (Po .33, Pd .59): words');
+        // the same woman, possessive and proud and flatter: she asks for proof, and she is still reassurance-driven
+        $d = $muiri['d'];
+        $x = RelDynTraits::fromStored($d['trait_vector']);
+        $x['E'] = 0.30; $x['L'] = 0.30; $x['Po'] = 0.90; $x['Pd'] = 0.85;
+        $d['trait_vector'] = RelDynTraits::toStored($x);
+        $d['_trait_vector_src']['auto'] = RelDynTraits::toStored($x);
+        unset($d['love_language_primary'], $d['love_language_secondary'], $d['_ll_auto']);
+        RelationshipDynamics::ensureLoveLanguage('Muiri', $d);
+        $this->assertSame($LL('LL_SERVICE'), $d['love_language_primary'], 'possessive or proud: do x to prove you care');
+        $this->assertNotSame($d['love_language_primary'], $d['love_language_secondary']);
+        // the others are not reassurance-seekers: attachment does not pick their primary
+        foreach (['Ashe', self::AELA, self::LYNLY] as $npc) {
+            $p = $this->profile($npc);
+            $this->assertLessThan(0.5, $seek($p['d']), "{$npc} does not seek reassurance");
+            $this->assertNotSame($muiri['ll'], $p['ll'], "{$npc}'s love languages are not Muiri's");
+        }
+        $this->assertSame([], $this->db->failures);
+    }
+
     public function testAStoredLoveLanguageIsKept(): void
     {
         $d = $this->track(self::AELA);

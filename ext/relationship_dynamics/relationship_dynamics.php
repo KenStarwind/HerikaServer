@@ -1093,8 +1093,13 @@ class RelationshipDynamics
             // else (no temperament) the core race (raceToLoveLanguage; race is a minor prior, rulings #7).
             // The secondary is the temperament's too (the next table). A secondary equal to the primary rotates.
             // Attachment first (after MARAS / Sharmat): anxious + toxic corner weights summing to min_weight
-            // or more seek reassurance, so their primary is words of affirmation.
-            'love_language_attachment' => ['corners' => ['anxious', 'toxic'], 'min_weight' => 0.5, 'language' => self::LL_WORDS],
+            // or more seek reassurance (decisions §20 #11), and ask for it in words of affirmation OR in acts
+            // of service ("do x to prove you care"), chosen by trait: 'choices' = language => trait weights
+            // (trait code => weight); her score for a language is the weighted mean of those traits in her
+            // vector, the highest wins, a tie (and a vector-less NPC) takes 'language'. Reactive and
+            // expressive leans words; possessive or proud leans service.
+            'love_language_attachment' => ['corners' => ['anxious', 'toxic'], 'min_weight' => 0.5, 'language' => self::LL_WORDS,
+                'choices' => [self::LL_WORDS => ['E' => 1.0, 'L' => 1.0], self::LL_SERVICE => ['Po' => 1.0, 'Pd' => 1.0]]],
             'love_language_primary' => [
                 'Romantic' => self::LL_WORDS, 'Anxious' => self::LL_TIME, 'Bold' => self::LL_TOUCH, 'Playful' => self::LL_TOUCH,
                 'Humble' => self::LL_GIFTS, 'Nurturing' => self::LL_SERVICE, 'Gentle' => self::LL_TIME, 'Jealous' => self::LL_WORDS,
@@ -3649,19 +3654,53 @@ class RelationshipDynamics
 
     /**
      * The primary love language attachment implies (config love_language_attachment {corners, min_weight,
-     * language}): the language when the NPC's corner weights (attachmentWeights) of the listed corners sum
-     * to at least min_weight, else null.
+     * language, choices}): when the NPC's corner weights (attachmentWeights) of the listed corners sum to at
+     * least min_weight she seeks reassurance, and which language she asks for it in is her trait vector's
+     * choice among the table (reassuranceLanguage); else null.
      */
     private static function attachmentToLoveLanguage(array $dynamics)
     {
         $cfg = self::getConfig()['love_language_attachment'] ?? null;
-        $cfg = is_array($cfg) ? $cfg : (array) self::defaultConfig()['love_language_attachment'];
+        $defaults = (array) self::defaultConfig()['love_language_attachment'];
+        $cfg = is_array($cfg) ? $cfg + $defaults : $defaults;   // a row saved before 'choices' took the default table
         $language = $cfg['language'] ?? null;
         if (!is_string($language) || $language === '') return null;
         $weights = self::attachmentWeights($dynamics);
         $sum = 0.0;
         foreach ((array) ($cfg['corners'] ?? []) as $corner) $sum += floatval($weights[$corner] ?? 0.0);
-        return $sum >= floatval($cfg['min_weight'] ?? 0.5) ? $language : null;
+        if ($sum < floatval($cfg['min_weight'] ?? 0.5)) return null;
+        return self::reassuranceLanguage($dynamics, $language, (array) ($cfg['choices'] ?? []));
+    }
+
+    /**
+     * Which language a reassurance-seeking NPC asks in (decisions §20 #11): the choice with the highest
+     * weighted mean of its traits in her vector; a tie, a choice without usable weights, or an NPC with no
+     * vector takes $default. Never a gate: it is read from the vector as it stands, so it moves with her.
+     */
+    private static function reassuranceLanguage(array $dynamics, string $default, array $choices): string
+    {
+        $x = RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $dynamics);
+        if ($x === null) return $default;
+        $best = $default;
+        $bestScore = null;
+        $scores = [];
+        foreach ($choices as $language => $weights) {
+            if (!is_string($language) || $language === '' || !is_array($weights)) continue;
+            $num = 0.0;
+            $den = 0.0;
+            foreach ($weights as $code => $w) {
+                if (!is_numeric($w) || floatval($w) <= 0.0 || !isset(RelDynTraits::TRAITS[$code])) continue;
+                $num += floatval($w) * floatval($x[$code] ?? 0.5);
+                $den += floatval($w);
+            }
+            if ($den > 0.0) $scores[$language] = $num / $den;
+        }
+        foreach ($scores as $language => $score) {
+            if ($bestScore === null || $score > $bestScore + 1e-9) { $best = $language; $bestScore = $score; }
+        }
+        // a tie for the top is the default's (when the default is among the tied) so the table's order never decides
+        if ($bestScore !== null && isset($scores[$default]) && abs($scores[$default] - $bestScore) <= 1e-9) return $default;
+        return $best;
     }
 
     /** The primary love language of a temperament through the trait engine: the nearest preset's (config love_language_primary), null without one. */
