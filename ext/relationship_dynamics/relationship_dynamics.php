@@ -3443,14 +3443,73 @@ class RelationshipDynamics
     public static function ensureLoveLanguage($npcName, &$dynamics)
     {
         self::ensureTemperamentProfile($npcName, $dynamics);
+        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $sig = self::loveLanguageSignature($dynamics, $temperament);
 
         if (!empty($dynamics['love_language_primary'])) {
-            return; // Already set
+            $auto = $dynamics[self::LL_AUTO_KEY] ?? null;
+            if (!is_array($auto)) {
+                // A save from before the record: nothing says what was derived and what was chosen, so
+                // what is stored is kept (love languages already stored are kept), and from here on it is
+                // recorded that nothing stored is derived
+                $dynamics[self::LL_AUTO_KEY] = ['sig' => $sig, 'primary' => null, 'secondary' => null, 'curve' => null];
+                return;
+            }
+            if (($auto['sig'] ?? null) === $sig) {
+                return; // Already set, from the same temperament, runner-ups and attachment
+            }
+            // Her trait vector moved (her bio read landed after the first meeting, an editor temperament
+            // or trait change): what she still holds from the last derivation is derived again; what was
+            // chosen since (the editor's love language, curve) is kept
+            $new = self::deriveLoveLanguages((string) $npcName, $dynamics, $temperament);
+            $kept = [];
+            foreach (['primary' => 'love_language_primary', 'secondary' => 'love_language_secondary', 'curve' => 'warmth_curve'] as $k => $field) {
+                $stored = $dynamics[$field] ?? null;
+                if ($stored === null || $stored === '' || ($auto[$k] ?? null) === $stored) {
+                    $dynamics[$field] = $new[$k];
+                } else {
+                    $kept[] = $field;
+                }
+            }
+            $dynamics[self::LL_AUTO_KEY] = ['sig' => $sig] + $new;
+            self::log("Re-derived LL for {$npcName}: primary={$dynamics['love_language_primary']}, secondary={$dynamics['love_language_secondary']}, curve={$dynamics['warmth_curve']}, temp={$temperament}"
+                . ($kept !== [] ? ' (kept: ' . implode(', ', $kept) . ')' : ''));
+            return;
         }
 
+        $new = self::deriveLoveLanguages((string) $npcName, $dynamics, $temperament);
+        $dynamics['love_language_primary'] = $new['primary'];
+        $dynamics['love_language_secondary'] = $new['secondary'];
+        $dynamics['warmth_curve'] = $new['curve'];
+        $dynamics[self::LL_AUTO_KEY] = ['sig' => $sig] + $new;
+
+        self::log("Auto-gen LL for {$npcName}: primary={$dynamics['love_language_primary']}, secondary={$dynamics['love_language_secondary']}, curve={$dynamics['warmth_curve']}, temp={$temperament}");
+    }
+
+    /** dynamics key: what the last derivation of love languages / warmth curve gave, and the signature of what it was derived from. */
+    const LL_AUTO_KEY = '_ll_auto';
+
+    /**
+     * What the love languages and the warmth curve derive from, as the discrete outcome of it: the
+     * temperament, the nearest presets of her vector (the runner-up language) and the language her
+     * attachment implies. A vector that moves inside the same neighbourhood, or an attachment that
+     * drifts without crossing the reassurance-seeking line, derives the same thing (and costs no lookups).
+     */
+    private static function loveLanguageSignature(array $dynamics, ?string $temperament): string
+    {
+        $x = $temperament !== null ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+        $near = $x !== null ? RelDynTraits::nearestPresets($x, self::RUNNER_UP_PRESETS + 1) : [];
+        return md5(json_encode([$temperament, $near, self::attachmentToLoveLanguage($dynamics)]));
+    }
+
+    /**
+     * The derivation: ['primary', 'secondary', 'curve'] for this NPC now (pure of the dynamics'
+     * stored languages; reads MARAS / Sharmat / race / social class for the NPC's name).
+     */
+    private static function deriveLoveLanguages(string $npcName, array $dynamics, ?string $temperament): array
+    {
         $primary = null;
         $secondary = null;
-        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? null);
         $warmthCurve = $temperament !== null ? self::temperamentToWarmthCurve($temperament, $dynamics) : null;
 
         // Priority 1: MARAS temperament
@@ -3501,11 +3560,11 @@ class RelationshipDynamics
             $secondary = self::rotateLoveLanguage($primary);
         }
 
-        $dynamics['love_language_primary'] = $primary ?: self::LL_TIME;
-        $dynamics['love_language_secondary'] = $secondary ?: self::LL_WORDS;
-        $dynamics['warmth_curve'] = $warmthCurve ?: self::CURVE_MODERATE;
-
-        self::log("Auto-gen LL for {$npcName}: primary={$dynamics['love_language_primary']}, secondary={$dynamics['love_language_secondary']}, curve={$dynamics['warmth_curve']}, temp={$temperament}");
+        return [
+            'primary'   => $primary ?: self::LL_TIME,
+            'secondary' => $secondary ?: self::LL_WORDS,
+            'curve'     => $warmthCurve ?: self::CURVE_MODERATE,
+        ];
     }
 
     // ---- Love language mapping helpers ----
@@ -3682,8 +3741,8 @@ class RelationshipDynamics
     ];
 
     /**
-     * A6 through the trait engine: the nearest preset's curve name. (Phase 3 computes the
-     * curve numbers from traits every time: RelDynTraits columns warmth_half_life etc.)
+     * A6 through the trait engine: the nearest preset's curve name (the label; the curve's numbers
+     * are the continuous columns warmth_half_life etc. at her vector: warmthParams).
      */
     private static function temperamentToWarmthCurve($temperament, ?array $dynamics = null)
     {
@@ -3798,9 +3857,7 @@ class RelationshipDynamics
             $hoursSince = min($hoursSince, 0.167);
         }
 
-        $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
-        $params = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
-        $decayRate = $params['passion_decay'];
+        $decayRate = self::warmthParams($dynamics)['passion_decay'];
 
         $decay = $decayRate * $hoursSince;
         $floor = self::passionStageFloor($dynamics);
@@ -3999,6 +4056,31 @@ class RelationshipDynamics
     // =========================================================================
 
     /**
+     * The warmth-curve numbers [decay_rate, half_life, lambda, passion_decay] this NPC runs on.
+     * While her curve is the one derived from her traits (warmth_curve equals the last derivation's
+     * in _ll_auto: not chosen in the editor), they are the continuous trait columns A6 at her own
+     * vector (traits design §14: an in-between NPC blends the textbook curves, a textbook preset gets
+     * exactly its named curve's numbers). A curve chosen by name, or one nothing derived (an older save,
+     * no vector), is the named CURVE_PARAMS row.
+     */
+    public static function warmthParams(array $dynamics): array
+    {
+        $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
+        $named = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
+        $derived = $dynamics[self::LL_AUTO_KEY]['curve'] ?? null;
+        if ($derived === null || $curve !== $derived) return $named;
+        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $x = $temperament !== null ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+        if ($x === null) return $named;
+        return [
+            'decay_rate'    => RelDynTraits::value($x, 'warmth_decay_rate'),
+            'half_life'     => RelDynTraits::value($x, 'warmth_half_life'),
+            'lambda'        => RelDynTraits::value($x, 'warmth_lambda'),
+            'passion_decay' => RelDynTraits::value($x, 'warmth_passion_decay'),
+        ];
+    }
+
+    /**
      * Get the current session multiplier based on exponential decay of interaction count.
      */
     public static function getSessionMultiplier($dynamics)
@@ -4019,8 +4101,7 @@ class RelationshipDynamics
             // Note: read-only function, caller must persist if needed
         }
 
-        $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
-        $params = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
+        $params = self::warmthParams($dynamics);
         $decayRate = $params['decay_rate'];
         $lambda = $params['lambda'];
 
@@ -4058,9 +4139,7 @@ class RelationshipDynamics
 
         // Apply exponential decay to existing count before incrementing
         if ($lastInteraction > 0 && $rawCount > 0) {
-            $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
-            $params = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
-            $lambda = $params['lambda'];
+            $lambda = self::warmthParams($dynamics)['lambda'];
             $hoursSince = ($now - $lastInteraction) / self::GAMETS_PER_REAL_HOUR;
             $rawCount = $rawCount * exp(-$hoursSince * $lambda);
         }
