@@ -328,6 +328,9 @@ final class RelDynReadCalibrationTestBedsPostgresTest extends TestCase
         $this->assertSame($LL('LL_TOUCH'), $pairs[self::AELA][0], 'Bold-leaning: touch');
         $this->assertSame($LL('LL_TIME'), $pairs['Ashe'][0], 'Stoic-leaning: quality time');
         $this->assertSame($LL('LL_SERVICE'), $pairs['Ashe'][1]);
+        // attachment first: Muiri's anxious + toxic corners sum to 0.5 or more (reassurance-seeking): words of affirmation
+        $this->assertGreaterThanOrEqual(0.5, array_sum(array_intersect_key(RelationshipDynamics::attachmentWeights($this->profile('Muiri')['d']), ['anxious' => 1, 'toxic' => 1])));
+        $this->assertSame($LL('LL_WORDS'), $pairs['Muiri'][0]);
         $this->assertGreaterThan(1, count(array_unique(array_map('json_encode', $pairs))), 'the four beds do not all share one pair');
         $this->assertNotSame($pairs[self::AELA], $pairs['Muiri'], "Muiri's love languages are not Aela's");
         $this->assertNotSame($pairs[self::AELA], $pairs[self::LYNLY], "Lynly's are not Aela's");

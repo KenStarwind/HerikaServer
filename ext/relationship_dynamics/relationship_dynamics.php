@@ -1062,21 +1062,25 @@ class RelationshipDynamics
             // (phase 2: override > preset > bio read over priors > priors) or 'label' (phase 1
             // legacy: the old vote's preset point); residual_reach = Rule R reach (trait-space distance).
             // read_calibration (rulings 2026-09-30): the bio read IS the profile, presets do not define
-            // normal. relevel (default on) = the neutral intercepts of the 'offset' / 'mult' regressions
-            // (all-0.5 vector = no offset / x1.0). leniency (default OFF: the bio read is used as read; the
+            // normal. relevel (default on) = the neutral intercepts of the 'offset' regressions (A26, C2: an
+            // all-0.5 vector = no offset); relevel_mult (default off: those values are tuned against rulings)
+            // = the same for the 'mult' regressions (x1.0). leniency (default OFF: the bio read is used as read; the
             // seed's reads are mostly named followers and warriors, so their mean is characterisation) =
             // the leniency correction of LLM-read traits (x' = x - read_mean + 0.5, at use time). Each off
             // restores the earlier behaviour exactly. read_mean = the committed seed's mean over its
             // evidenced reads, per trait (a trait with under 30 reads has none: no shift); a stored 'traits'
             // row without read_calibration takes the seed's computed means.
             'traits' => ['assignment' => RelDynTraits::ASSIGNMENT, 'residual_reach' => RelDynTraits::RESIDUAL_REACH,
-                         'read_calibration' => ['relevel' => true, 'leniency' => false, 'read_mean' => [
+                         'read_calibration' => ['relevel' => true, 'relevel_mult' => false, 'leniency' => false, 'read_mean' => [
                              'guard' => 0.660, 'expressiveness' => 0.517, 'confidence' => 0.659, 'pride' => 0.636,
                              'resilience' => 0.629, 'reactivity' => 0.553, 'warmth' => 0.503, 'restraint' => 0.618]]],
             // Love language (ensureLoveLanguage): the primary comes from MARAS / Sharmat when they have
             // data, else from the NPC's own temperament (nearest preset of its trait vector: this table),
             // else (no temperament) the core race (raceToLoveLanguage; race is a minor prior, rulings #7).
             // The secondary is the temperament's too (the next table). A secondary equal to the primary rotates.
+            // Attachment first (after MARAS / Sharmat): anxious + toxic corner weights summing to min_weight
+            // or more seek reassurance, so their primary is words of affirmation.
+            'love_language_attachment' => ['corners' => ['anxious', 'toxic'], 'min_weight' => 0.5, 'language' => self::LL_WORDS],
             'love_language_primary' => [
                 'Romantic' => self::LL_WORDS, 'Anxious' => self::LL_TIME, 'Bold' => self::LL_TOUCH, 'Playful' => self::LL_TOUCH,
                 'Humble' => self::LL_GIFTS, 'Nurturing' => self::LL_SERVICE, 'Gentle' => self::LL_TIME, 'Jealous' => self::LL_WORDS,
@@ -3463,12 +3467,18 @@ class RelationshipDynamics
             }
         }
 
-        // Priority 3: the NPC's own temperament (nearest preset of its trait vector; config love_language_primary)
+        // Priority 3: attachment shapes how love is sought: an NPC in the anxious / toxic corners (reassurance-
+        // seeking) asks for words (config love_language_attachment)
+        if (!$primary) {
+            $primary = self::attachmentToLoveLanguage($dynamics);
+        }
+
+        // Priority 4: the NPC's own temperament (nearest preset of its trait vector; config love_language_primary)
         if (!$primary && $temperament !== null) {
             $primary = self::temperamentToPrimaryLoveLanguage($temperament, $dynamics);
         }
 
-        // Priority 4: CHIM race, only when there is no temperament (race is a minor prior)
+        // Priority 5: CHIM race, only when there is no temperament (race is a minor prior)
         if (!$primary) {
             $race = self::getNpcRace($npcName);
             $primary = self::raceToLoveLanguage($race);
@@ -3533,6 +3543,23 @@ class RelationshipDynamics
     }
 
     const RUNNER_UP_PRESETS = 3;
+
+    /**
+     * The primary love language attachment implies (config love_language_attachment {corners, min_weight,
+     * language}): the language when the NPC's corner weights (attachmentWeights) of the listed corners sum
+     * to at least min_weight, else null.
+     */
+    private static function attachmentToLoveLanguage(array $dynamics)
+    {
+        $cfg = self::getConfig()['love_language_attachment'] ?? null;
+        $cfg = is_array($cfg) ? $cfg : (array) self::defaultConfig()['love_language_attachment'];
+        $language = $cfg['language'] ?? null;
+        if (!is_string($language) || $language === '') return null;
+        $weights = self::attachmentWeights($dynamics);
+        $sum = 0.0;
+        foreach ((array) ($cfg['corners'] ?? []) as $corner) $sum += floatval($weights[$corner] ?? 0.0);
+        return $sum >= floatval($cfg['min_weight'] ?? 0.5) ? $language : null;
+    }
 
     /** The primary love language of a temperament through the trait engine: the nearest preset's (config love_language_primary), null without one. */
     private static function temperamentToPrimaryLoveLanguage($temperament, ?array $dynamics = null)

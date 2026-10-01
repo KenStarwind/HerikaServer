@@ -81,6 +81,19 @@ final class RelDynReadCalibrationTest extends TestCase
         $this->assertSame($LL('LL_TIME'), RelationshipDynamics::raceToLoveLanguage(null));
     }
 
+    public function testTheAttachmentLoveLanguageRowIsAWellFormedConfig(): void
+    {
+        $row = RelationshipDynamics::defaultConfig()['love_language_attachment'];
+        $this->assertSame(['anxious', 'toxic'], $row['corners']);
+        $this->assertSame(0.5, $row['min_weight']);
+        $this->assertSame(RelationshipDynamics::LL_WORDS, $row['language']);
+        // a secure NPC has none of it; a textbook anxious one is all of it
+        $secure = RelationshipDynamics::attachmentWeights(['profile_overrides' => ['attachment_axes' => ['anxiety' => 0.15, 'avoidance' => 0.15]]]);
+        $anxious = RelationshipDynamics::attachmentWeights(['profile_overrides' => ['attachment_axes' => ['anxiety' => 0.85, 'avoidance' => 0.15]]]);
+        $this->assertEqualsWithDelta(0.0, $secure['anxious'] + $secure['toxic'], 1e-9);
+        $this->assertEqualsWithDelta(1.0, $anxious['anxious'] + $anxious['toxic'], 1e-9);
+    }
+
     public function testTheLoveLanguageTablesCoverEveryPresetWithAValidLanguage(): void
     {
         foreach (['love_language_primary', 'love_language_secondary'] as $key) $this->checkLoveLanguageTable($key);
@@ -291,6 +304,7 @@ final class RelDynReadCalibrationTest extends TestCase
     public function testEveryRelevelledRuleIsNeutralAtTheMiddleVector(): void
     {
         $half = array_fill_keys(array_keys(RelDynTraits::TRAITS), 0.5) + ['maturity_start' => 50.0];
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'relevel_mult' => true];   // the multiplier rules explicitly on
         $rules = self::relevelled();
         $this->assertCount(8, $rules, 'the Rule R regressions in the offset / mult units, less the five that break the wrong-way guard');
         // y_affinity_up keeps its textbook intercept (re-levelled it would break the 20% wrong-way guard)
@@ -319,6 +333,31 @@ final class RelDynReadCalibrationTest extends TestCase
         $this->assertEqualsWithDelta(0.0, RelDynTraits::modelAtMiddle([0.08, 'W' => -0.21], 'offset')['new'], 1e-12, 'C2 avoidance');
     }
 
+    public function testTheShippedDefaultsReLevelOnlyTheOffsetRules(): void
+    {
+        $shipped = RelationshipDynamics::defaultConfig()['traits']['read_calibration'];
+        $this->assertTrue($shipped['relevel']);
+        $this->assertFalse($shipped['relevel_mult'], 'the multiplier values are tuned against rulings: off');
+        $half = array_fill_keys(array_keys(RelDynTraits::TRAITS), 0.5) + ['maturity_start' => 50.0];
+        // the offset rules (A26, C2) are neutral at a middle vector ...
+        foreach (RelDynIntimacy::TEMPERAMENT_RULES as $axis => [$rule, $model]) {
+            $this->assertEqualsWithDelta(0.0, RelDynTraits::modelAtMiddle($model, 'offset')['new'], 1e-12, "A26 {$axis}");
+        }
+        // ... the multiplier rules keep their textbook intercepts, the same as with relevel off
+        foreach (['passion_mult' => 0.925, 'jealousy_mult' => 1.185, 'y_warmth_up' => 0.91, 'y_arousal_up' => 0.865, 'resist_affinity' => 0.945] as $id => $middle) {
+            $this->assertEqualsWithDelta($middle, RelDynTraits::value($half, $id), 1e-12, "{$id} at the middle, shipped defaults");
+        }
+        foreach (RelDynTraits::columns() as $id => $c) {
+            if ($c['unit'] !== 'mult') continue;
+            foreach (array_slice(self::middleVectors(4), 0, 4) as $x) {
+                RelDynTraits::$readCalibrationOverride = null;
+                $default = RelDynTraits::value($x, $id);
+                RelDynTraits::$readCalibrationOverride = ['relevel' => false, 'relevel_mult' => false];
+                $this->assertEqualsWithDelta($default, RelDynTraits::value($x, $id), 1e-12, "{$id}: shipped defaults = no relevel");
+            }
+        }
+    }
+
     public function testSlopesAreUnchangedAndOffIsTodaysRule(): void
     {
         $rules = self::relevelled();
@@ -328,9 +367,9 @@ final class RelDynReadCalibrationTest extends TestCase
             $c = RelDynTraits::columns()[$id];
             $delta = RelDynTraits::modelAtMiddle($c['model'], $unit)['old'] - $neutral;
             foreach ($vectors as $x) {
-                RelDynTraits::$readCalibrationOverride = ['relevel' => true];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'relevel_mult' => true];
                 $on = RelDynTraits::value($x, $id);
-                RelDynTraits::$readCalibrationOverride = ['relevel' => false];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => false, 'relevel_mult' => false];
                 $off = RelDynTraits::value($x, $id);
                 $this->assertEqualsWithDelta(self::legacyR($c['model'], RelDynTraits::table($id), $x), $off, 1e-9, "{$id} off = today's Rule R");
                 $this->assertEqualsWithDelta($off - $delta, $on, 1e-9, "{$id}: the same slopes, the intercept moved by the middle's offset");
@@ -340,9 +379,9 @@ final class RelDynReadCalibrationTest extends TestCase
         foreach (RelDynTraits::columns() as $id => $c) {
             if (isset($rules[$id])) continue;
             foreach (array_slice($vectors, 0, 5) as $x) {
-                RelDynTraits::$readCalibrationOverride = ['relevel' => true];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'relevel_mult' => true];
                 $on = RelDynTraits::value($x, $id);
-                RelDynTraits::$readCalibrationOverride = ['relevel' => false];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => false, 'relevel_mult' => false];
                 $this->assertEqualsWithDelta($on, RelDynTraits::value($x, $id), 1e-12, "{$id} is not re-levelled");
             }
         }
@@ -351,7 +390,7 @@ final class RelDynReadCalibrationTest extends TestCase
     public function testEveryPresetIsExactOnOrOff(): void
     {
         foreach ([true, false] as $enabled) {
-            RelDynTraits::$readCalibrationOverride = ['relevel' => $enabled, 'leniency' => $enabled];
+            RelDynTraits::$readCalibrationOverride = ['relevel' => $enabled, 'relevel_mult' => $enabled, 'leniency' => $enabled];
             foreach (RelDynTraits::points() as $preset => $p) {
                 foreach (RelDynTraits::columns() as $id => $c) {
                     $this->assertSame(RelDynTraits::table($id)[$preset], RelDynTraits::value($p, $id), "{$id} at {$preset}, calibration " . ($enabled ? 'on' : 'off'));
@@ -368,7 +407,7 @@ final class RelDynReadCalibrationTest extends TestCase
         // the label assignment: the vector is the label's preset point, so every column is its table value
         RelDynTraits::$assignmentOverride = 'label';
         foreach ([true, false] as $enabled) {
-            RelDynTraits::$readCalibrationOverride = ['relevel' => $enabled, 'leniency' => $enabled];
+            RelDynTraits::$readCalibrationOverride = ['relevel' => $enabled, 'relevel_mult' => $enabled, 'leniency' => $enabled];
             foreach (array_keys(RelDynTraits::PRESET_TRAITS) as $preset) {
                 $d = ['inferred_temperament' => $preset];
                 $this->assertEqualsWithDelta(RelationshipDynamics::TEMPERAMENT_PASSION_MULT[$preset] ?? 1.0, RelDynTraits::param($preset, 'passion_mult', 1.0, $d), 1e-12, $preset);

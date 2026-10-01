@@ -41,10 +41,12 @@
  *           table lookup. trait_vector mirrors the label's preset point and is not read.
  * Either way a textbook preset reproduces every old table value exactly.
  *
- * READ CALIBRATION (config traits.read_calibration {relevel, leniency, read_mean}; rulings 2026-09-30):
- * presets do not define what normal is; the bio read is the profile. Two corrections, two switches:
- * relevel (default ON) is 2, leniency (default OFF) is 1: the seed's reads are mostly named followers
- * and warriors, so their mean is characterisation, not LLM leniency, and the read is used as read.
+ * READ CALIBRATION (config traits.read_calibration {relevel, relevel_mult, leniency, read_mean};
+ * rulings 2026-09-30): presets do not define what normal is; the bio read is the profile. Two
+ * corrections, three switches: relevel (default ON; the offset-unit rules) and relevel_mult (default
+ * OFF; the multiplier rules, whose values are tuned against rulings) are 2, leniency (default OFF) is 1:
+ * the seed's reads are mostly named followers and warriors, so their mean is characterisation, not LLM
+ * leniency, and the read is used as read.
  *   1. Leniency (calibrateRead, applied at USE time in readVector, stored reads stay raw): the LLM
  *      reads high (guard .66 where the middle of a population is .5), so each trait the bio read
  *      supplied is moved by x' = clamp01(r - read_mean + 0.5), spread unchanged, before it is
@@ -53,7 +55,7 @@
  *      label-assigned vector is never touched. read_mean defaults to the committed seed's mean
  *      over its evidenced reads (seedReadStats), for traits with READ_CALIBRATION_MIN_READS reads.
  *   2. Neutral intercepts (relevelModel, in blend): every Rule R regression whose unit is 'offset'
- *      or 'mult' evaluates as neutral + sum slope (x - 0.5), neutral 0 / 1.0: the all-0.5 vector (a
+ *      (relevel) or 'mult' (relevel_mult) evaluates as neutral + sum slope (x - 0.5), neutral 0 / 1.0: the all-0.5 vector (a
  *      middle read) adds nothing. Slopes are unchanged; the residual terms are taken against the
  *      re-levelled model, so every preset still returns its table row exactly. Rule RI is not
  *      re-levelled: its normalised residual blend absorbs any shift of the model (no-op), the
@@ -114,8 +116,8 @@ final class RelDynTraits
     // =========================================================================
 
     /**
-     * Pins the calibration regardless of config (null = config): ['relevel' => bool, 'leniency' => bool,
-     * 'read_mean' => storage name => 0..1]. For tests and tools.
+     * Pins the calibration regardless of config (null = config): ['relevel' => bool, 'relevel_mult' => bool,
+     * 'leniency' => bool, 'read_mean' => storage name => 0..1]. For tests and tools.
      */
     public static $readCalibrationOverride = null;
 
@@ -132,11 +134,17 @@ final class RelDynTraits
         return is_array($t) && is_array($t['read_calibration'] ?? null) ? $t['read_calibration'] : [];
     }
 
-    /** Are the neutral intercepts of the Rule R offset / mult regressions on? Default (a row without 'relevel'): on. */
+    /** Are the neutral intercepts of the Rule R offset-unit regressions on? Default (a row without 'relevel'): on. */
     public static function relevelEnabled(): bool
     {
         $row = self::readCalibrationRow();
         return !array_key_exists('relevel', $row) || !empty($row['relevel']);
+    }
+
+    /** Are the neutral intercepts of the Rule R multiplier regressions on? Default: off (their values are tuned against rulings). */
+    public static function relevelMultEnabled(): bool
+    {
+        return !empty(self::readCalibrationRow()['relevel_mult']);
     }
 
     /** Is the leniency correction of LLM-read traits on? Default (a row without 'leniency'): off, the read is used as read. */
@@ -230,7 +238,7 @@ final class RelDynTraits
     }
 
     /**
-     * Columns left at their textbook intercept: re-levelling them steepens the residual ramps (the
+     * Multiplier columns left at their textbook intercept when relevel_mult is on: re-levelling them steepens the residual ramps (the
      * value must go from neutral at the middle to the table row at the preset inside the reach) until
      * they turn the wrong way near a preset by more than the phase-3 guard of 20% of the table span
      * (RelDynTraitBlendTest): y_affinity_up (0.206 against 0.200) and its twin y_affinity_down (the
@@ -254,7 +262,8 @@ final class RelDynTraits
      */
     private static function relevelModel($model, ?string $unit)
     {
-        if ($unit === null || self::$relevelHeld || !isset(self::RELEVEL_UNITS[$unit]) || !self::relevelEnabled()) return $model;
+        if ($unit === null || self::$relevelHeld || !isset(self::RELEVEL_UNITS[$unit])) return $model;
+        if (!($unit === 'offset' ? self::relevelEnabled() : self::relevelMultEnabled())) return $model;
         $half = array_fill_keys(array_keys(self::TRAITS), 0.5) + ['maturity_start' => 50.0];
         $delta = self::evalModel($model, $half) - self::RELEVEL_UNITS[$unit];
         if (abs($delta) < 1e-15) return $model;

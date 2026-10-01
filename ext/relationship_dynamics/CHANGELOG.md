@@ -6,17 +6,20 @@ Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-d
 ## Unreleased — love languages that work, and bio reads that are not inflated
 Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
 which is retired, and the race map never matched CHIM's race names ("NordRace", "NordRaceVampire"). The primary now
-follows the NPC's own temperament (the nearest preset of her trait vector, config `love_language_primary`), the
+follows her attachment first (anxious and toxic corner weights summing to 0.5 or more seek reassurance: words of
+affirmation, config `love_language_attachment`), then her own temperament (the nearest preset of her trait vector,
+config `love_language_primary`), the
 secondary likewise (`love_language_secondary`); when the two come out equal the secondary is the language of her
 next-nearest temperament, and only then rotated. The core race (normalised: Nord, Orc, Redguard: acts of service;
 Breton, Dunmer: words; High elf, Imperial: gifts; Khajiit, Wood elf: touch) is a minor prior used only when there is no
 temperament. Love languages already stored are kept.
 Two corrections on how traits turn into numbers, each behind its own switch (`traits.read_calibration`; off is the
-earlier behaviour exactly). `relevel` (on): the regressions that turn a trait into an offset or a multiplier were fitted
-on the 13 presets, whose averages are not the middle, so a middle (all 0.5) vector carried an offset nobody chose (+0.20
-emotional need); they are re-levelled so that it adds nothing and multiplies by one, with the slopes unchanged, and a
-preset still gets exactly its table row (one column, y_affinity_up, keeps its fit: re-levelled it broke the wrong-way
-guard). `leniency` (off): the bio read is the profile and is used as read; switched on, each trait the model read is
+earlier behaviour exactly). `relevel` (on): the intimacy-need and attachment regressions (A26, C2) were fitted on the 13
+presets, whose averages are not the middle, so a middle (all 0.5) vector carried an offset nobody chose (+0.20 emotional
+need); they are re-levelled so that it adds nothing, with the slopes unchanged, and a preset still gets exactly its table
+row. `relevel_mult` (off): the same for the multiplier regressions (passion, jealousy, plasticity, resistance), whose
+values are tuned against rulings; five of them (y_affinity up/down, y_valence_up, y_respect_up, resist_trust) stay
+unlevelled even then, as re-levelled they break the wrong-way guard. `leniency` (off): the bio read is the profile and is used as read; switched on, each trait the model read is
 moved at use time by the seed population's mean (`x' = x - read_mean + 0.5`; stored reads stay raw; a hand-set vector,
 a preset or a label is never touched).
 
