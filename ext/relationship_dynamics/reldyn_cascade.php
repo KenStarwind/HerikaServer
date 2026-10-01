@@ -316,6 +316,36 @@ final class RelDynCascade
         $items = is_array($stored['value'] ?? null) && array_is_list($stored['value']) ? $stored['value'] : [];
         if ($items === []) return [];
 
+        // One request at a time applies this NPC's ripples (the eval inbox's pattern: a session advisory
+        // lock, dropped with the connection of a request that dies). Overlapping prerequests would each
+        // read the same item and each apply it: the applied-id list merges as 'mine' and the pending delta
+        // merges additively, so both applications would survive the save. The request that does not get the
+        // lock leaves the ripples for the next one; it is not lost.
+        if (!RelDynStorage::tryLockInbox($npcId, RelDynStorage::CASCADE_LOCK_CLASS)) {
+            RelationshipDynamics::log("[CASCADE] {$npcName}: another request is applying the ripples; left for the next request");
+            return [];
+        }
+        try {
+            return self::applyLocked($npcName, $npcId, $dynamics);
+        } finally {
+            RelDynStorage::unlockInbox($npcId, RelDynStorage::CASCADE_LOCK_CLASS);
+        }
+    }
+
+    /** onPrerequest's body, with the NPC's ripple lock held: the inbox and the applied ids are read fresh. */
+    private static function applyLocked(string $npcName, int $npcId, array &$dynamics): array
+    {
+        // Under the lock: the inbox as it stands now (the one read above may predate a trim by the request
+        // that held the lock before) and the ids that request stored as applied (this copy may be older)
+        $stored = RelDynStorage::readKeyForUpdate($npcId, self::INBOX_KEY);
+        $items = is_array($stored['value'] ?? null) && array_is_list($stored['value']) ? $stored['value'] : [];
+        if ($items === []) return [];
+        $storedState = RelDynStorage::loadDynamics($npcId);
+        if (is_array($storedState[self::APPLIED_KEY] ?? null)) {
+            $dynamics[self::APPLIED_KEY] = array_values(array_unique(array_merge(
+                array_values((array) ($dynamics[self::APPLIED_KEY] ?? [])), array_values($storedState[self::APPLIED_KEY]))));
+        }
+
         $cfg = self::config();
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null;
         $applied = is_array($dynamics[self::APPLIED_KEY] ?? null) ? array_values($dynamics[self::APPLIED_KEY]) : [];

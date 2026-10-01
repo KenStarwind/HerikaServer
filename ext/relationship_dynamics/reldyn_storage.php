@@ -295,18 +295,21 @@ class RelDynStorage
      * and with it the lock. Returns false when another request holds it.
      */
     const INBOX_LOCK_CLASS = 1380218441;   // int4 constant, 'RDvI'
+    /** The cascade ripple inbox's own lock class (int4 constant, 'RDcA'): a target applies its ripples one request at a time. */
+    const CASCADE_LOCK_CLASS = 1380278081;
 
-    public static function tryLockInbox(int $npcId): bool
+    public static function tryLockInbox(int $npcId, int $class = self::INBOX_LOCK_CLASS): bool
     {
-        $row = self::db()->fetchOne('SELECT pg_try_advisory_lock($1::int, $2::int) AS got', [self::INBOX_LOCK_CLASS, $npcId]);
+        $row = self::db()->fetchOne('SELECT pg_try_advisory_lock($1::int, $2::int) AS got', [$class, $npcId]);
         return in_array($row['got'] ?? null, ['t', true], true);
     }
 
-    public static function unlockInbox(int $npcId): void
+    public static function unlockInbox(int $npcId, int $class = self::INBOX_LOCK_CLASS): void
     {
-        $row = self::db()->fetchOne('SELECT pg_advisory_unlock($1::int, $2::int) AS released', [self::INBOX_LOCK_CLASS, $npcId]);
+        $row = self::db()->fetchOne('SELECT pg_advisory_unlock($1::int, $2::int) AS released', [$class, $npcId]);
         if (!in_array($row['released'] ?? null, ['t', true], true)) {
-            error_log("[RelDyn] ERROR unlockInbox: eval inbox lock of npc {$npcId} was not held");
+            $what = $class === self::CASCADE_LOCK_CLASS ? 'cascade ripple' : 'eval';
+            error_log("[RelDyn] ERROR unlockInbox: {$what} inbox lock of npc {$npcId} was not held");
         }
     }
 
