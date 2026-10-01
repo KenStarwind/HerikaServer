@@ -284,7 +284,11 @@ final class RelDynAttractionRomanceTest extends TestCase
              json_encode(['skills' => array_merge($all, ['archery' => '72', 'sneak' => '56', 'lightarmor' => '52', 'onehanded' => '45'])]),
              json_encode(['class' => ['name' => 'Hunter', 'formid' => '0x0001317f'], 'factions' => $factions,
                  'relationships' => ['Player' => ['aff' => $aff, 'type' => $type]]]),
-             json_encode(['reldyn' => ['dynamics' => ['dimensions' => ['maturity' => ['x' => 80, 'baseline' => 80]]]]])]));
+             // (the love languages this story always ran with: before the race keys matched, inference gave every NPC
+             // quality time then words, and the evenings below (quality time, praise, reassurance) are written for
+             // them; Aela now infers touch / time, which paces the courtship slower. Stored languages are kept.)
+             json_encode(['reldyn' => ['dynamics' => ['dimensions' => ['maturity' => ['x' => 80, 'baseline' => 80]],
+                 'love_language_primary' => RelationshipDynamics::LL_TIME, 'love_language_secondary' => RelationshipDynamics::LL_WORDS]]])]));
         $this->npcId = (int) $row['id'];
     }
 

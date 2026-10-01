@@ -526,7 +526,9 @@ final class RelDynProtocolsTestBedsPostgresTest extends TestCase
         // past core 70; Muiri's new love stops at 70 however good the days are
         foreach (['Muiri', 'Lynly Star-Sung'] as $npc) $this->setCoreAffinity($npc, 68);
         $t = $t30 + 2 * self::DAY;
-        for ($k = 0; $k < 12; $k++) {
+        // (20 evenings, was 12: Muiri now infers touch / words, so the quality-time evenings are no longer her primary
+        // language and her affinity reaches the ceiling later; the lock is still asserted where a gain was held back)
+        for ($k = 0; $k < 20; $k++) {
             foreach (['Muiri', 'Lynly Star-Sung'] as $i => $npc) $this->turn($npc, 'Tell me about your day.', $t + 600 * (2 * $k + $i), "day{$k}");
             $stats = RelDynEval::runWorker($this->evalLlm());
             $this->assertSame(0, $stats['failed'] ?? 0, json_encode($stats));
