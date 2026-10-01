@@ -184,8 +184,7 @@ final class RelDynGifts
     /**
      * One handover is one delivery, whoever sees it first (the eventlog row of the player's
      * handover, or the request's side: the eval's tag, when its exchange held the row
-     * (handoverTagsInExchange), or, dormant on CHIM 3.4.1, the local classifier's reading of a
-     * give / trade action). Each calls this before it delivers $tag at raw game time $at, with its
+     * (handoverTagsInExchange)). Each calls this before it delivers $tag at raw game time $at, with its
      * $source ('row' | 'request'): true = the other side already delivered it (an unpaired entry of
      * the other source, the same tag, within eval_pair_game_hours: now paired, deliver nothing);
      * false = nobody has, deliver it (an unpaired entry of this source is kept for the other side).

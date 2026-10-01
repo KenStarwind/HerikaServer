@@ -601,46 +601,6 @@ final class RelDynBatchTClassifyBedsPostgresTest extends TestCase
     }
 
     /**
-     * The dormant request side (the hook called directly: CHIM 3.4.1 core emits no ExtCmdGiveItem and ends
-     * an 'infoaction' request before any ext hook, so the live handovers are the rows of the tests above,
-     * not this shape; kept for a fork or plugin that emits the action). A give action the local classifier
-     * reads (the eval off) is the same handover as its itemfound row: one delivery. The classifier delivers at its own units (legacy_love_language_units), the row
-     * is then paired with it.
-     */
-    public function testAGiveRequestAndItsRowAreOneHandoverWithTheEvalOff(): void
-    {
-        $this->seed(['eval_producer' => ['enabled' => false]]);
-        $beds = array_keys(self::BEDS);
-        $t = self::at(self::N0, 18.0);
-        $this->event('infoloc', self::MARE, $t - 100);
-        $this->round($beds, 'Evening, friends.', $t, 'hello');
-        $this->editDynamics(self::LYNLY, function (array &$d) {
-            $d['love_language_primary'] = RelationshipDynamics::LL_GIFTS;
-            $d['love_language_secondary'] = RelationshipDynamics::LL_WORDS;
-        });
-        $this->editDynamics(self::AELA, function (array &$d) {
-            $d['love_language_primary'] = RelationshipDynamics::LL_SERVICE;
-            $d['love_language_secondary'] = RelationshipDynamics::LL_TOUCH;
-        });
-        $this->round($beds, 'Anything on your mind?', $t + 2 * self::HOUR, 'pin');
-
-        $units = floatval(RelDynFulfillment::config()['legacy_love_language_units']);
-        $out = [];
-        foreach ([[self::LYNLY, 'Ruby Ring', RelationshipDynamics::LL_GIFTS], [self::AELA, 'Potion of Healing', RelationshipDynamics::LL_SERVICE]] as $i => [$npc, $item, $axis]) {
-            $at = $t + (int) ((5 + 4 * $i) * self::HOUR);
-            $before = $this->level($npc, $axis, $at + 60);
-            $this->event('itemfound', self::PLAYER . " gave 1 {$item} to {$npc}", $at);
-            $this->request($npc, ['infoaction', (string) $this->realTs, (string) ($at + 60), "ExtCmdGiveItem@{$item}"], "give{$i}");
-            $out[$npc] = round($this->level($npc, $axis, $at + 60) - $before, 4);
-            $this->assertEqualsWithDelta($units, $out[$npc], 0.04, "{$npc}: the {$item} handed over is one delivery (the classifier's) " . json_encode($out));
-            // its row is paired, so the next request does not deliver it again
-            $this->turn($npc, 'Thank you.', $at + 120, "after{$i}");
-            $this->assertEqualsWithDelta($units, $this->level($npc, $axis, $at + 120) - $before, 0.06, "{$npc}: still one delivery");
-        }
-        $this->assertClean(false);
-    }
-
-    /**
      * Review fix (interaction-classification): the eval's 'help' (or 'gift') tag is one delivery with a
      * handover row only when that exchange held the handover. An unrelated help exchange (the player
      * helped her with a wolf, nothing changed hands) within the pairing hour of a potion handover is its

@@ -5514,17 +5514,10 @@ class RelationshipDynamics
             return self::LL_TOUCH;
         }
 
-        // An item handed over (give / trade) is what the action proves, so it comes before any
-        // guess from her mood: food, drink and potions are looking after her (acts of service),
-        // anything else a gift (handoverLoveLanguage). DORMANT on CHIM 3.4.1: core emits no
-        // ExtCmdGiveItem / ExtCmdTradeItem (its actions are GiveItemTo / TradeItems) and ends an
-        // 'infoaction' request before any ext hook runs (main.php), like the ExtCmdHug / ExtCmdKiss
-        // names above. It is kept for a fork or plugin that emits the names. The live deliveries of a
-        // handover are the eventlog row's (processGift, once per row) and the eval's gift / help tag
-        // for an exchange that held the row (RelDynGifts::noteHandover, handover_tags).
-        if (self::isHandoverAction($action)) {
-            return RelDynGifts::handoverLoveLanguage(self::handoverItemOfAction($action));
-        }
+        // An item handed over does not come through here: CHIM 3.4.1 core sends no give / trade request this
+        // hook could read (decisions §20 #17). A handover reaches RelDyn as its eventlog 'itemfound' row
+        // (processGift, once per row) and as the eval's gift / help tag for an exchange that held the row
+        // (RelDynGifts::noteHandover, handover_tags).
 
         // Words of affirmation (flirty/loving mood)
         $romanticMoods = ['flirty', 'loving', 'lovely', 'playful', 'seductive', 'aroused', 'charming', 'affectionate'];
@@ -5556,21 +5549,6 @@ class RelationshipDynamics
             return self::LL_TIME;
         }
 
-        return null;
-    }
-
-    /** Is this request action an item handover (ExtCmdGiveItem / ExtCmdTradeItem)? */
-    public static function isHandoverAction($action): bool
-    {
-        return is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item/i', $action) === 1;
-    }
-
-    /** The item a handover action names (ExtCmdGiveItem@Name, ExtCmdTradeItem@Name), or null when it names none. */
-    public static function handoverItemOfAction($action): ?string
-    {
-        if (is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item@([^:\r\n]+)/i', $action, $m) && trim($m[1]) !== '') {
-            return trim($m[1]);
-        }
         return null;
     }
 
@@ -5606,7 +5584,7 @@ class RelationshipDynamics
 
     /**
      * The item of a gift/item interaction: the LLM response's item field (connectors set
-     * LAST_LLM_RESPONSE), else the gameRequest action ExtCmdGiveItem@Name / ExtCmdTradeItem@Name.
+     * LAST_LLM_RESPONSE), else null.
      */
     public static function detectGiftItemName(): ?string
     {
@@ -5614,7 +5592,7 @@ class RelationshipDynamics
         if (is_array($llmResponse) && is_string($llmResponse['item'] ?? null) && trim($llmResponse['item']) !== '') {
             return trim($llmResponse['item']);
         }
-        return self::handoverItemOfAction($GLOBALS['gameRequest'][3] ?? '');
+        return null;
     }
 
     /**
