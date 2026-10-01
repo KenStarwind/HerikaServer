@@ -1475,6 +1475,7 @@ PROMPT;
             // CHIM fork hook (RelDyn): if an extension owns this affinity (applies its own eval deltas), keep the stored
             // 'aff'; type, notes, romance gate, lock and timeline run as before on it. No owner registered = unchanged.
             $affOwned = chimRelationshipAffinityOwned($npcId, $target);
+            if (!$affOwned) $delta = chimRelationshipDeltaFor($npcId, $target, $delta, $newType); // RelDyn fork hook: an extension may damp this gain
 
             $targetExists = isset($currentRels[$target]);
             if ($targetExists && !is_array($currentRels[$target])) {

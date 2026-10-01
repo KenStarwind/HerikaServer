@@ -92,6 +92,8 @@ if ($gameRequest[0] == "funcret") { // Take out the functions part
 	
 	// Add current game date/time context to the prompt
 	$diaryPrompt = "Current date and time: {$sk_date}. " . $diaryPrompt;
+	require_once(__DIR__."/../lib/relationship_manager.php"); // RelDyn fork hook: what an extension adds to the diary prompt
+	$diaryPrompt .= chimDiaryContextFor($GLOBALS["HERIKA_NAME"]);
 	
 	$request = $diaryPrompt;
 	
