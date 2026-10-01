@@ -18203,6 +18203,9 @@ class RelationshipDynamics
 
         // Read dimension values
         $trust           = floatval($dims['trust']['x'] ?? 50);
+        // The grip of the fear of losing the player holds trust down (RelDynKeeping, a standing offset); that strain is never read
+        // as distrust here: nothing the player asks is refused because the NPC is afraid of losing them (decisions §23)
+        $trust           = min(100.0, $trust - min(0.0, floatval($dynamics[RelDynKeeping::KEY]['applied']['trust'] ?? 0.0)));
         $respect         = floatval($dims['respect']['x'] ?? 50);
         $resentment      = floatval($dims['resentment']['x'] ?? 0);
         $selfConfidence  = floatval($dims['self_confidence']['x'] ?? 50);

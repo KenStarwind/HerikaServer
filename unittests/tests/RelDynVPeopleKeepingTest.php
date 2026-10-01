@@ -279,6 +279,25 @@ final class RelDynVPeopleKeepingTest extends TestCase
         $this->assertFalse($startsOne($this->npc(self::FEARFUL, 15.0, 60.0, self::CONTROL)), 'off: it stays in the words');
     }
 
+    public function testTheStrainOfTheFearIsNeverReadAsDistrustSoNoCommandIsRefusedForIt(): void
+    {
+        // the grip holds trust down by up to 12 points (a standing offset); autonomy reads trust without it
+        $held = $this->npc(self::FEARFUL, 55.0, 60.0);
+        $held['dimensions']['trust']['x'] = 45.0;
+        $held['_keeping'] = ['v' => 1, 'fear' => 0.9, 'applied' => ['trust' => -12.0, 'comfort' => -8.0]];
+        $free = $this->npc(self::FEARFUL, 55.0, 60.0);
+        $free['dimensions']['trust']['x'] = 57.0;
+        $worse = $this->npc(self::FEARFUL, 55.0, 60.0);
+        $worse['dimensions']['trust']['x'] = 45.0;   // the same low trust from anything else: that does count
+        $a = RelationshipDynamics::evaluateAutonomyState($held, 'Stoic');
+        $b = RelationshipDynamics::evaluateAutonomyState($free, 'Stoic');
+        $c = RelationshipDynamics::evaluateAutonomyState($worse, 'Stoic');
+        $this->assertSame($b['autonomy_score'], $a['autonomy_score'], 'trust without the held strain');
+        $this->assertGreaterThan($b['autonomy_score'], $c['autonomy_score'], 'distrust from anything else still counts');
+        // the one who is not held: unchanged by the new read
+        $this->assertSame(RelationshipDynamics::evaluateAutonomyState($free, 'Stoic'), RelationshipDynamics::evaluateAutonomyState($free + ['_keeping' => ['v' => 1, 'fear' => 0.0, 'applied' => ['trust' => 0.0]]], 'Stoic'));
+    }
+
     public function testJevCarriesTheResponse(): void
     {
         $d = $this->npc(self::FEARFUL, 15.0, 60.0, self::CONTROL);
