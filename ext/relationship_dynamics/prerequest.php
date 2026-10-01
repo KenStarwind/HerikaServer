@@ -581,6 +581,14 @@ $GLOBALS['RELDYN_BLUSH_MULTIPLIER'] = 1.0;
 // plugin_extended_data.reldyn.romance for a Sharmat hook; Sharmat's store is never written.
 RelDynRomance::publishState($npcName, $dynamics, $dynamics['_core_rel_type'] ?? null, $sharmatArousal);
 
+// Consent (Ken 2026-10-01 §21, reldyn_consent.php): RelDyn decides whether intimacy happens at all, and Sharmat defers to
+// the decision published to plugin_extended_data.reldyn.consent. After the pull-back, keeping and romance states above.
+try {
+    RelDynConsent::publish($npcName, $dynamics, $GLOBALS['PLAYER_NAME'] ?? 'the player');
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('consent', $e);
+}
+
 // ========== DIRECTOR GOAL — PASSIVE BRIDGE (PR 39, Step 9) ==========
 // If no director goal is currently active, check CHIM's HERIKA_GOALS for
 // Director/SNQE-assigned goals and bridge them into the RelDyn goal system.

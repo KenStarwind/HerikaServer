@@ -35,6 +35,17 @@ one costs nothing. The new read moves the personality instead of replacing it, b
 moves less, someone volatile or still finding themselves moves more, and nobody is immune. A trait the first read knew
 nothing about simply fills in. Hand-set vectors and presets chosen in the editor are never re-read. The editor shows when the
 profile was last read, what moved, and has a "Read again" button. One switch and the cadence live in the trait reader config.
+## unreleased (consent) — whether it gets that far is RelDyn's call
+RelDyn now decides whether intimacy happens at all, and the adult-content mod (Sharmat) defers to it for the "whether",
+keeping the "during" to itself. The answer is no for an NPC who is asexual or aromantic, for a friendzone and for a
+walkaway, and those are states that can end, never a permanent verdict. Otherwise it is how much the NPC wants it (the
+bond, the passion, how far they have let the player in, the romance, being drawn) less what weighs on it: an open
+quarrel, the ick, being withdrawn, pulling back, not being let in far enough, and fear. Each weighs by who the NPC is,
+none is a switch and no one is immune: a proud, reactive NPC is hurt most by a quarrel, an immature one is driven by a
+mood, a guarded one needs to be let in further, a bold one has a lower bar than a guarded, bond-first one. An NPC
+with little confidence or maturity, an anxious attachment and a deep fear of losing the player may say yes when they
+should not, up to a limit; RelDyn models the person and never judges the player. The answer is published for the mod
+to read and is the same words for every gender: the NPC's name, never a pronoun. A switch restores the mod's own rules.
 
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or
