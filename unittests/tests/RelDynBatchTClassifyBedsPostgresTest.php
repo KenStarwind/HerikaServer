@@ -803,7 +803,10 @@ final class RelDynBatchTClassifyBedsPostgresTest extends TestCase
         $this->assertSame('edgy', $trace[8][self::AELA]['band'], "Aela's jealousy reached the edgy band {$why}");
         $this->assertNotNull($trace[8][self::AELA]['line'], "Aela's next turn carries the edgy line {$why}");
         // the toxic bed's reaches 'unsettled' and opens a conflict; the secure-leaning ones' do not yet
-        $this->assertTrue($trace[6]['Muiri']['conflict'], "Muiri's jealousy opens a conflict {$why}");
+        // (at the sixth flirt Muiri sat just under the conflict line, 39 of 40, once her jealousy multiplier went neutral at the
+        // middle, §21 #10; the seventh and eighth open it)
+        $this->assertFalse($trace[6]['Muiri']['conflict'], "Muiri's jealousy is just short of a conflict at six {$why}");
+        $this->assertTrue($trace[8]['Muiri']['conflict'], "Muiri's jealousy opens a conflict {$why}");
         $this->assertFalse($trace[8][self::AELA]['conflict'], $why);
         // the band reaches her next turn as a feeling: the edgy line from jealousy 20, the rival named from 'unsettled' (40)
         foreach ($partners as $p) {

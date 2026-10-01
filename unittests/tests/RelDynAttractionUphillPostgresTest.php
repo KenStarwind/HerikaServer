@@ -574,7 +574,11 @@ final class RelDynAttractionUphillPostgresTest extends TestCase
         $su = $silver['a']['passion']['units']['flexible:visceral'];
         $this->assertSame($pu['score'], $su['score'], 'the curve reads the lens score before the speech lift');
         $this->assertSame($pu['m_hill'], $su['m_hill']);
-        $this->assertEqualsWithDelta($su['m_hill'] + (1 - $su['m_hill']) * 0.15, $su['m'], 1e-3, 'speech 100 closes 15% of the gap');
+        // (the share is config curve.charm_hill_max: 0.15 until batch V, 0.13 since the neutral passion multiplier gave Aela
+        // about 8% more gain and the charm lever gave it back, §21 #10; the test reads the shipped value)
+        $charmShare = floatval(RelDynAttraction::curveConfig()['charm_hill_max']);
+        $this->assertEqualsWithDelta(0.13, $charmShare, 1e-9);
+        $this->assertEqualsWithDelta($su['m_hill'] + (1 - $su['m_hill']) * $charmShare, $su['m'], 1e-3, 'speech 100 closes its share of the gap');
         $this->assertGreaterThan(1.5 * $plain['a']['passion']['curve'], $silver['a']['passion']['curve'], 'charm is a real lever, not 0.25%');
         $this->assertLessThan(0.3, $silver['a']['passion']['curve'], 'a silver tongue does not replace substance');
         $this->assertGreaterThan($plain['a']['pillars']['strength']['score'], $silver['a']['pillars']['strength']['score'],

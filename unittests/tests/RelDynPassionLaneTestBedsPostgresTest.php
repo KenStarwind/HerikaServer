@@ -584,7 +584,7 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
             $this->assertGreaterThan(0.75 * abs($passionNode), abs($heldPassion), "{$npc} passion: closing on the node {$why}");
             $this->assertLessThanOrEqual(abs($passionNode) + 1e-6, abs($heldPassion), "{$npc} passion: never past it {$why}");
             $this->assertSame($passionNode > 0, $heldPassion > 0, "{$npc} passion {$why}");
-            $this->assertEqualsWithDelta(RelationshipDynamics::getPassion($d) + RelDynPassion::spike($d) + $heldPassion, RelationshipDynamics::getEffectivePassion($d), 1e-6,
+            $this->assertEqualsWithDelta(max(0.0, min(100.0, RelationshipDynamics::getPassion($d) + RelDynPassion::spike($d) + $heldPassion)), RelationshipDynamics::getEffectivePassion($d), 1e-6,
                 "{$npc}: the weather pull rides on passion, the floor is her own");
             // monotone approach: every held offset along the way is no further from the node than the one before
             $series = array_map(fn($r) => floatval(($r[1] ?? [])['valence'] ?? 0.0), $trace[$npc]);
