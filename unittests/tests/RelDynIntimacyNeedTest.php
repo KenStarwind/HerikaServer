@@ -404,7 +404,11 @@ final class RelDynIntimacyNeedTest extends TestCase
         $prefs = RelDynFacets::neutralPreferences();
         $levels = [];
         foreach (['avoidant', 'secure', 'toxic', 'anxious'] as $style) {
-            $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['profile_overrides' => ['attachment_style' => $style]]);
+            // both intimacy axes must be needs for every style (an avoidant one least): the love languages this
+            // test always ran with are pinned (quality time, words; before the race keys matched, every NPC
+            // inferred them, and a Nord huntress now infers acts of service / touch, whose emotional rows are smaller)
+            $d = $this->derived(['Huntress' => self::huntress()], 'Huntress', ['profile_overrides' => ['attachment_style' => $style],
+                'love_language_primary' => RelationshipDynamics::LL_TIME, 'love_language_secondary' => RelationshipDynamics::LL_WORDS]);
             $this->assertSame($style, RelationshipDynamics::getAttachmentStyle($d));
             $this->assertTrue(RelDynFulfillment::ensure($d, $prefs, self::T0));
             $levels[$style] = RelDynFulfillment::levelsAt(RelDynFulfillment::pairState($d), self::T0 + 3 * self::DAY);

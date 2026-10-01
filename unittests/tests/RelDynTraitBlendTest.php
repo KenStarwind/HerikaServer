@@ -279,10 +279,15 @@ final class RelDynTraitBlendTest extends TestCase
         foreach (RelDynTraits::columns() as $col => $spec) {
             if ($spec['rule'] !== 'R' || is_callable($spec['model'])) continue;
             $m = $spec['model'];
-            $f = function (array $x) use ($m) {
+            // the model the engine evaluates: the textbook fit with its intercept re-levelled so a middle
+            // (all 0.5) vector is neutral (rulings 2026-09-30; offset / mult units of Rule R). The residuals
+            // the bound sums are taken against it, as blend() takes them.
+            $shift = RelDynTraits::modelAtMiddle($m, $spec['unit']);
+            $shift = $shift['old'] - $shift['new'];
+            $f = function (array $x) use ($m, $shift) {
                 $v = floatval($m[0] ?? 0.0);
                 foreach ($m as $k => $c) if ($k !== 0) $v += floatval($c) * floatval($x[$k]);
-                return $v;
+                return $v - $shift;
             };
             $r = [];
             foreach ($pts as $n => $q) $r[$n] = floatval(RelDynTraits::table($col)[$n]) - $f($q);
@@ -313,8 +318,10 @@ final class RelDynTraitBlendTest extends TestCase
         $this->assertGreaterThan(250, $checked);
         // the reviewed magnitudes (units: multiplier); coord_m (20.35 coordinate points) and
         // tier_retention (7.13 core points) moved to Rule RI in phase 3 (next test)
-        $this->assertEqualsWithDelta(0.076, $worst['passion_mult'], 0.005);
-        $this->assertEqualsWithDelta(0.163, $worst['jealousy_mult'], 0.005);
+        // (0.076 and 0.163 on the textbook intercepts; the re-levelled models (passion +0.075, jealousy -0.185 at a
+        // middle vector, rulings 2026-09-30) have other residuals at the presets, hence other excursions)
+        $this->assertEqualsWithDelta(0.066, $worst['passion_mult'], 0.005);
+        $this->assertEqualsWithDelta(0.272, $worst['jealousy_mult'], 0.005);
         // every Rule-R column left turns the wrong way by less than 20% of its table span
         foreach ($worst as $col => $w) {
             $t = array_map('floatval', RelDynTraits::table($col));
@@ -537,8 +544,11 @@ final class RelDynTraitBlendTest extends TestCase
         $near = RelDynTraits::nearestPreset($base);
         $this->assertSame('Gentle', $near['name']);
         $this->assertEqualsWithDelta(0.451, $near['distance'], 0.002);
-        $this->assertEqualsWithDelta(0.93, RelDynTraits::value($base, 'passion_mult'), 0.01);
-        $this->assertEqualsWithDelta(0.80, RelDynTraits::value($base, 'jealousy_mult'), 0.01);
+        // The design's textbook intercepts gave 0.93 and 0.80 here; the Rule R regressions of the 'mult' unit
+        // are now neutral at the all-0.5 vector (rulings 2026-09-30): passion_mult +0.075, jealousy_mult -0.185,
+        // slopes unchanged (a middle E, D, G now multiplies by exactly 1.0; possessiveness 0.325 still lowers jealousy).
+        $this->assertEqualsWithDelta(1.0, RelDynTraits::value($base, 'passion_mult'), 0.01);
+        $this->assertEqualsWithDelta(0.615, RelDynTraits::value($base, 'jealousy_mult'), 0.01);
         $this->assertEqualsWithDelta(35, RelDynTraits::value($base, 'baseline_trust'), 0.5);
         $this->assertEqualsWithDelta(33, RelDynTraits::value($base, 'baseline_comfort'), 0.5);
         $this->assertEqualsWithDelta(35, RelDynTraits::value($base, 'baseline_affinity'), 0.5);
@@ -549,8 +559,9 @@ final class RelDynTraitBlendTest extends TestCase
         $aela = self::vec(['guard' => 0.66, 'expressiveness' => 0.47, 'confidence' => 0.77, 'pride' => 0.50, 'resilience' => 0.69,
             'reactivity' => 0.45, 'warmth' => 0.43, 'restraint' => 0.53, 'possessiveness' => 0.22, 'protectiveness' => 0.69]);
         $this->assertSame('Bold', RelDynTraits::nearestPreset($aela)['name']);
-        $this->assertEqualsWithDelta(0.85, RelDynTraits::value($aela, 'passion_mult'), 0.01);
-        $this->assertEqualsWithDelta(0.56, RelDynTraits::value($aela, 'jealousy_mult'), 0.01);
+        // (design 0.85 and 0.56 on the textbook intercepts; re-levelled the same +0.075 / -0.185, see above)
+        $this->assertEqualsWithDelta(0.925, RelDynTraits::value($aela, 'passion_mult'), 0.01);
+        $this->assertEqualsWithDelta(0.375, RelDynTraits::value($aela, 'jealousy_mult'), 0.01);
         $this->assertEqualsWithDelta(0.40, RelDynTraits::opennessAt($aela, RelDynAttraction::defaults()['temperament_openness'], RelDynAttraction::defaults()['openness_levels'])['o'], 0.01);
         // (the design's table rounds its own unrounded vector: within one point)
         $this->assertEqualsWithDelta(31, RelDynTraits::value($aela, 'baseline_trust'), 1.0);
