@@ -46,6 +46,9 @@ final class RelDynTraitEquivalenceTest extends TestCase
         // maturity <= 40 the Charmer's passion multiplier is charmer_friendzone_passion_mult,
         // whatever the temperament (RelDynBatchPReviewFixesTest)
         'charmer_friendzone' => ['*/charisma/charmer/*/passion'],
+        // Reunion prose names the NPC instead of a gendered she / her, and the minimum hours is the spike's
+        // (roadmap reunion-spike, batch T; asserted by RelDynReunionTextTest)
+        'reunion_prose_named' => ['*/reunion_text/*'],
     ];
 
     /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */

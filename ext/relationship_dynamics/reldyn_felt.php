@@ -383,7 +383,7 @@ final class RelDynFelt
     {
         return array_merge([
             'key' => $key, 'scope' => $scope, 'lane' => $lane,
-            'salience' => max(0.0, min(1.0, $salience)), 'must' => false, 'intense' => false,
+            'salience' => max(0.0, min(1.0, $salience)), 'must' => false, 'keep' => false, 'intense' => false,
             'handwritten' => false, 'tier0' => false, 'tag' => null, 'text' => trim($text),
         ], $extra);
     }
@@ -852,8 +852,11 @@ final class RelDynFelt
         if ($voiced !== null && $voiced === (RelDynGoals::active($dynamics)[0]['type'] ?? null)) $intrinsic = null;
         if ($intrinsic !== null) {
             $top = RelDynGoals::active($dynamics)[0] ?? [];
+            // A backstory goal is who she is (MDD 14.2, persistent): it keeps its own place beside the
+            // lines that compete for the tier's cap (under the token budget it is the last of the lines to go)
             $lines[] = self::line('intrinsic_goal', self::SCOPE_SELF, self::LANE_CORE,
-                floatval($sal['intrinsic_goal']) * floatval($top['priority'] ?? 0.5), $intrinsic);
+                floatval($sal['intrinsic_goal']) * floatval($top['priority'] ?? 0.5), $intrinsic,
+                ['keep' => ($top['source'] ?? null) === 'backstory']);
         }
 
         // --- Reputation: what she had heard of the player, while it still colours the meeting ---
@@ -1104,9 +1107,9 @@ final class RelDynFelt
         $kept = [];
         $n = 0;
         foreach ($lines as $l) {
-            if ($l['must'] || $n < $max) {
+            if ($l['must'] || !empty($l['keep']) || $n < $max) {
                 $kept[] = $l;
-                if (!$l['must']) $n++;
+                if (!$l['must'] && empty($l['keep'])) $n++;
             }
         }
         foreach ($kept as &$l) {
@@ -1119,7 +1122,13 @@ final class RelDynFelt
         while (count($kept) > 0 && self::estimateTokens((string) self::renderSubtext($npc, $player, $kept, $cfg)) > $budget) {
             $drop = null;
             for ($i = count($kept) - 1; $i >= 0; $i--) {
-                if (!$kept[$i]['must']) { $drop = $i; break; }
+                if (!$kept[$i]['must'] && empty($kept[$i]['keep'])) { $drop = $i; break; }
+            }
+            // only the lines that keep their place are left to cut: the least salient of them
+            if ($drop === null) {
+                for ($i = count($kept) - 1; $i >= 0; $i--) {
+                    if (!$kept[$i]['must']) { $drop = $i; break; }
+                }
             }
             if ($drop === null) break;
             array_splice($kept, $drop, 1);

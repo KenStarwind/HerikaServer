@@ -401,4 +401,31 @@ final class RelDynEmergentEmotionsTest extends TestCase
         $friend = $this->state(self::draft()['insecurity']['match']);
         $this->assertNotNull($this->felt($friend));
     }
+    // ------------------------------------------------------------------ a backstory goal keeps its place
+
+    private static function felt1(string $key, float $sal, string $text, bool $keep = false): array
+    {
+        return ['key' => $key, 'scope' => RelDynFelt::SCOPE_SELF, 'lane' => RelDynFelt::LANE_TURN, 'salience' => $sal, 'must' => false,
+                'keep' => $keep, 'intense' => false, 'handwritten' => false, 'tier0' => false, 'tag' => null, 'text' => $text];
+    }
+
+    public function testALineThatKeepsItsPlaceSurvivesTheCapAndTheBudgetUntilNothingElseIsLeft(): void
+    {
+        // a new, more salient composite must not push a persistent backstory goal out of the prompt
+        $cfg = RelDynFelt::config();
+        $cfg['tier_max_lines'] = [2 => 3];
+        $cfg['tier_token_budget'] = [2 => 100000];
+        $lines = [self::felt1('a', 0.9, 'one'), self::felt1('b', 0.8, 'two'), self::felt1('c', 0.7, 'three'), self::felt1('goal', 0.4, 'the old vow', true)];
+        $keys = array_column(RelDynFelt::select('Aela', 'Kaida', $lines, 2, [], $cfg), 'key');
+        $this->assertSame(['a', 'b', 'c', 'goal'], $keys, 'the goal keeps a place beside the cap');
+        // the token budget cuts the least salient of the others first
+        $cfg['tier_token_budget'] = [2 => RelDynFelt::estimateTokens((string) RelDynFelt::renderSubtext('Aela', 'Kaida', [$lines[0], $lines[3]], $cfg))];
+        $keys = array_column(RelDynFelt::select('Aela', 'Kaida', $lines, 2, [], $cfg), 'key');
+        $this->assertSame(['a', 'goal'], $keys, 'c and b go before the goal does');
+        // and a line that does not keep its place still goes first, as before
+        $lines[3]['keep'] = false;
+        $keys = array_column(RelDynFelt::select('Aela', 'Kaida', $lines, 2, [], $cfg), 'key');
+        $this->assertSame(['a'], array_slice($keys, 0, 1));
+        $this->assertNotContains('goal', $keys);
+    }
 }
