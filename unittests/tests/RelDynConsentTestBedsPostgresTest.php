@@ -254,7 +254,7 @@ final class RelDynConsentTestBedsPostgresTest extends TestCase
         $this->corePlayer('gender', 'male');
     }
 
-    /** One player line to $npc through the real hooks: prerequest, context, postrequest; she answers in $mood. */
+    /** One player line to $npc through the real hooks: prerequest, context, postrequest; the NPC answers in $mood. */
     private function turn(string $npc, string $line, ?string $mood = null): void
     {
         if ($mood !== null) {
@@ -517,7 +517,7 @@ final class RelDynConsentTestBedsPostgresTest extends TestCase
 
     public function testAFriendzoneAndAWalkawayCloseTheDoorAndItReopens(): void
     {
-        // the player is a bard; Aela's rigid strength and competence bars fail: the Matrix friendzones him
+        // the player is a bard; Aela's rigid strength and competence bars fail: the Matrix friendzones the player
         $skills = array_fill_keys(['alchemy', 'alteration', 'archery', 'block', 'conjuration', 'destruction', 'enchanting', 'heavyarmor', 'illusion',
             'lightarmor', 'lockpicking', 'onehanded', 'pickpocket', 'restoration', 'smithing', 'sneak', 'speechcraft', 'twohanded'], 15);
         $this->corePlayer('skills', array_merge($skills, ['speechcraft' => 95, 'illusion' => 80]));
