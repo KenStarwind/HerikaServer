@@ -3,57 +3,24 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## Unreleased — batch T
-Diary moments stopped for good at a steady pace. The diary's "fifteen talks since the last moment", the ick window and the
-parasite ledger's stamps counted on `interaction_count`, which is the diminishing-returns factor: it decays over play time
-before each talk adds one, so at ten talks per play hour it settles near 116 and a gap measured on it never opened again
-(and baseline drift, which runs at a moment, stopped with it). They count on a lifetime counter now
-(`lifetime_interactions`, seeded from the count on an older save, never decays); the session multiplier is the only reader of
-the decaying one.
-Her warmth curve and love languages follow her trait vector. They were derived once, by the first call that found none, so
-an NPC met before her bio read landed kept the curve of her priors for good. What she still holds from the last derivation
-(`_ll_auto`) is derived again when her temperament, the nearest presets of her vector or the language her attachment implies
-changes; what the editor chose is kept, and so are the love languages of a save from before the record. The continuous trait
-columns for the curve (warmth half-life, decay rate, lambda, passion decay) were defined and read by nothing; the session
-multiplier, the count's decay and passion decay run on them at her own vector now (a textbook preset gets exactly its named
-curve's numbers, an in-between NPC blends, a curve the editor set by name runs on its row).
-Physical states: the four states core can see (injured, rain, snow and cold, a clear night) ship; hunger, a warm fire,
-rested, exhausted, dirty and bloody have no CHIM 3.4.1 signal, so their rows stay and are inert (`physical_states.inert`,
-never detected: unknown, not assumed). The injured row's trust +3 no longer goes to a healer temperament: it goes to the
-NPC who heals the player (her heal cast on the player in core's eventlog, once per game hour, within twelve game hours,
-`physical_states.healer_*`). The dirty respect hit needs pride (Pd of 0.5 or more) instead of landing on everyone.
-Creatures: back in her own skin a werewolf gets the maturity the full moon or night took off her given back, exactly
-(`creatures.post_transform.recovery`), and the beast's override comes back with the next change. Blood thirst stays unbuilt
-(no feeding signal) and the vampire's day penalty stays by day anywhere. The editor's Creature field says how to settle a
-Companions member cured of the blood ("Purity"): "not a creature".
-Combat: April's flat "party defeated" cost is retired for good. 3.4.1 has no defeat event and her own fall already drains or
-fires her by who she is (the bleedout response); the player's fall in a fight costs nobody a flat defeat.
-Things handed to her are read by what they are: food, drink and potions are help, anything else is a gift, and the
-handover itself outranks the mood guess. A gift delivers its love language once, whether the row, the local reading or the
-eval saw it first. The repair boost after a quarrel now reaches the eval path too, and open flirting or a plugin scene makes
-the committed people in the room jealous at the request itself. The eval is shown a plain anchor for each dimension so its
-scores land on a shared scale.
-Felt lines: the love-language hint and the blush now ride on the gesture the player just made, spent on the next word, and a
-matching language is brighter and held longer instead of gating the blush. Reunion prose names the NPC instead of a
-gendered pronoun and honours the configured minimum. The emergent emotions follow the design draft's inputs, with a short
-window for the ones that need a recent change, and at most the two deepest speak.
-Word of what the player did to someone now travels: a large change, or a defining moment, queues a ripple for the people
-who care about that NPC, applied lazily at their own next turn (hearsay only damps, enemies invert, one hop) with a
-once-said line. NPC-to-NPC evaluations get tiered facts about each NPC from RelDyn, deeper as her bond to the player grows,
-registered idempotently beside other extensions' sources and switchable.
-Prompt gating learns more fame: the civil war sides, the Bards College, the Volkihar, a thane of Whiterun, and the Dawnguard
-as its own side only. Two tools join the repo: a replay tool for captured prompts (list, show, diff, replay with a block
-removed or patched) and a read-only seam check for the live pipeline.
-Batch T review fixes. Two overlapping requests for the same NPC no longer apply the same hearsay ripple twice (a request
-applies a target's ripples under a lock of its own, and the ids another request already applied are read after it holds
-it). An eval "gift" or "help" tag counts as the delivery of a handed-over item only when that exchange really held the
-handover (the eval item carries `handover_tags`, written from the eventlog), so helping her with a wolf next to a potion
-is two deliveries, not one; the local give / trade action reading is documented as dormant on 3.4.1, where the item row
-and the eval's tag are the live paths. A side taken in the civil war or the Dawnguard / Volkihar outlives its quest (the
-side quests are also read from the stage log once they reach a journal-visible stage), a fames table saved whole from the
-settings hub gains the new fames and the corrected Dawnguard and civil-war entries, and a stored creatures
-`post_transform` table keeps the maturity recovery it was saved without. The love-language hint of a local gesture is
-kept whether or not it raised passion, as the eval path does.
+## reldyn-v0.21 — gifts that count as gifts, ripples through her circle, the feelings that grow from the rest, and fame that follows what you joined
+What you hand her is read for what it is: food, drink and potions are help, anything else is a gift, and each handover
+counts once however many ways it was seen. Making up after a quarrel warms her more again in ordinary play, and open
+flirting or an intimate scene in front of someone who cares about you now stings them right then.
+Word travels. Something big you do to one person reaches the people who care about them, gently and second-hand, the
+next time they talk to you; an enemy of theirs hears it the other way. NPCs talking among themselves now know a little
+about each other's feelings toward you, more as the bond deepens.
+Her inner life fills out: the emotions that grow out of the rest (loneliness, earned security, impostor feelings and the
+others from the design) appear when their ingredients are there, and only the deepest couple speak. Reunions and the
+little hints of what she likes ride on what you just did, and name her instead of assuming a pronoun.
+Her warmth and love languages keep up with who she is when her personality is read or edited, and the diary's moments
+no longer stall out on a steady pace of play.
+The body and the blood: the states the game can actually see (hurt, rain, cold, a clear night) count; hunger, fatigue and
+the like wait until something can sense them. Whoever heals you earns the trust, a werewolf comes back to herself after
+the change, and the old flat penalty for losing a fight is gone, since her own fall already says who she is.
+Fame follows the sides you joined (the civil war, the Bards, the Dawnguard or the Volkihar, a thane's title) and stays
+after the quest ends. A replay tool and a read-only health check for the live pipeline join the repo for testing on the
+real game.
 
 ## reldyn-v0.20 — love languages that work, and bio reads that are not inflated
 Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
