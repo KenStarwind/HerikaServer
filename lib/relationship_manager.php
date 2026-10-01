@@ -729,6 +729,18 @@ class RelationshipManager {
     }
 
     /**
+     * Split a CACHE_PEOPLE style string into a list of names.
+     * CACHE_PEOPLE is '|'-delimited ("|Lydia|Aela the Huntress|"); names can contain commas
+     * or spaces but never '|'. Surrounding whitespace and empty tokens are dropped.
+     *
+     * @param string $peoplePipe Pipe-delimited names
+     * @return string[] Names, in order
+     */
+    public static function parsePeopleList($peoplePipe) {
+        return array_values(array_filter(array_map('trim', explode('|', (string)$peoplePipe)), 'strlen'));
+    }
+
+    /**
      * Build relationship context block for AI injection
      * Only includes Player + nearby NPCs to save tokens
      *

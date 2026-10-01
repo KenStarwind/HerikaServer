@@ -279,7 +279,7 @@ if ($useRelLLM && $npcId) {
 
     // Nearby NPCs (loaded AI agents) - for filtering relationship context
     if (!empty($GLOBALS["CACHE_PEOPLE"])) {
-        $context['nearby_npcs'] = array_map('trim', explode(',', $GLOBALS["CACHE_PEOPLE"]));
+        $context['nearby_npcs'] = RelationshipManager::parsePeopleList($GLOBALS["CACHE_PEOPLE"]);
     }
 
     // Add listener name to context for explicit SPEAKER/LISTENER identification

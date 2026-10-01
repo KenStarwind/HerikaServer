@@ -155,8 +155,8 @@ if ($npcName) {
     // Parse nearby NPCs from CACHE_PEOPLE
     $nearbyNpcs = [];
     if (!empty($GLOBALS["CACHE_PEOPLE"])) {
-        // CACHE_PEOPLE is a comma-separated string of NPC names
-        $nearbyNpcs = array_map('trim', explode(',', $GLOBALS["CACHE_PEOPLE"]));
+        // CACHE_PEOPLE is a '|'-delimited string of NPC names ("|Lydia|Aela the Huntress|")
+        $nearbyNpcs = RelationshipManager::parsePeopleList($GLOBALS["CACHE_PEOPLE"]);
     }
 
     // Also include NPCs mentioned in recent dialogue
