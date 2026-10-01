@@ -3,17 +3,10 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## Unreleased (u-social lane) — news that travels, and jealousy that knows who the rival is
-Word no longer travels by telepathy, and it travels with more of its weight. What you do to one person still reaches the
-people who care about them, but now it arrives the way news does. Someone who was in the room hears it at once, as
-someone who saw it, with the whole of the weight the design asked for (a friend at 80 loses about 8 of a 10 drop, where
-it was about 2). Anyone else gets it after the time it takes to cross the map, sooner when they live close by and
-sooner when they are close to whoever it happened to; a fight in Solitude is not known in Whiterun an hour later. If the
-two actually talk to each other first, the word is out at once. What is only passed on is told a little softer than what
-was seen, and each person still takes it in through who they are.
-Jealousy over a flirt you make in front of someone who loves you now remembers who the rival is: a rival who is close to
-you stings about twice as much as a stranger, whoever is watching. How settled the watcher is softens it by the same
-curve that blunts a mature NPC's hurt (one curve, not two on top of each other), and never to nothing: no one is immune.
+## Unreleased — batch U
+Closer to who each woman is, and less like a switch. A flirt that lands now skips the slow climb of attraction only to the degree she already finds him very attractive, or he stands well above her and she admires that; otherwise it climbs like any other gain, and nothing makes her fully immune or fully open. Interest she does not show still counts: a shy, drawn NPC is not read as cold, her quiet answer is not mistaken for an attempt she turned down, and she voices her feeling only once the bond is deep enough for her, deeper the less sure of herself she is. Every NPC now fears losing the player, a little or a great deal by how attached, insecure and possessive she is, and past a point that fear shows in how she speaks and quietly holds her trust and comfort down. Fighting beside the player now counts as time together, weighted by whether she likes a fight.
+News no longer travels by telepathy, and it travels with more of its weight. Someone who was in the room hears it at once, as someone who saw it, with the full weight the design asked for; anyone else hears after the time it takes to cross the map, sooner when she lives close by and when she is close to whoever it happened to, and at once if the two talk first. What is only passed on is told a little softer than what was seen. Jealousy over a flirt in front of a committed NPC now remembers who the rival is (someone close to the player stings more than a stranger) and is softened by her maturity along the one curve that already blunts her hurt, never to nothing.
+An NPC who needs reassurance asks for it in words or in acts of service, by her traits. The old give and trade request path, which core no longer uses, is gone. The morning after a drunken night is no longer shame: the sober her wonders whether it was too soon, by how open she is and how much trust she would normally need, with a small comfort wobble that a reassuring exchange or her trust catching up resolves, and that time alone does not. Two fork hooks let RelDyn damp core's own NPC-to-NPC romance for NPCs held in an exclusive bond with the player, and add her marked moments and depth to core's diary prompt; both do nothing without RelDyn.
 
 ## reldyn-v0.22 — let in, and pulling back
 "Closed off" is no longer a permanent verdict. Two things replace it. Being let in is earned and lasting: it grows with
