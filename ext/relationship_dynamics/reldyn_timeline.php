@@ -703,6 +703,10 @@ final class RelDynTimeline
         }
         self::clampIn($d, [RelDynAbsence::ROT_KEY, 'last_gamets'], $T);
         self::clampIn($d, [RelDynAbsence::ROT_KEY, 'absence', 'contact'], $T);
+        // Pulling back (reldyn_pullback.php): its clock and episode stamps on the loaded time at the latest
+        foreach (['gamets', 'since_gamets', 'ended_gamets', 'ease_until_gamets'] as $stamp) {
+            self::clampIn($d, [RelDynPullback::KEY, $stamp], $T);
+        }
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'at_gamets'], $T);
         // Combat's rescue response (reldyn_combat.php): a fall the load discarded never happened (no

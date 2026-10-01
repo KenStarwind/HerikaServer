@@ -117,6 +117,7 @@ echo $line('player mirror', RelDynMirror::enabled());
 echo $line('prompt gating', RelDynGating::enabled());
 echo $line('fulfillment', RelDynFulfillment::enabled());
 echo $line('concern', RelDynConcern::enabled());
+echo $line('pullback', RelDynPullback::enabled());
 echo $line('exclusivity', RelDynExclusivity::enabled());
 
 echo "\n--- Bond and dimensions ---\n";
@@ -182,6 +183,13 @@ else {
 echo "\n--- Concern ---\n";
 if (($e = $error($jev)) !== null) echo $e;
 else foreach ((array) ($jev['concern'] ?? []) as $k => $v) echo $line((string) $k, $v);
+
+echo "\n--- Let in / pulling back ---\n";
+if (($e = $error($jev)) !== null) echo $e;
+else {
+    echo $line('let_in', $jev['let_in'] ?? null);
+    foreach ((array) ($jev['pullback'] ?? []) as $k => $v) echo $line((string) $k, $v);
+}
 
 echo "\n--- Exclusivity ---\n";
 if (($e = $error($jev)) !== null) echo $e;

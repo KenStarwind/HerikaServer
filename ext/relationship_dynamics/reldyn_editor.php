@@ -1242,6 +1242,17 @@ final class RelDynEditor
             'reset' => $vb !== 'none' ? function (array &$dd) { $dd[RelDynConcern::STATE_KEY]['boundary'] = ['state' => 'none']; } : null]);
         $fields[] = self::field('state:boundary', 'Fulfillment boundary', 'readonly', (string) $jev['boundary'], ['state' => 'state',
             'hint' => 'reset it under Fulfillment']);
+        // Let in (durable, earned) and pulling back (temporary): reldyn_pullback.php
+        $pb = $jev['pullback'];
+        $fields[] = self::field('state:let_in', 'Let in', 'readonly', self::num($pb['let_in'], 1) . ($pb['not_let_in_yet'] ? ' (not yet)' : ''), ['state' => 'state',
+            'hint' => 'how far she has let the player in: sqrt(comfort x trust), any bond type. Derived; change comfort or trust to move it']);
+        $fields[] = self::field('state:pullback', 'Pulling back', 'readonly', $pb['active']
+            ? 'yes, ' . self::num($pb['pressure'], 2) . ' (on ' . self::num((float) $pb['on'], 2) . ', off ' . self::num((float) $pb['off'], 2) . '), '
+                . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
+                . ($pb['since_game_hours'] !== null ? ', ' . self::num($pb['since_game_hours'], 1) . ' game hours' : '') . ($pb['voiced'] ? ', voiced' : '')
+            : 'no (pressure ' . self::num($pb['pressure'], 2) . ')', ['state' => 'state',
+            'hint' => 'temporary: the weather, unmet needs and resentment press on her; reset lets her open up at once (it comes back if the pressure does)',
+            'reset' => isset($d[RelDynPullback::KEY]) ? function (array &$dd) { unset($dd[RelDynPullback::KEY]); } : null]);
         $walk = (string) ($d['_walkaway_state'] ?? 'normal');
         $fields[] = self::field('state:walkaway', 'Walkaway', 'readonly', $walk . (isset($d['_walkaway_reason']) ? ' (' . (string) $d['_walkaway_reason'] . ')' : ''), [
             'state' => 'state', 'hint' => 'reset brings her back to normal (resetWalkawayState)',
@@ -1251,7 +1262,8 @@ final class RelDynEditor
             'blocks' => [['type' => 'held', 'rows' => $held]],
             'reset' => function (array &$dd) use ($walk) {
                 self::releaseHeld($dd);
-                unset($dd[RelDynPassion::SPIKE_KEY], $dd[RelDynPassion::SPIKE_TRIGGER_KEY], $dd[RelDynPassion::SPIKE_CLOCK_KEY], $dd[RelDynConcern::STATE_KEY]);
+                unset($dd[RelDynPassion::SPIKE_KEY], $dd[RelDynPassion::SPIKE_TRIGGER_KEY], $dd[RelDynPassion::SPIKE_CLOCK_KEY], $dd[RelDynConcern::STATE_KEY],
+                    $dd[RelDynPullback::KEY]);
                 $dd['_grief_bonds'] = [];
                 $dd['_widow_lock_ceiling'] = 100;
                 if ($walk !== 'normal') RelationshipDynamics::resetWalkawayState($dd);

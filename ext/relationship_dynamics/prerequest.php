@@ -363,6 +363,18 @@ if (!empty($reldynCfg['internal_weather_enabled'])) {
 // on the game calendar; with internal weather off the held pull relaxes back to none.
 RelationshipDynamics::applyWeatherGravity($npcName, $dynamics);
 
+// ========== LET IN / PULLING BACK (Ken 2026-10-01, reldyn_pullback.php) ==========
+// Temporary, not a pass / fail: the weather (and the gravity it has built up), the fulfillment deficit and
+// unresolved resentment press on her; mood sensitivity scales with immaturity, guard lowers the threshold, a
+// deeper let-in raises it; hysteresis, on the game calendar. After the weather and its gravity above (its inputs);
+// an exchange that meets her reaches it through the eval consumer (RelDynPullback::onEvalItem); its entering and
+// reopening are said in the context hook.
+try {
+    RelDynPullback::advance($npcName, $dynamics, RelationshipDynamics::currentGamets());
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('pulling back', $e);
+}
+
 // ========== CREATURE MOODIFICATIONS (feedback_creature_moodifications, decisions §7) ==========
 // Vampires by night / day, werewolves by Skyrim's moon: the row's offsets are held while it
 // holds and taken back when it changes (or when creature_moodifications_enabled is off); a

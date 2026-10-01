@@ -30,7 +30,7 @@ final class RelDynDryRun
         'affinity', 'affinity_tier', 'relationship_type', 'trust', 'comfort', 'respect', 'warmth', 'maturity', 'passion',
         'passion_spike', 'passion_effective', 'jealousy', 'resentment', 'resentment_self', 'self_confidence', 'arousal', 'valence',
         'attachment', 'attachment_anxiety', 'attachment_avoidance', 'open_conflict', 'conflict_repairs', 'walkaway', 'boundary',
-        'weather', 'fulfillment.band', 'fulfillment.low', 'concern.level', 'concern.band', 'exclusivity.pull', 'exclusivity.band',
+        'weather', 'fulfillment.band', 'fulfillment.low', 'concern.level', 'concern.band', 'let_in', 'pullback.active', 'pullback.pressure', 'exclusivity.pull', 'exclusivity.band',
         'attraction.passion_mult', 'attraction.curve', 'attraction.won_over', 'attraction.friendzoned', 'context_tier',
     ];
 

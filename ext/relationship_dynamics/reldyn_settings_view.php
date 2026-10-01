@@ -452,7 +452,7 @@ final class RelDynSettingsView
             . '<h4>Note on the player\'s nearby-actors entry</h4><pre class="rd-pre">'
             . self::h($p['note'] ?? '(core\'s own note)') . '</pre>'
             . '<h4>COMMAND_PROMPT</h4><pre class="rd-pre">' . self::h($p['name_unknown'] ?? '(nothing: she knows the name)') . '</pre>';
-        $out .= '<h4>At every tier</h4><div class="rd-scroll"><table class="rd-table rd-tiers"><tr><th>Tier</th><th>Affinity</th><th>Level</th><th>&lt;knowledge_of_player&gt;</th></tr>';
+        $out .= '<h4>At every tier</h4><p class="rd-blurb">This table changes only what she knows of the player, tier by tier. Her current feelings (let-in, a pull-back, resentment) are held fixed, so the line under each tier is what she would say about the player if only the bond were that deep.</p><div class="rd-scroll"><table class="rd-table rd-tiers"><tr><th>Tier</th><th>Affinity</th><th>Level</th><th>&lt;knowledge_of_player&gt;</th></tr>';
         foreach ($tiers as $tier => $t) {
             $out .= '<tr><td>' . self::h($tier) . '</td><td>' . self::h(RelDynSettings::numberText($t['core_aff'])) . '</td><td>'
                 . self::h($t['knowledge']['level']) . '</td><td>' . self::h($t['text']) . '</td></tr>';
