@@ -601,8 +601,10 @@ final class RelDynBatchTClassifyBedsPostgresTest extends TestCase
     }
 
     /**
-     * A give action the local classifier reads (the eval off) is the same handover as its itemfound
-     * row: one delivery. The classifier delivers at its own units (legacy_love_language_units), the row
+     * The dormant request side (the hook called directly: CHIM 3.4.1 core emits no ExtCmdGiveItem and ends
+     * an 'infoaction' request before any ext hook, so the live handovers are the rows of the tests above,
+     * not this shape; kept for a fork or plugin that emits the action). A give action the local classifier
+     * reads (the eval off) is the same handover as its itemfound row: one delivery. The classifier delivers at its own units (legacy_love_language_units), the row
      * is then paired with it.
      */
     public function testAGiveRequestAndItsRowAreOneHandoverWithTheEvalOff(): void
@@ -636,6 +638,73 @@ final class RelDynBatchTClassifyBedsPostgresTest extends TestCase
             $this->assertEqualsWithDelta($units, $this->level($npc, $axis, $at + 120) - $before, 0.06, "{$npc}: still one delivery");
         }
         $this->assertClean(false);
+    }
+
+    /**
+     * Review fix (interaction-classification): the eval's 'help' (or 'gift') tag is one delivery with a
+     * handover row only when that exchange held the handover. An unrelated help exchange (the player
+     * helped her with a wolf, nothing changed hands) within the pairing hour of a potion handover is its
+     * own delivery, and so is the potion: neither drops the other, in either order. Aela, service
+     * primary. Each phase sits a day and a half after the last, and a phase alone is its own control.
+     */
+    public function testAnUnrelatedHelpExchangeNextToAPotionHandoverKeepsBothDeliveries(): void
+    {
+        $this->seed(['eval_producer' => ['enabled' => true]]);
+        // the eval is silent about the potion line and tags the wolf as help
+        $this->script = fn(string $ex): array => str_contains($ex, 'wolf') ? self::warm(['tags' => ['help']]) : self::warm();
+        $t = self::at(self::N0, 18.0);
+        $service = RelationshipDynamics::LL_SERVICE;
+        $this->event('infoloc', self::MARE, $t - 100);
+        $this->round([self::AELA], 'Evening.', $t, 'hello');
+        $this->editDynamics(self::AELA, function (array &$d) {
+            $d['love_language_primary'] = RelationshipDynamics::LL_SERVICE;
+            $d['love_language_secondary'] = RelationshipDynamics::LL_TOUCH;
+        });
+        $this->round([self::AELA], 'Anything on your mind?', $t + 2 * self::HOUR, 'pin');
+
+        $delta = function (int $at, callable $act) use ($service): float {
+            // her service need starts empty each phase (the level is capped: deliveries must have room), and
+            // both levels are read at one moment after it, so only what was delivered differs
+            $this->editDynamics(self::AELA, function (array &$d) use ($service) {
+                $s = RelDynFulfillment::pairState($d);
+                $s['lv'][$service] = 0.0;
+                RelDynFulfillment::setPairState($d, RelDynFulfillment::PLAYER, $s);
+            });
+            $m = $at + (int) self::HOUR;
+            $before = $this->level(self::AELA, $service, $m);
+            $act();
+            $this->worker();
+            return round($this->level(self::AELA, $service, $m) - $before, 4);
+        };
+        // each exchange is evaluated as it happens (the worker runs after every reply)
+        $potion = function (int $at) {
+            $this->give(self::AELA, 'Potion of Healing', 'Take this potion, you will need it.', $at, "potion{$at}");
+            $this->worker();
+        };
+        $wolf = function (int $at) {
+            $this->turn(self::AELA, 'I drove off that wolf that was after you.', $at, "wolf{$at}");
+            $this->worker();
+        };
+
+        $day = (int) self::DAY;
+        $p1 = $t + (int) (3 * $day / 2);
+        $p2 = $p1 + (int) (3 * $day / 2);
+        $p3 = $p2 + (int) (3 * $day / 2);
+        $p4 = $p3 + (int) (3 * $day / 2);
+        $alonePotion = $delta($p1, fn() => $potion($p1));
+        $aloneWolf = $delta($p2, fn() => $wolf($p2));
+        // the wolf, twenty game minutes after a potion handover of a different exchange
+        $potionThenWolf = $delta($p3, function () use ($potion, $wolf, $p3) { $potion($p3); $wolf($p3 + (int) (self::HOUR / 3)); });
+        // the potion, twenty game minutes after an unrelated wolf exchange
+        $wolfThenPotion = $delta($p4, function () use ($potion, $wolf, $p4) { $wolf($p4); $potion($p4 + (int) (self::HOUR / 3)); });
+        $this->probe('help next to a potion', compact('alonePotion', 'aloneWolf', 'potionThenWolf', 'wolfThenPotion'));
+
+        $this->assertEqualsWithDelta(0.65, $alonePotion, 0.04, 'the potion alone is one handover');
+        $this->assertGreaterThan(0.2, $aloneWolf, 'the eval tag alone is a delivery');
+        $why = json_encode(compact('alonePotion', 'aloneWolf', 'potionThenWolf', 'wolfThenPotion'));
+        $this->assertEqualsWithDelta($alonePotion + $aloneWolf, $potionThenWolf, 0.06, "both delivered, potion first {$why}");
+        $this->assertEqualsWithDelta($alonePotion + $aloneWolf, $wolfThenPotion, 0.06, "both delivered, wolf first {$why}");
+        $this->assertClean();
     }
 
     // ------------------------------------------------------------------ conflict-repair

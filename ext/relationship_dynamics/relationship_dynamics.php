@@ -5473,8 +5473,12 @@ class RelationshipDynamics
 
         // An item handed over (give / trade) is what the action proves, so it comes before any
         // guess from her mood: food, drink and potions are looking after her (acts of service),
-        // anything else a gift (handoverLoveLanguage). Items the eventlog reports as handed to
-        // her are delivered separately, once per row (processGift, RelDynGifts::noteHandover).
+        // anything else a gift (handoverLoveLanguage). DORMANT on CHIM 3.4.1: core emits no
+        // ExtCmdGiveItem / ExtCmdTradeItem (its actions are GiveItemTo / TradeItems) and ends an
+        // 'infoaction' request before any ext hook runs (main.php), like the ExtCmdHug / ExtCmdKiss
+        // names above. It is kept for a fork or plugin that emits the names. The live deliveries of a
+        // handover are the eventlog row's (processGift, once per row) and the eval's gift / help tag
+        // for an exchange that held the row (RelDynGifts::noteHandover, handover_tags).
         if (self::isHandoverAction($action)) {
             return RelDynGifts::handoverLoveLanguage(self::handoverItemOfAction($action));
         }
@@ -9302,6 +9306,14 @@ class RelationshipDynamics
                 error_log("[RelDyn-EVAL] eval item for {$npc}: masking is not {flag, slipped} booleans, ignored");
             }
         }
+        if (array_key_exists('handover_tags', $item)) {
+            // the item handovers that exchange held (code-written, RelDynEval job: RelDynGifts::handoverTagsInExchange)
+            if (is_array($item['handover_tags']) && array_is_list($item['handover_tags'])) {
+                $out['handover_tags'] = array_values(array_intersect(['gift', 'help'], array_filter($item['handover_tags'], 'is_string')));
+            } else {
+                error_log("[RelDyn-EVAL] eval item for {$npc}: handover_tags is not a list, ignored");
+            }
+        }
         if (array_key_exists('duty_factor', $item)) {
             // a duty exchange (code-written from RelDynQuests, MDD 9): 0..1 on its negative signals
             if (is_numeric($item['duty_factor']) && floatval($item['duty_factor']) >= 0.0 && floatval($item['duty_factor']) <= 1.0) {
@@ -9474,8 +9486,12 @@ class RelationshipDynamics
         // delivery, not a second one (RelDynGifts::noteHandover).
         $deliverAt = floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets();
         $delivered = [];
+        // Only a tag the exchange really held a handover for (handover_tags, from its eventlog rows) is
+        // paired: the eval's 'help' for the wolf the player drove off is no potion's delivery.
         foreach (['gift', 'help'] as $handoverTag) {
-            if (in_array($handoverTag, $n['tags'], true) && RelDynGifts::noteHandover($dynamics, 'request', $handoverTag, $deliverAt)) {
+            if (in_array($handoverTag, $n['tags'], true)
+                && (!is_array($n['handover_tags'] ?? null) || in_array($handoverTag, $n['handover_tags'], true))
+                && RelDynGifts::noteHandover($dynamics, 'request', $handoverTag, $deliverAt)) {
                 $delivered[] = $handoverTag;
             }
         }

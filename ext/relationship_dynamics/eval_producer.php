@@ -56,6 +56,12 @@
  *               exchange came from (the job's, lowercased: 'inputtext' when the player spoke, an
  *               NPC's own line otherwise, e.g. core's bleedout 'instruction'). The rescue response
  *               reads it: only the player's own exchange answers her fall. Absent: unknown.
+ *    handover_tags: additive to v1, written by code (never the LLM): the tags ('gift' for an item
+ *               that is no food or potion, 'help' for one that is) of the item handovers to the
+ *               NPC the exchange held (the player's eventlog 'itemfound' rows within it), possibly
+ *               empty. The consumer pairs the item's own gift / help tag with a handover row only
+ *               when the tag is listed here (RelDynGifts::noteHandover). Absent: unknown, the tags
+ *               pair as they always did.
  *    goal_addressed + goal_ref: additive to v1 (decisions §8), only when the eval was shown the
  *               NPC's active director goal: goal_addressed bool (the exchange served or settled
  *               it), goal_ref = RelationshipDynamics::directorGoalRef of the goal shown, so the
@@ -820,6 +826,17 @@ final class RelDynEval
             return ['drop' => 'no_reply'];
         }
 
+        // The handovers (item rows the player gave her) this exchange held, so an eval 'gift' / 'help'
+        // tag is paired with a row only when there was one in it (RelDynGifts::handoverTagsInExchange).
+        // A failed read leaves the field out: unknown, not none.
+        try {
+            $job['handover_tags'] = RelDynGifts::handoverTagsInExchange($npc, $player, $scoredThrough, $anchor,
+                is_numeric($job['gamets'] ?? null) ? floatval($job['gamets']) - floatval(RelDynGifts::config()['eval_pair_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0 : null);
+        } catch (\Throwable $e) {
+            error_log("[RelDyn-EVAL] job for {$npc}: handovers of the exchange not read (" . $e->getMessage() . '), its gift / help tags pair as before');
+            unset($job['handover_tags']);
+        }
+
         $dynamics = RelationshipDynamics::getDynamics($npc);   // fresh read, no cache
         $witnesses = self::witnesses($window['current'], $npc, $player);
         // Additive v1 questions (decisions §8): the goal the eval is shown travels with the job
@@ -1377,6 +1394,7 @@ PROMPT;
           + (is_string($job['reported_intimacy'] ?? null) && $job['reported_intimacy'] !== '' ? ['reported_intimacy' => $job['reported_intimacy']] : [])
           + (is_string($job['request_type'] ?? null) && trim($job['request_type']) !== '' ? ['request_type' => strtolower(trim($job['request_type']))] : [])
           + (is_numeric($job['duty_factor'] ?? null) ? ['duty_factor' => max(0.0, min(1.0, floatval($job['duty_factor'])))] : [])
+          + (is_array($job['handover_tags'] ?? null) ? ['handover_tags' => array_values(array_intersect(['gift', 'help'], $job['handover_tags']))] : [])
           + $goal
           + ($masking !== null ? ['masking' => $masking] : [])
           + ($exposure !== null ? ['exposure' => $exposure] : []);

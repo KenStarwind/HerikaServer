@@ -183,7 +183,8 @@ final class RelDynGifts
 
     /**
      * One handover is one delivery, whoever sees it first (the eventlog row of the player's
-     * handover, or the request's side: the eval's tag, or the local classifier's reading of the
+     * handover, or the request's side: the eval's tag, when its exchange held the row
+     * (handoverTagsInExchange), or, dormant on CHIM 3.4.1, the local classifier's reading of a
      * give / trade action). Each calls this before it delivers $tag at raw game time $at, with its
      * $source ('row' | 'request'): true = the other side already delivered it (an unpaired entry of
      * the other source, the same tag, within eval_pair_game_hours: now paired, deliver nothing);
@@ -223,6 +224,41 @@ final class RelDynGifts
         }
         $dynamics[self::LEDGER_KEY] = $ledger;
         return $paired;
+    }
+
+    /**
+     * The tags ('gift' / 'help') of the player's handovers to $npcName that one exchange held: the
+     * eventlog 'itemfound' rows "<player> gave [n] <item> to <npc>" logged after $afterRowid (the
+     * previous exchange's anchor; null = the exchange's first scored row is unknown, so the rows of
+     * the last $sinceGamets onwards) up to $uptoRowid (the exchange's anchor). The evidence that an
+     * eval item's 'gift' / 'help' tag speaks of a handover that really happened in that exchange
+     * (the tag alone, 'help' above all, is not: the player also helps with a wolf or a lockpick), so
+     * only then is the tag one delivery with the row's (noteHandover). Throws on a failed query:
+     * the caller treats the exchange's handovers as unknown, not as none.
+     *
+     * @return string[] distinct tags, in order of first appearance, possibly empty
+     */
+    public static function handoverTagsInExchange(string $npcName, string $playerName, ?int $afterRowid, int $uptoRowid, ?float $sinceGamets = null): array
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) throw new RuntimeException('RelDynGifts::handoverTagsInExchange: no database connection');
+        $npcLike = $db->escape(RelationshipDynamics::escapeLike(trim($npcName)));
+        $where = ["type = 'itemfound'", "data LIKE '%gave%to%{$npcLike}%' ESCAPE '\\'", 'rowid <= ' . intval($uptoRowid)];
+        if ($afterRowid !== null) {
+            $where[] = 'rowid > ' . intval($afterRowid);
+        } elseif ($sinceGamets !== null) {
+            $where[] = 'gamets >= ' . intval($sinceGamets);
+        }
+        $rows = $db->fetchAll('SELECT data FROM eventlog WHERE ' . implode(' AND ', $where) . ' ORDER BY rowid ASC LIMIT 50');
+        $tags = [];
+        foreach ((array) $rows as $row) {
+            [$line] = self::stripStolenMarker((string) ($row['data'] ?? ''));
+            if (!preg_match('/^\s*(.+?)\s+gave\s+(?:\d+\s+)?(.+?)\s+to\s+(.+?)\s*(?:,\s*\(value\s+\d+\s+gold\))?\s*$/i', $line, $m)) continue;
+            if (strcasecmp(trim($m[1]), trim($playerName)) !== 0 || strcasecmp(trim($m[3]), trim($npcName)) !== 0) continue;
+            $tag = self::handoverTag(trim($m[2]));
+            if (!in_array($tag, $tags, true)) $tags[] = $tag;
+        }
+        return $tags;
     }
 
     /**

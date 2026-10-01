@@ -161,7 +161,9 @@ if ($reldynIntimate) {
 // eval scores it (its tags deliver then, in processEvalContractItem).
 if (!$evalOwnsExchange) {
     // A give / trade request is a handover: one the eventlog row of the same handover delivered
-    // already (processGift) is not delivered twice (RelDynGifts::noteHandover)
+    // already (processGift) is not delivered twice (RelDynGifts::noteHandover). Dormant on CHIM 3.4.1:
+    // no request carries these action names to this hook (see classifyInteraction); a handover
+    // reaches RelDyn as its eventlog row and the eval's tag.
     $handoverPaired = RelationshipDynamics::isHandoverAction($GLOBALS['gameRequest'][3] ?? '') && $interactionLL !== null
         && RelDynGifts::noteHandover($dynamics, 'request',
             $interactionLL === RelationshipDynamics::LL_GIFTS ? 'gift' : 'help', RelationshipDynamics::currentGamets());

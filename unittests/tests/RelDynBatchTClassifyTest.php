@@ -113,6 +113,29 @@ final class RelDynBatchTClassifyTest extends TestCase
         $this->assertSame(['help'], RelDynEval::eventTagsForRequest(self::request('infoaction', 'ExtCmdTradeItem@Honningbrew Mead')));
     }
 
+    /**
+     * Review fix: the handovers an exchange held ride on the eval item as handover_tags (code-written):
+     * only gift / help survive, a list that is not one is ignored (the tags then pair as they always did),
+     * and an empty list is kept (the exchange held no handover).
+     */
+    public function testTheItemsHandoverTagsAreNormalized(): void
+    {
+        $norm = fn(array $item): array => RelationshipDynamics::normalizeEvalExtraFields($item, 'Aela the Huntress');
+        $this->assertSame(['handover_tags' => ['gift', 'help']], $norm(['handover_tags' => ['help', 'gift', 'touch', 7]]));
+        $this->assertSame(['handover_tags' => []], $norm(['handover_tags' => []]), 'none seen is not unknown');
+        $this->assertSame([], $norm([]), 'unknown');
+        $logged = tempnam(sys_get_temp_dir(), 'rdhtags');
+        $prev = ini_set('error_log', $logged);
+        try {
+            $this->assertSame([], $norm(['handover_tags' => 'help']));
+            $this->assertSame([], $norm(['handover_tags' => ['a' => 'help']]));
+        } finally {
+            ini_set('error_log', $prev === false ? '' : (string) $prev);
+        }
+        $this->assertStringContainsString('handover_tags is not a list', (string) file_get_contents($logged));
+        @unlink($logged);
+    }
+
     /** MARAS is retired: its sync requests classify as nothing (they never reach the hook anyway). */
     public function testTheDeadMarasBranchesAreGone(): void
     {
