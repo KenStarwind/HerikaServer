@@ -5461,9 +5461,11 @@ class RelationshipDynamics
      */
     public static function getReunionText($npcName, $temperament, $hoursApart, $player, ?array $dynamics = null)
     {
-        if ($hoursApart < 8) return null;
+        // The same minimum checkReunion fires on (reunion_min_hours, game-calendar hours): one number,
+        // so the spike and its prose cannot diverge
+        if ($hoursApart < floatval(self::configValue('reunion_min_hours'))) return null;
 
-        // Time tier: long (48h+), medium (24h+), short (8h+)
+        // Time tier: long (48h+), medium (24h+), short (the minimum and up)
         if ($hoursApart >= 48) {
             $tier = 'long';
         } elseif ($hoursApart >= 24) {
@@ -5472,71 +5474,73 @@ class RelationshipDynamics
             $tier = 'short';
         }
 
+        // Named, never a pronoun: the felt text speaks of {NAME} the way every other felt line does
+        // (the NPC's gender is not this table's to know)
         $texts = [
             'Romantic' => [
                 'long'   => "{$npcName} hasn't seen {$player} in far too long — there's a rush of emotion, relief and warmth flooding back at seeing them again. The urge to close the distance is overwhelming.",
                 'medium' => "{$npcName} missed {$player} — seeing them again brings a wave of warmth and the urge to close the distance between them.",
-                'short'  => "{$npcName} is genuinely glad to see {$player} again — a warmth that shows in her eyes before she can hide it.",
+                'short'  => "{$npcName} is genuinely glad to see {$player} again — a warmth that shows in {$npcName}'s eyes before it can be hidden.",
             ],
             'Independent' => [
-                'long'   => "{$npcName} notes {$player}'s return with a measured look. Something eases in her posture — barely perceptible — though her expression gives nothing away. She noticed the absence more than she expected to.",
-                'medium' => "{$npcName} registers {$player}'s presence. A pause — almost imperceptible — before she continues what she was doing. The silence between them is slightly warmer than it was before.",
-                'short'  => "{$npcName} acknowledges {$player}'s return with a slight nod. If she is pleased to see them, it shows only in the fact that she looked up at all.",
+                'long'   => "{$npcName} notes {$player}'s return with a measured look. Something eases in {$npcName}'s posture — barely perceptible — though the expression gives nothing away. The absence was noticed more than {$npcName} expected.",
+                'medium' => "{$npcName} registers {$player}'s presence. A pause — almost imperceptible — before {$npcName} continues what was being done. The silence between them is slightly warmer than it was before.",
+                'short'  => "{$npcName} acknowledges {$player}'s return with a slight nod. If {$npcName} is pleased to see them, it shows only in the fact that {$npcName} looked up at all.",
             ],
             'Proud' => [
-                'long'   => "{$npcName} composes herself at seeing {$player} again after so long. Something flickers behind her eyes — quickly mastered. She would never admit how much the absence weighed on her.",
-                'medium' => "{$npcName} carries herself with deliberate poise as {$player} returns. She has things to say about the absence, but they will keep. For now, she allows a measured warmth.",
-                'short'  => "{$npcName} greets {$player}'s return with composure and the faintest warming of her tone.",
+                'long'   => "{$npcName} holds a composed bearing at seeing {$player} again after so long. Something flickers behind the eyes — quickly mastered. {$npcName} would never admit how much the absence weighed.",
+                'medium' => "{$npcName} carries the moment with deliberate poise as {$player} returns. There are things to say about the absence, but they will keep. For now, a measured warmth is allowed.",
+                'short'  => "{$npcName} greets {$player}'s return with composure and the faintest warming of tone.",
             ],
             'Jealous' => [
-                'long'   => "{$npcName} stares at {$player} with an intensity that holds both relief and accusation. Where have they been? Who were they with? The questions burn behind her eyes even as warmth floods back.",
+                'long'   => "{$npcName} stares at {$player} with an intensity that holds both relief and accusation. Where have they been? Who were they with? The questions burn behind {$npcName}'s eyes even as warmth floods back.",
                 'medium' => "{$npcName} is clearly relieved to see {$player}, but an edge of anxiety lingers — a need to know where they were and why they stayed away.",
                 'short'  => "{$npcName} watches {$player} return with sharp eyes. Glad, yes — but watchful. Already cataloguing whether anything has changed.",
             ],
             'Humble' => [
-                'long'   => "{$npcName} quietly brightens at {$player}'s return, like a hearth rekindled after a long cold. She doesn't demand explanations — she's simply, genuinely glad they came back.",
-                'medium' => "{$npcName} greets {$player} with a warm, unguarded smile. The relief is honest and unhidden. She doesn't try to make it more or less than it is.",
+                'long'   => "{$npcName} quietly brightens at {$player}'s return, like a hearth rekindled after a long cold. No explanations are demanded — {$npcName} is simply, genuinely glad they came back.",
+                'medium' => "{$npcName} greets {$player} with a warm, unguarded smile. The relief is honest and unhidden, and {$npcName} does not try to make it more or less than it is.",
                 'short'  => "{$npcName} looks up at {$player}'s return with quiet pleasure. A small, genuine warmth.",
             ],
             'Anxious' => [
                 'long'   => "{$npcName} freezes at the sight of {$player}. Relief crashes into hurt crashes into desperate gladness. The words come too fast — 'Where were you? I thought — never mind. You're here.'",
-                'medium' => "{$npcName} visibly exhales seeing {$player}. The tension she's been carrying dissolves into nervous warmth. She moves closer almost involuntarily.",
-                'short'  => "{$npcName} brightens immediately at {$player}'s return, then catches herself — tries to play it cool. Fails.",
+                'medium' => "{$npcName} visibly exhales seeing {$player}. The tension carried all this while dissolves into nervous warmth, and {$npcName} moves closer almost involuntarily.",
+                'short'  => "{$npcName} brightens immediately at {$player}'s return, then catches the reaction — tries to play it cool. Fails.",
             ],
             'Bold' => [
-                'long'   => "{$npcName} strides toward {$player} without hesitation. 'About time.' The directness masks the depth of what she felt during the absence.",
-                'medium' => "{$npcName} greets {$player} with confident warmth. No games, no pretense. She's glad they're here and she shows it plainly.",
+                'long'   => "{$npcName} strides toward {$player} without hesitation. 'About time.' The directness masks the depth of what {$npcName} felt during the absence.",
+                'medium' => "{$npcName} greets {$player} with confident warmth. No games, no pretense. {$npcName} is glad they're here and shows it plainly.",
                 'short'  => "{$npcName} acknowledges {$player}'s return with a firm nod and the ghost of a smile. 'Missed the action.'",
             ],
             'Playful' => [
-                'long'   => "{$npcName} greets {$player} with an exaggerated pout. 'Oh, you're alive. I was about to give away your things.' The lightness barely hides how much she missed them.",
+                'long'   => "{$npcName} greets {$player} with an exaggerated pout. 'Oh, you're alive. I was about to give away your things.' The lightness barely hides how much they were missed.",
                 'medium' => "{$npcName} flashes a grin at {$player}. 'Couldn't stay away, could you?' There's genuine warmth under the teasing.",
                 'short'  => "{$npcName} gives {$player} a playful look. 'Back already? I was just getting comfortable.'",
             ],
             'Nurturing' => [
-                'long'   => "{$npcName} searches {$player}'s face with quiet concern — are they hurt? Tired? Hungry? The questions are gentle but thorough. She's been worrying.",
+                'long'   => "{$npcName} searches {$player}'s face with quiet concern — are they hurt? Tired? Hungry? The questions are gentle but thorough. The worry has been there all along.",
                 'medium' => "{$npcName} greets {$player} with a warm, steady presence. 'You look tired. Come sit.' Caretaking first, everything else after.",
                 'short'  => "{$npcName} smiles warmly at {$player}'s return. A quiet check — eyes scanning for injury — before relaxing.",
             ],
             'Gentle' => [
                 'long'   => "{$npcName} looks at {$player} for a long moment without speaking. When the words come, they're soft. 'I'm glad.' That's all. It's enough.",
-                'medium' => "{$npcName} greets {$player} with a soft warmth that radiates without effort. Her presence says what her words don't.",
+                'medium' => "{$npcName} greets {$player} with a soft warmth that radiates without effort. The presence says what the words don't.",
                 'short'  => "{$npcName} offers {$player} a gentle smile. Understated, sincere.",
             ],
             'Guarded' => [
-                'long'   => "{$npcName} studies {$player} from across the room. Something shifts behind her eyes — a wall lowering a fraction. She doesn't approach. But she doesn't look away either.",
-                'medium' => "{$npcName} notes {$player}'s return with careful neutrality. Only the slight easing of her shoulders betrays that she noticed the absence.",
-                'short'  => "{$npcName} glances at {$player}. A beat longer than necessary. Then back to what she was doing.",
+                'long'   => "{$npcName} studies {$player} from across the room. Something shifts behind the eyes — a wall lowering a fraction. {$npcName} doesn't approach. But doesn't look away either.",
+                'medium' => "{$npcName} notes {$player}'s return with careful neutrality. Only the slight easing of the shoulders betrays that the absence was noticed.",
+                'short'  => "{$npcName} glances at {$player}. A beat longer than necessary. Then back to what was being done.",
             ],
             'Stoic' => [
-                'long'   => "{$npcName} stands still as {$player} approaches. Her expression is unreadable. But she turns to face them fully — and that, from her, is a declaration.",
-                'medium' => "{$npcName} acknowledges {$player} with the barest inclination of her head. The silence that follows is not cold. It's loaded.",
-                'short'  => "{$npcName} meets {$player}'s eyes briefly. Says nothing. The corner of her mouth moves — not quite a smile.",
+                'long'   => "{$npcName} stands still as {$player} approaches. The expression is unreadable. But {$npcName} turns to face them fully — and that, from {$npcName}, is a declaration.",
+                'medium' => "{$npcName} acknowledges {$player} with the barest inclination of the head. The silence that follows is not cold. It's loaded.",
+                'short'  => "{$npcName} meets {$player}'s eyes briefly. Says nothing. The corner of the mouth moves — not quite a smile.",
             ],
             'Defiant' => [
                 'long'   => "{$npcName} looks {$player} up and down. 'You look like hell. Good — means you were doing something.' The defiance is the affection.",
-                'medium' => "{$npcName} gives {$player} a sharp grin. 'Didn't think you'd come crawling back this fast.' She's pleased. She'd never say so.",
-                'short'  => "{$npcName} smirks at {$player}. 'Back for more?' Challenge as greeting — her native tongue.",
+                'medium' => "{$npcName} gives {$player} a sharp grin. 'Didn't think you'd come crawling back this fast.' Pleased, and {$npcName} would never say so.",
+                'short'  => "{$npcName} smirks at {$player}. 'Back for more?' Challenge as greeting — {$npcName}'s native tongue.",
             ],
         ];
 
@@ -9248,6 +9252,9 @@ class RelationshipDynamics
             $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($spikes), 2));
             self::log("[SPIKE] {$npcName} eval item gamets={$n['gamets']}: " . json_encode($spikes));
         }
+        // How the gesture landed (the love-language hint) and how much of it was the language she
+        // likes (the blush's multiplier): kept for her next word (RelDynFelt::noteEvalGesture)
+        RelDynFelt::noteEvalGesture($dynamics, $n, $spikes !== [], $itemGamets);
         // Interaction significance for the diary's defining_moment trigger, on the legacy 1..3
         // level scale: contract significance 0..1 x 3, rounded (0.33, "normal +-10 of 30" -> 1;
         // 1.0 -> 3). The strongest item of this request counts.

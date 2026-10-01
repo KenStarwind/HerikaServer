@@ -91,6 +91,20 @@ final class RelDynFelt
             // From context tier 2 the maturity line (how they handle what they feel) always
             // speaks, at least at this salience.
             'maturity_floor_salience' => 0.35,
+            // The blush (one-shot, the passion moment of the last exchange, pipeline Block 3): the
+            // moment's size in passion points decides the line (faint / mild / strong from these);
+            // the love language the gesture matched scales it, it never gates it: a secondary match
+            // brightens the line a little (match_salience_secondary), a primary one more and holds
+            // the flush hold_turns_primary more turns (the old "primary doubles the duration").
+            'blush' => [
+                'faint_at' => 2.0, 'mild_at' => 4.0, 'strong_at' => 7.0,
+                'match_salience_secondary' => 0.05, 'match_salience_primary' => 0.1, 'hold_turns_primary' => 1,
+            ],
+            // The love-language hint (pipeline Block 7): how the last gesture landed, one-shot. The
+            // request that classified it keeps it (core's context hook runs before ext postrequest);
+            // it is spent on the player's next word, and dropped after ttl_game_hours of game time. A rescue has
+            // its own line (skip_tags).
+            'll_hint' => ['ttl_game_hours' => 6.0, 'skip_tags' => ['rescue']],
             // Base salience per source (0..1); passion / jealousy / goal scale by their value.
             'salience' => [
                 'crisis' => 0.95, 'walkaway' => 0.95, 'bleeding_out' => 1.0, 'combat' => 0.9, 'mask' => 0.85,
@@ -249,6 +263,8 @@ final class RelDynFelt
             'mild'   => "colour rises in {NAME}'s cheeks, unbidden; it catches {NAME} off guard",
             'faint'  => "a faint warmth at the skin; that moment landed differently than expected",
         ],
+        // A primary match holds the flush one more turn: it has not gone yet
+        'blush_hold' => "the flush has not left {NAME}'s face; {NAME} keeps glancing away so it will not be noticed",
         // Jealousy (RelationshipDynamics::getJealousyBand). {RIVAL}: the trigger's name.
         'jealousy' => [
             'seething'  => "jaw tight, answers in clipped half-sentences, keeps circling back to {RIVAL}",
@@ -383,7 +399,8 @@ final class RelDynFelt
      *
      * $env (all optional; the hooks pass the request's globals):
      *   player_addressed bool   the player is speaking to this NPC (one-shots wait for it)
-     *   last_ll ?string         love language of the last classified interaction
+     *   last_ll ?string         love language of the gesture to react to, when a caller hands it over (the hooks
+     *                           do not: the NPC keeps it, noteGesture / noteEvalGesture)
      *   duty_factor float       <1 when quest duty drives the exchange
      *   masking bool, performed ?array   social masking this request
      *   ick bool                the ick is active this request
@@ -452,19 +469,35 @@ final class RelDynFelt
                 $shownPassion / 100 + floatval($cfg['passion_salience_offset']), $text, ['intense' => true]);
         }
 
-        // --- Blush: one-shot on a passion spike ---
+        // --- Blush: one-shot on a passion moment (pipeline Block 3) ---
+        // The delta's size is the band; the love language the gesture matched (pending_blush_mult:
+        // primary 2, secondary 1.5, else 1) scales the line, it never gates it. A primary match
+        // holds the flush one more turn (a second line on the player's next word).
         $lastDelta = floatval($dynamics['_last_passion_delta'] ?? 0);
         $blushMult = floatval($dynamics['pending_blush_mult'] ?? 1.0);
-        if ($lastDelta >= 4.0 && $blushMult >= 1.5) {
-            $lines[] = self::line('blush', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['blush']),
-                self::fill((string) $t['blush'][$lastDelta >= 7.0 ? 'strong' : 'mild'], $vars));
+        $bc = (array) $cfg['blush'];
+        $blushBand = $lastDelta >= floatval($bc['strong_at']) ? 'strong'
+            : ($lastDelta >= floatval($bc['mild_at']) ? 'mild' : ($lastDelta >= floatval($bc['faint_at']) ? 'faint' : null));
+        $blushNow = false;
+        if ($blushBand !== null) {
+            $primaryMatch = $blushMult >= 2.0;
+            $match = $blushMult >= 1.5 ? ($primaryMatch ? floatval($bc['match_salience_primary']) : floatval($bc['match_salience_secondary'])) : 0.0;
+            $lines[] = self::line('blush', self::SCOPE_BOND, self::LANE_TURN,
+                floatval($sal['blush']) - ($blushBand === 'faint' ? 0.2 : 0.0) + $match,
+                self::fill((string) $t['blush'][$blushBand], $vars), ['intense' => $primaryMatch]);
             $dynamics['_last_passion_delta'] = 0;
             $dynamics['pending_blush_mult'] = 1.0;
+            $hold = $primaryMatch ? max(0, intval($bc['hold_turns_primary'])) : 0;
+            if ($hold > 0) $dynamics[self::BLUSH_HOLD_KEY] = $hold; else unset($dynamics[self::BLUSH_HOLD_KEY]);
+            $blushNow = true;
             $changed = true;
-        } elseif ($lastDelta >= 2.0 && $blushMult >= 1.0) {
-            $lines[] = self::line('blush', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['blush']) - 0.2,
-                self::fill((string) $t['blush']['faint'], $vars));
-            $dynamics['_last_passion_delta'] = 0;
+        }
+        // The flush a primary match held: still there on the player's next word
+        if (!$blushNow && intval($dynamics[self::BLUSH_HOLD_KEY] ?? 0) > 0 && !empty($env['player_addressed'])) {
+            $lines[] = self::line('blush_hold', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['blush']) - 0.1,
+                self::fill((string) $t['blush_hold'], $vars));
+            $left = intval($dynamics[self::BLUSH_HOLD_KEY]) - 1;
+            if ($left > 0) $dynamics[self::BLUSH_HOLD_KEY] = $left; else unset($dynamics[self::BLUSH_HOLD_KEY]);
             $changed = true;
         }
 
@@ -494,8 +527,18 @@ final class RelDynFelt
                 ['intense' => true]);
         }
 
-        // --- The last gesture's love-language resonance (the discovery mechanic) ---
+        // --- The last gesture's love-language resonance (the discovery mechanic, pipeline Block 7) ---
+        // The request that classified the gesture kept it on the NPC (noteGesture, noteEvalGesture:
+        // core runs this hook before ext postrequest); it is spent on the player's next word. A
+        // caller may hand the compose the gesture itself (env last_ll).
         $lastLL = $env['last_ll'] ?? null;
+        $fromStore = false;
+        if (!is_string($lastLL) || $lastLL === '') {
+            $taken = self::takeGesture($dynamics, $now, !empty($env['player_addressed']));
+            $lastLL = $taken['ll'];
+            $fromStore = $taken['ll'] !== null;
+            if ($taken['changed']) $changed = true;
+        }
         $primaryLL = $dynamics['love_language_primary'] ?? null;
         if (is_string($lastLL) && $lastLL !== '' && $primaryLL) {
             $key = $lastLL === $primaryLL ? $lastLL
@@ -503,6 +546,10 @@ final class RelDynFelt
             if (isset($t['ll_reaction'][$key])) {
                 $lines[] = self::line('ll_reaction', self::SCOPE_BOND, self::LANE_TURN, floatval($sal['ll_reaction']),
                     self::fill((string) $t['ll_reaction'][$key], $vars));
+                if ($fromStore) {
+                    $dynamics['love_language_hints_given'] = intval($dynamics['love_language_hints_given'] ?? 0) + 1;
+                    $changed = true;
+                }
             }
         }
 
@@ -1414,6 +1461,96 @@ final class RelDynFelt
     }
 
     // =====================================================================
+    // THE LAST GESTURE (love-language discovery, roadmap ll-discovery-hints)
+    // =====================================================================
+
+    /** dynamics key: turns the flush a primary love-language match holds still has to run. */
+    const BLUSH_HOLD_KEY = '_blush_hold';
+    /** dynamics keys: how the last gesture landed (an LL_* id) and the game time it was made (raw gamets). */
+    const GESTURE_KEY = '_last_interaction_ll';
+    const GESTURE_AT_KEY = '_last_interaction_ll_gamets';
+
+    /** The blush multiplier a gesture of love language $ll earns with this NPC: primary 2, secondary 1.5, else 1. */
+    public static function matchMult(array $dynamics, string $ll): float
+    {
+        if ($ll === ($dynamics['love_language_primary'] ?? null)) return 2.0;
+        if ($ll === ($dynamics['love_language_secondary'] ?? null)) return 1.5;
+        return 1.0;
+    }
+
+    /** Keep $ll as the gesture the player's next word finds her reacting to. */
+    public static function noteGesture(array &$dynamics, string $ll, float $gamets): void
+    {
+        $dynamics[self::GESTURE_KEY] = $ll;
+        $dynamics[self::GESTURE_AT_KEY] = $gamets;
+    }
+
+    /**
+     * The love language of a gesture the LOCAL classifier read (RelationshipDynamics::classifyInteraction
+     * calls every line of dialogue quality time, and a line after a fight acts of service): plain
+     * conversation is no gesture to react to, except warm words (a flirty or loving reply mood).
+     * Anything else the classifier saw (a touch, a gift, a shared fight) is. Null for no gesture.
+     */
+    public static function legacyGestureLL(?string $ll, array $gameRequest): ?string
+    {
+        if ($ll === null) return null;
+        $type = strtolower(trim((string) ($gameRequest[0] ?? '')));
+        if (in_array($type, ['inputtext', 'inputtext_s', 'ginputtext', 'ginputtext_s', 'rechat'], true)) {
+            return $ll === RelationshipDynamics::LL_WORDS ? $ll : null;
+        }
+        return $ll;
+    }
+
+    /**
+     * An eval item's gesture: its love-language tags (affinity_tag_love_language) are how the
+     * exchange landed, the one she likes best (primary, then secondary, else the first listed).
+     * Only a gesture that was welcome counts (no grievance, no net loss across affinity / trust /
+     * comfort / respect / passion), and not one with its own felt line (ll_hint.skip_tags: a rescue).
+     * A passion MOMENT it raised ($moment) carries the match as the blush multiplier (primary 2,
+     * secondary 1.5; an unspent larger one is never cooled).
+     */
+    public static function noteEvalGesture(array &$dynamics, array $n, bool $moment, float $gamets): void
+    {
+        $tagLL = (array) RelationshipDynamics::configValue('affinity_tag_love_language');
+        $skip = array_map('strtolower', (array) (self::config()['ll_hint']['skip_tags'] ?? []));
+        $lls = [];
+        foreach ((array) ($n['tags'] ?? []) as $tag) {
+            $tag = strtolower((string) $tag);
+            if (in_array($tag, $skip, true) || !isset($tagLL[$tag])) continue;
+            $lls[(string) $tagLL[$tag]] = true;
+        }
+        if ($lls === [] || !empty($n['grievance']['flag'])) return;
+        $net = 0.0;
+        foreach (['affinity', 'trust', 'comfort', 'respect', 'passion'] as $signal) $net += floatval($n['signals'][$signal] ?? 0.0);
+        if ($net < 0.0) return;
+        $best = null;
+        foreach (array_keys($lls) as $ll) {
+            if ($best === null || self::matchMult($dynamics, (string) $ll) > self::matchMult($dynamics, (string) $best)) $best = (string) $ll;
+        }
+        self::noteGesture($dynamics, (string) $best, $gamets);
+        $mult = self::matchMult($dynamics, (string) $best);
+        if ($moment && $mult > 1.0) {
+            $dynamics['pending_blush_mult'] = max(floatval($dynamics['pending_blush_mult'] ?? 1.0), $mult);
+        }
+    }
+
+    /**
+     * Spend the gesture one-shot: the love language kept, once the player is speaking to her
+     * ($addressed; her own remark waits), and not when it is older than ll_hint.ttl_game_hours of
+     * game time at $now (raw gamets; dropped, not kept for later). ['ll' => ?string, 'changed' => bool]
+     */
+    public static function takeGesture(array &$dynamics, float $now, bool $addressed): array
+    {
+        $ll = $dynamics[self::GESTURE_KEY] ?? null;
+        if (!is_string($ll) || $ll === '' || !$addressed) return ['ll' => null, 'changed' => false];
+        $at = floatval($dynamics[self::GESTURE_AT_KEY] ?? 0);
+        unset($dynamics[self::GESTURE_KEY], $dynamics[self::GESTURE_AT_KEY]);
+        $ttl = floatval(self::config()['ll_hint']['ttl_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0;
+        if ($at > 0 && $now > 0 && $now - $at > $ttl) return ['ll' => null, 'changed' => true];
+        return ['ll' => $ll, 'changed' => true];
+    }
+
+    // =====================================================================
     // HOOKS
     // =====================================================================
 
@@ -1426,7 +1563,6 @@ final class RelDynFelt
             // an interaction of the player pair (the player's word, or intimacy with the player):
             // the place time since the pair's last one is its fulfillment (rulings §11)
             'pair' => RelationshipDynamics::isPairInteraction($GLOBALS['gameRequest'] ?? null, (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')),
-            'last_ll' => $GLOBALS['RELDYN_LAST_INTERACTION_LL'] ?? null,
             'duty_factor' => floatval($GLOBALS['RELDYN_DUTY_FACTOR'] ?? 1.0),
             'duty_quest' => is_array($GLOBALS['RELDYN_DUTY'] ?? null) ? (string) ($GLOBALS['RELDYN_DUTY']['quest'] ?? '') : '',
             'ick' => !empty($GLOBALS['RELDYN_ICK_ACTIVE']),
