@@ -20,6 +20,10 @@ Do not assume every endpoint executes every hook. Keep hook code bounded, avoid 
 
 See [Plugin runtime reference](plugin-runtime.md) for hook examples and timing, optional speech/playthrough state, atomic writes, install/update routes, and background model calls.
 
+## Reading dialogue from `eventlog`
+
+`returnLines()` in [lib/chat_helper_functions.php](../lib/chat_helper_functions.php) stores every generated NPC line twice, on purpose: first as a `prechat` row, then as a `chat` row carrying a `delivery_state` (`pending`, `emitted`, `spoken`). `prechat` is the in-flight copy, `main.php` includes it when it builds context for `rechat` and `narration` requests, so those see lines the game has not displayed yet; every other history query in core leaves it out (`type<>'prechat'`, plus `chimBuildChatDeliveryStateSql()` for `chat`). An extension that reads dialogue should read `chat` rows with that delivery-state filter and ignore `prechat`, or every line is counted twice. Rows are `Speaker: text`; take the speaker from that prefix rather than from the request's NPC name.
+
 ## Maintained examples
 
 - [CHIM-Custom](https://github.com/Dwemer-Dynamics/CHIM-Custom): optional Skyrim-mod state, native client source under `SkyrimPlugin/`, PHP context hooks, migrations and release scripts.
