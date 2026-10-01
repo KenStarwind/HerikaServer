@@ -100,6 +100,8 @@ class RelDynPlayer
      * Defaults for config 'player_profile'. Deed tables map an evidence key to [half, weight]:
      *   'stat:<Tracked Stat Name>'   Skyrim tracked stat (case-insensitive)
      *   'questline:<id>'             distinct quests of that questline in the journal (quests)
+     *   'quest:<editor id>@<stage>'  1 when that quest reached that stage (the stage log, questlog, and the
+     *                                journal row's stage), 0 when it did not, unknown with no quest row at all
      *   'journal:quests'             distinct quests in the journal, any line (quests)
      *   'kills:total'                sum of the tracked kill stats, else eventlog player kills
      *   'dragons'                    'Dragon Souls Collected', else eventlog dragon kills
@@ -143,6 +145,20 @@ class RelDynPlayer
                 'daedric'          => ['DA'],
                 'dawnguard'        => ['DLC1'],
                 'dragonborn_dlc'   => ['DLC2'],
+            ],
+            // Finer questlines, counted beside the ones above (a quest counts in each line whose prefix it
+            // matches): the SIDE a faction was joined on, from the quest editor ids that only one side
+            // has (core's own quest data, data/skyrim_quest_definitions.json: CW00A Joining the Legion,
+            // CW01B Joining the Stormcloaks, CW02A / CW02B the Jagged Crown; DLC1VQ03Hunter / Vampire,
+            // the DLC1HunterBase* / DLC1VampireBase* join quests, DLC1RH* / DLC1RV* the radiant
+            // work of each side). Quests both sides share (CW03, CWMission*, CWFortSiegeFort, CWObj,
+            // DLC1VQ00-02, 05-08) are in neither. Prompt gating's fames read these (reldyn_reputation.php).
+            'questlines_fine' => [
+                'civil_war_imperial'   => ['CW00A', 'CW01A', 'CW02A'],
+                'civil_war_stormcloak' => ['CW00B', 'CW01B', 'CW02B'],
+                'dawnguard_hunter'     => ['DLC1VQ03Hunter', 'DLC1HunterBase', 'DLC1RH'],
+                'volkihar'             => ['DLC1VQ03Vampire', 'DLC1VampireBase', 'DLC1RV'],
+                'bards_college'        => ['BardsCollege'],
             ],
             'archetypes' => [
                 'warrior' => [
@@ -505,10 +521,26 @@ class RelDynPlayer
         $facts['eventlog_dragon_kills'] = self::fact($kills['dragons'] ?? null, 'eventlog death "(powerful DRAGON)"', $killNote);
 
         // journal: questlines the player has taken up
-        $facts['questlines'] = self::questlines($db, (array) $cfg['questlines']);
+        $facts['questlines'] = self::questlines($db, (array) $cfg['questlines'], (array) ($cfg['questlines_fine'] ?? []));
 
-        // No CHIM 3.4.1 source at all.
-        $facts['thane_holds'] = self::fact(null, null, 'no core source in CHIM 3.4.1 (needs a game-side bridge)');
+        // quest stages the fame evidence names ('quest:<editor id>@<stage>'): reached or not, null while no quest row is known
+        foreach (self::questStages($db) as $key => $reached) {
+            $facts[$key] = self::fact($reached, $reached === null ? null : 'quests (journal stage) / questlog (stage log)');
+        }
+        // Thane titles: no core source (CHIM 3.4.1 keeps no player titles); read from the quest stages that grant them
+        $thane = null;
+        if (class_exists('RelDynReputation', false)) {
+            foreach ((array) (RelDynReputation::config()['thane_holds'] ?? []) as $hold => $spec) {
+                foreach ((array) ($spec['quests'] ?? []) as $id => $stage) {
+                    $v = $facts['quest:' . $id . '@' . intval($stage)]['value'] ?? null;
+                    if ($v === null) continue;
+                    $thane = $thane ?? [];
+                    if ($v && !in_array((string) $hold, $thane, true)) $thane[] = (string) $hold;
+                }
+            }
+        }
+        $facts['thane_holds'] = self::fact($thane, 'quest stages that grant the title (config reputation.thane_holds)',
+            'no core source for titles in CHIM 3.4.1: read from the quest stage that grants each (the holds listed in the config only)');
         $facts['faction_ranks'] = self::fact(null, null,
             'no core source in CHIM 3.4.1: factions.player_rank is the vendor faction\'s reaction, not membership');
 
@@ -733,7 +765,7 @@ class RelDynPlayer
      * journal has a row. Only ACTIVE quests are in the journal table (the plugin skips completed
      * ones), so finished questlines are counted by the "<Guild> Quests Completed" tracked stats.
      */
-    private static function questlines($db, array $lines): array
+    private static function questlines($db, array $lines, array $fine = []): array
     {
         $unknown = ['value' => null, 'source' => null, 'journal_quests' => null];
         if (!$db) return $unknown;
@@ -744,9 +776,18 @@ class RelDynPlayer
             return $unknown;
         }
         if (!$rows) return $unknown;
-        $counts = array_fill_keys(array_keys($lines), 0);
+        $counts = array_fill_keys(array_keys($lines), 0) + array_fill_keys(array_keys($fine), 0);
         foreach ($rows as $r) {
             $id = strtoupper((string) $r['id_quest']);
+            // the finer lines count beside the coarse ones
+            foreach ($fine as $line => $prefixes) {
+                foreach ((array) $prefixes as $prefix) {
+                    if ($prefix !== '' && strpos($id, strtoupper((string) $prefix)) === 0) {
+                        $counts[$line]++;
+                        continue 2;
+                    }
+                }
+            }
             foreach ($lines as $line => $prefixes) {
                 foreach ((array) $prefixes as $prefix) {
                     if ($prefix !== '' && strpos($id, strtoupper((string) $prefix)) === 0) {
@@ -757,6 +798,47 @@ class RelDynPlayer
             }
         }
         return ['value' => $counts, 'source' => 'quests (active journal quests, distinct editor ids)', 'journal_quests' => count($rows)];
+    }
+
+    /**
+     * Quest stages the fame evidence tables name ('quest:<editor id>@<stage>'): key => 1 when the
+     * quest reached that stage, 0 when the journal and the stage log are known and it did not, null
+     * while neither holds a quest row (an unplayed game says nothing). The stage log (questlog,
+     * '_uquest': one row per stage change) is the history; the journal row (quests) carries the
+     * stage the plugin last sent. A failed read is logged and reads as unknown.
+     */
+    private static function questStages($db): array
+    {
+        $wanted = [];
+        if (class_exists('RelDynReputation', false)) {
+            foreach (RelDynReputation::evidenceTables() as $table) {
+                foreach (array_keys((array) $table) as $key) {
+                    if (preg_match('/^quest:([A-Za-z0-9_]+)@(\d+)$/', (string) $key, $m)) $wanted[(string) $key] = [$m[1], intval($m[2])];
+                }
+            }
+        }
+        if (!$wanted) return [];
+        $none = array_fill_keys(array_keys($wanted), null);
+        if (!$db) return $none;
+        try {
+            $any = $db->fetchAll('SELECT id_quest FROM quests WHERE id_quest IS NOT NULL LIMIT 1')
+                ?: $db->fetchAll("SELECT id_quest FROM questlog WHERE id_quest IS NOT NULL AND id_quest <> '' LIMIT 1");
+            if (!$any) return $none;
+            $list = implode(', ', array_map(fn($w) => $db->escapeLiteral($w[0]), array_values($wanted)));
+            $best = [];
+            foreach (['quests', 'questlog'] as $table) {
+                foreach ($db->fetchAll("SELECT id_quest, MAX(stage) AS stage FROM {$table} WHERE id_quest IN ({$list}) AND stage IS NOT NULL GROUP BY id_quest") as $r) {
+                    $id = strtoupper((string) $r['id_quest']);
+                    $best[$id] = max($best[$id] ?? -1, intval($r['stage']));
+                }
+            }
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('RelDynPlayer quest stages', $e);
+            return $none;
+        }
+        $out = [];
+        foreach ($wanted as $key => [$id, $stage]) $out[$key] = (($best[strtoupper($id)] ?? -1) >= $stage) ? 1 : 0;
+        return $out;
     }
 
     // =====================================================================
@@ -779,6 +861,9 @@ class RelDynPlayer
         $ev['journal:quests'] = $facts['questlines']['journal_quests'];
         $ev['form:beast'] = $facts['beast_form']['value'] === null ? null : ($facts['beast_form']['value'] ? 1 : 0);
         foreach ((array) ($facts['questlines']['value'] ?? []) as $line => $n) $ev['questline:' . strtolower((string) $line)] = $n;
+        foreach ($facts as $k => $f) {
+            if (strpos((string) $k, 'quest:') === 0) $ev[strtolower($k)] = $f['value'];
+        }
         return $ev;
     }
 

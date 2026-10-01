@@ -235,6 +235,15 @@ final class RelDynGating
             if ($dist > intval($spec['reach'] ?? 0)) continue;
             $out[(string) $key] = ['score' => round(floatval($score), 4), 'distance' => $dist, 'text' => (string) ($spec['text'] ?? '')];
         }
+        // A fame the finer ones replace (the side-less civil war line, once a side is heard) is left out
+        foreach (array_keys($out) as $key) {
+            foreach ((array) (RelDynReputation::config()['fames'][$key]['superseded_by'] ?? []) as $finer) {
+                if (isset($out[(string) $finer])) {
+                    unset($out[$key]);
+                    break;
+                }
+            }
+        }
         uasort($out, fn($a, $b) => $b['score'] <=> $a['score']);
         return $out;
     }
