@@ -295,6 +295,9 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
         RelationshipDynamics::applyPhysicalStateModifiers($dynamics, $activePhysStates, $physTemperament);
     }
 
+    // The trust the injured row used to hand a healer temperament goes to whoever heals the player
+    RelationshipDynamics::consumeHealEvents($npcName, $physPlayerName, $dynamics, $physTemperament);
+
     // Store active states in globals for context.php to reference
     $GLOBALS['RELDYN_ACTIVE_PHYS_STATES'] = $activePhysStates;
 

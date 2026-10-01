@@ -9,7 +9,9 @@
  *   werewolf full moon: an arousal spike, valence thrill (Bold) or fear (Guarded), maturity -10
  *            (beast blood overrides), coord_m aggressive, coord_f suppressed; halved on other
  *            nights; beast blood passive: a constant low arousal lift, maturity a little lower;
- *            after transforming back: shame (resentment_self), a comfort crash.
+ *            after transforming back: shame (resentment_self), a comfort crash, maturity recovery
+ *            (the beast's override lets go: what the full moon / night row took off maturity is given
+ *            back, exactly, while she is in her own skin; the passive beast blood is not).
  * These are temporary offsets, like the physical-state bridges ("same pipeline, different
  * trigger"): the offsets of the NPC's current creature state are applied once through applyDelta,
  * held while the state holds and taken back exactly when it changes (reverseAppliedDeltas).
@@ -40,7 +42,12 @@
  * anchor_days stay in config in case a mod shifts the cycle.
  *
  * Not built (no core signal): vampire blood thirst / fed vs starving. Vanilla NPC vampires have no
- * hunger stages and CHIM 3.4.1 core reports no NPC feeding, so thirst is unknown, never assumed.
+ * hunger stages and CHIM 3.4.1 core reports no NPC feeding, so thirst is unknown, never assumed
+ * (review queue 2026-09-30, JUDGED: it stays unbuilt until a feeding event exists; a simulated
+ * thirst clock is Ken's call). The vampire's day penalty applies by day anywhere (JUDGED, the design's
+ * wording; vampire_sun_outdoors_only is the switch for "only in the sun"). A Companions member cured of
+ * the blood ("Purity") is still a werewolf by faction: the editor's creature_type 'none' is the answer
+ * and needs no code (the editor's Creature field says so).
  *
  * State: $dynamics['_creature'] = ['type', 'source', 'state' (row key or null), 'key' (applied
  * signature), 'applied' (dim => actual applied points), 'form' (the last non-normal form seen:
@@ -137,6 +144,11 @@ final class RelDynCreatures
             // the same for every werewolf (the design), 'fear_share' = x fear / (fight + fear).
             'post_transform' => [
                 'rows' => [self::WEREWOLF => ['resentment_self' => 8.0, 'comfort' => -10.0]],
+                // Maturity recovery (design: "post-transformation: ... maturity recovery"): the fraction 0..1 of the
+                // maturity (any dimension) the full-moon / night row holds off her that is given back, exactly (no
+                // physics: it is the same offset ending), when she is back in her own skin. 1.0 = all of it. The
+                // passive beast blood (the day row) is her baseline and stays. Starting value.
+                'recovery' => [self::WEREWOLF => ['maturity' => 1.0]],
                 'scale' => 'flat',
                 'felt_game_hours' => 12.0,   // the shame reads in felt text this long (game calendar)
             ],
@@ -467,8 +479,10 @@ final class RelDynCreatures
     /**
      * A return from beast form: a werewolf form was seen (the plugin's report on the core row, or
      * the form watch) and the row now reports the normal form later on the game clock. The
-     * post_transform row is applied once through applyDelta (a spike, not an offset), and the
-     * watch entry is dropped. A form seen now is remembered in $state['form'].
+     * post_transform row is applied once through applyDelta (a spike, not an offset), the beast's
+     * maturity drop held by the moon / night row is given back exactly (post_transform.recovery;
+     * $state['recovered'] until the beast is seen again), and the watch entry is dropped. A form seen
+     * now is remembered in $state['form'].
      */
     private static function observeReturn(string $npcName, array &$dynamics, array &$state, array $cur, float $gamets, ?string $temperament): void
     {
@@ -484,6 +498,11 @@ final class RelDynCreatures
             }
         }
         $state['form'] = $seen;
+        if ($seen !== null && !empty($state['recovered'])) {
+            // The beast is back after a recovery: the row's full offsets are applied again (the key no longer matches)
+            unset($state['recovered']);
+            $state['key'] = null;
+        }
         if ($seen === null || $now === null || $now['state'] !== 'normal') return;
         $backAt = $now['gamets'] > 0 ? $now['gamets'] : $gamets;
         if ($backAt <= floatval($seen['last'])) return;
@@ -509,9 +528,25 @@ final class RelDynCreatures
             if (abs($a) > 0.0001) $applied[$dim] = round($a, 3);
         }
         if ($applied !== []) $state['shame_gamets'] = $backAt;
+        // Maturity recovery: the beast's override lets go (only what the moon / night row holds: the passive blood stays)
+        $given = [];
+        if (in_array($state['state'] ?? null, ['werewolf_moon', 'werewolf_night'], true)) {
+            $recovery = (array) (((array) ($pt['recovery'] ?? []))[$type] ?? []);
+            foreach ($recovery as $dim => $fraction) {
+                $held = floatval($state['applied'][$dim] ?? 0);
+                $share = max(0.0, min(1.0, floatval($fraction)));
+                if ($held >= 0.0 || $share <= 0.0 || !isset($dynamics['dimensions'][$dim])) continue;
+                RelationshipDynamics::reverseAppliedDeltas($dynamics, [$dim => $held * $share], 'RelDyn-CREATURE', "beast {$dim} drop");
+                $left = $held * (1.0 - $share);
+                if (abs($left) > 0.0001) $state['applied'][$dim] = $left; else unset($state['applied'][$dim]);
+                $given[$dim] = round(-$held * $share, 3);
+            }
+            if ($given !== []) $state['recovered'] = true;
+        }
         $state['form'] = null;
         self::dropWatch($npcName);
-        RelationshipDynamics::log("[RelDyn-CREATURE] {$npcName}: back from {$seen['state']} form: " . json_encode($applied));
+        RelationshipDynamics::log("[RelDyn-CREATURE] {$npcName}: back from {$seen['state']} form: " . json_encode($applied)
+            . ($given !== [] ? ' recovered ' . json_encode($given) : ''));
     }
 
     // =====================================================================

@@ -245,6 +245,32 @@ final class RelDynCreaturesTest extends TestCase
         $this->assertNull(RelDynCreatures::jev($d));
     }
 
+    /** JUDGED 2026-09-30 (review queue, batch T): the vampire's day penalty is by day anywhere, as the design words it; the sun switch is Ken's to flip. */
+    public function testTheVampiresDayPenaltyIsByDayAnywhereUnlessTheSunSwitchIsOn(): void
+    {
+        $noon = self::at(40, 12.0);
+        $this->assertFalse(RelDynCreatures::config()['vampire_sun_outdoors_only']);
+        foreach ([true, false, null] as $interior) {
+            $this->assertSame('vampire_day', RelDynCreatures::rowFor('vampire', $noon, $interior, null)['state'], 'indoors, outdoors or unknown: the day weighs');
+        }
+        $this->db->config = ['creatures' => ['vampire_sun_outdoors_only' => true]];
+        RelationshipDynamics::clearConfigCache();
+        $this->assertNull(RelDynCreatures::rowFor('vampire', $noon, true, null)['state'], 'switched on: not under a roof');
+        $this->assertNull(RelDynCreatures::rowFor('vampire', $noon, null, null)['state'], 'nor where nobody knows');
+        $this->assertSame('vampire_day', RelDynCreatures::rowFor('vampire', $noon, false, null)['state'], 'but in the sun');
+    }
+
+    /** The design's post-transformation row: shame (resentment_self), a comfort crash, and a maturity recovery of the beast's drop (batch T). */
+    public function testThePostTransformRowHasAMaturityRecoveryAndThirstStaysUnbuilt(): void
+    {
+        $cfg = RelDynCreatures::configDefaults();
+        $this->assertSame(['maturity' => 1.0], $cfg['post_transform']['recovery']['werewolf']);
+        $this->assertSame(['resentment_self' => 8.0, 'comfort' => -10.0], $cfg['post_transform']['rows']['werewolf']);
+        // blood thirst / fed vs starving has no core signal: no row, no setting, nothing detects it
+        foreach (array_keys($cfg['rows']) as $row) $this->assertStringNotContainsString('thirst', $row);
+        $this->assertArrayNotHasKey('thirst', $cfg);
+    }
+
     public function testFeltTextIsFeelingNotNumbers(): void
     {
         $vars = ['{NAME}' => 'Serana', '{PLAYER}' => 'Kaida'];

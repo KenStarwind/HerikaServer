@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../lib/core/npc_master.class.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
+require_once __DIR__ . '/../../ext/relationship_dynamics/reldyn_settings_text.php';
 
 /** `sql`-compatible adapter over one pg connection (CHIM conventions: fetchOne returns [] on failure). */
 final class RelDynCombatBedsPgDb
@@ -614,6 +615,45 @@ final class RelDynCombatTestBedsPostgresTest extends TestCase
         $this->assertStringContainsString('badly hurt and still fighting', $this->felt[self::AELA]['fight']['combat'] ?? '', json_encode($this->felt[self::AELA]['fight']));
         $this->assertStringContainsString('fights beside', $this->felt['Lynly Star-Sung']['fight']['combat'] ?? '', json_encode($this->felt['Lynly Star-Sung']['fight']));
         $this->assertDoesNotMatchRegularExpression('/\d/', $this->felt[self::AELA]['fight']['combat']);
+        $this->assertNoFailures();
+    }
+
+    /**
+     * combat-passion (batch T, review queue 2026-09-30, JUDGED): April's flat "party defeated: -1.5 to -3 passion"
+     * is retired, superseded by the section 18 #4 bleedout redesign: her OWN fall drains or fires her by who she is
+     * (the other tests), and the player's fall in a fight she fought costs nobody a flat defeat. 3.4.1 has no defeat
+     * event either; the player's own bleedout is nobody else's fall.
+     */
+    public function testThePlayersFallInAFightSheFoughtCostsNobodyAFlatDefeat(): void
+    {
+        $beds = array_keys(self::BEDS);
+        $t0 = self::at(101, 12.0);
+        $this->event('infoloc', self::OUTSIDE, $t0 - 1000, $this->people());
+        $this->round($beds, 'Stay sharp.', $t0, 'before');
+        $t1 = self::at(101, 14.0);
+        $this->bark(self::AELA, $t1);
+        $this->event('death', 'Aela the Huntress has defeated Bandit Chief', $t1 + 20000, $this->people());
+        $this->turn('Ashe', 'That was close.', $t1 + 60000, 'fought');
+        $this->assertCount(1, $this->combatEvents('death')[self::AELA] ?? [], 'Aela fought it');
+        $before = [];
+        foreach ($beds as $npc) $before[$npc] = $this->dynamics($npc);
+        $events = substr_count($this->log(), 'COMBAT EVENT: ');
+        $falls = substr_count($this->log(), 'Bleedout: ');
+
+        // The player goes down in that fight: core's bleedout row and Papyrus' report of it
+        $this->event('bleedout', 'Kaida falls to the ground almost unconscious', $t1 + 100000, $this->people());
+        $this->event('instruction', 'Kaida has lost combat and is wounded bleedingout.', $t1 + 101000, $this->people());
+        $this->round($beds, 'Kaida! Stay with me!', $t1 + 200000, 'down');
+        $this->assertSame($events, substr_count($this->log(), 'COMBAT EVENT: '), 'no combat event for the player\'s fall');
+        $this->assertSame($falls, substr_count($this->log(), 'Bleedout: '), 'and no NPC fall');
+        foreach ($beds as $npc) {
+            $this->assertSame(self::combatSource($before[$npc]), self::combatSource($this->dynamics($npc)), "{$npc}: no defeat cost on her combat passion");
+            $this->assertArrayNotHasKey('_combat_last_fall_gamets', $this->dynamics($npc), $npc);
+        }
+        // The retired setting is not in the combat config, and the settings hub says so
+        $cfg = RelDynCombat::configDefaults();
+        foreach (array_keys($cfg) as $k) $this->assertStringNotContainsString('defeat', (string) $k);
+        $this->assertStringContainsString('defeat', strtolower(RelDynSettingsText::SECTION_HELP['combat']));
         $this->assertNoFailures();
     }
 }

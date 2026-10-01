@@ -8,7 +8,7 @@ require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.p
 require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
 
 /** `sql`-compatible adapter over one pg connection (CHIM conventions: fetchOne returns [] on failure). */
-final class RelDynPhysicalBedsPgDb
+final class RelDynDiminishingBedsPgDb
 {
     public $link;
     public array $failures = [];
@@ -59,20 +59,19 @@ final class RelDynPhysicalBedsPgDb
 }
 
 /**
- * physical-state-bridges on the four test beds (Aela the Huntress, Ashe with Serene's hand-set
- * vector, Muiri, Lynly Star-Sung) through the real hooks, CHIM 3.4.1 core-shaped rows on a real
- * PostgreSQL, no LLM call.
+ * diminishing-returns (and the diary gap it fed) on the four test beds (Aela the Huntress, Ashe with
+ * Serene's hand-set vector, Muiri, Lynly Star-Sung) through the real hooks, CHIM 3.4.1 core-shaped rows
+ * on a real PostgreSQL, no LLM call.
  *
- * Only states core reports: the weather outside (RelDynCoreSensorsPostgresTest) and the player's
- * live health (the plugin's gamedata.php 'stats' report, core_player.stats): badly hurt (under
- * April's 0.3 of max) is 'injured' for every bed, held while it holds, taken back exactly when
- * healed. The trust of April's injured row goes to the NPC who heals the player, not to a healer
- * temperament (consumeHealEvents, the tests at the end). No report is unknown, never "whole" or
- * "hurt"; hunger, tiredness, dirt and blood have no core source: their rows are inert and never detected.
+ * Consecutive turns each pay less (the session multiplier falls with the count), at a rate that is
+ * her own curve (guard-owned half-life and decay, the continuous A6 columns at her vector); a played
+ * break (the play heartbeat crediting eventlog time) gives it back while the lifetime interaction clock
+ * only grows; a bio read that lands after the first meeting moves her curve and love languages to
+ * the read's; a steady pace keeps opening the diary's gap.
  *
  * Opt-in: RELDYN_TEST_PG_DSN must point at a THROWAWAY database (never dbname=dwemer).
  */
-final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
+final class RelDynDiminishingReturnsTestBedsPostgresTest extends TestCase
 {
     private const PLAYER = 'Kaida';
     private const DAY = RelationshipDynamics::GAMETS_PER_DAY;
@@ -91,7 +90,9 @@ final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
 
     private string $dsn;
     private string $schema;
-    private ?RelDynPhysicalBedsPgDb $db = null;
+    private array $readFields = [];
+    private array $seed = [];
+    private ?RelDynDiminishingBedsPgDb $db = null;
     private array $savedGlobals = [];
     private string $errorLog;
     private $prevErrorLog = null;
@@ -113,9 +114,9 @@ final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
             unset($GLOBALS[$key]);
         }
         $this->clearReldynGlobals();
-        $this->errorLog = tempnam(sys_get_temp_dir(), 'rdphys');
+        $this->errorLog = tempnam(sys_get_temp_dir(), 'rddimret');
         $this->prevErrorLog = ini_set('error_log', $this->errorLog);
-        Logger::setCustomLog(sys_get_temp_dir() . '/reldyn_phys_beds_test.log');
+        Logger::setCustomLog(sys_get_temp_dir() . '/reldyn_dimret_beds_test.log');
         RelDynTraits::$assignmentOverride = null;
         RelDynTraitRead::reset();
         RelDynTraitRead::$launcher = function () {};
@@ -158,7 +159,7 @@ final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
     /** A fresh schema with the CHIM 3.4.1 tables RelDyn touches, the shipped config, the beds and Serana. */
     private function world(): void
     {
-        $this->schema = 'reldyn_phys_' . getmypid() . '_' . bin2hex(random_bytes(3));
+        $this->schema = 'reldyn_dimret_' . getmypid() . '_' . bin2hex(random_bytes(3));
         $admin = pg_connect($this->dsn, PGSQL_CONNECT_FORCE_NEW);
         pg_query($admin, "CREATE SCHEMA {$this->schema}");
         pg_query($admin, "SET search_path TO {$this->schema}");
@@ -197,7 +198,7 @@ final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
             melotts_voiceid varchar, xtts_voiceid varchar, xvasynth_voiceid varchar)");
         pg_close($admin);
 
-        $this->db = new RelDynPhysicalBedsPgDb($this->dsn, $this->schema);
+        $this->db = new RelDynDiminishingBedsPgDb($this->dsn, $this->schema);
         $GLOBALS['db'] = $this->db;
         $GLOBALS['PLAYER_NAME'] = self::PLAYER;
         $GLOBALS['RELLLM_CONNECTOR'] = 5;
@@ -207,7 +208,7 @@ final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
             [RelationshipDynamics::CONFIG_ROW_ID, json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true]))]);
         RelationshipDynamics::clearConfigCache();
 
-        $seed = RelDynTraitRead::loadSeedFile();
+        $seed = $this->seed = RelDynTraitRead::loadSeedFile();
         RelDynTraitRead::ensureTable();
         $all = array_fill_keys(['archery', 'block', 'onehanded', 'twohanded', 'conjuration', 'destruction',
             'restoration', 'alteration', 'illusion', 'heavyarmor', 'lightarmor', 'lockpicking', 'pickpocket',
@@ -229,13 +230,21 @@ final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [$key, 'core', $fields['personality'], $fields['relationships'],
                 $fields['npc_static_bio'], $fields['speechstyle'], $fields['goals'], $fields['occupation']]);
             if ($voice !== null) pg_query_params($this->db->link, 'INSERT INTO npc_templates_v2 (npc_name, xvasynth_voiceid) VALUES ($1, $2)', [$key, $voice]);
-            if (!isset($seed['reads'][$key])) continue;   // Ashe: Serene's hand-set vector, never read; Serana: no seed
-            $e = $seed['reads'][$key];
-            pg_query_params($this->db->link, "INSERT INTO reldyn_trait_reads (template_key, src_hash, prompt_v, status, attempts, model, result)
-                VALUES (\$1, \$2, \$3, 'done', 1, \$4, \$5::jsonb)",
-                [$key, RelDynTraitRead::srcHash($fields), RelDynTraitRead::PROMPT_V, 'seed:' . $e['model'], json_encode($e['result'])]);
+            $this->readFields[$key] = $fields;
+            $this->insertRead($key);
         }
         pg_query_params($this->db->link, 'INSERT INTO core_player (id, value) VALUES ($1, $2)', ['stats', json_encode(['level' => 20])]);
+    }
+
+    /** The seed read of $key (the bio read the shipped seed holds; Ashe's vector is hand-set and Serana has none: nothing to land). */
+    private function insertRead(string $key): void
+    {
+        if (!isset($this->seed['reads'][$key])) return;
+        $e = $this->seed['reads'][$key];
+        pg_query_params($this->db->link, "INSERT INTO reldyn_trait_reads (template_key, src_hash, prompt_v, status, attempts, model, result)
+            VALUES ($1, $2, $3, 'done', 1, $4, $5::jsonb)
+            ON CONFLICT (template_key, src_hash) DO UPDATE SET status = 'done', attempts = 1, model = EXCLUDED.model, result = EXCLUDED.result",
+            [$key, RelDynTraitRead::srcHash($this->readFields[$key]), RelDynTraitRead::PROMPT_V, 'seed:' . $e['model'], json_encode($e['result'])]);
     }
 
     private static function at(int $day, float $hour): int
@@ -314,232 +323,118 @@ final class RelDynPhysicalStatesTestBedsPostgresTest extends TestCase
         pg_query_params($this->db->link, 'INSERT INTO core_player (id, value) VALUES ($1, $2)', ['stats', json_encode($stats)]);
     }
 
-    // ------------------------------------------------------------------ the bodies
+    // ------------------------------------------------------------------ helpers
 
-    public function testThePlayersWoundsWeighOnEveryBedAndHealBackExactly(): void
+    /** Eventlog 'request' polls every 100,000 raw gamets from $from for $hours of real play: the play heartbeat credits them as play. Returns the last row's gamets. */
+    private function playFor(float $hours, int $from): int
+    {
+        $step = 100000;
+        $n = (int) ceil($hours * RelationshipDynamics::GAMETS_PER_REAL_HOUR / $step);
+        pg_query($this->db->link, "INSERT INTO eventlog (type, data, sess, gamets, localts, ts, people, location)
+            SELECT 'request', '', 'pending', {$from} + g * {$step}, {$this->realTs}, {$from} + g * {$step}, '', '' FROM generate_series(1, {$n}) g");
+        return $from + $n * $step;
+    }
+
+    private function params(string $npc): array
+    {
+        return RelationshipDynamics::warmthParams($this->dynamics($npc));
+    }
+
+    // ------------------------------------------------------------------ diminishing returns through the hooks
+
+    public function testConsecutiveTurnsEachPayLessAtHerOwnRateAndAPlayedBreakGivesItBack(): void
     {
         $beds = array_keys(self::BEDS);
-        $t0 = self::at(60, 12.0);
-        $this->event('infoloc', self::OUTSIDE, $t0 - 1000, $this->people());
-        $this->playerStats(280.0);
-        $this->round($beds, 'A fine day.', $t0, 'whole');
-        $whole = [];
+        $t = self::at(70, 12.0);
+        $this->event('infoloc', self::OUTSIDE, $t - 1000, $this->people());
+        $mult = [];
+        $clock = [];
+        for ($i = 0; $i < 8; $i++) {
+            $this->round($beds, 'Another good talk.', $t, "talk{$i}");
+            $t += 90000;      // 39 real seconds of play between her turns
+            foreach ($beds as $npc) {
+                $d = $this->dynamics($npc);
+                $mult[$npc][] = RelationshipDynamics::getSessionMultiplier($d);
+                $clock[$npc][] = RelationshipDynamics::interactionClock($d);
+            }
+        }
         foreach ($beds as $npc) {
-            $whole[$npc] = $this->dynamics($npc);
-            $this->assertNotContains('injured', $whole[$npc]['_active_physical_states'] ?? [], $npc);
+            for ($i = 1; $i < 8; $i++) {
+                $this->assertLessThan($mult[$npc][$i - 1], $mult[$npc][$i], "{$npc}: talk " . ($i + 1) . ' pays less than the one before');
+                $this->assertSame($clock[$npc][$i - 1] + 1, $clock[$npc][$i], "{$npc}: the lifetime clock counts the talk");
+            }
+            $this->assertGreaterThan(0.05, $mult[$npc][7]);
+            $this->assertLessThan(0.97, $mult[$npc][7], "{$npc}: eight talks in five play minutes are well down");
         }
 
-        // Badly hurt (20% of max, under April's 0.3): every bed sees it on her next turn
-        $this->playerStats(60.0);
-        $this->round($beds, 'I need a moment.', $t0 + (int) self::HOUR, 'hurt');
-        $healers = [];
-        foreach ($beds as $npc) {
-            $d = $this->dynamics($npc);
-            $this->assertContains('injured', $d['_active_physical_states'], $npc);
-            $applied = $d['_applied_physical_deltas']['injured'];
-            $this->assertGreaterThan(0.0, $applied['arousal'], $npc);
-            $this->assertLessThan(0.0, $applied['valence'], $npc);
-            $this->assertLessThan(0.0, $applied['maturity'], $npc);
-            // A wound alone buys no trust in anyone (it goes to whoever heals the player; the row had it for the healer temperaments)
-            $healer = RelDynTraits::membership($d['inferred_temperament'] ?? null, RelationshipDynamics::PHYSICAL_HEALER_TEMPERAMENTS, $d) >= 0.5;
-            $this->assertSame($healer, isset($applied['trust']), $npc);
-            if ($healer) $healers[] = $npc;
-        }
-        // None of the four reads as a healer temperament (Nurturing / Gentle / Anxious): no trust moves
-        $this->assertSame([], $healers);
-        // Held while it holds: another turn adds nothing
-        $held = $this->dynamics(self::AELA)['_applied_physical_deltas']['injured'];
-        $this->turn(self::AELA, 'Still hurts.', $t0 + (int) self::HOUR + 3000, 'hurt2');
-        $this->assertSame($held, $this->dynamics(self::AELA)['_applied_physical_deltas']['injured']);
-
-        // Healed (the plugin's next report): the injury is taken back
-        $this->playerStats(290.0);
-        $this->round($beds, 'Better now.', $t0 + 2 * (int) self::HOUR, 'healed');
-        foreach ($beds as $npc) {
-            $d = $this->dynamics($npc);
-            $this->assertNotContains('injured', $d['_active_physical_states'] ?? [], $npc);
-            $this->assertArrayNotHasKey('injured', $d['_applied_physical_deltas'] ?? [], $npc);
-        }
-        $this->assertStringContainsString('[RelDyn-PHYS] Cleared state injured', $this->log());
-        $this->assertNoFailures();
-    }
-
-    public function testWoundsReachIndoorsToo(): void
-    {
-        // Inside (no weather state), the wound still counts
-        $this->event('infoloc', '(Context location: Jorrvaskr, Hold: Whiterun, current weather: indoors)', self::at(61, 9.0), $this->people());
-        $this->playerStats(30.0);
-        RelationshipDynamics::endRequest();
-        $GLOBALS['gameRequest'] = ['inputtext', '0', (string) self::at(61, 10.0), 'probe'];
-        $GLOBALS['CACHE_PEOPLE'] = $this->people();
-        $states = RelationshipDynamics::detectPhysicalStates(self::AELA, self::PLAYER);
-        $this->assertContains('injured', $states);
-        $this->assertNotContains('raining', $states);
-        $this->assertNoFailures();
-    }
-
-    public function testNoReportIsUnknownNeverHurtOrWhole(): void
-    {
-        $GLOBALS['gameRequest'] = ['inputtext', '0', (string) self::at(62, 10.0), 'probe'];
-        $GLOBALS['CACHE_PEOPLE'] = $this->people();
-        $this->playerStats(null);
-        $this->assertNull(RelDynCombat::playerHealth());
-        $this->assertNotContains('injured', RelationshipDynamics::detectPhysicalStates(self::AELA, self::PLAYER));
-        $this->playerStats(0.0, 0.0);   // a zero maximum: no reading
-        $this->assertNull(RelDynCombat::playerHealth());
-        $this->assertNotContains('injured', RelationshipDynamics::detectPhysicalStates(self::AELA, self::PLAYER));
-        $this->playerStats(150.0);
-        $this->assertEqualsWithDelta(0.5, RelDynCombat::playerHealth(), 1e-9);
-        $this->assertNotContains('injured', RelationshipDynamics::detectPhysicalStates(self::AELA, self::PLAYER), 'half health is not badly hurt');
-        // Hunger, cold beyond snow, tiredness, dirt, blood: core reports none of them, so no state
-        foreach (['hungry', 'exhausted', 'well_rested', 'dirty', 'bloody', 'warm_fire'] as $unknown) {
-            $this->assertNotContains($unknown, RelationshipDynamics::detectPhysicalStates(self::AELA, self::PLAYER), $unknown);
-        }
-        $this->assertNoFailures();
-    }
-
-    // ------------------------------------------------------------------ whoever heals the player earns the trust
-
-    /** The plugin logs every actor's cast as an npcspellcast row: "<caster> casts <spell>[ on <target>]". */
-    private function cast(string $caster, string $spell, string $target, int $gamets): void
-    {
-        $this->event('npcspellcast', $target === '' ? "{$caster} casts {$spell} " : "{$caster} casts {$spell} on {$target}", $gamets, $this->people());
-    }
-
-    public function testOnlyTheNpcWhoHealsThePlayerEarnsTheInjuredTrust(): void
-    {
-        $beds = array_keys(self::BEDS);
-        $t0 = self::at(80, 12.0);
-        $this->event('infoloc', self::OUTSIDE, $t0 - 1000, $this->people());
-        $this->playerStats(280.0);
-        $this->round($beds, 'A fine day.', $t0, 'whole');
-        $whole = [];
-        foreach ($beds as $npc) {
-            $whole[$npc] = $this->dynamics($npc);
-            $this->assertIsNumeric($whole[$npc]['_heal_seen_rowid'] ?? null, "{$npc}: her first turn anchors the heal watch");
-            $this->assertArrayNotHasKey('_heal_last', $whole[$npc], $npc);
+        // Her own rate: the continuous curve at her vector (guard-owned), so the beds do not pay alike
+        $final = array_map(fn($m) => round($m[7], 4), $mult);
+        $this->assertGreaterThan(1, count(array_unique($final)), 'the four beds do not all pay alike: ' . json_encode($final));
+        $rate = [];
+        foreach ($beds as $npc) $rate[$npc] = $this->params($npc)['decay_rate'];
+        $this->assertGreaterThan(1, count(array_unique(array_map(fn($r) => round($r, 4), $rate))), 'the beds run on different curves');
+        foreach ($beds as $a) {
+            foreach ($beds as $b) {
+                if ($rate[$a] > $rate[$b] + 1e-4) $this->assertLessThan($mult[$b][7], $mult[$a][7], "{$a} decays faster than {$b}: pays less");
+            }
         }
 
-        $this->playerStats(60.0);
-        $this->round($beds, 'I need a moment.', $t0 + (int) self::HOUR, 'hurt');
-        foreach ($beds as $npc) {
-            $this->assertContains('injured', $this->dynamics($npc)['_active_physical_states'], $npc);
-            $this->assertArrayNotHasKey('trust', $this->dynamics($npc)['_applied_physical_deltas']['injured'], "{$npc}: a wound alone buys no trust");
-        }
-
-        // Muiri heals the player; Aela casts a fireball at a bandit; Lynly heals Aela; Ashe closes her own wounds
-        $c = $t0 + (int) self::HOUR + 20000;
-        $this->cast('Muiri', 'Healing', self::PLAYER, $c);
-        $this->cast(self::AELA, 'Fireball', 'Bandit', $c + 10);
-        $this->cast('Lynly Star-Sung', 'Healing Hands', self::AELA, $c + 20);
-        $this->cast('Ashe', 'Close Wounds', '', $c + 30);
-        $this->playerStats(290.0);
-        $this->round($beds, 'Thank you.', $t0 + 2 * (int) self::HOUR, 'healed');
-
-        $trustBy = [];
+        // Ten played hours away: the count melts, the multiplier recovers; the lifetime clock does not melt
+        $before = array_map(fn($m) => $m[7], $mult);
+        $end = $this->playFor(10.0, $t);
+        $this->round($beds, 'It has been a while.', $end + 100000, 'afterbreak');
         foreach ($beds as $npc) {
             $d = $this->dynamics($npc);
-            $this->assertArrayNotHasKey('injured', $d['_applied_physical_deltas'] ?? [], "{$npc}: healed, the injury is taken back");
-            $trustBy[$npc] = self::x($d, 'trust') - self::x($whole[$npc], 'trust');
+            $this->assertGreaterThan($before[$npc] + 0.05, RelationshipDynamics::getSessionMultiplier($d), "{$npc}: the break gave the gain back");
+            $this->assertSame($clock[$npc][7] + 1, RelationshipDynamics::interactionClock($d), "{$npc}: the clock only grows");
+            $this->assertLessThan(RelationshipDynamics::interactionClock($d), intval($d['interaction_count']), "{$npc}: the diminishing count melted below the lifetime clock");
         }
-        $m = $this->dynamics('Muiri');
-        $this->assertEquals((float) $c, $m['_heal_last']['gamets']);
-        $this->assertSame('Healing', $m['_heal_last']['spell']);
-        $this->assertGreaterThan(0.5, $m['_heal_last']['trust'], 'trust +3 through applyDelta, scaled by who she is');
-        $this->assertGreaterThan(0.4, $trustBy['Muiri']);
-        foreach (['Ashe', self::AELA, 'Lynly Star-Sung'] as $npc) {
-            $this->assertArrayNotHasKey('_heal_last', $this->dynamics($npc), "{$npc} healed nobody the player knows of");
-            $this->assertLessThan($trustBy['Muiri'], $trustBy[$npc], "{$npc} earned less than Muiri");
-        }
-        $this->assertStringContainsString('[RelDyn-PHYS] Muiri healed ' . self::PLAYER . ' (Healing)', $this->log());
         $this->assertNoFailures();
     }
 
-    public function testEveryBedThatHealsEarnsItAtItsOwnRateAndAStreamOfHealsIsOneActOfCare(): void
+    public function testHerBioReadLandingAfterTheFirstMeetingMovesHerCurveAndLoveLanguages(): void
     {
-        $beds = array_keys(self::BEDS);
-        $t0 = self::at(81, 12.0);
-        $this->event('infoloc', self::OUTSIDE, $t0 - 1000, $this->people());
-        $this->playerStats(250.0);
-        $this->round($beds, 'A fine day.', $t0, 'whole');
-        $before = [];
-        foreach ($beds as $npc) $before[$npc] = self::x($this->dynamics($npc), 'trust');
+        $keys = ['Aela the Huntress' => 'aela_the_huntress', 'Muiri' => 'muiri', 'Lynly Star-Sung' => 'lynly_star-sung'];
+        foreach ($keys as $key) pg_query_params($this->db->link, 'DELETE FROM reldyn_trait_reads WHERE template_key = $1', [$key]);
+        RelDynTraitRead::reset();
 
-        $c = $t0 + 20000;
-        foreach ($beds as $i => $npc) $this->cast($npc, 'Healing', self::PLAYER, $c + $i);
-        $this->round($beds, 'Thank you all.', $t0 + 40000, 'healed');
-        $award = [];
-        foreach ($beds as $npc) {
+        $t = self::at(71, 12.0);
+        $this->event('infoloc', self::OUTSIDE, $t - 1000, $this->people());
+        $this->round(array_keys($keys), 'We have only just met.', $t, 'first');
+        $first = [];
+        foreach (array_keys($keys) as $npc) {
             $d = $this->dynamics($npc);
-            $this->assertGreaterThan(0.0, $d['_heal_last']['trust'], $npc);
-            $award[$npc] = $d['_heal_last']['trust'];
+            $this->assertSame('pending', $d['_trait_vector_src']['read_status'], "{$npc}: her read is not in yet");
+            $this->assertNotEmpty($d['love_language_primary'], $npc);
+            $first[$npc] = ['vec' => $d['trait_vector'], 'curve' => $d['warmth_curve'], 'll' => [$d['love_language_primary'], $d['love_language_secondary']],
+                            'params' => RelationshipDynamics::warmthParams($d)];
         }
-        $this->assertGreaterThan(1, count(array_unique(array_map(fn($a) => round($a, 3), $award))), 'who she is scales the trust: ' . json_encode($award));
 
-        // Healing hands spammed through one fight (ten game minutes on): the same act of care
-        $muiri = self::x($this->dynamics('Muiri'), 'trust');
-        $this->cast('Muiri', 'Healing', self::PLAYER, $c + 6000);
-        $this->turn('Muiri', 'Again?', $t0 + 80000, 'again');
-        $this->assertEqualsWithDelta($award['Muiri'], $this->dynamics('Muiri')['_heal_last']['trust'], 1e-9);
-        $this->assertEquals((float) ($c + array_search('Muiri', $beds, true)), $this->dynamics('Muiri')['_heal_last']['gamets'], 'the second cast inside the cooldown is not a second award');
-        $this->assertEqualsWithDelta($muiri, self::x($this->dynamics('Muiri'), 'trust'), 0.5);
-
-        // Two game hours later it is another act
-        $this->cast('Muiri', 'Healing', self::PLAYER, $t0 + 2 * (int) self::HOUR + 20000);
-        $this->turn('Muiri', 'You again.', $t0 + 2 * (int) self::HOUR + 40000, 'later');
-        $this->assertSame((float) ($t0 + 2 * (int) self::HOUR + 20000), (float) $this->dynamics('Muiri')['_heal_last']['gamets']);
+        foreach ($keys as $key) $this->insertRead($key);   // the read lands
+        RelDynTraitRead::reset();
+        $this->round(array_keys($keys), 'Tell me about yourself.', $t + 90000, 'second');
+        $changed = 0;
+        foreach (array_keys($keys) as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertSame('done', $d['_trait_vector_src']['read_status'], "{$npc}: her read landed");
+            $this->assertNotSame($first[$npc]['vec'], $d['trait_vector'], "{$npc}: her vector is her read's now");
+            // her read's curve: what the engine gives a fresh NPC at that vector (the label the vector names), and the
+            // continuous numbers at her own vector
+            $this->assertSame(RelDynTraits::labelParam($d['inferred_temperament'], RelationshipDynamics::TEMPERAMENT_WARMTH_CURVES, 'moderate', $d),
+                $d['warmth_curve'], "{$npc}: the curve of her read");
+            $x = RelDynTraits::readVector($d);
+            $params = RelationshipDynamics::warmthParams($d);
+            foreach (['decay_rate' => 'warmth_decay_rate', 'half_life' => 'warmth_half_life', 'passion_decay' => 'warmth_passion_decay'] as $k => $col) {
+                $this->assertEqualsWithDelta(RelDynTraits::value($x, $col), $params[$k], 1e-9, "{$npc} {$k}");
+            }
+            $probe = $d;
+            unset($probe['love_language_primary'], $probe['love_language_secondary'], $probe['warmth_curve'], $probe['_ll_auto']);
+            RelationshipDynamics::ensureLoveLanguage($npc, $probe);
+            $this->assertSame([$probe['love_language_primary'], $probe['love_language_secondary'], $probe['warmth_curve']],
+                [$d['love_language_primary'], $d['love_language_secondary'], $d['warmth_curve']], "{$npc}: the languages a fresh derivation at her read gives");
+            if ($params != $first[$npc]['params']) $changed++;
+        }
+        $this->assertSame(3, $changed, 'each of the three runs on a different curve once her read is in');
         $this->assertNoFailures();
-    }
-
-    public function testAHealFromBeforeTheWatchOrLongAgoCountsForNothing(): void
-    {
-        $t0 = self::at(82, 12.0);
-        $this->event('infoloc', self::OUTSIDE, $t0 - 1000, $this->people());
-        $this->cast('Muiri', 'Healing', self::PLAYER, $t0 - 5000);   // before she was ever tracked
-        $this->turn('Muiri', 'Hello.', $t0, 'first');
-        $this->assertArrayNotHasKey('_heal_last', $this->dynamics('Muiri'), 'history is not replayed');
-
-        // a heal she cast, found fourteen game hours later (the player was away from her): too long ago to be hers of the moment
-        $this->cast('Muiri', 'Healing', self::PLAYER, $t0 + 20000);
-        $this->turn('Muiri', 'Back again.', $t0 + 14 * (int) self::HOUR, 'late');
-        $this->assertArrayNotHasKey('_heal_last', $this->dynamics('Muiri'));
-        // the watch moved past it: a fresh heal now counts
-        $this->cast('Muiri', 'Healing', self::PLAYER, $t0 + 14 * (int) self::HOUR + 20000);
-        $this->turn('Muiri', 'Thank you.', $t0 + 14 * (int) self::HOUR + 40000, 'now');
-        $this->assertSame('Healing', $this->dynamics('Muiri')['_heal_last']['spell']);
-        $this->assertNoFailures();
-    }
-
-    public function testASpellThatIsNotAHealOrIsNotOnThePlayerEarnsNothing(): void
-    {
-        $t0 = self::at(83, 12.0);
-        $this->event('infoloc', self::OUTSIDE, $t0 - 1000, $this->people());
-        $this->turn('Muiri', 'Hello.', $t0, 'first');
-        $this->cast('Muiri', 'Fireball', self::PLAYER, $t0 + 100);                       // a spell at the player, no heal
-        $this->cast('Muiri', 'Healing', 'Aela the Huntress', $t0 + 200);                 // a heal on someone else
-        $this->cast('Muiri', 'Healing', '', $t0 + 300);                                  // her own
-        $this->cast('Aela the Huntress', 'Healing', self::PLAYER, $t0 + 400);            // someone else's heal
-        $this->turn('Muiri', 'Quiet day.', $t0 + 40000, 'second');
-        $this->assertArrayNotHasKey('_heal_last', $this->dynamics('Muiri'));
-        $this->assertNoFailures();
-    }
-
-    public function testTheInertListSilencesAStateAndSurvivalStatesAreNeverDetected(): void
-    {
-        $GLOBALS['gameRequest'] = ['inputtext', '0', (string) self::at(84, 10.0), 'probe'];
-        $GLOBALS['CACHE_PEOPLE'] = $this->people();
-        $this->playerStats(30.0);
-        $this->assertContains('injured', RelationshipDynamics::detectPhysicalStates(self::AELA, self::PLAYER), 'a core-visible state is not inert by default');
-        $cfg = array_replace(RelationshipDynamics::defaultConfig(), ['log_enabled' => true]);
-        $cfg['physical_states']['inert'][] = 'injured';
-        pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $1 WHERE id = $2', [json_encode($cfg), RelationshipDynamics::CONFIG_ROW_ID]);
-        RelationshipDynamics::clearConfigCache();
-        $this->assertNotContains('injured', RelationshipDynamics::detectPhysicalStates(self::AELA, self::PLAYER), 'listed inert: unknown, never assumed');
-        $this->assertNoFailures();
-    }
-
-    private function log(): string
-    {
-        return (string) file_get_contents($this->errorLog);
     }
 }

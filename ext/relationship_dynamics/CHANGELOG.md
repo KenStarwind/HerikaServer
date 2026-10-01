@@ -3,6 +3,32 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Unreleased (batch T, traits and bodies)
+Diary moments stopped for good at a steady pace. The diary's "fifteen talks since the last moment", the ick window and the
+parasite ledger's stamps counted on `interaction_count`, which is the diminishing-returns factor: it decays over play time
+before each talk adds one, so at ten talks per play hour it settles near 116 and a gap measured on it never opened again
+(and baseline drift, which runs at a moment, stopped with it). They count on a lifetime counter now
+(`lifetime_interactions`, seeded from the count on an older save, never decays); the session multiplier is the only reader of
+the decaying one.
+Her warmth curve and love languages follow her trait vector. They were derived once, by the first call that found none, so
+an NPC met before her bio read landed kept the curve of her priors for good. What she still holds from the last derivation
+(`_ll_auto`) is derived again when her temperament, the nearest presets of her vector or the language her attachment implies
+changes; what the editor chose is kept, and so are the love languages of a save from before the record. The continuous trait
+columns for the curve (warmth half-life, decay rate, lambda, passion decay) were defined and read by nothing; the session
+multiplier, the count's decay and passion decay run on them at her own vector now (a textbook preset gets exactly its named
+curve's numbers, an in-between NPC blends, a curve the editor set by name runs on its row).
+Physical states: the four states core can see (injured, rain, snow and cold, a clear night) ship; hunger, a warm fire,
+rested, exhausted, dirty and bloody have no CHIM 3.4.1 signal, so their rows stay and are inert (`physical_states.inert`,
+never detected: unknown, not assumed). The injured row's trust +3 no longer goes to a healer temperament: it goes to the
+NPC who heals the player (her heal cast on the player in core's eventlog, once per game hour, within twelve game hours,
+`physical_states.healer_*`). The dirty respect hit needs pride (Pd of 0.5 or more) instead of landing on everyone.
+Creatures: back in her own skin a werewolf gets the maturity the full moon or night took off her given back, exactly
+(`creatures.post_transform.recovery`), and the beast's override comes back with the next change. Blood thirst stays unbuilt
+(no feeding signal) and the vampire's day penalty stays by day anywhere. The editor's Creature field says how to settle a
+Companions member cured of the blood ("Purity"): "not a creature".
+Combat: April's flat "party defeated" cost is retired for good. 3.4.1 has no defeat event and her own fall already drains or
+fires her by who she is (the bleedout response); the player's fall in a fight costs nobody a flat defeat.
+
 ## reldyn-v0.20 — love languages that work, and bio reads that are not inflated
 Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
 which is retired, and the race map never matched CHIM's race names ("NordRace", "NordRaceVampire"). The primary now

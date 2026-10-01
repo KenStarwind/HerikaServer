@@ -29,7 +29,13 @@
  *           the named participant. A bystander at a combat event is no longer "confirmed".
  *   grief   a death: RelDyn NPCs around (people + party) with a bond to the deceased
  *           (RelDynProtocols::onDeath -> RelationshipDynamics::onNpcDeath).
- * Defeat ("party defeated", -1.5 to -3) has no core signal (no defeat event in 3.4.1): unknown.
+ * Defeat: April's flat "party defeated: -1.5 to -3 passion" is RETIRED (review queue 2026-09-30, JUDGED;
+ * status decided). CHIM 3.4.1 has no defeat event, and the design already says it better: MDD 3.3 reads
+ * "defeat / bleedout -> temperament-dependent drain" and the section 18 #4 bleedout redesign is that
+ * (bleedoutResponse: her OWN fall drains or fires her by who she is: Aela fights harder, Muiri panics, Ashe
+ * falls through shame). The player's own fall is nobody else's fall (parse() leaves the player out) and
+ * costs nobody a flat defeat; it feeds the rescue response (noteFall / rescue, MDD 3.3), not a drain.
+ * There is no setting for it: a flat cost to every NPC at once is exactly what the redesign replaced.
  *
  * Live HP (npcHealth / playerHealth): the AIAgent 3.4.1 plugin posts each nearby agent's
  * health / magicka / stamina to gamedata.php 'stats' (RefreshAIAgentStats: on a hit at most every
@@ -57,6 +63,7 @@ final class RelDynCombat
     {
         return [
             // Route core's death / bleedout eventlog rows (they never reach a hook)
+            // (No 'defeat' setting: the flat "party defeated" cost is retired, see the module doc.)
             'consume_eventlog' => true,
             'batch' => 100,               // rows per prerequest at most (the rest on the next)
             'witness_mult' => 0.5,        // a kill seen, not made
@@ -390,7 +397,7 @@ final class RelDynCombat
                     RelationshipDynamics::setPassion($dynamics, max(0, RelationshipDynamics::getPassion($dynamics) + $gain));
                     $dynamics['passion_updated_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 }
-                $dynamics['interaction_count'] = intval($dynamics['interaction_count'] ?? 0) + 1;
+                RelationshipDynamics::countCombatInteraction($dynamics);
                 $dynamics['last_interaction_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 $dynamics['passion_sources']['combat'] = floatval($dynamics['passion_sources']['combat'] ?? 0) + $gain;
                 RelationshipDynamics::saveDynamics($npc, $dynamics);

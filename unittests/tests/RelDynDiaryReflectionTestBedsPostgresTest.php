@@ -635,4 +635,26 @@ final class RelDynDiaryReflectionTestBedsPostgresTest extends TestCase
         $this->assertSame(0, $this->llmCalls);
         $this->assertSame([], $this->db->failures);
     }
+
+    /**
+     * diary-reflection-eval part 1 (batch T): the moments' interaction gap is measured on the lifetime clock, through
+     * the hooks. A day of talks marks her moment once the gap of talks has passed (the bookmark is a value of the
+     * lifetime clock, a gap or more in and never past it); interaction_count, the diminishing-returns count the gap
+     * used to read, decays and is not what the bookmark holds.
+     * (The long steady-paced run is RelDynInteractionClockTest, on the real recordInteraction / checkDiaryTrigger.)
+     */
+    public function testTheMomentsGapRidesTheLifetimeClockNotTheDecayingCount(): void
+    {
+        $before = $this->dayTogether();
+        foreach (['Aela the Huntress', 'Ashe', 'Lynly Star-Sung'] as $npc) {
+            $d = $before[$npc];
+            $clock = RelationshipDynamics::interactionClock($d);
+            $this->assertArrayHasKey('lifetime_interactions', $d, $npc);
+            $this->assertGreaterThanOrEqual(19, $clock, "{$npc}: hello, first morning, sixteen talks, the vow, good night");
+            $this->assertGreaterThanOrEqual(RelationshipDynamics::DIARY_INTERACTION_GAP, $d['_diary_last_interaction'], "{$npc}: marked a gap of talks in");
+            $this->assertLessThanOrEqual($clock, $d['_diary_last_interaction'], "{$npc}: and never past the lifetime clock");
+            $this->assertNotEmpty($d['_diary_moments'], "{$npc}: the moment is kept");
+            $this->assertLessThanOrEqual($clock, intval($d['interaction_count']), "{$npc}: the diminishing count never runs ahead of it");
+        }
+    }
 }

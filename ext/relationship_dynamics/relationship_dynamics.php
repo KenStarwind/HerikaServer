@@ -1293,7 +1293,24 @@ class RelationshipDynamics
             'environment_modifiers_enabled' => true,
             // Physical-state bridges (detectPhysicalStates): the player's live HP ratio under which
             // the scene reads as 'injured' (April's vitals rule).
-            'physical_states' => ['injured_health_ratio' => 0.3],
+            // inert: the states CHIM 3.4.1 core has no signal for (no hunger, rest, dirt, blood or fire
+            // report in lib/processor/gamedata.php): their rows stay in PHYSICAL_STATE_MODIFIERS, and
+            // detectPhysicalStates never reports one of these ("unknown, never assumed", as with creature
+            // thirst). Hunger has no row at all (the design's maturity -3 / resentment x1.3 is unbuilt).
+            // Take a state out of this list only when a plugin-side sensor for it exists (review queue
+            // 2026-09-30: ask Ken before building one on the AIAgent fork).
+            // healer_*: the trust an NPC earns by healing the player ('injured' trust +3, April): a
+            // heal spell she casts on the player (eventlog npcspellcast "<NPC> casts <spell> on <player>",
+            // spell name containing one of heal_spells) inside heal_max_age_game_hours, at most once per
+            // heal_cooldown_game_hours. Through applyDelta (trust): a gain that stays, scaled by who she is.
+            'physical_states' => [
+                'injured_health_ratio' => 0.3,
+                'inert' => ['hungry', 'warm_fire', 'well_rested', 'exhausted', 'dirty', 'bloody'],
+                'healer_trust' => 3.0,
+                'heal_spells' => ['heal', 'close wounds', 'restore health'],
+                'heal_max_age_game_hours' => 12.0,
+                'heal_cooldown_game_hours' => 1.0,
+            ],
             'environment_facet_effects' => [
                 'danger' => ['arousal' => 15],
                 'dark'   => ['arousal' => 5, 'comfort' => -3],
@@ -3452,14 +3469,73 @@ class RelationshipDynamics
     public static function ensureLoveLanguage($npcName, &$dynamics)
     {
         self::ensureTemperamentProfile($npcName, $dynamics);
+        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $sig = self::loveLanguageSignature($dynamics, $temperament);
 
         if (!empty($dynamics['love_language_primary'])) {
-            return; // Already set
+            $auto = $dynamics[self::LL_AUTO_KEY] ?? null;
+            if (!is_array($auto)) {
+                // A save from before the record: nothing says what was derived and what was chosen, so
+                // what is stored is kept (love languages already stored are kept), and from here on it is
+                // recorded that nothing stored is derived
+                $dynamics[self::LL_AUTO_KEY] = ['sig' => $sig, 'primary' => null, 'secondary' => null, 'curve' => null];
+                return;
+            }
+            if (($auto['sig'] ?? null) === $sig) {
+                return; // Already set, from the same temperament, runner-ups and attachment
+            }
+            // Her trait vector moved (her bio read landed after the first meeting, an editor temperament
+            // or trait change): what she still holds from the last derivation is derived again; what was
+            // chosen since (the editor's love language, curve) is kept
+            $new = self::deriveLoveLanguages((string) $npcName, $dynamics, $temperament);
+            $kept = [];
+            foreach (['primary' => 'love_language_primary', 'secondary' => 'love_language_secondary', 'curve' => 'warmth_curve'] as $k => $field) {
+                $stored = $dynamics[$field] ?? null;
+                if ($stored === null || $stored === '' || ($auto[$k] ?? null) === $stored) {
+                    $dynamics[$field] = $new[$k];
+                } else {
+                    $kept[] = $field;
+                }
+            }
+            $dynamics[self::LL_AUTO_KEY] = ['sig' => $sig] + $new;
+            self::log("Re-derived LL for {$npcName}: primary={$dynamics['love_language_primary']}, secondary={$dynamics['love_language_secondary']}, curve={$dynamics['warmth_curve']}, temp={$temperament}"
+                . ($kept !== [] ? ' (kept: ' . implode(', ', $kept) . ')' : ''));
+            return;
         }
 
+        $new = self::deriveLoveLanguages((string) $npcName, $dynamics, $temperament);
+        $dynamics['love_language_primary'] = $new['primary'];
+        $dynamics['love_language_secondary'] = $new['secondary'];
+        $dynamics['warmth_curve'] = $new['curve'];
+        $dynamics[self::LL_AUTO_KEY] = ['sig' => $sig] + $new;
+
+        self::log("Auto-gen LL for {$npcName}: primary={$dynamics['love_language_primary']}, secondary={$dynamics['love_language_secondary']}, curve={$dynamics['warmth_curve']}, temp={$temperament}");
+    }
+
+    /** dynamics key: what the last derivation of love languages / warmth curve gave, and the signature of what it was derived from. */
+    const LL_AUTO_KEY = '_ll_auto';
+
+    /**
+     * What the love languages and the warmth curve derive from, as the discrete outcome of it: the
+     * temperament, the nearest presets of her vector (the runner-up language) and the language her
+     * attachment implies. A vector that moves inside the same neighbourhood, or an attachment that
+     * drifts without crossing the reassurance-seeking line, derives the same thing (and costs no lookups).
+     */
+    private static function loveLanguageSignature(array $dynamics, ?string $temperament): string
+    {
+        $x = $temperament !== null ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+        $near = $x !== null ? RelDynTraits::nearestPresets($x, self::RUNNER_UP_PRESETS + 1) : [];
+        return md5(json_encode([$temperament, $near, self::attachmentToLoveLanguage($dynamics)]));
+    }
+
+    /**
+     * The derivation: ['primary', 'secondary', 'curve'] for this NPC now (pure of the dynamics'
+     * stored languages; reads MARAS / Sharmat / race / social class for the NPC's name).
+     */
+    private static function deriveLoveLanguages(string $npcName, array $dynamics, ?string $temperament): array
+    {
         $primary = null;
         $secondary = null;
-        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? null);
         $warmthCurve = $temperament !== null ? self::temperamentToWarmthCurve($temperament, $dynamics) : null;
 
         // Priority 1: MARAS temperament
@@ -3510,11 +3586,11 @@ class RelationshipDynamics
             $secondary = self::rotateLoveLanguage($primary);
         }
 
-        $dynamics['love_language_primary'] = $primary ?: self::LL_TIME;
-        $dynamics['love_language_secondary'] = $secondary ?: self::LL_WORDS;
-        $dynamics['warmth_curve'] = $warmthCurve ?: self::CURVE_MODERATE;
-
-        self::log("Auto-gen LL for {$npcName}: primary={$dynamics['love_language_primary']}, secondary={$dynamics['love_language_secondary']}, curve={$dynamics['warmth_curve']}, temp={$temperament}");
+        return [
+            'primary'   => $primary ?: self::LL_TIME,
+            'secondary' => $secondary ?: self::LL_WORDS,
+            'curve'     => $warmthCurve ?: self::CURVE_MODERATE,
+        ];
     }
 
     // ---- Love language mapping helpers ----
@@ -3691,8 +3767,8 @@ class RelationshipDynamics
     ];
 
     /**
-     * A6 through the trait engine: the nearest preset's curve name. (Phase 3 computes the
-     * curve numbers from traits every time: RelDynTraits columns warmth_half_life etc.)
+     * A6 through the trait engine: the nearest preset's curve name (the label; the curve's numbers
+     * are the continuous columns warmth_half_life etc. at her vector: warmthParams).
      */
     private static function temperamentToWarmthCurve($temperament, ?array $dynamics = null)
     {
@@ -3807,9 +3883,7 @@ class RelationshipDynamics
             $hoursSince = min($hoursSince, 0.167);
         }
 
-        $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
-        $params = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
-        $decayRate = $params['passion_decay'];
+        $decayRate = self::warmthParams($dynamics)['passion_decay'];
 
         $decay = $decayRate * $hoursSince;
         $floor = self::passionStageFloor($dynamics);
@@ -4008,6 +4082,31 @@ class RelationshipDynamics
     // =========================================================================
 
     /**
+     * The warmth-curve numbers [decay_rate, half_life, lambda, passion_decay] this NPC runs on.
+     * While her curve is the one derived from her traits (warmth_curve equals the last derivation's
+     * in _ll_auto: not chosen in the editor), they are the continuous trait columns A6 at her own
+     * vector (traits design §14: an in-between NPC blends the textbook curves, a textbook preset gets
+     * exactly its named curve's numbers). A curve chosen by name, or one nothing derived (an older save,
+     * no vector), is the named CURVE_PARAMS row.
+     */
+    public static function warmthParams(array $dynamics): array
+    {
+        $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
+        $named = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
+        $derived = $dynamics[self::LL_AUTO_KEY]['curve'] ?? null;
+        if ($derived === null || $curve !== $derived) return $named;
+        $temperament = self::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $x = $temperament !== null ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+        if ($x === null) return $named;
+        return [
+            'decay_rate'    => RelDynTraits::value($x, 'warmth_decay_rate'),
+            'half_life'     => RelDynTraits::value($x, 'warmth_half_life'),
+            'lambda'        => RelDynTraits::value($x, 'warmth_lambda'),
+            'passion_decay' => RelDynTraits::value($x, 'warmth_passion_decay'),
+        ];
+    }
+
+    /**
      * Get the current session multiplier based on exponential decay of interaction count.
      */
     public static function getSessionMultiplier($dynamics)
@@ -4028,8 +4127,7 @@ class RelationshipDynamics
             // Note: read-only function, caller must persist if needed
         }
 
-        $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
-        $params = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
+        $params = self::warmthParams($dynamics);
         $decayRate = $params['decay_rate'];
         $lambda = $params['lambda'];
 
@@ -4055,6 +4153,7 @@ class RelationshipDynamics
         $now = self::getPlayGamets($dynamics);
         $lastInteraction = floatval($dynamics['last_interaction_at'] ?? 0);
         $rawCount = intval($dynamics['interaction_count'] ?? 0);
+        $storedCount = $rawCount;
 
         // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
         // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
@@ -4066,17 +4165,52 @@ class RelationshipDynamics
 
         // Apply exponential decay to existing count before incrementing
         if ($lastInteraction > 0 && $rawCount > 0) {
-            $curve = $dynamics['warmth_curve'] ?? self::CURVE_MODERATE;
-            $params = self::CURVE_PARAMS[$curve] ?? self::CURVE_PARAMS[self::CURVE_MODERATE];
-            $lambda = $params['lambda'];
+            $lambda = self::warmthParams($dynamics)['lambda'];
             $hoursSince = ($now - $lastInteraction) / self::GAMETS_PER_REAL_HOUR;
             $rawCount = $rawCount * exp(-$hoursSince * $lambda);
         }
 
         $dynamics['interaction_count'] = intval(ceil($rawCount)) + 1;
+        self::tickInteractionClock($dynamics, $storedCount);
         $dynamics['last_interaction_at'] = $now;
         $dynamics['last_seen_at'] = $now;
         $dynamics['reunion_spike_given'] = false;
+    }
+
+    /**
+     * The lifetime interaction counter: how many times the player has talked to this NPC (or fought
+     * beside her), only ever growing. interaction_count is NOT this: it is the diminishing-returns
+     * factor, which recordInteraction decays over play time before adding one (about 116 at ten talks
+     * per play hour, and it melts during a played break). Anything that asks "N interactions since X"
+     * (the diary's gap, the ick window, the parasite ledger's stamps) reads this clock. A save from
+     * before it existed has none: it reads interaction_count until the next interaction seeds the
+     * counter from it.
+     */
+    public static function interactionClock(array $dynamics): int
+    {
+        return isset($dynamics['lifetime_interactions']) && is_numeric($dynamics['lifetime_interactions'])
+            ? intval($dynamics['lifetime_interactions'])
+            : intval($dynamics['interaction_count'] ?? 0);
+    }
+
+    /** Count one interaction on the lifetime clock; $storedCount is interaction_count before this interaction touched it (the seed of a legacy save). */
+    private static function tickInteractionClock(array &$dynamics, int $storedCount): void
+    {
+        $base = isset($dynamics['lifetime_interactions']) && is_numeric($dynamics['lifetime_interactions'])
+            ? intval($dynamics['lifetime_interactions']) : $storedCount;
+        $dynamics['lifetime_interactions'] = $base + 1;
+        // A diary bookmark above the clock is a value of the decayed count from an older save: marked now
+        if (intval($dynamics['_diary_last_interaction'] ?? 0) > $dynamics['lifetime_interactions']) {
+            $dynamics['_diary_last_interaction'] = $dynamics['lifetime_interactions'];
+        }
+    }
+
+    /** A combat beat (RelDynCombat::route) is an interaction on both counters: the diminishing count and the lifetime clock. */
+    public static function countCombatInteraction(array &$dynamics): void
+    {
+        $stored = intval($dynamics['interaction_count'] ?? 0);
+        $dynamics['interaction_count'] = $stored + 1;
+        self::tickInteractionClock($dynamics, $stored);
     }
 
     // =========================================================================
@@ -12803,31 +12937,38 @@ class RelationshipDynamics
     // condition is active and are reversed when it clears. No MinAI reads.
     // ====================================================
 
-    /** A23: temperaments whose trust answers 'injured' (healer gate) / respect answers 'bloody' (warrior gate). */
+    /**
+     * A23: temperaments whose trust answered 'injured' (the healer gate, the column healer_gate). The
+     * injured row no longer carries a trust part: the trust goes to the NPC who heals the player
+     * (consumeHealEvents), whatever her temperament. Kept for the column and its tests.
+     */
     const PHYSICAL_HEALER_TEMPERAMENTS  = ['Nurturing', 'Gentle', 'Anxious'];
     const PHYSICAL_WARRIOR_TEMPERAMENTS = ['Bold', 'Defiant', 'Proud'];
 
     /**
      * Mapping of physical state names to dimension deltas.
      *
-     * Each key is a detected state; each value is an array of
-     * dimensionId => raw delta to apply through applyDelta().
+     * Each key is a state; each value is an array of dimensionId => raw delta to apply through
+     * applyDelta(). The states core can see (config physical_states.inert lists the rest) are
+     * injured, raining, snowing + cold and clear_night: detectPhysicalStates. The others are the
+     * April survival rows, kept and INERT: no CHIM 3.4.1 signal exists for them, so detectPhysicalStates
+     * never reports them (config physical_states.inert). applyPhysicalStateModifiers applies whatever
+     * states it is handed, so a sensor only has to report one.
      *
-     * "trust_healer" and "respect_warrior" are NOT real dimensions --
-     * detectPhysicalStates() remaps them to 'trust' / 'respect' only
-     * when the NPC temperament matches (Nurturing->trust_healer,
-     * Bold/Defiant->respect_warrior).
+     * "respect_warrior" and "respect_proud" are NOT real dimensions: they are remapped to 'respect'
+     * only for an NPC the trait engine puts on that side (the A23 warrior gate for a 'bloody' row,
+     * pride for a 'dirty' row: Pd of 0.5 or more, "dirty: respect -2 for Proud/Noble").
      */
     const PHYSICAL_STATE_MODIFIERS = [
         'cold'        => ['comfort' => -10, 'arousal' => +20, 'valence' => -15],
         'warm_fire'   => ['comfort' => +10, 'warmth' => +5, 'passion' => +5],
-        'injured'     => ['arousal' => +30, 'valence' => -20, 'maturity' => -5, 'trust_healer' => +3],
+        'injured'     => ['arousal' => +30, 'valence' => -20, 'maturity' => -5],
         'well_rested' => ['maturity' => +2, 'comfort' => +5],
         'exhausted'   => ['maturity' => -5, 'comfort' => -8],
         'raining'     => ['comfort' => -3, 'warmth' => -2],
         'snowing'     => ['comfort' => -8, 'warmth' => -5, 'arousal' => +10, 'valence' => -10],
         'clear_night' => ['comfort' => +3, 'passion' => +3],
-        'dirty'       => ['comfort' => -3, 'respect' => -2],
+        'dirty'       => ['comfort' => -3, 'respect_proud' => -2],
         'bloody'      => ['arousal' => +5, 'respect_warrior' => +1],
     ];
 
@@ -12842,9 +12983,9 @@ class RelationshipDynamics
      * the plugin reports and whether the player is inside) and apply only outside:
      *   rain -> raining; snow -> snowing + cold; night with known clear/pleasant weather ->
      *   clear_night.
-     * Not detected (no CHIM 3.4.1 core source): hunger, dirty / bloody (April: Dirt and Blood),
-     * warm_fire; exhausted / well_rested were April's player-stamina proxy (stamina is a combat
-     * resource that refills in seconds, not rest), left unknown pending a rest signal.
+     * Not detected (no CHIM 3.4.1 core source; config physical_states.inert): hunger, dirty / bloody
+     * (April: Dirt and Blood), warm_fire; exhausted / well_rested were April's player-stamina proxy
+     * (stamina is a combat resource that refills in seconds, not rest), left unknown pending a rest signal.
      *
      * @param string $npcName    The NPC being spoken to
      * @param string $playerName The player character name (the injured read is the player's)
@@ -12861,7 +13002,7 @@ class RelationshipDynamics
 
         $place = RelDynFacets::currentPlaceContext((string) $npcName);
         if (empty($place['known']) || $place['is_interior'] !== false) {
-            return $states;   // indoors (or unknown): the weather outside does not reach the NPC
+            return self::activePhysicalStates($states, $cfg);   // indoors (or unknown): the weather outside does not reach the NPC
         }
 
         $weather = (array) $place['weather'];
@@ -12877,7 +13018,13 @@ class RelationshipDynamics
             $states[] = 'clear_night';
         }
 
-        return $states;
+        return self::activePhysicalStates($states, $cfg);
+    }
+
+    /** The states without the inert ones (config physical_states.inert: no game signal; whatever names one, it is unknown). */
+    private static function activePhysicalStates(array $states, array $cfg): array
+    {
+        return array_values(array_diff($states, array_map('strval', (array) ($cfg['inert'] ?? []))));
     }
 
     /**
@@ -12915,8 +13062,7 @@ class RelationshipDynamics
             $dynamics['_applied_physical_deltas'] = [];
         }
 
-        // Temperament-gated pseudo-dimension remapping (A23, membership through the trait engine)
-        $healerTemperaments  = self::PHYSICAL_HEALER_TEMPERAMENTS;
+        // Trait-gated pseudo-dimension remapping (A23 membership / pride, through the trait engine)
         $warriorTemperaments = self::PHYSICAL_WARRIOR_TEMPERAMENTS;
 
         foreach ($activeStates as $state) {
@@ -12934,11 +13080,13 @@ class RelationshipDynamics
 
             foreach ($modifiers as $dimId => $delta) {
                 // Remap pseudo-dimensions
-                if ($dimId === 'trust_healer') {
-                    if ($temperament && RelDynTraits::membership($temperament, $healerTemperaments, $dynamics) >= 0.5) {
-                        $dimId = 'trust';
+                if ($dimId === 'respect_proud') {
+                    // pride is her own trait (Pd), not a temperament label: a proud NPC loses face in front of the dirty
+                    $px = $temperament ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+                    if ($px !== null && floatval($px['Pd'] ?? 0.0) >= 0.5) {
+                        $dimId = 'respect';
                     } else {
-                        continue; // Skip -- temperament does not qualify
+                        continue;
                     }
                 }
                 if ($dimId === 'respect_warrior') {
@@ -13030,6 +13178,73 @@ class RelationshipDynamics
         // Update tracking: only keep states that are still active
         $dynamics['_active_physical_states']   = array_values(array_intersect($previousStates, $activeStates));
         $dynamics['_applied_physical_deltas']  = $appliedDeltas;
+    }
+
+    /**
+     * The trust a healer earns (A23 'injured' trust +3, April: "toward the healer"): the NPC who
+     * heals the player, not any NPC of a healer temperament. Reads the NPC's own heal casts on the
+     * player from core's eventlog (type npcspellcast, "<NPC> casts <spell> on <player>"; the plugin
+     * logs every actor's casts while DETECT_MAGIC_EVENT is on) since the last one this NPC saw
+     * (_heal_seen_rowid; the first sight anchors at the newest row, history is not replayed). A cast
+     * counts when its spell name holds one of physical_states.heal_spells, it is no older than
+     * heal_max_age_game_hours, and the previous award was heal_cooldown_game_hours or more before it
+     * (a healing hands spammed through one fight is one act of care). Each award is trust
+     * +physical_states.healer_trust through applyDelta, and remembered in _heal_last.
+     * No heal event is unknown, never "not healed". Returns the trust applied.
+     */
+    public static function consumeHealEvents(string $npcName, string $playerName, array &$dynamics, ?string $temperament = null): float
+    {
+        $db = $GLOBALS['db'] ?? null;
+        $cfg = (array) (self::configValue('physical_states') ?? []) + self::defaultConfig()['physical_states'];
+        $trust = floatval($cfg['healer_trust']);
+        if (!$db || $trust <= 0.0 || trim($npcName) === '' || trim($playerName) === '') return 0.0;
+        try {
+            $top = $db->fetchOne('SELECT rowid FROM eventlog ORDER BY rowid DESC LIMIT 1');
+            $newest = intval($top['rowid'] ?? 0);
+            $seen = $dynamics['_heal_seen_rowid'] ?? null;
+            if (!is_numeric($seen) || $newest < intval($seen)) {
+                $dynamics['_heal_seen_rowid'] = $newest;   // first sight (or a rebuilt eventlog): nothing before it counts
+                return 0.0;
+            }
+            $seen = intval($seen);
+            if ($newest === $seen) return 0.0;
+            $prefix = $db->escapeLiteral(self::escapeLike($npcName . ' casts ') . '%');
+            $limit = 50;
+            $rows = $db->fetchAll('SELECT rowid, data, gamets FROM eventlog WHERE rowid > ' . $seen . ' AND rowid <= ' . $newest
+                . " AND type = 'npcspellcast' AND data LIKE {$prefix} ESCAPE '\\' ORDER BY rowid LIMIT {$limit}");
+            $rows = is_array($rows) ? $rows : [];
+            $dynamics['_heal_seen_rowid'] = count($rows) >= $limit ? intval(end($rows)['rowid']) : $newest;
+        } catch (Throwable $e) {
+            self::logError('heal events', $e);
+            return 0.0;
+        }
+
+        $now = self::currentGamets();
+        $maxAge = floatval($cfg['heal_max_age_game_hours']) * self::GAMETS_PER_DAY / 24.0;
+        $cooldown = floatval($cfg['heal_cooldown_game_hours']) * self::GAMETS_PER_DAY / 24.0;
+        $applied = 0.0;
+        foreach ($rows as $r) {
+            $rest = substr((string) $r['data'], strlen($npcName . ' casts '));
+            $at = strrpos($rest, ' on ');
+            if ($at === false) continue;   // no target: a self-cast
+            $spell = strtolower(trim(substr($rest, 0, $at)));
+            $target = trim(preg_replace('/\s*\([^)]*\)\s*$|[.,!?\s]+$/u', '', substr($rest, $at + 4)));
+            if (strcasecmp($target, $playerName) !== 0) continue;
+            $isHeal = false;
+            foreach ((array) $cfg['heal_spells'] as $kw) {
+                if ($kw !== '' && strpos($spell, strtolower((string) $kw)) !== false) { $isHeal = true; break; }
+            }
+            if (!$isHeal) continue;
+            $gamets = floatval($r['gamets'] ?? 0);
+            if ($now > 0 && $gamets > 0 && $now - $gamets > $maxAge) continue;   // too long ago to be her act of the moment
+            $last = floatval($dynamics['_heal_last']['gamets'] ?? 0);
+            if ($last > 0 && $gamets > 0 && $gamets >= $last && $gamets - $last < $cooldown) continue;
+            $actual = self::applyDelta('trust', $dynamics, $trust, $temperament);
+            $applied += $actual;
+            $dynamics['_heal_last'] = ['gamets' => $gamets, 'spell' => trim(substr($rest, 0, $at)), 'trust' => round($actual, 3)];
+            self::log("[RelDyn-PHYS] {$npcName} healed {$playerName} ({$dynamics['_heal_last']['spell']}): trust " . round($actual, 2));
+        }
+        return $applied;
     }
 
     // ========== END PHYSICAL STATE BRIDGES ==========
@@ -15435,7 +15650,7 @@ class RelationshipDynamics
         $dynamics['_attraction_tier_ceiling'] = $maxTier;
         $dynamics['_attraction_friendzoned'] = $friendzoned;
         $dynamics['_attraction_passion_mult'] = $passionMult;
-        $dynamics['_attraction_matrix_last_eval'] = intval($dynamics['interaction_count'] ?? 0);
+        $dynamics['_attraction_matrix_last_eval'] = self::interactionClock($dynamics);
 
         self::log("[MATRIX] {$npcName}: beauty=" . round($pillarScores['beauty'], 2) . " str=" . round($pillarScores['strength'], 2) . " status=" . round($pillarScores['status'], 2) . " comp=" . round($pillarScores['competence'], 2) . " tier={$maxTier} fz=" . ($friendzoned ? '1' : '0') . " passion_mult=" . round($passionMult, 2));
 
@@ -15619,7 +15834,7 @@ class RelationshipDynamics
                     'from' => self::getRelationshipType($npcName, $dynamics),
                     'from_override' => $currentOverride,   // restored on recovery (null = follow core)
                     'to' => 'parasite',
-                    'at' => intval($dynamics['interaction_count'] ?? 0),
+                    'at' => self::interactionClock($dynamics),
                     'reason' => 'gift_ratio=' . round($giftRatio, 2) . ' threshold=' . round($threshold, 2),
                 ];
                 $dynamics['_relationship_type_override'] = 'parasite';
@@ -15657,7 +15872,7 @@ class RelationshipDynamics
             $dynamics['_relationship_type_history'][] = [
                 'from' => 'parasite',
                 'to' => $previousType ?? 'friend',
-                'at' => intval($dynamics['interaction_count'] ?? 0),
+                'at' => self::interactionClock($dynamics),
                 'reason' => 'genuine_recovery',
             ];
             self::log("[TYPE] Parasite recovery for {$npcName}: returning to " . ($previousType ?? 'default'));
@@ -16403,8 +16618,14 @@ class RelationshipDynamics
 
         // Gate 5 (interaction source only): Interaction gap check
         if ($triggerSource === 'interaction') {
-            $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+            // The lifetime clock, not interaction_count: that one decays (diminishing returns) and at a
+            // steady pace settles, so a gap measured on it never reopened. A bookmark ahead of the clock
+            // (a decayed-count value from an older save) is marked now.
+            $interactionCount = self::interactionClock($dynamics);
             $lastDiaryInteraction = intval($dynamics['_diary_last_interaction'] ?? 0);
+            if ($lastDiaryInteraction > $interactionCount) {
+                $lastDiaryInteraction = $dynamics['_diary_last_interaction'] = $interactionCount;
+            }
             $gap = intval($config['diary_interaction_gap'] ?? self::DIARY_INTERACTION_GAP);
             if (($interactionCount - $lastDiaryInteraction) < $gap) {
                 return false;
@@ -16595,8 +16816,8 @@ class RelationshipDynamics
         // Accumulated time bookmark
         $dynamics['_diary_last_accumulated'] = intval($dynamics['_accumulated_time'] ?? 0);
 
-        // Interaction count bookmark
-        $dynamics['_diary_last_interaction'] = intval($dynamics['interaction_count'] ?? 0);
+        // Interaction bookmark (the lifetime clock: checkDiaryTrigger gate 5)
+        $dynamics['_diary_last_interaction'] = self::interactionClock($dynamics);
 
         // Divine intervention count bookmark
         $dynamics['_diary_last_di_count'] = intval($dynamics['_divine_intervention_count'] ?? 0);
@@ -16941,17 +17162,19 @@ class RelationshipDynamics
             $dynamics['_ick_tracker'] = [
                 'romantic_count'     => 0,
                 'total_count'        => 0,
-                'window_start'       => intval($dynamics['interaction_count'] ?? 0),
+                'window_start'       => self::interactionClock($dynamics),
                 'ick_active'         => false,
                 'ick_cooldown_until_play_gamets' => 0,
             ];
         }
 
         $tracker = &$dynamics['_ick_tracker'];
-        $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+        // The lifetime clock (a window measured on the decaying interaction_count never rolled at a steady pace)
+        $interactionCount = self::interactionClock($dynamics);
 
-        // Reset window if exceeded
-        if (($interactionCount - intval($tracker['window_start'])) >= self::ICK_WINDOW_SIZE) {
+        // Reset window if exceeded (or if its start is ahead of the clock: a value of the decayed count from an older save)
+        if (($interactionCount - intval($tracker['window_start'])) >= self::ICK_WINDOW_SIZE
+            || intval($tracker['window_start']) > $interactionCount) {
             $tracker['romantic_count'] = 0;
             $tracker['total_count'] = 0;
             $tracker['window_start'] = $interactionCount;
