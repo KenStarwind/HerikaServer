@@ -460,19 +460,24 @@ final class RelDynBatchQFixTest extends TestCase
     /**
      * feedback_passion_spikes: the spike "bypasses session / gate multipliers" and "hits hard". The
      * decisions §13 uphill (the continuous attraction multiplier above the spark) is such a
-     * multiplier: the moment is the size who she is makes it (temperament, floor, arousal), not
-     * crushed by how far she is below her floors. What stays absolute: a hard zero (§13: 100 x 0),
-     * a closed channel (§15, an asexual NPC's touch), the MDD 1.4 ceiling and the tier's governor
-     * (caps, not multipliers).
+     * multiplier: with its prerequisite met (decisions §20.1: she finds him very attractive, or a
+     * status gap with attraction and aspiration; here spike_open 1) the moment is the size who she
+     * is makes it (temperament, floor, arousal), not crushed by how far she is below her floors;
+     * without it the moment climbs the uphill like any gain. What stays absolute either way: a hard
+     * zero (§13: 100 x 0), a closed channel (§15, an asexual NPC's touch), the MDD 1.4 ceiling and
+     * the tier's governor (caps, not multipliers).
      */
-    public function testTheMomentBypassesTheUphillButNotAHardZeroOrACap(): void
+    public function testTheMomentBypassesTheUphillWithItsPrerequisiteButNotAHardZeroOrACap(): void
     {
         $open = $this->heart('Romantic', 30.0);
-        $hill = $this->heart('Romantic', 30.0, ['passion_mult' => 0.09]);   // far below her floors
+        $hill = $this->heart('Romantic', 30.0, ['passion_mult' => 0.09, 'spike_open' => 1.0]);   // far below her floors, but her type
         $a = RelDynPassion::addTrigger('Aela', $open, 'touch', ['touch']);
         $b = RelDynPassion::addTrigger('Aela', $hill, 'touch', ['touch']);
         $this->assertGreaterThan(5.0, $a);
-        $this->assertEqualsWithDelta($a, $b, 1e-9, 'the uphill does not crush the moment');
+        $this->assertEqualsWithDelta($a, $b, 1e-9, 'the uphill does not crush the moment of her type');
+        $climb = $this->heart('Romantic', 30.0, ['passion_mult' => 0.09]);
+        $c = RelDynPassion::addTrigger('Aela', $climb, 'touch', ['touch']);
+        $this->assertEqualsWithDelta($a * 0.09, $c, 1e-9, 'without the prerequisite it climbs the uphill like any gain');
 
         $zero = $this->heart('Romantic', 30.0, ['spark_mult' => 0.0, 'passion_mult' => 0.0, 'hard_zero' => 'orientation']);
         $this->assertSame(0.0, RelDynPassion::addTrigger('Aela', $zero, 'touch', ['touch']), 'a hard zero stays zero');

@@ -90,7 +90,16 @@
  *                     'units' => [unit => ['score' => pillar points 0..100, 'floor' => pillar points,
  *                                'met' => bool (at its MDD bar), 'm' => multiplier]],
  *                     'respect_mult' => respect-gain multiplier (0.5..2.0, 1 at the neutral pillar score),
- *                     'friendzoned' => bool (a label; no passion cap)]
+ *                     'friendzoned' => bool (a label; no passion cap),
+ *                     decisions §20.1 / §20.3: 'spike_open' => 0..1 (how far a passion moment skips the uphill),
+ *                     'spike_via' => ?type|status_gap (what opened it), 'interest' => 0..1 (how interested she is,
+ *                     shown or not; 0 when she is not drawn), 'shyness' => 0..1 (low self-confidence and self-esteem: how much
+ *                     deeper a bond she needs before her felt text voices it)]
+ *   keeping          ['enabled' => bool, 'fear' => 0..1 (of losing the player), 'band' => ?uneasy|clinging|controlling,
+ *                     'target' => ?0..1, 'stakes' => ?0..1 (what there is to lose), 'disposition' => 0..1 (who she is:
+ *                     her attachment corners x insecurity x possessiveness), 'threat' => ['absence', 'jealousy', 'deficit',
+ *                     'grievance', 'threat'] each 0..1, 'held' => ['trust' | 'comfort' => points <= 0 the grip holds
+ *                     down], 'expression' / 'style' => how she shows it] (RelDynKeeping, decisions §20.3)
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
  *   governor         null | ['tier' => distant|friendly|crush|committed|hostile, 'passion_floor',
  *                    'passion_ceiling' (passion points), 'raised' => bool] (MDD 8 tiered governors,
@@ -233,6 +242,11 @@ final class RelDynJev
             'respect_mult' => round(floatval($a['respect_mult'] ?? 1.0), 4),
             'score' => round(floatval($a['score'] ?? 0), 4),
             'friendzoned' => !empty($a['friendzoned']),
+            // decisions §20.1 / §20.3
+            'spike_open' => round(RelDynAttraction::spikeOpen($a), 4),
+            'spike_via' => isset($a['spike_prereq']['via']) ? (string) $a['spike_prereq']['via'] : null,
+            'interest' => RelDynAttraction::interest($dynamics)['interest'],
+            'shyness' => RelDynAttraction::shyness($dynamics),
         ];
 
         $place = null;
@@ -286,6 +300,7 @@ final class RelDynJev
             'concern' => RelDynConcern::jev($dynamics, $now),
             'let_in' => round(RelDynPullback::letIn($dynamics), 2),
             'pullback' => RelDynPullback::jev($dynamics, $now),
+            'keeping' => RelDynKeeping::jev($dynamics),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'resentment_arc' => RelDynResentment::jev($dynamics),
             'absence' => RelDynAbsence::jev($dynamics),
@@ -370,6 +385,13 @@ final class RelDynJev
                 . ' let_in=' . $f((float) $pb['let_in']) . ' ' . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
                 . ($pb['since_game_hours'] !== null ? ' ' . $f((float) $pb['since_game_hours']) . 'h' : '') . (!empty($pb['voiced']) ? ' voiced' : '');
         }
+        // compact: only while she fears losing the player and says so ("keeping=<fear>(<band> <expression>/<style>) held trust <points>");
+        // an uneasy worry is in the structured fields, not spent on every prompt
+        $kp = $s['keeping'] ?? null;
+        if (is_array($kp) && !empty($kp['enabled']) && in_array($kp['band'], ['clinging', 'controlling'], true)) {
+            $parts[] = 'keeping=' . number_format((float) $kp['fear'], 2, '.', '') . "({$kp['band']} {$kp['expression']}/{$kp['style']})"
+                . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '');
+        }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];
         $offsets = [];
@@ -414,6 +436,7 @@ final class RelDynJev
                 . ($a['won_over'] ? ' won_over' : '')
                 . ($a['channel'] !== null ? " channel={$a['channel']}" : '')
                 . ($a['passion_ceiling'] !== null ? ' passion_ceiling=' . $f($a['passion_ceiling']) : '');
+            // (spike_open, interest and shyness, decisions §20.1 / §20.3, are in the structured fields: the compact line has a budget)
         }
         if ($s['place'] !== null) {
             $parts[] = 'place=' . number_format($s['place']['valence'], 2, '.', '') . ($s['place']['dominant'] !== null ? "({$s['place']['dominant']})" : '');

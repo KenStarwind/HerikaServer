@@ -30,7 +30,7 @@ final class RelDynPassionSpikeConfigDb
  *     engine's passion_mult: Guarded 0.6), a higher floor makes it bigger, arousal amplifies it;
  *   - 55% kept per interaction: gone in about five exchanges; faded by absence (decisions §2);
  *   - every spike a passion gain through gainPassion: past the decisions §13 uphill (a
- *     multiplier), bounded by a hard zero, a closed channel, the MDD 1.4 ceiling and the tier's
+ *     multiplier) only with the §20.1 prerequisite, bounded by a hard zero, a closed channel, the MDD 1.4 ceiling and the tier's
  *     governor; no spike while the Ick lasts;
  *   - effective passion = floor + spike: what display reads; the affinity drive keeps the floor.
  * Units: passion / spike points 0..100, arousal points 0..100.
@@ -130,10 +130,14 @@ final class RelDynPassionSpikeTest extends TestCase
         $zero = $this->npc('Romantic', 40.0, 10.0, ['spark_mult' => 0.0, 'passion_mult' => 0.0, 'hard_zero' => 'orientation']);
         $this->assertSame(0.0, RelDynPassion::addTrigger('Tester', $zero, 'touch', ['touch']));
         $this->assertSame(0.0, RelDynPassion::spike($zero));
-        // The uphill (above the spark at x0.25) is a multiplier the moment bypasses
-        // (feedback_passion_spikes; batch-Q review): the full moment
+        // The uphill (above the spark at x0.25): decisions §20.1, a moment skips it only with a prerequisite
+        // (she finds him very attractive, or a status gap with attraction and aspiration). With it
+        // (spike_open 1) the full moment (feedback_passion_spikes; batch-Q review) ...
+        $typed = $this->npc('Romantic', 40.0, 10.0, ['passion_mult' => 0.25, 'spike_open' => 1.0]);
+        $this->assertEqualsWithDelta(13.0, RelDynPassion::addTrigger('Tester', $typed, 'touch', ['touch']), 1e-9);
+        // ... without it the moment climbs the uphill like any other gain
         $hill = $this->npc('Romantic', 40.0, 10.0, ['passion_mult' => 0.25]);
-        $this->assertEqualsWithDelta(13.0, RelDynPassion::addTrigger('Tester', $hill, 'touch', ['touch']), 1e-9);
+        $this->assertEqualsWithDelta(13.0 * 0.25, RelDynPassion::addTrigger('Tester', $hill, 'touch', ['touch']), 1e-9);
         // The MDD 1.4 ceiling bounds floor + spike
         $ceiling = $this->npc('Romantic', 40.0, 10.0, ['passion_ceiling' => 45.0]);
         $this->assertEqualsWithDelta(5.0, RelDynPassion::addTrigger('Tester', $ceiling, 'touch', ['touch']), 1e-9);

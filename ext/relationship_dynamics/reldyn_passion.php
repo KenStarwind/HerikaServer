@@ -14,9 +14,11 @@
  *     (decayTime: a moment left alone in silence does not last). It never forms on a floor below
  *     spike.min_floor (no racing heart for a stranger); temperament scales it (the trait engine's
  *     passion_mult: Guarded 0.6), a higher floor makes it bigger, arousal amplifies it. Every
- *     spike is a passion gain through RelationshipDynamics::gainPassion, bypassing the decisions
- *     §13 uphill (a multiplier) but not a hard zero, a closed channel, the MDD 1.4 ceiling or the
- *     tier's governor (RelDynAttraction::spikeFactor).
+ *     spike is a passion gain through RelationshipDynamics::gainPassion. It skips the decisions
+ *     §13 uphill (a multiplier) only with a prerequisite (decisions §20.1): she already finds the
+ *     player very attractive (he is her type), or there is a significant status gap with attraction
+ *     and aspiration in it; otherwise it climbs the uphill like any other gain. Never a hard zero,
+ *     a closed channel, the MDD 1.4 ceiling or the tier's governor (RelDynAttraction::spikeFactor).
  *   effective passion = floor + spike (+ the weather's pull on passion, weather-gravity-pull):
  *   what display, desire and the context read. The affinity drive, the stage floor, the
  *   attraction's won-over and emergent emotions keep reading the floor (lasting state).

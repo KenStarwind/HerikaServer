@@ -375,6 +375,17 @@ try {
     RelationshipDynamics::logError('pulling back', $e);
 }
 
+// ========== KEEPING: THE FEAR OF LOSING THE RELATIONSHIP (Ken 2026-10-01 §20.3, reldyn_keeping.php) ==========
+// Every NPC carries some, scaled by her attachment corners, insecurity and possessiveness: it follows its
+// target (what there is to lose x who she is x what looks like losing it) on the game calendar, and above a
+// point the grip costs the bond (a standing offset on trust and comfort). After the pull-back (shares its
+// inputs); said in the context hook.
+try {
+    RelDynKeeping::advance($npcName, $dynamics, RelationshipDynamics::currentGamets());
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('keeping', $e);
+}
+
 // ========== CREATURE MOODIFICATIONS (feedback_creature_moodifications, decisions §7) ==========
 // Vampires by night / day, werewolves by Skyrim's moon: the row's offsets are held while it
 // holds and taken back when it changes (or when creature_moodifications_enabled is off); a

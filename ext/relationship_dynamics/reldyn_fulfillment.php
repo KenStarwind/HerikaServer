@@ -130,6 +130,19 @@ class RelDynFulfillment
             // Places and things experienced together (facet weight 0..1 x units):
             'place_units_per_game_hour' => 0.5,   // per game hour spent in a place (placeTurn exposure)
             'experience_units'          => 0.5,   // per discrete experience (a fight, a gift's facets)
+            // Decisions §20.4 (Ken, 2026-10-01): fighting side by side counts as time together, weighted by
+            // whether she likes it (not everyone's favourite activity). A fight she was in beside the
+            // player delivers `units` of the time-together love-language axis (the same scale as
+            // experience_units), x her weight for it: the signed mean of her combat / adventure / danger
+            // facet preferences (facets: facet => weight in that mean), 0.5 + 0.5 x the mean, never under
+            // min_weight (a fight she dreads is still a little time together, never nothing, never a
+            // penalty). Aela (combat high) gets nearly all of it; a scholarly NPC a fifth of it.
+            'shared_fight' => [
+                'enabled' => true,
+                'units' => 0.5,
+                'facets' => ['combat' => 1.0, 'adventure' => 0.6, 'danger' => 0.5],
+                'min_weight' => 0.1,
+            ],
 
             // --- levels -> coverage ---
             'target_units'        => 3.0,   // level at which an axis is fully covered (coverage +1); 0 = -1
@@ -229,6 +242,17 @@ class RelDynFulfillment
     public static function enabled(): bool
     {
         return !empty(self::config()['enabled']);
+    }
+
+    /** The 'shared_fight' table (decisions §20.4); a key stored before it existed falls back to its default. */
+    public static function sharedFightConfig(?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        $d = self::configDefaults()['shared_fight'];
+        $s = is_array($cfg['shared_fight'] ?? null) ? $cfg['shared_fight'] : [];
+        $out = array_replace($d, $s);
+        $out['facets'] = is_array($s['facets'] ?? null) ? $s['facets'] : $d['facets'];
+        return $out;
     }
 
     private static function day(): float
@@ -673,6 +697,37 @@ class RelDynFulfillment
             if ($v > 0) $out[$facet] = $v;
         }
         return $out;
+    }
+
+    /**
+     * Decisions §20.4: how much a fight beside the player is time together for HER (min_weight..1): the
+     * signed mean of her combat / adventure / danger preferences ($prefs: facet => -1..+1, shared_fight.facets
+     * the weights), 0.5 + 0.5 x the mean. Pure.
+     */
+    public static function sharedFightWeight(array $prefs, ?array $cfg = null): float
+    {
+        $sf = self::sharedFightConfig($cfg);
+        $sum = 0.0;
+        $w = 0.0;
+        foreach ((array) $sf['facets'] as $facet => $weight) {
+            if (!in_array($facet, RelDynFacets::FACETS, true) || !is_numeric($weight) || floatval($weight) <= 0.0) continue;
+            $sum += floatval($weight) * max(-1.0, min(1.0, floatval($prefs[$facet] ?? 0.0)));
+            $w += floatval($weight);
+        }
+        $liking = $w > 0.0 ? $sum / $w : 0.0;
+        return max(max(0.0, min(1.0, floatval($sf['min_weight']))), min(1.0, 0.5 + 0.5 * $liking));
+    }
+
+    /**
+     * Decisions §20.4: a fight she was in beside the player is time together, by how much she likes
+     * fighting (sharedFightWeight): deliver units x weight of the time-together axis at $at to the pair
+     * (no-op without state, or for an NPC with no such axis). Returns the levels applied by axis.
+     */
+    public static function recordSharedFight(array &$dynamics, array $prefs, float $at, string $target = self::PLAYER): array
+    {
+        $sf = self::sharedFightConfig();
+        if (empty($sf['enabled']) || floatval($sf['units']) <= 0.0) return [];
+        return self::deliver($dynamics, [RelationshipDynamics::LL_TIME => floatval($sf['units']) * self::sharedFightWeight($prefs)], $at, $target);
     }
 
     /** Places / things experienced together: deliver $facets x $units at $at to the pair (no-op without state). */

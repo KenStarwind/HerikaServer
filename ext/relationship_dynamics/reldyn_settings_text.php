@@ -89,6 +89,7 @@ final class RelDynSettingsText
         'fulfillment' => 'What she needs from the relationship and how well it has covered that: needs, deliveries, decay, bands, the mature boundary.',
         'concern' => 'Protective concern: how risk is appraised, how fast concern builds and fades, and how she voices it.',
         'pullback' => 'Letting in and pulling back: how far she has let the player in (comfort and trust), and the temporary closing off when the weather turns inclement and she feels unfulfilled: what presses on her, how maturity and guard change the threshold, how she is met, and how she shows it.',
+        'keeping' => 'The fear of losing the relationship: what there is to lose, who she is (attachment, insecurity, possessiveness), what looks like losing it, how fast it builds and eases, what it costs the bond, and how she shows it.',
         'resentment_arc' => 'Resentment\'s turning points: when she confronts the player, resentment toward herself, guilt bleeding into other bonds.',
         'intimacy_need' => 'How much physical and emotional closeness she needs (from her traits), and what deprivation does.',
         'impulse' => 'The want layer: short-term urges (romantic, protective, social, survival, curiosity), how they decay, and how she acts on them.',
@@ -113,6 +114,10 @@ final class RelDynSettingsText
     const HINTS = [
         // ---- switches ---------------------------------------------------
         'attraction.standards.enabled' => 'Her standards depend on who she is (how open, how mature, how proud): a demanding NPC wants more of the player before she warms. Off: every NPC uses the same flat floor.',
+        'attraction.spike_prereq.enabled' => 'A passion moment (something flirty landing) skips the slow uphill only when she already finds the player very attractive, or when the player stands well above her in standing and she is attracted and values it. Off: every moment skips it, as before.',
+        'attraction.interest.enabled' => 'Her interest in the player counts whether or not she shows it: a drawn but shy NPC is still interested for the Ick and the like, and low self-confidence needs a deeper bond before her felt text lets her say it. Off: no shyness gating, and no hidden interest.',
+        'fulfillment.shared_fight.enabled' => 'Fighting beside the player counts as time together for her needs, by how much she likes fighting (combat, adventure, danger tastes): Aela nearly fully, a scholar a sliver. Off: a fight feeds only her own facet needs.',
+        'keeping.enabled' => 'She fears losing the player and acts to keep the relationship, by who she is (attachment, insecurity, possessiveness): a secure NPC barely, a toxic one possessive and controlling even to the bond\'s detriment. Off: no such fear, and what it held down is lifted.',
         'attraction.respect_mult_enabled' => 'How fast the player earns her respect scales with their standing in her eyes: a legend earns it up to twice as fast, a nobody at half speed (losses are not scaled). Off: respect gains come at the raw rate.',
         'intrinsic_goals.enabled' => 'She forms goals of her own (bond seeking, purpose, mastery, safety, independence, revenge) from her backstory and how the bond is going.',
         'memory_translation.enabled' => 'Turns the relationship\'s numbers into memory-like words for her prompt.',
