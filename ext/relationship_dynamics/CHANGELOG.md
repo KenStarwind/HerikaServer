@@ -3,6 +3,18 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Unreleased (after v0.19) — the pages, made usable in a real browser
+The NPC editor's Save works in a browser: the Dimensions, Attraction and Attachment forms no longer fail the browser's own
+step check on a value like 32.77, and saving the Interests form no longer pins every interest the browser had nudged to
+the slider's grid. A save also stops putting back what the game changed while the page sat open (an affinity gain, a
+trust gain, a switch changed on another page): only what you changed is written, on the editor and on the hub. Her record
+of grievances shows what each one was, and the fulfillment spider is the same drawing on the editor and the player
+profile, sized so its words stay readable and whole at phone width; the shareable card scales to the screen instead of
+scrolling sideways. In the hub every setting reads in plain words: trait codes by name, abbreviations spelled out,
+a name that said "Beauty" seventeen times now says whose and which, every switch says what it switches and the ones that
+ship off say so, the big keyword and weight tables say what a row means and what its two numbers are, and each section
+says what it is.
+
 ## reldyn-v0.19 — RelDyn gets its own pages: the hub, every part of her, and how they see you
 The plugin button in CHIM's Server Plugins page now opens RelDyn's hub, and from there every RelDyn page is a click
 away. The hub holds every setting RelDyn has, grouped by what it shapes, each showing its default, whether it was

@@ -124,6 +124,7 @@ if (!$embed) {
 .rd-field-body, .rd-field-meta, .rd-hint { min-width: 0; }
 .rd-field-meta { font-size: 0.78em; color: var(--rd-muted); }
 .rd-hint { grid-column: 2; font-size: 0.78em; color: #7d7d7d; }
+.rd-section-help { margin: 0 0 12px; font-size: 0.86em; color: #9a9a9a; }
 .rd-field.rd-changed { background: rgba(242, 124, 17, 0.06); }
 .rd-field.rd-changed .rd-field-head label { color: #ffcf9f; }
 .rd-wrap input[type="text"], .rd-wrap input[type="number"], .rd-wrap input[type="search"], .rd-wrap select, .rd-wrap textarea {

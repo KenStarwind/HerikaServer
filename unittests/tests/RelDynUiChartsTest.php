@@ -166,6 +166,7 @@ final class RelDynUiChartsTest extends TestCase
             foreach (array_slice($labels, 0, $n) as $i => $label) $axes[] = ['axis' => "a{$i}", 'label' => $label, 'need' => 0.9 - 0.05 * $i, 'coverage' => 0.0];
             $x = self::xml(RelDynUiCharts::fulfillmentSpider(['npc' => 'Muiri', 'axes' => $axes]));
             [, , $w, $h] = array_map('floatval', explode(' ', (string) $x['viewBox']));
+            self::assertStringNotContainsString('…', (string) $x->asXML(), "{$n} axes: no label is cut short with an ellipsis");
             self::assertLessThanOrEqual(440.0, $w, "{$n} axes: a drawing a phone can show without shrinking it to nothing");
             $scale = min(1.0, 317.0 / $w);   // the chart box of a 375px phone
             foreach ($x->xpath('//s:text') as $t) {

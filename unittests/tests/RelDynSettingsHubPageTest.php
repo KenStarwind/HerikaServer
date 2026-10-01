@@ -280,6 +280,71 @@ PHP);
         $this->assertSame([], $r['writes']);
     }
 
+    /** What a browser posts from the form holding field $code, with nothing touched (a checkbox only when ticked, its hidden twin otherwise). */
+    private function browserPost(string $html, string $code): array
+    {
+        $x = self::dom($html);
+        $form = $x->query('//form[@method="post"][.//*[@name="f[' . $code . ']"]]')->item(0);
+        $this->assertNotNull($form, 'the form holding ' . $code);
+        $post = ['f' => []];
+        foreach ($x->query('.//input|.//textarea|.//select', $form) as $el) {
+            $name = $el->getAttribute('name');
+            if ($name === '') continue;
+            $type = strtolower($el->getAttribute('type') ?: 'text');
+            if ($type === 'checkbox' && !$el->hasAttribute('checked')) continue;
+            if ($el->nodeName === 'select') {
+                $value = '';
+                foreach ($x->query('.//option', $el) as $o) {
+                    if ($value === '' || $o->hasAttribute('selected')) $value = $o->getAttribute('value');
+                    if ($o->hasAttribute('selected')) break;
+                }
+            } elseif ($el->nodeName === 'textarea') {
+                $value = $el->textContent;
+            } else {
+                $value = $el->getAttribute('value');
+            }
+            if (preg_match('/^f\[(.*)\]$/', $name, $m)) $post['f'][$m[1]] = $value; else $post[$name] = $value;
+        }
+        $post['save'] = '1';
+        return $post;
+    }
+
+    public function testASaveFromAStalePageKeepsWhatAnotherPageChangedMeanwhile(): void
+    {
+        $mask = self::code('social_masking_enabled');
+        $prompt = self::code('player_mirror', 'prompt', 'enabled');
+        // the Switches page was loaded on a fresh install ...
+        $r = self::request('GET', ['tab' => 'settings']);
+        $this->assertCleanRun($r, 'features');
+        $post = $this->browserPost($r['html'], $mask);
+        $this->assertArrayHasKey('snap', $post, 'the form carries the values it showed');
+        $this->assertSame('', $post['f'][$prompt], 'the prompt switch showed off');
+        // ... then the Player profile page switched player_mirror.prompt on; now she ticks only masking and saves the stale form
+        $post['f'][$mask] = '1';
+        $post['csrf_token'] = self::TOKEN;
+        $meanwhile = ['player_mirror' => ['prompt' => ['enabled' => true]], 'config_schema' => RelationshipDynamics::CONFIG_SCHEMA];
+        $r = self::request('POST', ['tab' => 'settings'], $post, $meanwhile);
+        $this->assertCleanRun($r, 'stale save');
+        $this->assertTrue($r['row']['social_masking_enabled'], 'her change is saved');
+        $this->assertTrue($r['row']['player_mirror']['prompt']['enabled'], 'the profile page\'s switch is not reverted by a form that had not seen it');
+        $this->assertStringContainsString('Saved 1 setting: social_masking_enabled.', $r['html']);
+    }
+
+    public function testTheSettingsPageShowsPlainWordLabelsAndHints(): void
+    {
+        $r = self::request('GET', ['tab' => 'settings']);
+        $this->assertCleanRun($r, 'features');
+        $x = self::dom($r['html']);
+        $row = $x->query('//div[contains(@class,"rd-field")][.//input[@name="f[' . self::code('memory_translation', 'commit', 'enabled') . ']"]]')->item(0);
+        $this->assertNotNull($row);
+        $this->assertStringContainsString('Memory translation › Commit (switch)', $row->textContent);
+        $this->assertStringContainsString('Ships off: it is a new write into a core table.', $row->textContent);
+        // a section says what it is above its tables
+        $r = self::request('GET', ['tab' => 'settings', 'group' => 'inner']);
+        $this->assertStringContainsString('The want layer', $r['html']);
+        $this->assertStringContainsString('class="rd-section-help"', $r['html']);
+    }
+
     public function testSaveAndResetRoundTrip(): void
     {
         $mask = self::code('social_masking_enabled');

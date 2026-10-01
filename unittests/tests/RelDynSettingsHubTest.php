@@ -385,6 +385,111 @@ final class RelDynSettingsHubTest extends TestCase
     // The POST handler
     // ------------------------------------------------------------------
 
+    // ------------------------------------------------------------------
+    // Plain-word labels and hints (usability): the hub shows 4000+ settings, most of them keys of a table
+    // ------------------------------------------------------------------
+
+    public function testEverySettingHasAPlainWordLabelAndAHint(): void
+    {
+        $fields = RelDynSettings::fields();
+        $bySection = [];
+        foreach ($fields as $f) {
+            $this->assertNotSame('', trim($f['hint']), $f['dotted'] . ' has no hint');
+            $this->assertMatchesRegularExpression('/\p{L}{3}/u', $f['label'], $f['dotted'] . ': a label with words in it, not a bare key');
+            $this->assertDoesNotMatchRegularExpression('/^[^\p{L}]*$/u', $f['label'], $f['dotted']);
+            $bySection[$f['path'][0]][mb_strtolower($f['label'])][] = $f['dotted'];
+        }
+        foreach ($bySection as $section => $labels) {
+            foreach ($labels as $label => $dotted) {
+                $this->assertCount(1, $dotted, "{$section}: the label '{$label}' names more than one setting: " . implode(', ', array_slice($dotted, 0, 4)));
+            }
+        }
+    }
+
+    public function testCrypticKeysReadInWordsAndDoNotRepeat(): void
+    {
+        $f = fn(string ...$path) => RelDynSettings::fields()[self::code(...$path)];
+        $this->assertStringContainsString('Expressiveness', $f('impulse', 'default_traits', 'E')['label'], 'E is a trait code');
+        $this->assertStringContainsString('Protectiveness', $f('impulse', 'trait_gain', 'protective', 'Pr')['label']);
+        $positive = $f('facet_appraisal', 'felt_text', 'thing', 'spiritual', '+');
+        $this->assertStringContainsString('Spiritual', $positive['label']);
+        $this->assertStringContainsString('Positive', $positive['label']);
+        $this->assertStringContainsString('likes it', $positive['hint']);
+        $this->assertStringContainsString('Spells Learned', $f('player_profile', 'archetypes', 'mage', 'deeds', 'stat:Spells Learned')['label']);
+        $this->assertStringNotContainsString('Stat:', $f('player_profile', 'archetypes', 'mage', 'deeds', 'stat:Spells Learned')['label']);
+        $this->assertStringContainsStringIgnoringCase('place of interest', $f('facet_appraisal', 'poi_valence_min')['label']);
+        $this->assertStringContainsStringIgnoringCase('minimum', $f('facet_appraisal', 'poi_valence_min')['label']);
+        $this->assertStringContainsStringIgnoringCase('multiplier', $f('attraction', 'respect_mult_enabled')['label']);
+        // 17 settings were all called "Beauty" or "Status" inside the Attraction group
+        $labels = [];
+        foreach (RelDynSettings::fields() as $x) if ($x['path'][0] === 'attraction') $labels[] = $x['label'];
+        $this->assertSame($labels, array_values(array_unique($labels)), 'no label repeats inside Attraction');
+        // the two numbers of an evidence row say what they are
+        $dragons = $f('reputation', 'fames', 'dragonborn', 'evidence', 'dragons');
+        $this->assertStringContainsString('half its weight', $dragons['hint']);
+        $this->assertStringContainsString('then its weight', $dragons['hint']);
+    }
+
+    public function testEverySwitchSaysWhatItSwitchesAndTheOnesThatShipOffSaySoInTheirOwnWords(): void
+    {
+        foreach (RelDynSettings::featureFields() as $f) {
+            $this->assertTrue(RelDynSettingsText::isExplicit($f['dotted']), $f['dotted'] . ' has a hint written for it, not composed');
+            if (count($f['path']) > 1 && end($f['path']) === 'enabled' && !isset(RelDynSettings::LABELS[$f['dotted']])) {
+                $this->assertStringEndsWith('(switch)', $f['label'], $f['dotted']);
+                $this->assertGreaterThan(8, mb_strlen($f['label']), $f['dotted']);
+            }
+            if ($f['default'] === false && $f['dotted'] !== 'log_enabled' && $f['dotted'] !== 'social_masking_enabled') {
+                $this->assertGreaterThan(30, mb_strlen($f['hint']), $f['dotted'] . ' ships off: its hint says why');
+            }
+        }
+        $f = RelDynSettings::fields();
+        $this->assertSame('Memory translation › Commit (switch)', $f[self::code('memory_translation', 'commit', 'enabled')]['label']);
+        $this->assertStringContainsString('Ships off', $f[self::code('memory_translation', 'commit', 'enabled')]['hint']);
+        $this->assertStringContainsString('Ships off', $f[self::code('gift_delta', 'value_base', 'enabled')]['hint']);
+        $this->assertStringContainsString('Ships off', $f[self::code('mood_axes', 'social', 'enabled')]['hint']);
+        $this->assertStringContainsString('Ships off', $f[self::code('player_mirror', 'prompt', 'enabled')]['hint']);
+    }
+
+    // ------------------------------------------------------------------
+    // A form is a snapshot: a field posted as the form showed it is no edit, whatever changed since
+    // ------------------------------------------------------------------
+
+    public function testAFieldPostedAsTheFormShowedItIsNoEditEvenWhenItChangedSince(): void
+    {
+        $gating = fn(string $k) => RelDynSettings::fields()[self::code('prompt_gating', $k)];
+        $shownDisplay = RelDynSettings::effective();   // the form was rendered here
+        $codes = [self::code('prompt_gating', 'fame_max_lines'), self::code('prompt_gating', 'token_budget'), self::code('player_mirror', 'prompt', 'enabled')];
+        $snap = RelDynSettings::snapshot($codes, $shownDisplay);
+        $this->assertSame($codes, array_keys($snap));
+        // while it sat open, the player page switched the prompt on and a second tab set fame_max_lines
+        RelDynSettings::apply([[['player_mirror', 'prompt', 'enabled'], true], [['prompt_gating', 'fame_max_lines'], 7]], []);
+        RelationshipDynamics::clearConfigCache();
+        // she saves that form, having changed only token_budget; every field is posted as the form showed it
+        $f = [
+            self::code('prompt_gating', 'fame_max_lines') => RelDynSettings::formValue($gating('fame_max_lines'), RelDynSettings::valueAt($shownDisplay, ['prompt_gating', 'fame_max_lines'])),
+            self::code('prompt_gating', 'token_budget') => '99',
+            self::code('player_mirror', 'prompt', 'enabled') => '',   // an unticked box posts its hidden empty twin
+        ];
+        $r = RelDynSettings::handlePost(['csrf_token' => $_SESSION[RelDynSettings::CSRF_KEY], 'f' => $f, 'snap' => json_encode($snap), '_complete' => '1']);
+        $this->assertTrue($r['ok'] && $r['saved'], implode(' ', $r['errors']));
+        $this->assertStringContainsString('Saved 1 setting: prompt_gating.token_budget.', implode(' ', $r['messages']));
+        $row = $this->db->row();
+        $this->assertSame(7, $row['prompt_gating']['fame_max_lines'], 'the other tab\'s save survives');
+        $this->assertSame(99, $row['prompt_gating']['token_budget']);
+        $this->assertTrue($row['player_mirror']['prompt']['enabled'], 'the player page\'s switch survives');
+
+        // without a snapshot (an older form) the post behaves as before: compared with what RelDyn reads now
+        $r = RelDynSettings::handlePost(['csrf_token' => $_SESSION[RelDynSettings::CSRF_KEY], 'f' => [
+            self::code('player_mirror', 'prompt', 'enabled') => ''], '_complete' => '1']);
+        $this->assertTrue($r['ok']);
+        $this->assertFalse($this->db->row()['player_mirror']['prompt']['enabled'] ?? false);
+        // a snapshot that is not JSON, or not a table of strings, is no snapshot
+        $r = RelDynSettings::handlePost(['csrf_token' => $_SESSION[RelDynSettings::CSRF_KEY], 'snap' => '{"x":[1]}', 'f' => [
+            self::code('prompt_gating', 'token_budget') => '5'], '_complete' => '1']);
+        $this->assertTrue($r['ok'] && $r['saved']);
+        $this->assertSame(5, $this->db->row()['prompt_gating']['token_budget']);
+    }
+
     public function testPostWithoutTheSessionTokenWritesNothing(): void
     {
         foreach ([null, '', 'wrong', $_SESSION[RelDynSettings::CSRF_KEY] . 'x'] as $token) {

@@ -24,6 +24,7 @@
  */
 
 require_once __DIR__ . '/relationship_dynamics.php';
+require_once __DIR__ . '/reldyn_settings_text.php';
 
 final class RelDynSettings
 {
@@ -464,6 +465,13 @@ final class RelDynSettings
         if (self::$fieldCache !== null) return self::$fieldCache;
         $out = [];
         foreach (self::defaults() as $key => $value) self::collect([$key], $value, $out);
+        // plain-word labels (qualified where a label would repeat in its section) and a hint for every setting
+        $labels = RelDynSettingsText::labels($out, self::LABELS);
+        foreach ($out as $code => &$f) {
+            $f['label'] = $labels[$code] ?? $f['label'];
+            if ($f['hint'] === '') $f['hint'] = RelDynSettingsText::hint($f['path'], $f['kind'], $f['default']);
+        }
+        unset($f);
         return self::$fieldCache = $out;
     }
 
@@ -518,8 +526,41 @@ final class RelDynSettings
 
     public static function humanize(string $key): string
     {
-        $s = trim((string) preg_replace('/[_\s]+/', ' ', $key));
-        return $s === '' ? $key : ucfirst($s);
+        return RelDynSettingsText::humanize($key);
+    }
+
+    /** Short digest of the text a field showed (a form's snapshot keeps one per field, not the text). */
+    public static function digest(string $text): string
+    {
+        return substr(md5($text), 0, 12);
+    }
+
+    /**
+     * A form's snapshot of what it showed: code => digest of the field's form text, for the fields $codes, from
+     * $display (effective(), what RelDyn read when the page was drawn; a key it lacks shows its default).
+     */
+    public static function snapshot(array $codes, array $display): array
+    {
+        $fields = self::fields();
+        $out = [];
+        foreach ($codes as $code) {
+            $field = $fields[(string) $code] ?? null;
+            if ($field === null) continue;
+            $v = self::valueAt($display, $field['path'], $found);
+            $out[(string) $code] = self::digest(self::formValue($field, $found ? $v : $field['default']));
+        }
+        return $out;
+    }
+
+    /** A POST's 'snap' field: code => digest (anything that is not a JSON table of strings is no snapshot). */
+    private static function decodeSnapshot($raw): array
+    {
+        if (!is_string($raw) || $raw === '' || strlen($raw) > 400000) return [];
+        $j = json_decode($raw, true);
+        if (!is_array($j)) return [];
+        $out = [];
+        foreach ($j as $code => $d) if (is_string($d)) $out[(string) $code] = $d;
+        return $out;
     }
 
     /** Vars a leaf posts (a checkbox posts its hidden twin too). */
@@ -701,7 +742,9 @@ final class RelDynSettings
      *   csrf_token  the session token (core's pattern); anything else: nothing is read or written
      *   _complete   the form's last input: missing = the POST was cut short (max_input_vars), refused
      *   reset       a path code: that key (or section) back to its default, nothing else
-     *   f[code]     field values; only those that differ from what RelDyn reads now are applied
+     *   f[code]     field values; only those the user changed are applied: posted differently from what the form
+     *               showed (snap, a digest per field), and from what RelDyn reads now (without a snap: the latter only)
+     *   snap        JSON code => digest of the text each field showed
      */
     public static function handlePost(array $post): array
     {
@@ -736,11 +779,22 @@ final class RelDynSettings
         }
         $edits = [];
         $display = self::effective();
+        $shown = self::decodeSnapshot($post['snap'] ?? null);
         foreach ((array) ($post['f'] ?? []) as $code => $raw) {
             $field = $fields[(string) $code] ?? null;
             if ($field === null) {
                 $res['errors'][] = 'The form names a setting this RelDyn does not have (reload the page). Nothing was saved.';
                 return $res;
+            }
+            // posted back as the form showed it: not an edit, whatever that setting reads as now (another page or tab
+            // may have changed it while this one was open; a save must not put it back)
+            if (isset($shown[(string) $code])) {
+                $asShown = str_replace("\r\n", "\n", (string) (is_array($raw) ? end($raw) : $raw));
+                if ($field['kind'] === 'bool') {
+                    $b = self::parse($field, $raw);
+                    $asShown = $b['ok'] && $b['value'] ? '1' : '';
+                }
+                if (self::digest($asShown) === $shown[(string) $code]) continue;
             }
             $now = self::valueAt($display, $field['path'], $found);
             // posted back exactly as the form showed it: not an edit, whatever the value (a stored value

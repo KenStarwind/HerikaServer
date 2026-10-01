@@ -1,0 +1,394 @@
+<?php
+/**
+ * Relationship Dynamics — plain-word labels and hints for the settings hub (roadmap settings-page).
+ *
+ * The hub's form is generated from RelationshipDynamics::defaultConfig(): thousands of leaves, most of
+ * them keys of a table (a class, a keyword, a trait code, "+" / "-"). A bare key means nothing out of
+ * context, so every field gets:
+ *
+ *   a label   what it is in words: abbreviations spelled out (mult, poi, mf), trait codes by name
+ *             (E = expressiveness), "+" / "-" as positive / negative reading, "stat:Spells Learned" as
+ *             a game stat; where a short label would repeat inside its section (Beauty x17) it is
+ *             qualified by the keys above it until it is unique ("Floors › Beauty"); a switch is named
+ *             by what it switches ("Memory translation › Commit (switch)").
+ *   a hint    one or two sentences: an explicit one (HINTS, RelDynSettings::LABELS) where a person needs
+ *             one to decide, a family rule for the big keyword / weight tables (PATTERNS), else what the
+ *             section does (SECTION_HELP) with what kind of value this is and its unit.
+ *
+ * Pure text: nothing here reads or writes state. RelDynSettings::fields() calls it once per process.
+ */
+
+final class RelDynSettingsText
+{
+    /** Whole words spelled out in a label (lower case key => replacement). */
+    const WORDS = [
+        'mult' => 'multiplier', 'min' => 'minimum', 'max' => 'maximum', 'pct' => 'percent', 'poi' => 'place of interest',
+        'hwm' => 'high-water mark', 'll' => 'love language', 'npc' => 'NPC', 'npcs' => 'NPCs', 'aff' => 'affinity',
+        'cfg' => 'config', 'llm' => 'LLM', 'tts' => 'TTS', 'ssc' => 'social sensitivity curve', 'mf' => 'M/F coordinates',
+        'conf' => 'confidence', 'attr' => 'attraction', 'dim' => 'dimension', 'dims' => 'dimensions', 'src' => 'source',
+        'k' => 'rate (k)', 'log2' => 'log2',
+    ];
+
+    /** Keys that stand for something else (exact key => words). */
+    const SEGMENTS = [
+        '+' => 'Positive', '-' => 'Negative',
+        '+M/+F' => 'M coordinate up, F coordinate up', '+M/-F' => 'M coordinate up, F coordinate down',
+        '-M/+F' => 'M coordinate down, F coordinate up', '-M/-F' => 'M coordinate down, F coordinate down',
+        'ex' => 'Ex-partner',
+    ];
+
+    /** Prefix before a colon in a key (stat:Murders) => words. */
+    const PREFIXES = [
+        'stat' => 'Game stat', 'questline' => 'Questline', 'eventlog' => 'Event count', 'ledger' => 'Ledger',
+        'form' => 'Form', 'journal' => 'Journal', 'kills' => 'Kills', 'survival' => 'Survival',
+    ];
+
+    /** What each top-level section is, in a sentence (the hub shows it above the section's tables). */
+    const SECTION_HELP = [
+        'felt_steering' => 'How her feelings are put into words for the prompt: how many lines each bond depth gets, how strong a feeling must be to be spoken, and the wording of each. Never numbers.',
+        'attraction' => 'The Attraction Matrix: what she finds attractive in the player (looks, strength, status, competence), how demanding she is, and how that gates romance and scales passion.',
+        'preference_jealousy_mult' => 'How much more or less jealous she is, by what kind of relationship she wants.',
+        'quests' => 'How quests touch her: the duty override that softens negative reactions during obligations, what counts as hostile, and which quest stages change a life.',
+        'intrinsic_goals' => 'Goals she forms on her own from her backstory and how the bond is going: how many at once, how they are chosen, when they renew.',
+        'reputation' => 'What the player is known for (fame, infamy, wealth, the named fames) and how word of it reaches people who have not met them.',
+        'memory_translation' => 'How the relationship\'s numbers become memory-like words, and the anchor moments (first meeting, first gift...) she keeps.',
+        'player_mirror' => 'The player\'s behaviour profile built from how NPCs experience them (the Player profile page): its window, evidence, character mode, and whether it reaches prompts.',
+        'prompt_gating' => 'Who knows the player: what strangers may know of the name, the story and rumours, by bond depth.',
+        'item_modifiers' => 'How items move her dimensions: which dimensions an item is appraised on, and how many event-log rows are read per request.',
+        'baseline_drift' => 'How her resting point (baseline) slowly moves when behaviour keeps pulling the same way.',
+        'per_bond_display' => 'How the depth and type of a bond colour the values she shows toward the player (display only, never stored).',
+        'self_confidence' => 'When high self-confidence with low maturity reads as arrogance.',
+        'social_masking' => 'Who wears a social mask (maturity, attachment style, status trait) and how much she must trust someone to drop it.',
+        'charisma' => 'How the player\'s style (rock, catalyst, charmer) is recognised from graded exchanges.',
+        'autonomy' => 'The autonomy override: how likely she is to refuse a command (from distrust, disrespect, resentment...), and which actions she may deny.',
+        'director_goals' => 'How long a goal assigned by the Director stays active.',
+        'temperament_autogen' => 'The tables that guess her temperament, maturity type and trait tags from class, faction, skills, voice, race and the words of her bio.',
+        'traits' => 'How her ten trait values are assigned (read from her bio, or from labels) and how far the read reaches past the presets.',
+        'trait_reader' => 'The background reader that reads her bio once with a model to set her traits: connector, jobs per run, limits.',
+        'attachment' => 'Attachment on two axes (anxiety and avoidance): how they are derived, how experience moves them, the thresholds between styles, and the words used.',
+        'facet_preferences' => 'How her likes and dislikes (the interests) are derived from class, faction, skills, archetype, temperament and traits.',
+        'facet_appraisal' => 'How she reacts to places and things she meets: the felt reactions, comfort and mood changes, weather feeding, discomfort in places she dislikes.',
+        'walkaway_sever_types' => 'What a bond type becomes when a permanent walkaway severs it.',
+        'passion_absence_attachment_mult' => 'How attachment style changes how fast passion fades while apart.',
+        'passion_dynamics' => 'Passion\'s floor and spike, the desire loop and derived warmth.',
+        'bleedout_response' => 'How she reacts when the player falls in combat: rage against panic, humiliation, shame.',
+        'neglect_bond_types' => 'Per kind of bond: how many game days without contact before neglect starts, and how fast resentment grows after that.',
+        'neglect_severity' => 'How hard neglect and the fade of warmth hit her, from codependence, maturity and pride.',
+        'bond_break' => 'What happens on return from an absence long enough to break the bond: resentment, lower comfort and trust, and how she shows it.',
+        'affinity_rot' => 'Core affinity bleeding away in a romance with open conflict or low passion and no positive contact.',
+        'affinity_tag_love_language' => 'Which love language each kind of evaluated event counts as.',
+        'jealousy_bystander_commitment' => 'How much more jealous bystanders get, by their bond type, when the player is intimate with someone else.',
+        'power_gap_core_types' => 'How little she can leave, by bond type (servant, fanatical, indebted, fearful).',
+        'place_facets' => 'How places (by tag, name, inside or outside, time of day, weather) map onto the interests.',
+        'physical_states' => 'Thresholds for physical states such as being injured.',
+        'environment_facet_effects' => 'What certain kinds of place (danger, dark) do to anyone\'s dimensions.',
+        'environment_time_effects' => 'What the hour (dawn, dusk...) does to anyone\'s dimensions.',
+        'facet_classifier' => 'The tables that sort places, things, creatures, activities and spells into interests: keywords, priors and the text-matching settings.',
+        'thing_appraisal' => 'How topics and gifts are appraised: the interest multiplier range and the match threshold.',
+        'player_profile' => 'How the player\'s archetype and pillars (looks, strength, status, competence) are read from the game\'s player data.',
+        'fulfillment' => 'What she needs from the relationship and how well it has covered that: needs, deliveries, decay, bands, the mature boundary.',
+        'concern' => 'Protective concern: how risk is appraised, how fast concern builds and fades, and how she voices it.',
+        'resentment_arc' => 'Resentment\'s turning points: when she confronts the player, resentment toward herself, guilt bleeding into other bonds.',
+        'intimacy_need' => 'How much physical and emotional closeness she needs (from her traits), and what deprivation does.',
+        'impulse' => 'The want layer: short-term urges (romantic, protective, social, survival, curiosity), how they decay, and how she acts on them.',
+        'creatures' => 'Vampire and werewolf mood changes: detection, the moon, night and day, the return from beast form.',
+        'combat' => 'Combat as bonding: witness, shared and danger multipliers, kill streaks, rescue.',
+        'governors' => 'The passion floor and ceiling of each bond tier, and the attracted NPC\'s raise.',
+        'exclusivity' => 'The natural pull toward the player (drive, disposition, title), how suitors change it, and the words between NPCs.',
+        'romance_promotion' => 'How a bond climbs the romance ladder: moments, confession, momentum, and the handoff to Sharmat.',
+        'save_load' => 'What survives loading an earlier save: relationship state, gold ledger checkpoints.',
+        'diary_reflection' => 'Her reflection on core\'s diary: how deep it goes, what each verdict changes, the moments it keeps.',
+        'poll' => 'What each core poll runs: the play heartbeat, the save-load check, creature forms.',
+        'protocols' => 'Divine intervention, grief and the widow\'s lock, the ick, and the parasite check.',
+        'substances' => 'Her own drinking and addiction: drunk levels, tolerance, craving, withdrawal, recovery.',
+        'mood_axes' => 'The M and F coordinates, and arousal and valence as live state: how they are derived, settle and are fed.',
+        'post_intimacy' => 'Aftermath states: afterglow, regret, the sober correction, and their words.',
+        'gift_delta' => 'How a gift moves affinity: the base points, love language, and the stolen and re-gifted cases.',
+    ];
+
+    /** Explicit hints (dotted path => sentence). Every switch has one; the plain top-level settings have one. */
+    const HINTS = [
+        // ---- switches ---------------------------------------------------
+        'attraction.standards.enabled' => 'Her standards depend on who she is (how open, how mature, how proud): a demanding NPC wants more of the player before she warms. Off: every NPC uses the same flat floor.',
+        'attraction.respect_mult_enabled' => 'How fast the player earns her respect scales with their standing in her eyes: a legend earns it up to twice as fast, a nobody at half speed (losses are not scaled). Off: respect gains come at the raw rate.',
+        'intrinsic_goals.enabled' => 'She forms goals of her own (bond seeking, purpose, mastery, safety, independence, revenge) from her backstory and how the bond is going.',
+        'memory_translation.enabled' => 'Turns the relationship\'s numbers into memory-like words for her prompt.',
+        'memory_translation.commit.enabled' => 'Also writes the memory wrapper and anchor notes into core\'s memory table. Ships off: it is a new write into a core table.',
+        'memory_translation.anchors.enabled' => 'Keeps the anchor moments (first meeting, first gift, first fight beside the player, first rescue, first intimacy) as memories she can return to.',
+        'memory_translation.anchors.revisit.enabled' => 'Lets an anchor moment come back in conversation now and then (with a cooldown); it can warm her passion a little.',
+        'player_mirror.enabled' => 'Builds the player\'s behaviour profile from how NPCs experience them (the Player profile page). Off: nothing new is observed.',
+        'player_mirror.reputation.enabled' => 'Lets the profile set a stranger\'s first impression: new NPCs start with a little trust or distrust from how the player has treated others.',
+        'player_mirror.prompt.enabled' => 'NPCs sense the player\'s profile: the most telling bands reach their prompts as one felt line, in words. Ships off (opt-in); the Player profile page has the same switch.',
+        'trait_reader.enabled' => 'Reads each NPC\'s bio once with a model to set her traits (a background queue that runs after the evaluation). Off: no bio is read.',
+        'attachment.drift.enabled' => 'Lived experience slowly moves her attachment axes (earned security, and the slingshot back).',
+        'passion_dynamics.spike.enabled' => 'Passion spikes: fast, event-driven passion on top of the slowly earned floor. Off: only the floor.',
+        'passion_dynamics.derived_warmth_enabled' => 'Warmth is derived from passion and comfort instead of being stored on its own.',
+        'bond_break.enabled' => 'On return from an absence long enough to break the bond, she shows it (resentment, lower comfort and trust, in her own way). Off: absence only decays the bond.',
+        'affinity_rot.enabled' => 'In a romance with an open conflict or low passion, affinity bleeds away when no positive interaction comes for a while.',
+        'fulfillment.enabled' => 'She has needs from the relationship (from her interests, love languages, traits and intimacy need) and tracks how well the player covers them.',
+        'concern.enabled' => 'Protective concern for the player: appraising risk, building concern and voicing it.',
+        'resentment_arc.enabled' => 'Resentment\'s turning points: confrontation, resentment toward herself and guilt bleed (each has its own switch below).',
+        'resentment_arc.confrontation.enabled' => 'At her own threshold she confronts the player with the grievance instead of simmering.',
+        'resentment_arc.self.enabled' => 'Resentment toward herself (people-pleasers) has its own thresholds, crisis and recovery.',
+        'resentment_arc.guilt_bleed.enabled' => 'Guilt from her self-resentment spills over into her other bonds.',
+        'intimacy_need.enabled' => 'How much physical and emotional closeness she needs (from her traits), and what deprivation does.',
+        'impulse.enabled' => 'Short-term urges (romantic, protective, social, survival, curiosity) that she may act on, in her own style.',
+        'combat.rescue.enabled' => 'Rescue moments in combat (who pulled whom out of trouble) move the bond.',
+        'governors.enabled' => 'Passion stays inside a floor and a ceiling set by the bond\'s tier. Off: no tier limits.',
+        'exclusivity.enabled' => 'A natural pull toward the player that grows as the bond deepens, with its own reactions around suitors.',
+        'romance_promotion.enabled' => 'A romance can climb its ladder (moments, confession, momentum) and hand over to Sharmat.',
+        'save_load.enabled' => 'Loading an earlier save puts RelDyn\'s state back in step with it (relationship state, gold ledger).',
+        'substances.enabled' => 'Her own drinking and addiction: drunk levels, tolerance, craving, withdrawal.',
+        'mood_axes.derived_coords.enabled' => 'The M and F coordinates are derived from respect, self-confidence, trust and comfort.',
+        'mood_axes.settle.enabled' => 'Arousal and valence settle back toward rest over play time after an event.',
+        'mood_axes.social.enabled' => 'Ships off. Social events (grievance, jealousy, rescue, insult, betrayal, praise...) also push arousal and valence.',
+        'post_intimacy.enabled' => 'After intimacy she is in an aftermath state (afterglow, regret, the sober correction) with its own words.',
+        'gift_delta.value_base.enabled' => 'Ships off. A gift\'s worth in gold scales how much it moves her (between the minimum and maximum multiplier below). Off: every gift counts the same.',
+        'gift_delta.stolen.enabled' => 'A gift that was stolen costs the player trust and respect (and a grievance).',
+        'gift_delta.regift.enabled' => 'Giving her back something she gave away costs the player trust and respect.',
+
+        // ---- plain top-level settings ----------------------------------------
+        'dimension_max_context_lines' => 'Most lines of dimension feeling that may be put into the prompt at once.',
+        'attraction_beauty_weight' => 'How much looks count in what she finds attractive (1 = normal).',
+        'attraction_strength_weight' => 'How much strength counts in what she finds attractive (1 = normal).',
+        'attraction_status_weight' => 'How much status counts in what she finds attractive (1 = normal).',
+        'attraction_competence_weight' => 'How much competence counts in what she finds attractive (1 = normal).',
+        'cascade_threshold' => 'How big a change in core affinity (points) must be before it ripples to NPCs bonded to her.',
+        'cascade_decay' => 'The fraction (0 to 1) of a change that passes on to the next NPC in the ripple.',
+        'social_sensitivity_signals' => 'Which evaluated signals are scaled by how deep the bond is (how much the player\'s words land); one per line.',
+        'walkaway_return_grace_contacts' => 'How many of the player\'s contacts she waits through, after a resolved boundary test, before she may walk away again while still resentful.',
+        'walkaway_parting_game_minutes' => 'Game minutes after she walks away in which the player\'s lines count as the parting conversation.',
+        'walkaway_affinity_at' => 'Core affinity (-100 to 100) at or below which she walks away, in a bond that once existed.',
+        'walkaway_affinity_min_tier' => 'How deep the bond must once have been (0 stranger to 3 bonded) for low affinity to make her walk away.',
+        'reunion_min_play_minutes' => 'Real minutes of play the time apart must hold for a reunion (a wait or a sleep alone is not enough).',
+        'fester_resentment_per_game_day' => 'Resentment points a not-yet-mature NPC gains per game day while a conflict stays open.',
+        'fester_maturity_below' => 'Maturity (0 to 100) below which an open conflict festers.',
+        'passion_absence_grace_game_hours' => 'Game hours without contact before passion starts to fade.',
+        'passion_absence_fade_per_game_day' => 'Passion points lost per game day after the grace period (before the attachment multiplier).',
+        'warmth_absence_grace_game_hours' => 'Game hours without contact before warmth starts to fade (times her neglect grace).',
+        'warmth_absence_fade_per_game_day' => 'Warmth points lost per game day after the grace period (times her neglect rate).',
+        'calendar_scan_interval_game_hours' => 'NPCs whose calendar was last advanced this many game hours ago are brought up to date on any request.',
+        'calendar_scan_max_npcs' => 'Most NPCs brought up to date per request.',
+        'eval_significance_clamp' => 'Most points one evaluated exchange can move a dimension by (times the exchange\'s significance, 0 to 1).',
+        'affinity_modifier_min' => 'Lowest the combined affinity multiplier may go.',
+        'affinity_modifier_max' => 'Highest the combined affinity multiplier may go.',
+        'affinity_modifiers' => 'Rules that multiply affinity changes (by gain or loss, tags, conditions). Advanced: edit as JSON.',
+        'grievance_resentment_raw' => 'Resentment points for each flagged grievance, before the severity multiplier.',
+        'grievance_severity_mult' => 'Multiplier by grievance severity: the numbers are for severity 0, 1, 2 and 3, in that order.',
+        'resentment_positive_decay' => 'Resentment points removed by each positive interaction.',
+        'jealousy_resentment_k' => 'How fast sustained jealousy turns into resentment (higher is faster).',
+        'jealousy_resentment_above' => 'Jealousy level (0 to 100) above which jealousy starts turning into resentment.',
+        'jealousy_eval_gain' => 'Jealousy points from one evaluated jealousy event at the lowest intensity, before the multipliers.',
+        'jealousy_intensity_mult' => 'Multiplier by jealousy intensity: the numbers are for intensity 0, 1, 2 and 3, in that order.',
+        'jealousy_trust_damping' => 'How strongly trust calms possessive jealousy (0 = not at all).',
+        'jealousy_grievance_kinds' => 'Grievance kinds from the evaluation that are really jealousy (a rival); one per line.',
+        'jealousy_bystander_tags' => 'Event tags that make nearby NPCs jealous when the player is intimate with someone; one per line.',
+        'jealousy_walkaway_at' => 'Jealousy level (0 to 100) at or above which she walks away.',
+        'power_gap_in_party' => 'How little she can leave (0 to 1) while she is in the player\'s party.',
+        'power_gap_factions' => 'Faction rules that set how little a member can leave. Advanced: edit as JSON.',
+        'conflict_session_gap_game_hours' => 'Game hours of silence that end a "session" when watching for a conflict from an affinity drop.',
+    ];
+
+    /**
+     * Family rules for the big tables: [regex on the dotted path, hint with {1}.. = the captured keys in words].
+     * First match wins.
+     */
+    const PATTERNS = [
+        // evidence tables: key => [half, weight]
+        ['/^(?:reputation\.(?:fame|infamy)|reputation\.fames\.[^.]+\.evidence|attraction\.status_markers\.[^.]+|player_profile\.archetypes\.[^.]+\.(?:deeds|anchor\.evidence)|player_profile\.pillar_components\.[^.]+)\.[^.]+$/',
+            'One kind of evidence about the player (a game stat, a questline, a count). Two numbers: the amount at which it counts for half its weight, then its weight (0 to 1). Several kinds combine; each adds less than the last.'],
+        ['/^facet_appraisal\.felt_text\.(place|thing)\.([^.]+)\.\+(?:\.(mild|strong))?$/',
+            'The words she is told when a {1} touches her interest in {2} and she likes it{3}. Feeling in words; {NAME} and {THING} are filled in.'],
+        ['/^facet_appraisal\.felt_text\.(place|thing)\.([^.]+)\.-(?:\.(mild|strong))?$/',
+            'The words she is told when a {1} touches her interest in {2} and she dislikes it{3}. Feeling in words; {NAME} and {THING} are filled in.'],
+        ['/^facet_classifier\.anchors\.([^.]+)$/', 'Describes the {1} interest in words; the classifier compares places and things to it to see how much {1} they carry.'],
+        ['/^facet_classifier\.embedding\.(.+)$/', 'A setting of the text-matching model the classifier uses ({1}).'],
+        ['/^facet_classifier\.build\.(.+)$/', 'A setting for how the classifier\'s table is built ({1}).'],
+        ['/^facet_classifier\.prior_weights\.(.+)$/', 'How much the {1} prior counts when the classifier blends its evidence (0 to 1).'],
+        ['/^facet_classifier\.knowledge_class_prior\.([^.]+)\.([^.]+)$/', 'How strongly lore of the "{1}" kind counts toward the {2} interest (0 to 1).'],
+        ['/^facet_classifier\.category_prior\.([^.]+)\.([^.]+)$/', 'How strongly the "{1}" category counts toward the {2} interest (0 to 1).'],
+        ['/^facet_classifier\.tag_keywords\.([^.]+)\.([^.]+)$/', 'How strongly a place whose tag or name has "{1}" in it counts toward the {2} interest (0 to 1).'],
+        ['/^facet_classifier\.item_keywords\.([^.]+)\.([^.]+)$/', 'How strongly an item with "{1}" in its name counts toward the {2} interest (0 to 1).'],
+        ['/^facet_classifier\.creature_keywords\.([^.]+)\.([^.]+)$/', 'How strongly a creature with "{1}" in its name counts toward the {2} interest (0 to 1).'],
+        ['/^facet_classifier\.activity_keywords\.([^.]+)\.([^.]+)$/', 'How strongly an activity with "{1}" in it counts toward the {2} interest (0 to 1).'],
+        ['/^facet_classifier\.spell_subjects\.schools\.([^.]+)\.archetypes\.([^.]+)$/', 'How strongly spells of the {1} school point to the {2} archetype (0 to 1).'],
+        ['/^facet_classifier\.spell_subjects\.subjects\.([^.]+)\.facets\.([^.]+)$/', 'How strongly a spell about "{1}" counts toward the {2} interest (0 to 1).'],
+        ['/^facet_classifier\.spell_subjects\.subjects\.([^.]+)\.archetypes\.([^.]+)$/', 'How strongly a spell about "{1}" points to the {2} archetype (0 to 1).'],
+        ['/^facet_classifier\.spell_subjects\.subjects\.([^.]+)\.archetypes$/', 'The archetypes a spell about "{1}" points to; one per line.'],
+        ['/^facet_classifier\.spell_subjects\.(.+)$/', 'How spells are read for their subject ({1}).'],
+        ['/^place_facets\.tags\.([^.]+)\.([^.]+)$/', 'How strongly a location tagged "{1}" carries the {2} interest (0 to 1).'],
+        ['/^(?:felt_steering|memory_translation\.translation)\.salience\.([^.]+)$/', 'How prominent a "{1}" line is, from 0 to 1: when the prompt has no room for every line, the more salient ones are kept and come first.'],
+        ['/^place_facets\.name_keywords\.([^.]+)$/', 'The interests a location with "{1}" in its name carries (interest => 0 to 1); empty means none.'],
+        ['/^place_facets\.name_keywords\.([^.]+)\.([^.]+)$/', 'How strongly a location with "{1}" in its name carries the {2} interest (0 to 1).'],
+        ['/^place_facets\.(interior|exterior|wilderness)\.([^.]+)$/', 'How much of the {2} interest a place carries just by being {1} (0 to 1).'],
+        ['/^place_facets\.time_of_day\.([^.]+)\.([^.]+)$/', 'How much of the {2} interest places carry at {1} (0 to 1).'],
+        ['/^place_facets\.weather\.([^.]+)\.([^.]+)$/', 'How much of the {2} interest places carry in {1} weather (0 to 1).'],
+        ['/^place_facets\.time_of_day_hours\.([^.]+)$/', 'The game hours (start, end) that count as {1}.'],
+        ['/^facet_preferences\.archetype_prefs\.([^.]+)\.([^.]+)$/', 'How much a {1} likes the {2} interest, from -1 (hates it) to +1 (loves it).'],
+        ['/^facet_preferences\.skill_facets\.([^.]+)\.([^.]+)$/', 'How much a high {1} skill points her toward the {2} interest (0 to 1).'],
+        ['/^facet_preferences\.temperament_prefs\.([^.]+)\.([^.]+)$/', 'How much a {1} temperament likes the {2} interest, from -1 (hates it) to +1 (loves it).'],
+        ['/^facet_preferences\.trait_prefs\.([^.]+)\.([^.]+)$/', 'How much a "{1}" trait tag pulls her toward the {2} interest, from -1 to +1.'],
+        ['/^attraction\.beauty\.keywords\.([^.]+)$/', 'Words in her view of the player\'s looks that she likes when she is a {1}; one per line.'],
+        ['/^attraction\.facet_archetypes\.([^.]+)\.([^.]+)$/', 'How much a {2} archetype counts toward the {1} interest in the attraction lens (0 to 1).'],
+        ['/^attraction\.lens_share\.([^.]+)$/', 'How much of her attraction lens looks at the player\'s {1} (0 to 1).'],
+        ['/^temperament_autogen\.(class|faction|skill)_archetypes\.(.+)$/', 'Which archetype a {1} matching "{2}" suggests.'],
+        ['/^temperament_autogen\.(archetype|voice|race)_temperament\.(.+)$/', 'Which temperament a {1} "{2}" suggests.'],
+        ['/\.felt_text(?:\.|$)/', 'Wording that reaches her prompt for this feeling ({NAME} and {PLAYER} are filled in). Words, never numbers.'],
+        ['/(?:^|\.)(?:text|style_text|strength_text|resolution_text)\./', 'Wording that reaches her prompt ({NAME}, {PLAYER} and similar are filled in). Words, never numbers.'],
+    ];
+
+    /** Unit notes by the last key of a setting (regex => sentence). */
+    const UNITS = [
+        ['/_per_game_day$/', 'Change per game day.'], ['/_per_game_hour$/', 'Change per game hour.'], ['/_per_play_minute$/', 'Change per minute of play.'],
+        ['/_per_hour$/', 'Change per real hour.'],
+        ['/_game_hours$/', 'In game hours.'], ['/_game_days$/', 'In game days.'], ['/_game_minutes$/', 'In game minutes.'],
+        ['/_play_minutes$/', 'In minutes of play.'], ['/_hours$/', 'In hours.'], ['/_mult$/', 'A multiplier (1 = no change).'],
+        ['/half_life/', 'Time for the effect to fall by half.'],
+    ];
+
+    // =====================================================================
+    // LABELS
+    // =====================================================================
+
+    /** One key in words. $path is the whole path, $i the key's position in it. */
+    public static function segment(string $seg, array $path, int $i): string
+    {
+        if (isset(self::SEGMENTS[$seg])) return self::SEGMENTS[$seg];
+        // a trait code under a table that is keyed by traits (E = expressiveness)
+        if ($i >= 1 && isset(RelDynTraits::TRAITS[$seg]) && self::traitTable($path, $i)) {
+            return ucfirst(RelDynTraits::TRAITS[$seg]) . ' (' . $seg . ')';
+        }
+        if (ctype_digit($seg)) return 'Level ' . $seg;
+        $p = strpos($seg, ':');
+        if ($p !== false && $p > 0 && isset(self::PREFIXES[strtolower(substr($seg, 0, $p))])) {
+            $rest = trim(substr($seg, $p + 1));
+            $rest = strpos($rest, '_') !== false || strtolower($rest) === $rest ? str_replace('_', ' ', $rest) : $rest;
+            return self::PREFIXES[strtolower(substr($seg, 0, $p))] . ' "' . $rest . '"';
+        }
+        return self::humanize($seg);
+    }
+
+    /** Is the key at $i of $path one of a table keyed by trait codes (default_traits, trait_weights, styles.*)? */
+    private static function traitTable(array $path, int $i): bool
+    {
+        foreach (array_slice($path, 0, $i) as $parent) {
+            if (in_array((string) $parent, ['default_traits', 'trait_weights', 'trait_gain', 'styles', 'traits'], true)) return true;
+        }
+        return false;
+    }
+
+    /** An underscored key as words, abbreviations spelled out. */
+    public static function humanize(string $key): string
+    {
+        $s = trim((string) preg_replace('/[_\s]+/', ' ', $key));
+        if ($s === '') return $key;
+        $words = [];
+        foreach (explode(' ', $s) as $w) {
+            // at100 = at 100
+            $words[] = self::WORDS[strtolower($w)] ?? (preg_match('/^([A-Za-z]+)(\d+)$/', $w, $m) ? $m[1] . ' ' . $m[2] : $w);
+        }
+        $out = implode(' ', $words);
+        return ucfirst($out);
+    }
+
+    /**
+     * Label for every field of $fields (code => field with 'path', 'dotted'), qualified where a label
+     * would repeat inside its top-level section. Fields with an explicit label (RelDynSettings::LABELS)
+     * are not touched. Returns code => label.
+     */
+    public static function labels(array $fields, array $explicit): array
+    {
+        $out = [];
+        $bySection = [];
+        foreach ($fields as $code => $f) {
+            $path = $f['path'];
+            if (isset($explicit[$f['dotted']])) { $out[$code] = $explicit[$f['dotted']][0]; continue; }
+            if (count($path) > 1 && (string) end($path) === 'enabled') {
+                // a switch is named by what it switches
+                $parents = [];
+                for ($i = 0; $i < count($path) - 1; $i++) $parents[] = self::segment((string) $path[$i], $path, $i);
+                $out[$code] = implode(' › ', array_slice($parents, -3)) . ' (switch)';
+                continue;
+            }
+            $segs = [];
+            foreach ($path as $i => $seg) $segs[] = self::segment((string) $seg, $path, $i);
+            $bySection[(string) $path[0]][$code] = $segs;
+        }
+        foreach ($bySection as $codes) {
+            $depth = [];
+            // a label with no real word in it (At 0, a bare number) always says what it belongs to
+            foreach ($codes as $code => $segs) $depth[$code] = !preg_match('/\p{L}{4}/u', (string) end($segs)) && count($segs) > 1 ? 2 : 1;
+            for ($pass = 0; $pass < 12; $pass++) {
+                $groups = [];
+                foreach ($codes as $code => $segs) $groups[mb_strtolower(self::compose($segs, $depth[$code]))][] = $code;
+                $changed = false;
+                foreach ($groups as $members) {
+                    if (count($members) < 2) continue;
+                    foreach ($members as $code) {
+                        if ($depth[$code] < count($codes[$code])) { $depth[$code]++; $changed = true; }
+                    }
+                }
+                if (!$changed) break;
+            }
+            foreach ($codes as $code => $segs) $out[$code] = self::compose($segs, $depth[$code]);
+        }
+        return $out;
+    }
+
+    private static function compose(array $segs, int $depth): string
+    {
+        return implode(' › ', array_slice($segs, -max(1, $depth)));
+    }
+
+    // =====================================================================
+    // HINTS
+    // =====================================================================
+
+    /** Is there a hint written for this exact setting (not one composed from its section)? */
+    public static function isExplicit(string $dotted): bool
+    {
+        return isset(self::HINTS[$dotted]) || isset(RelDynSettings::LABELS[$dotted]);
+    }
+
+    /** The hint of one setting: explicit, else its family's rule, else its section's help with the kind of value and unit. */
+    public static function hint(array $path, string $kind, $default): string
+    {
+        $dotted = implode('.', array_map('strval', $path));
+        if (isset(RelDynSettings::LABELS[$dotted]) && RelDynSettings::LABELS[$dotted][1] !== '') return RelDynSettings::LABELS[$dotted][1];
+        if (isset(self::HINTS[$dotted])) return self::HINTS[$dotted];
+        foreach (self::PATTERNS as [$regex, $text]) {
+            if (!preg_match($regex, $dotted, $m)) continue;
+            // the evidence rule is for the [half, weight] tables only
+            if (str_contains($text, 'Two numbers') && $kind !== 'numbers') continue;
+            $words = [];
+            foreach ($m as $k => $v) if ($k > 0) $words[$k] = $v !== '' ? ($k === 3 && in_array($v, ['mild', 'strong'], true) ? ', ' . $v . 'ly' : str_replace('_', ' ', $v)) : '';
+            return preg_replace_callback('/\{(\d)\}/', fn($mm) => $words[(int) $mm[1]] ?? '', $text);
+        }
+        $top = (string) $path[0];
+        $help = self::SECTION_HELP[$top] ?? null;
+        $last = (string) end($path);
+        $notes = [];
+        foreach (self::UNITS as [$regex, $note]) {
+            if (preg_match($regex, $last)) { $notes[] = $note; break; }
+        }
+        switch ($kind) {
+            case 'bool': $notes[] = 'On or off.'; break;
+            case 'int': $notes[] = 'A whole number.'; break;
+            case 'float': $notes[] = 'A number.'; break;
+            case 'numbers': $notes[] = 'A list of numbers, separated by commas.'; break;
+            case 'lines': $notes[] = 'One entry per line.'; break;
+            case 'enum': $notes[] = 'Pick one.'; break;
+            case 'json': $notes[] = 'Advanced: structured data (JSON).'; break;
+            case 'any': $notes[] = 'Leave empty for none.'; break;
+            default:
+                if (is_string($default) && strpbrk($default, '{') !== false) $notes[] = 'Wording for her prompt; placeholders like {NAME} are filled in.';
+        }
+        // a setting straight under its section says what the section is; deeper ones say where they sit (the hub shows
+        // the section's own help above its tables)
+        $parents = [];
+        for ($i = 0; $i < count($path) - 1; $i++) $parents[] = self::segment((string) $path[$i], $path, $i);
+        if (count($path) === 2 && $help !== null) return trim('Part of "' . $parents[0] . '": ' . $help . ' ' . implode(' ', $notes));
+        if ($parents !== []) return trim('Part of ' . implode(' › ', $parents) . '. ' . implode(' ', $notes));
+        return trim(implode(' ', $notes) . ($help !== null ? ' ' . $help : ''));
+    }
+}

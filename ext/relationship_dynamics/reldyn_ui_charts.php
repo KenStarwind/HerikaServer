@@ -320,7 +320,7 @@ final class RelDynUiCharts
         ], $opts + ['title' => ($npc !== '' ? "{$npc}: " : '') . 'needs and how well they are met', 'legend' => true,
             'ring_labels' => [[0.5, 'even'], [1.0, 'met']], 'empty' => 'No needs known yet.',
             // sized for a phone: a smaller drawing with larger type, labels wrapped, the room around the rim fitted to them
-            'radius' => 80, 'auto_pad' => true, 'label_wrap' => 12, 'label_lines' => 3, 'font' => 13, 'sub_font' => 12,
+            'radius' => 80, 'auto_pad' => true, 'label_wrap' => 12, 'label_lines' => 4, 'font' => 13, 'sub_font' => 12,
             'ring_font' => 12, 'legend_font' => 12]);
     }
 

@@ -230,11 +230,17 @@ final class RelDynSettingsView
     }
 
     /** The save bar and the sentinel that proves the POST arrived whole. */
-    public static function formClose(string $label = 'Save'): string
+    public static function formClose(string $label = 'Save', string $extra = ''): string
     {
         return '<div class="rd-save-bar"><button type="submit" class="rd-save" name="save" value="1">' . self::h($label) . '</button>'
             . '<span class="rd-save-note">Only the settings you change are stored; the rest follow RelDyn\'s defaults.</span></div>'
-            . '<input type="hidden" name="_complete" value="1"></form>';
+            . $extra . '<input type="hidden" name="_complete" value="1"></form>';
+    }
+
+    /** The form's snapshot of what it showed (RelDynSettings::handlePost: a field posted back as shown is no edit). */
+    public static function snapshotInput(array $codes, array $display): string
+    {
+        return '<input type="hidden" name="snap" value="' . self::h(json_encode(RelDynSettings::snapshot($codes, $display), JSON_UNESCAPED_SLASHES)) . '">';
     }
 
     /** A form with the given paths (nodes or leaves) rendered in order ($open: their tables start open). */
@@ -242,6 +248,7 @@ final class RelDynSettingsView
                                      bool $open = false): string
     {
         $out = self::formOpen($action, $csrf);
+        $codes = [];
         foreach ($paths as $p) {
             $node = RelDynSettings::valueAt(RelDynSettings::defaults(), $p);
             if (count($p) === 1 && RelDynSettings::isAssoc($node)) {
@@ -250,8 +257,9 @@ final class RelDynSettingsView
             } else {
                 $out .= self::node($p, $display, $overlay, $formKey, count($p) - 1, $open);
             }
+            foreach (array_keys(self::leavesUnder($p)) as $code) $codes[] = (string) $code;
         }
-        return $out . self::formClose();
+        return $out . self::formClose('Save', self::snapshotInput($codes, $display));
     }
 
     /** A reset button in a form of its own (a whole section back to its defaults). */
@@ -296,21 +304,19 @@ final class RelDynSettingsView
     public static function featuresPanel(array $display, array $overlay, string $action, string $csrf): string
     {
         $out = self::formOpen($action, $csrf) . '<div class="rd-switches">';
+        $codes = [];
         foreach (RelDynSettings::featureFields() as $code => $f) {
+            $codes[] = (string) $code;
             $d = RelDynSettings::valueAt($display, $f['path'], $found);
             if (!$found) $d = $f['default'];
             $s = RelDynSettings::valueAt($overlay, $f['path'], $sFound);
             if (!$sFound) $s = $f['default'];
-            $label = $f['label'];
-            if (count($f['path']) > 1 && $label === 'Enabled') {
-                $label = RelDynSettings::humanize((string) $f['path'][count($f['path']) - 2]);
-            }
-            $row = self::fieldRow((string) $code, $f, $d, $s, 'features', $label);
+            $row = self::fieldRow((string) $code, $f, $d, $s, 'features');
             $classes = ($d ? '' : ' rd-off') . ($f['default'] ? '' : ' rd-ships-off');
             $out .= '<div class="rd-switch' . $classes . '">' . $row
                 . ($f['default'] ? '' : '<span class="rd-ships-off-tag">ships off</span>') . '</div>';
         }
-        return $out . '</div>' . self::formClose('Save switches');
+        return $out . '</div>' . self::formClose('Save switches', self::snapshotInput($codes, $display));
     }
 
     /** One group: its plain keys in one form, each table section in its own card (split into forms by size). */
@@ -336,7 +342,8 @@ final class RelDynSettingsView
                 . '<h2>' . self::h(RelDynSettings::humanize($key)) . '</h2>'
                 . '<span class="rd-count"><code class="rd-path">' . self::h($key) . '</code> · ' . $total . ' settings'
                 . ($changed ? ', <b>' . $changed . ' changed</b>' : '') . '</span>'
-                . ($changed ? self::resetForm([$key], $action, $csrf, 'Reset section') : '') . '</div>';
+                . ($changed ? self::resetForm([$key], $action, $csrf, 'Reset section') : '') . '</div>'
+                . (isset(RelDynSettingsText::SECTION_HELP[$key]) ? '<p class="rd-section-help">' . self::h(RelDynSettingsText::SECTION_HELP[$key]) . '</p>' : '');
             if ($total > self::LAZY_LEAVES && $open !== $key) {
                 // a big table (the facet classifier's) loads on demand: the page stays light on a phone
                 $out .= '<a class="rd-link-card" href="' . self::h(self::url(['tab' => 'settings', 'group' => $group, 'open' => $key], $embed))
