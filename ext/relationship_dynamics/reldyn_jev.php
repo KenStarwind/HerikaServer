@@ -361,14 +361,14 @@ final class RelDynJev
         $parts[] = 'concern=' . $f($c['level']) . "({$c['band']}) incidents=" . $c['possessive_incidents'] . '/' . $c['protective_incidents']
             . ($pattern ? ' pattern=' . implode(',', $pattern) : '')
             . ($c['values_boundary'] !== 'none' ? " values_boundary={$c['values_boundary']}" : '');
-        // compact: "let_in=<points>" (not yet when below the line) and, while she is pulled back, "pullback=<pressure>/<on> ..."
-        $pb = $s['pullback'];
-        $parts[] = 'let_in=' . $f($s['let_in']) . ($pb['not_let_in_yet'] ? '(not yet)' : '');
-        if ($pb['enabled'] && ($pb['active'] || $pb['pressure'] > 0.2)) {
-            $parts[] = 'pullback=' . ($pb['active'] ? 'on' : 'off') . ' ' . number_format($pb['pressure'], 2, '.', '')
-                . ($pb['on'] !== null ? '/' . number_format($pb['on'], 2, '.', '') : '')
-                . ($pb['active'] ? ' ' . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
-                    . ($pb['since_game_hours'] !== null ? ' ' . $f($pb['since_game_hours']) . 'h' : '') . ($pb['voiced'] ? ' voiced' : '') : '');
+        // compact: only while she is pulled back ("pullback=on <pressure>/<on> let_in=<points> <band>/<style>[/<attachment>] <h>h [voiced]");
+        // otherwise let_in and the state are in the structured fields, not spent on every prompt
+        $pb = $s['pullback'] ?? null;
+        if (is_array($pb) && !empty($pb['enabled']) && !empty($pb['active'])) {
+            $parts[] = 'pullback=on ' . number_format((float) $pb['pressure'], 2, '.', '')
+                . ($pb['on'] !== null ? '/' . number_format((float) $pb['on'], 2, '.', '') : '')
+                . ' let_in=' . $f((float) $pb['let_in']) . ' ' . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
+                . ($pb['since_game_hours'] !== null ? ' ' . $f((float) $pb['since_game_hours']) . 'h' : '') . (!empty($pb['voiced']) ? ' voiced' : '');
         }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];

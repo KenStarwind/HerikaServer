@@ -533,8 +533,15 @@ final class RelDynPullbackTest extends TestCase
         $s = RelDynJev::state('Ysgerd', $d, self::at(301, 20.0));
         $this->assertEqualsWithDelta($j['let_in'], $s['let_in'], 1e-9);
         $this->assertSame($j, $s['pullback']);
-        $this->assertStringContainsString('let_in=72.5', $s['text']);
-        $this->assertMatchesRegularExpression('/pullback=on \d\.\d\d\/0\.\d\d immature\/sulking\/avoidant \d+h/', $s['text']);
+        $this->assertMatchesRegularExpression('/pullback=on \d\.\d\d\/0\.\d\d let_in=72\.5 immature\/sulking\/avoidant \d+h/', $s['text']);
+        // not spent on every prompt: the compact text says nothing of it while she is not pulled back (the structured fields do)
+        $calm = $this->npc([], 80.0);
+        self::weather($calm, 'clear', 0.0);
+        RelDynPullback::advance('Ysgerd', $calm, self::at(300, 8.0));
+        $c = RelDynJev::state('Ysgerd', $calm, self::at(300, 9.0));
+        $this->assertStringNotContainsString('pullback', $c['text']);
+        $this->assertFalse($c['pullback']['active']);
+        $this->assertGreaterThan(40.0, $c['let_in']);
         $this->assertArrayHasKey('pullback.pressure', RelDynJev::UNITS);
         $this->assertArrayHasKey('let_in', RelDynJev::UNITS);
     }
