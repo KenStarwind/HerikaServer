@@ -914,7 +914,8 @@ PROMPT;
         // - SPEAKER: The NPC (whose feelings we're recording)
         // - LISTENER: The Player (who they're talking to)
         //
-        // Note: $context['dialogue'] contains the NPC's previous lines (talkedSoFar)
+        // Note: $context['dialogue'] is the sentences of the reply being evaluated (talkedSoFar,
+        // the same text as $npcResponse). There is no earlier history in this context.
         // $context['player_action'] is what the Player said/did
         // $npcResponse is the NPC's latest response being evaluated
 
@@ -940,18 +941,6 @@ PROMPT;
 
         // NPC's response to the Player
         $contextStr .= "[{$npcName} replied]: " . $npcResponse . "\n";
-
-        // Recent dialogue history (for additional context, but clearly labeled)
-        if (!empty($context['dialogue'])) {
-            $recentLines = array_slice($context['dialogue'], -4);
-            if (!empty($recentLines)) {
-                $contextStr .= "\nPrevious exchanges (for context):\n";
-                foreach ($recentLines as $line) {
-                    // These are the NPC's previous lines
-                    $contextStr .= "  [{$npcName} said earlier]: " . $line . "\n";
-                }
-            }
-        }
         $contextStr .= "\n";
 
         // Current relationship state (for context)

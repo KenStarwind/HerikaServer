@@ -8,6 +8,8 @@ require_once $GLOBALS['ENGINE_PATH'] . 'lib' . DIRECTORY_SEPARATOR . 'relationsh
 require_once $GLOBALS['ENGINE_PATH'] . 'lib' . DIRECTORY_SEPARATOR . 'eventlog_helper.php';
 require_once $GLOBALS['ENGINE_PATH'] . 'lib' . DIRECTORY_SEPARATOR . 'core'
     . DIRECTORY_SEPARATOR . 'npc_master.class.php';
+require_once $GLOBALS['ENGINE_PATH'] . 'ext' . DIRECTORY_SEPARATOR . 'relationship_system'
+    . DIRECTORY_SEPARATOR . 'relationship_llm.php';
 
 // postrequest.php is a script that returns immediately while the relationship system is
 // disabled, but its helper functions are still declared. Load it with the system off so the
@@ -28,20 +30,39 @@ unset($relSysEnabledBeforeLoad);
 final class RelationshipSystemFakeDb
 {
     public array $npcs = [];
+    /** @var array<string,string> prompt_key => prompt text served from the prompts table */
+    public array $prompts = [];
+    public array $inserts = [];
+
+    private function npcRow(string $name): array
+    {
+        return [
+            'id' => array_search($name, array_keys($this->npcs), true) + 1,
+            'npc_name' => $name,
+            'extended_data' => json_encode(['relationships' => $this->npcs[$name]]),
+        ];
+    }
 
     public function fetchOne(string $query): ?array
     {
         if (preg_match("/npc_name = '((?:[^']|'')*)'/", $query, $m)) {
             $name = str_replace("''", "'", $m[1]);
-            if (isset($this->npcs[$name])) {
-                return [
-                    'id' => 1,
-                    'npc_name' => $name,
-                    'extended_data' => json_encode(['relationships' => $this->npcs[$name]]),
-                ];
-            }
+            return isset($this->npcs[$name]) ? $this->npcRow($name) : null;
+        }
+        if (preg_match('/FROM core_npc_master WHERE id = (\d+)/', $query, $m)) {
+            $names = array_keys($this->npcs);
+            return isset($names[(int)$m[1] - 1]) ? $this->npcRow($names[(int)$m[1] - 1]) : null;
+        }
+        if (preg_match("/prompt_key = '([^']+)'/", $query, $m) && isset($this->prompts[$m[1]])) {
+            return ['custom_prompt' => $this->prompts[$m[1]], 'default_prompt' => $this->prompts[$m[1]]];
         }
         return null;
+    }
+
+    public function insert(string $table, array $row): bool
+    {
+        $this->inserts[] = ['table' => $table, 'row' => $row];
+        return true;
     }
 
     public function fetchAll(string $query): array
@@ -52,6 +73,18 @@ final class RelationshipSystemFakeDb
     public function escape($value): string
     {
         return str_replace("'", "''", (string)$value);
+    }
+}
+
+/** Stands in for the relationship connector driver; records the messages it is asked to send. */
+final class RelationshipSystemFakeDriver
+{
+    public array $requests = [];
+
+    public function fast_request($messages, $params, $context)
+    {
+        $this->requests[] = $messages;
+        return '{"changes": {}}';
     }
 }
 
@@ -166,5 +199,54 @@ final class RelationshipSystemCoreFixesTest extends TestCase
         // A long sentence before a colon is speech, not a name.
         $line = 'I have been wondering about the dragons near Whiterun lately, haven\'t you: what do you think';
         $this->assertSame($line, _relStripSpeakerPrefix($line));
+    }
+
+    // --- relationship evaluation prompt -------------------------------------------------------
+
+    /**
+     * Run RelationshipLLM::evaluateContext() against a fake driver (no network, no database)
+     * and return [systemPrompt, userPrompt] as they would be sent to the model.
+     */
+    private function captureEvalPrompts(string $npcResponse, array $context, string $npcName = 'Lydia'): array
+    {
+        $GLOBALS['db']->npcs[$npcName] ??= ['Player' => ['aff' => 12, 'type' => 'platonic']];
+        $driver = new RelationshipSystemFakeDriver();
+
+        $llm = (new ReflectionClass(RelationshipLLM::class))->newInstanceWithoutConstructor();
+        foreach (
+            [
+                'db' => $GLOBALS['db'],
+                'driver' => $driver,
+                'connector' => ['driver' => 'test_driver', 'model' => 'test-model', 'label' => 'Test'],
+                'modelName' => 'test-model',
+            ] as $property => $value
+        ) {
+            $reflection = new ReflectionProperty(RelationshipLLM::class, $property);
+            $reflection->setValue($llm, $value);
+        }
+
+        $result = $llm->evaluateContext(1, $npcResponse, $context);
+        $this->assertTrue($result['ok'], json_encode($result));
+        $this->assertCount(1, $driver->requests);
+        $this->assertSame('system', $driver->requests[0][0]['role']);
+        $this->assertSame('user', $driver->requests[0][1]['role']);
+
+        return [$driver->requests[0][0]['content'], $driver->requests[0][1]['content']];
+    }
+
+    public function testEvalPromptDoesNotRepeatTheCurrentReplyAsEarlierDialogue(): void
+    {
+        // talkedSoFar holds the sentences of the reply that is being evaluated.
+        $sentences = ['I will not forget this.', 'You have my thanks, friend.'];
+        [, $user] = $this->captureEvalPrompts(
+            implode(' ', $sentences),
+            ['dialogue' => $sentences, 'player_action' => 'Here, take the amulet.', 'listener_name' => 'Player']
+        );
+
+        $this->assertStringNotContainsString('Previous exchanges', $user);
+        $this->assertStringNotContainsString('said earlier', $user);
+        $this->assertSame(1, substr_count($user, 'I will not forget this.'));
+        $this->assertSame(1, substr_count($user, 'You have my thanks, friend.'));
+        $this->assertStringContainsString('[Lydia replied]: I will not forget this. You have my thanks, friend.', $user);
     }
 }
