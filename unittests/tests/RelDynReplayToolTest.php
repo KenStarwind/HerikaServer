@@ -143,7 +143,8 @@ final class RelDynReplayToolTest extends TestCase
 
     public function testCrlfLineEndingsAndMarkersAndJunkAreHandled(): void
     {
-        $text = file_get_contents(self::SAMPLE);
+        // a checkout with CRLF line endings must read the same as one without
+        $text = str_replace("\r\n", "\n", (string) file_get_contents(self::SAMPLE));
         $crlf = RelDynReplay::parseLog(str_replace("\n", "\r\n", $text));
         $this->assertCount(3, $crlf);
         $this->assertSame(self::sample()[0]['payload'], $crlf[0]['payload'], 'a log copied through Windows reads the same');
@@ -241,26 +242,11 @@ final class RelDynReplayToolTest extends TestCase
     public function testLineDiffIsAnLcsWithContext(): void
     {
         $this->assertSame('', RelDynReplay::lineDiff("a\nb\nc", "a\nb\nc"));
-        $this->assertSame("  b
-- c
-+ x
-  d
-", RelDynReplay::lineDiff("a
-b
-c
-d
-e", "a
-b
-x
-d
-e", 1));
+        $this->assertSame("  b\n- c\n+ x\n  d\n", RelDynReplay::lineDiff("a\nb\nc\nd\ne", "a\nb\nx\nd\ne", 1));
         $far = RelDynReplay::lineDiff(implode("\n", range(1, 40)), implode("\n", array_merge(range(1, 19), ['X'], range(21, 40))), 2);
         $this->assertSame("  18\n  19\n- 20\n+ X\n  21\n  22\n", $far, 'far lines are not printed');
         $moved = RelDynReplay::lineDiff("one\ntwo", "two\none");
-        $this->assertSame("- one
-  two
-+ one
-", $moved);
+        $this->assertSame("- one\n  two\n+ one\n", $moved);
         $this->assertSame("+ new\n", RelDynReplay::lineDiff('', 'new'));
         $this->assertSame("- old\n", RelDynReplay::lineDiff('old', ''));
     }
