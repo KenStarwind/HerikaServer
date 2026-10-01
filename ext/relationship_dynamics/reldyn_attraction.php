@@ -317,7 +317,7 @@ class RelDynAttraction
                 // how the player loves her always outweighs how far past her floor he is. The
                 // MDD 1.1 drive (0.3..2.0) reads the passion POOL (0..100), not the gain rate:
                 // the surplus only fills the pool at most 25% faster than a player at her floor,
-                // it never raises the drive's 2.0 redline.
+                // it never raises the drive's 2.0 peak.
                 'surplus_max' => 1.25,
                 // Charm climbs the hill (decisions §13; MDD 2.5 "up to ~15%"): below the floor
                 // Speech closes up to this fraction of the gap between the hill and 1.0 (her
@@ -325,8 +325,12 @@ class RelDynAttraction
                 // (the hill is cubic), so charm acts where the climb is: the multiplier. It never
                 // reaches the floor on its own ("doesn't replace substance"), and it adds no
                 // surplus above it. The pillar scores (bars, tiers, respect) keep the MDD 2.5
-                // score lift (speech_boost_max).
-                'charm_hill_max' => 0.15,
+                // score lift (speech_boost_max). 0.13, not the MDD's 15%: passion_mult is neutral at a
+                // middle vector now (decisions 2026-10-01 §21 #10: Aela's gains rose about 8%), and Ken's
+                // ruling #8 (a pure silver tongue never wins her over; it levels off in the low 30s, below
+                // the won-over 40) is held by the charm lever giving that back, the foot of the hill and
+                // Ken's own examples (m_min 0.1, steepness 3) untouched.
+                'charm_hill_max' => 0.13,
                 // Won over (decisions §13: "a super-charming bard can win an atypical interest,
                 // slowly"): passion climbed on the uphill to this many points reads as attracted
                 // (the romance axis opens; tier lifts still wait for significant interactions).

@@ -976,18 +976,24 @@ class RelDynFacets
             'weather_thresholds' => ['sunny' => 0.3, 'clear' => -0.1, 'overcast' => -0.45],   // below: stormy
             // Emotional gravity (MDD 4.1: the weather sets a target node, the mood feels a constant
             // pull; roadmap weather-gravity-pull, RelationshipDynamics::applyWeatherGravity):
-            //   targets             weather => dimension => offset (points) from where she rests
-            //                       (chunk9 plan's WEATHER_BASELINE_TARGETS; comfort is physical, not
-            //                       the weather's); a dimension the weather names none for relaxes to 0
+            //   targets             weather => dimension => offset (points) from where she rests.
+            //                       The dimension draft's offsets (Internal Weather; decisions 2026-10-01 §22:
+            //                       "overcast cools harder", not April's chunk9 values): sunny passion +5 and
+            //                       warmth +5, overcast passion -10 and warmth -5. The draft names no stormy
+            //                       node: the chunk9 plan's (warmth -8, valence -15, arousal +10) stands,
+            //                       with passion held down as hard as overcast does (a storm is never milder
+            //                       than a grey day). Valence (sunny +10, overcast -8) is the chunk9 plan's too.
+            //                       Comfort is physical, not the weather's; a dimension the weather names none
+            //                       for relaxes to 0
             //   pull_per_game_hour  share (0..1) of the gap between the held offset and the target
             //                       closed per game-calendar hour (never per request)
             //   max_offset          points: no offset past it (BASELINE_DRIFT_MAX)
             'weather_gravity' => [
                 'targets' => [
-                    'sunny'    => ['warmth' => 5.0, 'valence' => 10.0],
+                    'sunny'    => ['warmth' => 5.0, 'valence' => 10.0, 'passion' => 5.0],
                     'clear'    => [],
-                    'overcast' => ['warmth' => -3.0, 'valence' => -8.0, 'passion' => -3.0],
-                    'stormy'   => ['warmth' => -8.0, 'valence' => -15.0, 'arousal' => 10.0],
+                    'overcast' => ['warmth' => -5.0, 'valence' => -8.0, 'passion' => -10.0],
+                    'stormy'   => ['warmth' => -8.0, 'valence' => -15.0, 'arousal' => 10.0, 'passion' => -10.0],
                 ],
                 'pull_per_game_hour' => 0.1,
                 'max_offset' => 20.0,

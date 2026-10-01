@@ -701,8 +701,23 @@ class RelationshipDynamics
      * 3 holds three defaults batch U retired as if they were choices (cascade_decay 0.3, the old cascade felt-text
      * lines, the post-intimacy drunk_regret row); loadStoredConfig() drops them (CONFIG_RETIRED_V4) so the current
      * defaults apply. A row stamped 4 or later is a choice.
+     * Schema 5 (rulings 2026-10-01 §21 #10, §22, batch V): install.php (a row stamped 4 included) stored the v0.23
+     * defaults of four settings those rulings changed; loadStoredConfig() reads them as the current defaults
+     * (dropRetiredV5Defaults): the multiplier re-levelling switch off, the April weather targets, the single toxic
+     * affinity row. A row stamped 5 or later is a choice.
      */
-    const CONFIG_SCHEMA = 4;
+    const CONFIG_SCHEMA = 5;
+
+    /** facet_appraisal.weather_gravity.targets as v0.23 shipped them (chunk9's, before the dimension draft's offsets, §22). */
+    const RETIRED_WEATHER_TARGETS_V5 = [
+        'sunny'    => ['warmth' => 5.0, 'valence' => 10.0],
+        'clear'    => [],
+        'overcast' => ['warmth' => -3.0, 'valence' => -8.0, 'passion' => -3.0],
+        'stormy'   => ['warmth' => -8.0, 'valence' => -15.0, 'arousal' => 10.0],
+    ];
+
+    /** The one toxic affinity-modifier row of v0.23 (x1.4 either way); §22 splits it into toxic_gains x1.2 and toxic_losses x1.6. */
+    const RETIRED_TOXIC_ROW_V5 = ['id' => 'toxic_all', 'sign' => 'any', 'tags' => [], 'when' => [['attachment' => 'toxic']], 'mult' => 1.4];
 
     /** cascade_decay as install.php stored it up to schema 3 (the hearsay damping of every ripple then; today's default is 0.9). */
     const RETIRED_CASCADE_DECAY = 0.3;
@@ -756,6 +771,9 @@ class RelationshipDynamics
         if ($schema < 4) {
             $stored = self::dropRetiredV4Defaults($stored);
         }
+        if ($schema < 5) {
+            $stored = self::dropRetiredV5Defaults($stored);
+        }
         // Migrated in memory: a settings-page save stores it with the current stamp
         if ($schema < self::CONFIG_SCHEMA) $stored['config_schema'] = self::CONFIG_SCHEMA;
         return $stored;
@@ -781,6 +799,44 @@ class RelationshipDynamics
         }
         if (is_array($stored['post_intimacy']['outcomes'] ?? null)) {
             unset($stored['post_intimacy']['outcomes']['drunk_regret']);
+        }
+        return $stored;
+    }
+
+    /**
+     * A row written before batch V (config_schema < 5) stores, beside every other default, four that rulings 2026-10-01
+     * §21 #10 and §22 changed; none was ever a choice, so the current default applies, only while the stored value
+     * still equals what v0.23 shipped (a value someone changed is theirs and stays):
+     *   - traits.read_calibration.relevel_mult false (the multipliers off): back to the default list (§21 #10);
+     *   - facet_appraisal.weather_gravity.targets equal to the April targets: the dimension draft's (§22);
+     *   - the affinity_modifiers row toxic_all (x1.4 either way): split in place into toxic_gains and toxic_losses (§22).
+     * Nothing else is touched.
+     */
+    private static function dropRetiredV5Defaults(array $stored): array
+    {
+        $defaults = self::defaultConfig();
+        if (is_array($stored['traits']['read_calibration'] ?? null) && array_key_exists('relevel_mult', $stored['traits']['read_calibration'])
+            && $stored['traits']['read_calibration']['relevel_mult'] === false) {
+            unset($stored['traits']['read_calibration']['relevel_mult']);
+        }
+        $targets = $stored['facet_appraisal']['weather_gravity']['targets'] ?? null;
+        if (is_array($targets) && $targets == self::RETIRED_WEATHER_TARGETS_V5) {
+            $stored['facet_appraisal']['weather_gravity']['targets'] = $defaults['facet_appraisal']['weather_gravity']['targets'];
+        }
+        if (is_array($stored['affinity_modifiers'] ?? null) && array_is_list($stored['affinity_modifiers'])) {
+            $split = [];
+            foreach ($defaults['affinity_modifiers'] as $row) {
+                if (in_array($row['id'] ?? null, ['toxic_gains', 'toxic_losses'], true)) $split[] = $row;
+            }
+            $out = [];
+            foreach ($stored['affinity_modifiers'] as $row) {
+                if (is_array($row) && $row == self::RETIRED_TOXIC_ROW_V5 && count($split) === 2) {
+                    array_push($out, ...$split);
+                } else {
+                    $out[] = $row;
+                }
+            }
+            $stored['affinity_modifiers'] = $out;
         }
         return $stored;
     }
@@ -1122,15 +1178,17 @@ class RelationshipDynamics
             // legacy: the old vote's preset point); residual_reach = Rule R reach (trait-space distance).
             // read_calibration (rulings 2026-09-30): the bio read IS the profile, presets do not define
             // normal. relevel (default on) = the neutral intercepts of the 'offset' regressions (A26, C2: an
-            // all-0.5 vector = no offset); relevel_mult (default off: those values are tuned against rulings)
-            // = the same for the 'mult' regressions (x1.0). leniency (default OFF: the bio read is used as read; the
+            // all-0.5 vector = no offset); relevel_mult = the same for the 'mult' regressions (x1.0), a list of
+            // columns: shipped passion_mult and jealousy_mult (decisions §21 #10: a middle-of-the-road NPC feels
+            // passion and jealousy at face value; the attraction curve is retuned to hold ruling #8), true = all of
+            // them, false = none. leniency (default OFF: the bio read is used as read; the
             // seed's reads are mostly named followers and warriors, so their mean is characterisation) =
             // the leniency correction of LLM-read traits (x' = x - read_mean + 0.5, at use time). Each off
             // restores the earlier behaviour exactly. read_mean = the committed seed's mean over its
             // evidenced reads, per trait (a trait with under 30 reads has none: no shift); a stored 'traits'
             // row without read_calibration takes the seed's computed means.
             'traits' => ['assignment' => RelDynTraits::ASSIGNMENT, 'residual_reach' => RelDynTraits::RESIDUAL_REACH,
-                         'read_calibration' => ['relevel' => true, 'relevel_mult' => false, 'leniency' => false, 'read_mean' => [
+                         'read_calibration' => ['relevel' => true, 'relevel_mult' => RelDynTraits::RELEVEL_MULT_DEFAULT, 'leniency' => false, 'read_mean' => [
                              'guard' => 0.660, 'expressiveness' => 0.517, 'confidence' => 0.659, 'pride' => 0.636,
                              'resilience' => 0.629, 'reactivity' => 0.553, 'warmth' => 0.503, 'restraint' => 0.618]]],
             // Love language (ensureLoveLanguage): the primary comes from MARAS / Sharmat when they have
@@ -1602,7 +1660,11 @@ class RelationshipDynamics
              'when' => [['attachment' => 'avoidant'], ['state' => 'comfort', 'op' => '<', 'value' => 50]], 'mult' => 0.6],
             ['id' => 'avoidant_neglect', 'sign' => 'loss', 'tags' => ['neglect'],
              'when' => [['attachment' => 'avoidant']], 'mult' => 0.5],
-            ['id' => 'toxic_all', 'sign' => 'any', 'tags' => [], 'when' => [['attachment' => 'toxic']], 'mult' => 1.4],
+            // Toxic attachment (decisions 2026-10-01 §22): idealise, then devalue. Asymmetric: gains x1.2, losses x1.6
+            // (it was one x1.4 either way; a row id 'toxic_all' stored by an older install is split by
+            // splitRetiredToxicRow). Like every attachment row it applies by the NPC's corner weight.
+            ['id' => 'toxic_gains', 'sign' => 'gain', 'tags' => [], 'when' => [['attachment' => 'toxic']], 'mult' => 1.2],
+            ['id' => 'toxic_losses', 'sign' => 'loss', 'tags' => [], 'when' => [['attachment' => 'toxic']], 'mult' => 1.6],
             ['id' => 'egocentric_flattery', 'sign' => 'gain', 'tags' => ['gift', 'praise'],
              'when' => [['trait' => 'egocentric']], 'mult' => 1.5],
             ['id' => 'egocentric_slight', 'sign' => 'loss', 'tags' => ['criticism', 'insult', 'neglect'],
@@ -1616,7 +1678,7 @@ class RelationshipDynamics
             // MDD 15.4 stage 3 / 15.5: resentment above 50 halves gains
             ['id' => 'resentment_blocks_gains', 'sign' => 'gain', 'tags' => [],
              'when' => [['state' => 'resentment', 'op' => '>', 'value' => 50]], 'mult' => 0.5],
-            // MDD 1.1: passion 0 -> x0.3 (idling), 100 -> x2.0 (redline)
+            // MDD 1.1: passion 0 -> x0.3 (idling), 100 -> x2.0 (the top of the burning band)
             ['id' => 'passion_drives_gains', 'sign' => 'gain', 'tags' => [], 'requires' => 'passion_enabled', 'when' => [],
              'mult' => ['state' => 'passion', 'ref' => 0, 'at_ref' => 0.3, 'per_point' => 0.017]],
             ['id' => 'stormy_losses', 'sign' => 'loss', 'tags' => [], 'requires' => 'internal_weather_enabled',
@@ -5876,16 +5938,28 @@ class RelationshipDynamics
     }
 
     /**
-     * Get a human-readable passion band label.
+     * The passion band row (DIMENSION_BANDS['passion']: the one set, "faint to burning", decisions 2026-10-01 §22) for
+     * $passion points: burning from 80, intense from 60, warm from 40, stirring from 20, faint above 0, none at 0.
+     * Pure; the single place that knows the edges.
+     */
+    public static function passionBandRow($passion): array
+    {
+        $rows = self::DIMENSION_BANDS['passion'];
+        $p = floatval($passion);
+        if ($p >= 80) return $rows[5];
+        if ($p >= 60) return $rows[4];
+        if ($p >= 40) return $rows[3];
+        if ($p >= 20) return $rows[2];
+        if ($p > 0)   return $rows[1];
+        return $rows[0];
+    }
+
+    /**
+     * Get a human-readable passion band label (lower case: none, faint, stirring, warm, intense, burning).
      */
     public static function getPassionBand($passion)
     {
-        if ($passion >= 80) return 'burning';
-        if ($passion >= 60) return 'intense';
-        if ($passion >= 40) return 'warm';
-        if ($passion >= 20) return 'stirring';
-        if ($passion > 0)   return 'faint';
-        return 'none';
+        return strtolower((string) self::passionBandRow($passion)['label']);
     }
 
     /**
@@ -6570,13 +6644,16 @@ class RelationshipDynamics
             ['label' => 'Close',    'range' => [71, 85],  'keywords' => "tells them things no one else hears, checks on them first, plans around them"],
             ['label' => 'Devoted',  'range' => [86, 100], 'keywords' => "puts their safety before their own, stands with them against anyone, would follow them anywhere"],
         ],
+        // Passion: the one band set, "faint to burning" (decisions 2026-10-01 §22; the older "cold to redline"
+        // set is gone). getPassionBand() and getDimensionBand('passion') both read these rows through
+        // passionBandRow(), by the exact edges 80 / 60 / 40 / 20 / above 0 (the ranges here are for display).
         'passion' => [
-            ['label' => 'Cold',     'range' => [0, 15],   'keywords' => "going through the motions, eyes elsewhere, no spark in the voice"],
-            ['label' => 'Tepid',    'range' => [16, 35],  'keywords' => "mild interest, the odd second glance"],
-            ['label' => 'Warm',     'range' => [36, 55],  'keywords' => "laughs more easily around them, steals glances, finds reasons to stay"],
-            ['label' => 'Heated',   'range' => [56, 75],  'keywords' => "flushed, leans in, charged silences, loses the thread when they come close"],
-            ['label' => 'Burning',  'range' => [76, 90],  'keywords' => "can barely focus, pulse racing, keeps finding reasons to touch them"],
-            ['label' => 'Redline',  'range' => [91, 100], 'keywords' => "trembling restraint, can't look away, every word charged"],
+            ['label' => 'None',     'range' => [0, 0],    'keywords' => "going through the motions, eyes elsewhere, no spark in the voice"],
+            ['label' => 'Faint',    'range' => [1, 19],   'keywords' => "mild interest, the odd second glance"],
+            ['label' => 'Stirring', 'range' => [20, 39],  'keywords' => "a small smile when they come near, quickly hidden, an unexamined glance now and then"],
+            ['label' => 'Warm',     'range' => [40, 59],  'keywords' => "laughs more easily around them, steals glances, finds reasons to stay"],
+            ['label' => 'Intense',  'range' => [60, 79],  'keywords' => "flushed, leans in, charged silences, loses the thread when they come close"],
+            ['label' => 'Burning',  'range' => [80, 100], 'keywords' => "can barely focus, pulse racing, can't look away, keeps finding reasons to touch them"],
         ],
         'warmth' => [
             ['label' => 'Walled',      'range' => [0, 20],   'keywords' => "closed off, answers in single words, avoids their eyes, keeps physical distance"],
@@ -6727,6 +6804,9 @@ class RelationshipDynamics
     {
         if (!isset(self::DIMENSION_BANDS[$dimensionId])) {
             return null;
+        }
+        if ($dimensionId === 'passion') {
+            return self::passionBandRow($xValue);   // the one passion set, exact edges (not rounded to a range)
         }
 
         $x = round(floatval($xValue));

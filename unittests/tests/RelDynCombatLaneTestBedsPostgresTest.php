@@ -670,7 +670,8 @@ final class RelDynCombatLaneTestBedsPostgresTest extends TestCase
                 $this->assertSame($u['score'], $s['score'], "{$npc} {$key}: no second speech lift in the curve");
                 $this->assertSame($u['m_hill'] ?? null, $s['m_hill'] ?? null, "{$npc} {$key}");
                 if (isset($s['m_hill']) && $s['m_hill'] > 0.0 && $s['m_hill'] < 1.0) {
-                    $this->assertEqualsWithDelta($s['m_hill'] + (1 - $s['m_hill']) * 0.15, $s['m_charm'], 1e-3, "{$npc} {$key}: charm, 15% of the gap");
+                    // (curve.charm_hill_max, 0.13 since batch V: the neutral passion multiplier's give-back, decisions §21 #10; was 0.15)
+                    $this->assertEqualsWithDelta($s['m_hill'] + (1 - $s['m_hill']) * floatval(RelDynAttraction::curveConfig()['charm_hill_max']), $s['m_charm'], 1e-3, "{$npc} {$key}: charm, its share of the gap");
                 }
             }
             $curveShift[$npc] = round(floatval($silver['passion']['curve'] ?? 1.0) - floatval($mute['passion']['curve'] ?? 1.0), 4);

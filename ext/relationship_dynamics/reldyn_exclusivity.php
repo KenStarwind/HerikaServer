@@ -40,11 +40,13 @@
  * ($dynamics['_exclusivity']['suitors'], keyed like fulfillment pairs): each romantic move and
  * each rise of her core affinity toward the suitor while a move is recent or core's NPC-NPC eval
  * holds a romantic type between them (the suitor's relationships entry for her, or hers for
- * him; that type alone never steers her reply) adds interest
- * x (1 - damping x pull). Core's own NPC-NPC 'aff' gains are damped by the same factor through the
- * fork hook chimRelationshipDeltaFor (lib/relationship_manager.php, ext/relationship_dynamics/
+ * him; that type alone never steers her reply) adds interest. A move is damped x (1 - damping x pull).
+ * Core's own NPC-NPC 'aff' gains are damped by that same factor through the fork hook
+ * chimRelationshipDeltaFor (lib/relationship_manager.php, ext/relationship_dynamics/
  * relationship_delta_damper.php, decisions §20 #19): dampCoreDelta(). Never a wall: a gain keeps
- * core_gain_floor points, and only romantic gains while she is held by the pull are touched.
+ * core_gain_floor points, and only romantic gains while she is held by the pull are touched. One damping, not
+ * two: while the hook is on the rise in her core affinity reaches the ledger already damped and counts in full;
+ * with the hook off (config exclusivity.core_damping) the ledger damps the rise itself.
  *
  * Units: pull and its parts 0..1; passion points 0..100; core affinity -100..+100; interest
  * points 0..100; time on the game calendar (raw gamets, RelationshipDynamics::GAMETS_PER_DAY).
@@ -434,6 +436,16 @@ final class RelDynExclusivity
         return $kinds >= 2;
     }
 
+    /**
+     * Does the fork hook damp core's own NPC-to-NPC romantic gains (config core_damping)? Then those gains reach the
+     * suitor ledger already damped, and the ledger must not damp them a second time (recordExchange).
+     */
+    public static function forkHookDamps(?array $cfg = null): bool
+    {
+        $cfg = $cfg ?? self::config();
+        return !empty($cfg['core_damping']);
+    }
+
     /** A suitor's ledger entry with its interest decayed to $now (interest points). Pure. */
     public static function interestAt(array $entry, float $now, ?array $cfg = null): float
     {
@@ -455,8 +467,12 @@ final class RelDynExclusivity
      * Record what this exchange with $suitor showed, at $now, damped by the pull: each new
      * romantic line of his (eventlog rowid past the entry's watermark) adds interest_per_move,
      * and a rise of her core affinity toward him since last seen, while the exchange is romantic,
-     * adds core_gain_factor per point; both x (1 - damping x pull). The entry keeps the pull he met
-     * ('pull_seen'). Returns the interest points added (after damping).
+     * adds core_gain_factor per point; the moves x (1 - damping x pull). The rise of her core affinity is
+     * damped once, not twice: while the fork hook is on (forkHookDamps(): config core_damping) core's own
+     * NPC-to-NPC gain was already damped by the same factor on its way in (dampCoreDelta), so what she gained
+     * is what she felt and counts in full; without the hook (core_damping off, or a core without it) the
+     * ledger damps the rise itself, as before. The entry keeps the pull he met ('pull_seen'). Returns the
+     * interest points added (after damping).
      *
      * @param array $lines  his romantic lines to her: [['rowid' => int, 'text' => string], ...]
      */
@@ -471,6 +487,7 @@ final class RelDynExclusivity
         $damp = self::clamp01(1.0 - floatval($cfg['damping']) * self::clamp01($pull));
 
         $raw = 0.0;
+        $rise = 0.0;   // her core affinity toward him gained since last seen (damped by the hook when it is on)
         $seen = intval($e['seen_rowid'] ?? 0);
         foreach ($lines as $l) {
             $rowid = intval($l['rowid'] ?? 0);
@@ -484,11 +501,11 @@ final class RelDynExclusivity
         if ($herCoreAff !== null) {
             $before = $e['aff_seen'] ?? null;
             if ($romantic && is_numeric($before) && $herCoreAff > floatval($before)) {
-                $raw += ($herCoreAff - floatval($before)) * floatval($cfg['core_gain_factor']);
+                $rise = ($herCoreAff - floatval($before)) * floatval($cfg['core_gain_factor']);
             }
             $e['aff_seen'] = round($herCoreAff, 2);
         }
-        $added = $raw * $damp;
+        $added = $raw * $damp + $rise * (self::forkHookDamps($cfg) ? 1.0 : $damp);
         $e['interest'] = round(max(0.0, min(100.0, $interest + $added)), 4);
         $e['pull_seen'] = round(self::clamp01($pull), 4);   // her pull toward the player when he last approached
         $e['gamets'] = $now;
@@ -704,7 +721,8 @@ final class RelDynExclusivity
      * title strengthens it, who she is shapes it, neglect weakens it), core's own affinity GAINS toward
      * another NPC while the bond between them is romantic (her core type toward him, his toward her, the
      * type this eval sets, or a romantic move of his she has lately met) are damped, by the same factor
-     * as the suitor ledger: delta x (1 - damping x pull). Dynamic, never a gate: a weak pull barely
+     * as the suitor ledger's moves: delta x (1 - damping x pull); the ledger then counts the gain as it landed, in
+     * full (recordExchange: one damping, not two). Dynamic, never a gate: a weak pull barely
      * touches it, and a gain never drops below core_gain_floor points (no one is immune). Losses, gains
      * toward the player (RelDyn's own), and gains in any bond that is not romantic are core's, untouched.
      * Lazy and read-only: an NPC RelDyn has never held (no stored state) is core's.

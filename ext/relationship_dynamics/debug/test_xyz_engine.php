@@ -214,9 +214,9 @@ check('C4: Trust 15 → Distrustful', $band['label'], 'Distrustful');
 $band = RelationshipDynamics::getDimensionBand('trust', 16);
 check('C5: Trust 16 → Wary', $band['label'], 'Wary');
 
-// C6: Passion at 91 → Redline
+// C6: Passion at 91 → Burning (the one passion band set, "faint to burning")
 $band = RelationshipDynamics::getDimensionBand('passion', 91);
-check('C6: Passion 91 → Redline', $band['label'], 'Redline');
+check('C6: Passion 91 → Burning', $band['label'], 'Burning');
 
 // C7: Resentment at 0 → null/no band (clean slate)
 $band = RelationshipDynamics::getDimensionBand('resentment', 0);

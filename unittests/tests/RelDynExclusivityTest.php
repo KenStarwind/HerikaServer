@@ -325,9 +325,25 @@ final class RelDynExclusivityTest extends TestCase
         $this->assertEqualsWithDelta(2 * 6.0 * 0.1, $held, 1e-9, 'two moves at pull 1: x (1 - 0.9)');
         $this->assertSame(0.0, RelDynExclusivity::recordExchange($d, 'mikael', $lines, 20.0, true, 1.0, self::T0 + self::HOUR),
             'the same lines again (any case of his name) count once');
-        // Her core affinity toward him rose 10 while it was romantic: 10 x core_gain_factor, damped
+        // Her core affinity toward him rose 10 while it was romantic: 10 x core_gain_factor. Damped ONCE: with the
+        // fork hook on (shipped, core_damping) core's own NPC-NPC gain was already damped by the same factor on its
+        // way in (dampCoreDelta), so the ledger counts what landed in full. It was 10 x (1 - 0.9 x 0.5) here when the
+        // ledger damped it a second time (review queue FIX NEXT, double damping).
         $gain = RelDynExclusivity::recordExchange($d, 'Mikael', [], 30.0, true, 0.5, self::T0 + 2 * self::HOUR);
-        $this->assertEqualsWithDelta(10.0 * (1 - 0.9 * 0.5), $gain, 1e-9);
+        $this->assertEqualsWithDelta(10.0, $gain, 1e-9);
+        // With the hook off (core_damping false: a core without it) nothing damped the gain on its way in, so the
+        // ledger damps the rise itself, as before; a move is damped by the pull either way
+        $noHook = ['core_damping' => false] + RelDynExclusivity::configDefaults();
+        $this->assertFalse(RelDynExclusivity::forkHookDamps($noHook));
+        $this->assertTrue(RelDynExclusivity::forkHookDamps(RelDynExclusivity::configDefaults()));
+        $o = [];
+        RelDynExclusivity::recordExchange($o, 'Mikael', [], 20.0, true, 0.5, self::T0, $noHook);
+        $this->assertEqualsWithDelta(10.0 * (1 - 0.9 * 0.5), RelDynExclusivity::recordExchange($o, 'Mikael', [], 30.0, true, 0.5, self::T0 + self::HOUR, $noHook), 1e-9);
+        $h = [];
+        $this->assertEqualsWithDelta(6.0 * (1 - 0.9 * 0.5), RelDynExclusivity::recordExchange($h, 'Mikael', [$lines[0]], 20.0, true, 0.5, self::T0), 1e-9,
+            'a move is the ledger\'s own to damp, hook or no hook');
+        $this->assertEqualsWithDelta(6.0 * (1 - 0.9 * 0.5) + 4.0, RelDynExclusivity::recordExchange($h, 'Mikael', [['rowid' => 12, 'text' => 'Marry me.']], 24.0, true, 0.5, self::T0 + self::HOUR), 1e-9,
+            'a new move (damped) and a 4 point rise (full: the hook damped it already) in one exchange');
         $e = RelDynExclusivity::suitor($d, 'MIKAEL');
         $this->assertSame(2, $e['moves']);
         $this->assertSame(11, $e['seen_rowid']);

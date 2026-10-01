@@ -3,6 +3,19 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Unreleased (batch V) — tuning: a middle NPC at face value, grey days that cool harder, toxic that idealises then devalues
+An NPC in the middle of the road now feels passion and jealousy at face value: nobody leans them a little cool on
+passion and a little hot on jealousy before they have said a word, though who they actually are still moves both. The
+charm curve was retuned alongside so a silver tongue alone still never wins anyone over; it takes weeks of courting and
+a real fit, as before.
+The weather pulls harder: a grey day cools passion and warmth (down 10 and down 5), a sunny one lifts them a little (up 5
+each), and a storm is never milder than a grey day. Toxic attachment is no longer one multiplier either way: it
+idealises on a gain (a little over a fifth more) and devalues on a loss (a little over half again as hard), by how toxic
+the NPC actually is. There is one set of passion words everywhere now (none, faint, stirring, warm, intense, burning);
+the older "cold to redline" set is gone. CHIM's own NPC-to-NPC romance, already damped once by the fork hook for someone
+committed to the player, is no longer damped a second time when RelDyn's suitor ledger reads the same gain.
+Settings saved by an older install read the new defaults for these (config schema 5); anything someone changed stays.
+
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or
 looks up to them; otherwise it climbs like any other gain. Interest that isn't shown still counts toward a romance, and

@@ -540,8 +540,9 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
      * closes on its own node (Aela's valence up toward +10, Muiri's down toward -15 with her
      * nerves up toward +10) and stays there: the pull is held, never accumulated (the old push
      * went on adding every game hour). What is held is not who she is: the drift sample reads her
-     * without it. Overcast would weigh on passion; neither of these names it, so their floors
-     * and effective passion agree. The LLM hears the weather as a feeling.
+     * without it. The draft's nodes name passion too (decisions 2026-10-01 §22: sunny +5, a storm -10): it is read
+     * at display time, so the floor stays hers and the effective passion carries the weather's pull. The LLM hears
+     * the weather as a feeling.
      */
     public function testEachMoodClosesOnItsOwnWeathersNode(): void
     {
@@ -576,8 +577,15 @@ final class RelDynPassionLaneTestBedsPostgresTest extends TestCase
                 $this->assertEqualsWithDelta(floatval($d['dimensions'][$dim]['x']) - RelationshipDynamics::heldTemporaryOffset($d, $dim),
                     RelationshipDynamics::driftSampleValue($d, $dim), 1e-6, "{$npc} {$dim}");
             }
-            $this->assertEqualsWithDelta(RelationshipDynamics::getPassion($d) + RelDynPassion::spike($d), RelationshipDynamics::getEffectivePassion($d), 1e-6,
-                "{$npc}: neither weather weighs on passion");
+            // passion is read at display time: the floor is hers, the weather's pull sits on top of it (it was nothing
+            // while neither node named passion; now sunny +5 and stormy -10, closing on the node like the rest)
+            $passionNode = $npc === self::AELA ? 5.0 : -10.0;
+            $heldPassion = RelationshipDynamics::weatherGravityOffset($d, 'passion');
+            $this->assertGreaterThan(0.75 * abs($passionNode), abs($heldPassion), "{$npc} passion: closing on the node {$why}");
+            $this->assertLessThanOrEqual(abs($passionNode) + 1e-6, abs($heldPassion), "{$npc} passion: never past it {$why}");
+            $this->assertSame($passionNode > 0, $heldPassion > 0, "{$npc} passion {$why}");
+            $this->assertEqualsWithDelta(max(0.0, min(100.0, RelationshipDynamics::getPassion($d) + RelDynPassion::spike($d) + $heldPassion)), RelationshipDynamics::getEffectivePassion($d), 1e-6,
+                "{$npc}: the weather pull rides on passion, the floor is her own");
             // monotone approach: every held offset along the way is no further from the node than the one before
             $series = array_map(fn($r) => floatval(($r[1] ?? [])['valence'] ?? 0.0), $trace[$npc]);
             for ($i = 1; $i < count($series); $i++) {
