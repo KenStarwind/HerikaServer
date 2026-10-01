@@ -34,6 +34,19 @@
  * relax, the less she lets the player in, the more there is to fear: the loop is damped (a lower
  * let-in lowers the stakes), never a cliff.
  *
+ * THE RESPONSE (Ken, 2026-10-01 §23): what the fear makes the NPC DO follows the NPC's own character graph, with no
+ * moralising: RelDyn models the person, it does not judge the player (response()).
+ *   appease   a people-pleaser (RelationshipDynamics::isPeoplePleaser: low confidence and low maturity) appeases and complies,
+ *             even with a player who treats them badly: agrees, apologises first, swallows what it costs. Never a conflict.
+ *   conflict  an immature NPC whose way is control (RelDynConcern::expression) may start a fight at the controlling band, once
+ *             the fear has held there (response.conflict), as an open conflict like any other (enterConflict); it is the
+ *             NPC's own act, so it is not counted as the player's evidence of leaving (threat()).
+ *   withdraw  an NPC whose avoidance outruns their anxiety goes quiet and distant rather than ask (response.withdraw_at).
+ *   express   everyone else shows it by maturity and traits as above: the mature say it plainly and ask to be reassured, the
+ *             in-between sharply, the immature control, accuse or sulk; the anxious and the fearful corners cling.
+ * Never a refusal of what the player asks: nothing here reaches the autonomy state or the action list (a conflict is an
+ * attitude in the NPC's words, not a denied command), and a people-pleaser stays compliant.
+ *
  * State: $dynamics['_keeping'] (state()). Units: fear, stakes, disposition, inputs 0..1 (unitless);
  * comfort / trust / jealousy / let-in points 0..100; core affinity -100..100; game hours and days on
  * the game calendar (raw gamets / RelationshipDynamics::GAMETS_PER_DAY). No wall clock.
@@ -100,8 +113,17 @@ class RelDynKeeping
             // concern lane's maturity weight 1) by (1 - mature_relief) of it ---
             'detriment' => ['from' => 0.4, 'trust_cap' => 12.0, 'comfort_cap' => 8.0, 'mature_relief' => 0.5],
 
+            // --- the response (decisions §23): who the NPC is decides what the fear makes them do ---
+            // withdraw_at: the NPC withdraws rather than clings when avoidance exceeds anxiety (attachment axes, 0..1) by this much.
+            // conflict: an immature NPC whose way is control opens a conflict at the controlling band once the fear has held
+            // there hold_game_hours, and again after cooldown_game_days at the earliest. Off: it stays in the NPC's words.
+            'response' => [
+                'withdraw_at' => 0.25,
+                'conflict' => ['enabled' => true, 'hold_game_hours' => 6.0, 'cooldown_game_days' => 3.0],
+            ],
+
             // --- felt text ---
-            // fear from which she says anything at all, and the bands 'clinging' / 'controlling'
+            // fear from which the NPC says anything at all, and the bands 'clinging' / 'controlling'
             'felt_from' => 0.25,
             'bands' => ['clinging' => 0.5, 'controlling' => 0.75],
             // line salience (0..1) by band; it also rises with the fear
@@ -131,10 +153,25 @@ class RelDynKeeping
                     'sulking'    => "{NAME} withdraws hard to see whether {PLAYER} will follow, a test no one agreed to take; the silence is a bid to be chased.",
                 ],
             ],
+            // What the NPC does about it, where it is not the maturity / trait expression above (decisions §23). Key: response, band,
+            // and for withdraw whether the NPC voices it (mature) or not (raw). Behaviour, never a verdict on the player; no digits;
+            // no pronoun for the NPC.
+            'response_text' => [
+                'appease_uneasy'      => "{NAME} is afraid of losing {PLAYER} and keeps things smooth: agrees quickly, apologises first, goes along with what {PLAYER} wants, whatever has been happening between them.",
+                'appease_clinging'    => "{NAME} is afraid of losing {PLAYER} and tries to be easy to keep: does what is asked before it is asked, takes the blame for small things, and leaves out anything that might cause a scene, including what {NAME} wants.",
+                'appease_controlling' => "The fear of losing {PLAYER} runs {NAME} now: {NAME} will agree to anything, apologise for everything and swallow every hurt to keep {PLAYER} from going, and does not say what it is costing.",
+                'withdraw_uneasy_mature'      => "{NAME} is quietly afraid of losing {PLAYER} and, being who {NAME} is, gives {PLAYER} room instead of asking for anything; says so once, briefly, if it comes up.",
+                'withdraw_uneasy_raw'         => "{NAME} is afraid of losing {PLAYER} and pulls into a shell about it: says less, keeps busy, acts as if it would not matter.",
+                'withdraw_clinging_mature'    => "{NAME} is afraid of losing {PLAYER} and shows it by going quieter, not closer: keeps some distance on purpose, says plainly that it is hard to ask for reassurance, and lets {PLAYER} decide.",
+                'withdraw_clinging_raw'       => "{NAME} is afraid of losing {PLAYER} and goes cold and distant to get ahead of it: short answers, no asking, bracing to be left and half ready to leave first.",
+                'withdraw_controlling_mature' => "The fear of losing {PLAYER} is loud in {NAME} now, and the habit of {NAME} is to pull away from it: more distance, fewer words, a stillness that is not calm. {NAME} knows it makes things worse, says so, and still cannot ask.",
+                'withdraw_controlling_raw'    => "{NAME} has all but shut the door on {PLAYER}: so sure of being left that {NAME} is leaving first in every small way, and hoping, against all of it, that {PLAYER} notices and follows.",
+                'conflict' => "{NAME} has started a fight with {PLAYER} to keep {PLAYER} from going: accusations, demands to know where {PLAYER} has been and with whom, ultimatums that are really pleas. {NAME} wants {PLAYER} to stay, and is making it hard.",
+            ],
         ];
     }
 
-    private const MERGED_TABLES = ['stakes', 'attachment', 'insecurity', 'possessiveness', 'threat', 'rates', 'detriment', 'bands', 'salience'];
+    private const MERGED_TABLES = ['stakes', 'attachment', 'insecurity', 'possessiveness', 'threat', 'rates', 'detriment', 'bands', 'salience', 'response', 'response_text'];
 
     /** The keeping settings: stored config per setting, its nested tables merged per entry ('felt_text' per band and expression). */
     public static function config(): array
@@ -151,6 +188,7 @@ class RelDynKeeping
                 $cfg[$t][$s] = array_replace((array) $defaults[$t][$s], is_array($stored[$t][$s] ?? null) ? $stored[$t][$s] : []);
             }
         }
+        $cfg['response']['conflict'] = array_replace((array) $defaults['response']['conflict'], is_array($stored['response']['conflict'] ?? null) ? $stored['response']['conflict'] : []);
         $cfg['felt_text'] = $defaults['felt_text'];
         foreach ((array) ($stored['felt_text'] ?? []) as $band => $row) {
             if (is_array($row) && isset($cfg['felt_text'][$band])) $cfg['felt_text'][$band] = array_replace($cfg['felt_text'][$band], $row);
@@ -222,7 +260,10 @@ class RelDynKeeping
         $days = ($prev > 0 && $now > $prev) ? ($now - $prev) / RelationshipDynamics::GAMETS_PER_DAY : 0.0;
         $absence = self::between($days, floatval($t['absence']['grace_game_days']), floatval($t['absence']['full_game_days']));
         $jealousy = self::between(floatval($dynamics['dimensions']['jealousy']['x'] ?? 0.0), floatval($t['jealousy']['from']), floatval($t['jealousy']['full']));
-        $p = RelDynPullback::inputs($dynamics, $now);
+        // a conflict the NPC started out of this fear is their own act, not the player's sign of leaving (no runaway loop)
+        $own = $dynamics;
+        if (!empty($dynamics[self::KEY]['conflict']['open'])) $own['in_conflict'] = false;
+        $p = RelDynPullback::inputs($own, $now);
         $in = ['absence' => $absence, 'jealousy' => $jealousy, 'deficit' => floatval($p['deficit']), 'grievance' => floatval($p['grievance'])];
         $keep = 1.0;
         foreach ($in as $k => $v) $keep *= 1.0 - self::clamp01(floatval(((array) $t['weights'])[$k] ?? 0.0) * $v);
@@ -275,6 +316,62 @@ class RelDynKeeping
     public static function expression(array $dynamics): array
     {
         return RelDynConcern::expression($dynamics, RelDynConcern::traitsOf($dynamics));
+    }
+
+    /**
+     * How the NPC answers the fear (decisions §23): 'kind' appease (a people-pleaser) | withdraw (avoidance outruns anxiety by
+     * response.withdraw_at) | express (the maturity / trait expression: plainly, sharply, control, accusation, sulking, clinging);
+     * 'lean' avoidance minus anxiety (attachment axes); 'expression' RelDynConcern::expression. Pure.
+     *
+     * @return array{kind: string, lean: float, expression: array}
+     */
+    public static function response(array $dynamics, ?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        $axes = RelationshipDynamics::getAttachmentAxes($dynamics);
+        $lean = round(floatval($axes['avoidance'] ?? 0.0) - floatval($axes['anxiety'] ?? 0.0), 4);
+        $kind = RelationshipDynamics::isPeoplePleaser($dynamics) ? 'appease'
+            : ($lean >= floatval(((array) $cfg['response'])['withdraw_at']) ? 'withdraw' : 'express');
+        return ['kind' => $kind, 'lean' => $lean, 'expression' => self::expression($dynamics)];
+    }
+
+    /** Is a conflict the fear started still open (the NPC's own fight, repaired or not)? */
+    public static function conflictOpen(array $dynamics): bool
+    {
+        return !empty($dynamics[self::KEY]['conflict']['open']) && !empty($dynamics['in_conflict']);
+    }
+
+    /**
+     * The conflict at the controlling end (decisions §23): an immature NPC whose way is control, at the controlling band, once the
+     * fear has held there response.conflict.hold_game_hours, and not again before cooldown_game_days; never a people-pleaser (they
+     * appease), never one who withdraws, never into a conflict already open. The conflict is an open conflict like any other
+     * (RelationshipDynamics::enterConflict); it denies the player nothing. Tracks how long the fear has held in the band.
+     * Returns true when this step opened one.
+     */
+    private static function conflictStep(string $npcName, array &$dynamics, ?string $band, array $response, float $now, array $cfg): bool
+    {
+        $state = &self::state($dynamics);
+        if (!empty($state['conflict']['open']) && empty($dynamics['in_conflict'])) $state['conflict']['open'] = false;   // repaired
+        if ($band === 'controlling') {
+            if (!isset($state['controlling_since'])) $state['controlling_since'] = $now;
+        } else {
+            unset($state['controlling_since']);
+        }
+        $cc = (array) ((array) $cfg['response'])['conflict'];
+        $e = $response['expression'];
+        $may = !empty($cc['enabled']) && $band === 'controlling' && $response['kind'] === 'express'
+            && $e['band'] === 'immature' && $e['style'] === 'control' && empty($dynamics['in_conflict']);
+        if (!$may) return false;
+        $held = ($now - floatval($state['controlling_since'] ?? $now)) / self::hour();
+        $last = floatval($state['conflict']['opened'] ?? 0);
+        if ($held < floatval($cc['hold_game_hours']) || ($last > 0 && $now >= $last && $now - $last < floatval($cc['cooldown_game_days']) * RelationshipDynamics::GAMETS_PER_DAY)) return false;
+        $count = intval($state['conflict']['count'] ?? 0) + 1;
+        $state['conflict'] = ['open' => true, 'opened' => $now, 'count' => $count];
+        unset($state);
+        RelationshipDynamics::enterConflict($dynamics);
+        RelationshipDynamics::log("[KEEPING] {$npcName}: the fear of losing the player has held at its worst for " . round($held, 1)
+            . " game hours, and the NPC (immature, a controlling way) starts a conflict (#{$count})");
+        return true;
     }
 
     // =====================================================================
@@ -342,6 +439,7 @@ class RelDynKeeping
         $bandBefore = self::band($before, $cfg);
         $bandNow = self::band($fear, $cfg);
         unset($state);
+        self::conflictStep($npcName, $dynamics, $bandNow, ['kind' => self::response($dynamics, $cfg)['kind'], 'expression' => $e], $now, $cfg);
         if ($bandNow !== $bandBefore) {
             RelationshipDynamics::log("[KEEPING] {$npcName}: the fear of losing the player is " . ($bandNow ?? 'gone') . ' (was ' . ($bandBefore ?? 'none')
                 . ', target ' . round($target, 3) . ", stakes " . round($stakes, 2) . ", disposition {$disp}, {$e['band']}/{$e['style']})");
@@ -391,13 +489,26 @@ class RelDynKeeping
         $fear = floatval($dynamics[self::KEY]['fear'] ?? 0.0);
         $band = self::band($fear, $cfg);
         if ($band === null) return null;
-        $e = self::expression($dynamics);
-        $row = (array) (((array) $cfg['felt_text'])[$band] ?? []);
-        $text = (string) ($row[$e['band'] === 'mature' ? 'mature' : ($e['band'] === 'mixed' ? 'mixed' : $e['style'])] ?? '');
+        $resp = self::response($dynamics, $cfg);
+        $e = $resp['expression'];
+        $rt = (array) $cfg['response_text'];
+        // what the NPC does about it, by who they are (decisions §23), else how they show it by maturity and traits
+        $text = '';
+        if ($resp['kind'] === 'appease') {
+            $text = (string) ($rt["appease_{$band}"] ?? '');
+        } elseif ($resp['kind'] === 'withdraw') {
+            $text = (string) ($rt["withdraw_{$band}_" . ($e['band'] === 'mature' ? 'mature' : 'raw')] ?? '');
+        } elseif ($band === 'controlling' && $e['band'] === 'immature' && $e['style'] === 'control' && self::conflictOpen($dynamics)) {
+            $text = (string) ($rt['conflict'] ?? '');
+        }
+        if ($text === '') {
+            $row = (array) (((array) $cfg['felt_text'])[$band] ?? []);
+            $text = (string) ($row[$e['band'] === 'mature' ? 'mature' : ($e['band'] === 'mixed' ? 'mixed' : $e['style'])] ?? '');
+        }
         if ($text === '') return null;
         $sal = floatval(((array) $cfg['salience'])[$band] ?? 0.5);
         return ['key' => 'keeping_' . $band, 'text' => strtr($text, ['{NAME}' => $npc, '{PLAYER}' => $player]),
-            'salience' => round(min(1.0, $sal + 0.1 * $fear), 3), 'band' => $band, 'style' => $e['style'], 'expression' => $e['band']];
+            'salience' => round(min(1.0, $sal + 0.1 * $fear), 3), 'band' => $band, 'style' => $e['style'], 'expression' => $e['band'], 'response' => $resp['kind']];
     }
 
     // =====================================================================
@@ -410,7 +521,8 @@ class RelDynKeeping
         $cfg = self::config();
         $s = is_array($dynamics[self::KEY] ?? null) ? $dynamics[self::KEY] : [];
         $fear = floatval($s['fear'] ?? 0.0);
-        $e = self::expression($dynamics);
+        $resp = self::response($dynamics, $cfg);
+        $e = $resp['expression'];
         return [
             'enabled' => !empty($cfg['enabled']),
             'fear' => round($fear, 3),
@@ -421,6 +533,8 @@ class RelDynKeeping
             'threat' => (array) ($s['last']['threat'] ?? []),
             'held' => array_map(fn($v) => round(floatval($v), 3), (array) ($s['applied'] ?? [])),
             'expression' => $e['band'], 'style' => $e['style'],
+            'response' => $resp['kind'], 'lean' => $resp['lean'],
+            'conflict' => ['open' => self::conflictOpen($dynamics), 'count' => intval($s['conflict']['count'] ?? 0)],
         ];
     }
 }

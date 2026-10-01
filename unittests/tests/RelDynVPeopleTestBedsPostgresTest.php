@@ -111,6 +111,8 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
     private ?string $people = null;
     /** The mood core records for the NPC's reply (moods_issued) */
     private string $mood = 'default';
+    /** npc => label => the action list core would offer the LLM after the ext functions hook (what autonomy left of it) */
+    private array $actions = [];
 
     protected function setUp(): void
     {
@@ -306,6 +308,7 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
                 $GLOBALS['HERIKA_PERS'] = "Roleplay as {$npc}.";
             }
             (static function () use ($hook): void { require __DIR__ . "/../../ext/relationship_dynamics/{$hook}"; })();
+            if ($hook === 'functions.php') $this->actions[$npc][$label] = array_values((array) ($GLOBALS['ENABLED_FUNCTIONS'] ?? []));
             if ($hook === 'context.php') {
                 $this->felt[$npc][$label] = RelDynFelt::lastRendered();
                 $this->subtext[$npc][$label] = '';
@@ -791,5 +794,214 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
     private function jev(string $npc, int $gamets): array
     {
         return RelDynJev::state($npc, $this->dynamics($npc), (float) $gamets);
+    }
+
+    // ------------------------------------------------------------------ §23 the fear of losing, answered by who they are
+
+    /** A hand-set trait override on a stored state (the editor's way: profile_overrides.trait_vector, by trait name; codes given here). */
+    private static function setTraits(array &$d, array $byCode): void
+    {
+        $map = (array) ($d['profile_overrides']['trait_vector'] ?? []);
+        foreach ($byCode as $code => $v) $map[RelDynTraits::TRAITS[$code]] = $v;
+        RelationshipDynamics::setProfileOverride($d, 'trait_vector', $map);
+    }
+
+    /** Hand-set dimensions (value and baseline, as the editor sets them). */
+    private static function setDims(array &$d, array $dims): void
+    {
+        foreach ($dims as $k => $v) {
+            $d['dimensions'][$k]['x'] = $v;
+            if ($k !== 'resentment' && $k !== 'jealousy') $d['dimensions'][$k]['baseline'] = $v;
+        }
+    }
+
+    /** The keeping lane's numbers for $npc now. */
+    private function keep(string $npc): array
+    {
+        $d = $this->dynamics($npc);
+        $r = RelDynKeeping::response($d);
+        return ['fear' => round(RelDynKeeping::fear($d), 3), 'band' => RelDynKeeping::band(RelDynKeeping::fear($d)), 'response' => $r['kind'], 'lean' => $r['lean'],
+            'maturity' => $r['expression']['band'], 'style' => $r['expression']['style'], 'conflict' => !empty($d['in_conflict']),
+            'count' => intval($d['_keeping']['conflict']['count'] ?? 0), 'held_trust' => round(floatval($d['_keeping']['applied']['trust'] ?? 0.0), 2),
+            'people_pleaser' => RelationshipDynamics::isPeoplePleaser($d)];
+    }
+
+    /** The keeping line the LLM was shown for $npc at the turn $label, or null. */
+    private function keepLine(string $npc, string $label): ?string
+    {
+        foreach (['keeping_uneasy', 'keeping_clinging', 'keeping_controlling'] as $k) {
+            if (isset($this->felt[$npc][$label][$k])) return (string) $this->felt[$npc][$label][$k];
+        }
+        return null;
+    }
+
+    /**
+     * Does the rendered $felt line say $text? Intensity formatting may set words in caps, add pauses and (low maturity) drop or
+     * swap a letter: most of its words must be there.
+     */
+    private static function reads(string $felt, string $text): bool
+    {
+        $words = fn(string $s) => array_values(array_filter(preg_split('/[^a-z_]+/', strtolower($s)), fn($w) => strlen($w) >= 4));
+        $said = $words($felt);
+        $want = $words($text);
+        return $want !== [] && count(array_intersect($want, $said)) >= 0.6 * count($want);
+    }
+
+    /** No command refused: the action list core would offer is whole (the autonomy filter took nothing off it). */
+    private function assertNothingRefused(string $npc, string $label): void
+    {
+        $this->assertSame(self::CORE_ACTIONS, $this->actions[$npc][$label] ?? null, "{$npc} {$label}: every action still on the list");
+    }
+
+    /** The same worried stretch for every bed: a bond to lose (core romantic 75, comfort and trust 70) and a jealous mind. */
+    private function worry(float $jealousy = 85.0): void
+    {
+        $this->setBeds(function (array &$d) use ($jealousy): void {
+            self::setDims($d, ['comfort' => 70.0, 'trust' => 70.0, 'jealousy' => $jealousy]);
+        });
+    }
+
+    /** $line to each bed at $gamets, then the eval worker. */
+    private function everyone(string $line, int $gamets, string $label): void
+    {
+        foreach (array_keys(self::BEDS) as $i => $npc) $this->turn($npc, $line, $gamets + 600 * $i, $label);
+        $this->worker();
+    }
+
+    /**
+     * keeping x character x autonomy (decisions §23), the four as they are. The same stretch for all four, the same bond (core
+     * romantic, affinity 75, comfort and trust 70) and the same worry (jealous, two days without a word): the fear of losing the
+     * player is everyone's, nobody is immune, and what it makes each of them DO is who they are: Muiri (toxic, immature) accuses
+     * on thin evidence and her trust is held down, Ashe (mature) says it plainly, the secure and the unbothered say nothing at all.
+     * No one's commands are refused for it (the action list stays whole), no verdict on the player is in any word, no number.
+     */
+    public function testTheFearOfLosingIsEveryonesAndEachAnswersAsTheyAreWithNoCommandRefused(): void
+    {
+        $this->seed(75);
+        $this->meet();
+        $this->worry();
+        $beds = array_keys(self::BEDS);
+        $this->everyone('I am back.', self::at(self::N0 + 2, 18.0), 'back');
+        $this->everyone('Still here.', self::at(self::N0 + 2, 18.0) + (int) round(9 * self::HOUR), 'later');
+        $k = $line = [];
+        foreach ($beds as $npc) {
+            $k[$npc] = $this->keep($npc);
+            $line[$npc] = $this->keepLine($npc, 'later');
+        }
+        $this->probe('keeping, the four as they are', compact('k', 'line'));
+        $why = json_encode($k);
+        foreach ($beds as $npc) $this->assertGreaterThan(0.0, $k[$npc]['fear'], "{$npc}: nobody is immune {$why}");
+        $this->assertGreaterThan(2.0 * max($k[self::AELA]['fear'], $k[self::LYNLY]['fear']), $k['Muiri']['fear'], "meaningfully apart {$why}");
+        $this->assertGreaterThan($k['Ashe']['fear'], $k['Muiri']['fear'], $why);
+        // each says it in their own way, or nothing at all
+        $this->assertNotNull($line['Muiri'], 'Muiri says it');
+        $this->assertNotSame('mature', $k['Muiri']['maturity'], $why);
+        $this->assertStringContainsString('sharp', (string) $line['Muiri'], 'the one who means to say it evenly and cannot: it comes out sharp');
+        $this->assertNotNull($line['Ashe'], 'Ashe says it');
+        $this->assertSame('mature', $k['Ashe']['maturity'], $why);
+        $this->assertStringContainsString('plainly', (string) $line['Ashe'], 'a mature one says it plainly');
+        $this->assertNotSame($line['Muiri'], $line['Ashe']);
+        $this->assertNull($line[self::LYNLY], 'a secure one says nothing about it');
+        // never a refused command, never a verdict, never a number or a pronoun of RelDyn\'s own
+        foreach ($beds as $npc) {
+            $this->assertSame('express', $k[$npc]['response'], "{$npc}: the way they show it by maturity and traits {$why}");
+            $this->assertFalse($k[$npc]['conflict'], "{$npc}: a fear is not yet a fight {$why}");
+            foreach (['back', 'later'] as $label) $this->assertNothingRefused($npc, $label);
+            foreach (['back', 'later'] as $label) {
+                $text = (string) $this->keepLine($npc, $label);
+                $this->assertDoesNotMatchRegularExpression('/\b(abus\w*|toxic|unfair|deserv\w*|cruel|manipulat\w*|refus\w*)\b/i', $text, "{$npc} {$label}");
+                $this->assertDoesNotMatchRegularExpression('/\b(he|she|his|her|hers|him)\b/i', $text, "{$npc} {$label}");
+            }
+        }
+        $this->assertLessThan(0.0, $k['Muiri']['held_trust'], 'Muiri: it costs the bond where it is strongest');
+        $jev = RelDynJev::state('Muiri', $this->dynamics('Muiri'), (float) RelationshipDynamics::currentGamets());
+        $this->assertSame('express', $jev['keeping']['response']);
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /**
+     * keeping x character x autonomy (decisions §23), hand-set copies (Ken: Lynly's bio does not establish shyness, so nothing
+     * is forced on her own read; the copies are made by the editor's overrides) under the same stretch and a worse worry:
+     *   Lynly, a people-pleaser copy (low confidence, low maturity, anxious): appeases and complies, with a player who has treated
+     *     them badly (trust 10, resentment 80) all the same: no conflict, no action refused, the autonomy design's people-pleaser
+     *     stays compliant;
+     *   Muiri, an immature, controlling copy: starts a conflict once the fear has held at its worst, in its words and as a
+     *     standing conflict, and still no command is refused;
+     *   Aela, an avoidant copy: withdraws, quiet and distant, rather than ask;
+     *   Ashe as she is: plainly, if she says anything.
+     * RelDyn models the person: none of the words judges the player.
+     */
+    public function testAPeoplePleaserAppeasesAControllingOneStartsAFightAnAvoidantOneWithdrawsAndNoOneRefuses(): void
+    {
+        $this->seed(75);
+        $this->meet();
+        $this->worry(95.0);
+        $this->setBeds(function (array &$d): void {
+            self::setDims($d, ['self_confidence' => 12.0, 'maturity' => 20.0, 'trust' => 10.0, 'respect' => 8.0, 'resentment' => 80.0]);
+            $d['profile_overrides']['attachment_axes'] = ['anxiety' => 0.8, 'avoidance' => 0.2];
+        }, [self::LYNLY]);
+        $this->setBeds(function (array &$d): void {
+            self::setDims($d, ['maturity' => 15.0]);
+            self::setTraits($d, ['Po' => 0.95, 'C' => 0.5, 'L' => 0.35, 'Pd' => 0.35]);
+        }, ['Muiri']);
+        $this->setBeds(function (array &$d): void {
+            self::setDims($d, ['self_confidence' => 60.0, 'maturity' => 55.0]);
+            $d['profile_overrides']['attachment_axes'] = ['anxiety' => 0.2, 'avoidance' => 0.85];
+        }, [self::AELA]);
+        $beds = array_keys(self::BEDS);
+        $t2 = self::at(self::N0 + 2, 18.0);
+        $this->everyone('I am back.', $t2, 'back');
+        $this->everyone('Still here.', $t2 + (int) round(9 * self::HOUR), 'later');
+        $this->everyone('Good morning.', $t2 + (int) round(20 * self::HOUR), 'morning');
+        $k = $line = [];
+        foreach ($beds as $npc) {
+            $k[$npc] = $this->keep($npc);
+            $line[$npc] = $this->keepLine($npc, 'morning') ?? $this->keepLine($npc, 'later');
+        }
+        $this->probe('keeping, by who they are', compact('k', 'line'));
+        $why = json_encode($k);
+        // the people-pleaser appeases
+        $this->assertTrue($k[self::LYNLY]['people_pleaser'], $why);
+        $this->assertSame('appease', $k[self::LYNLY]['response'], $why);
+        $this->assertContains($k[self::LYNLY]['band'], ['clinging', 'controlling'], "the fear is real {$why}");
+        $this->assertFalse($k[self::LYNLY]['conflict'], "a people-pleaser never starts a fight {$why}");
+        $this->assertNotNull($line[self::LYNLY]);
+        $this->assertMatchesRegularExpression('/keeps? things smooth|easy to keep|agree to anything/', (string) $line[self::LYNLY], 'appeases');
+        $auto = RelationshipDynamics::evaluateAutonomyState($this->dynamics(self::LYNLY), 'Stoic');
+        $this->assertSame('compliant', $auto['state'], 'complies, though the player has treated them badly');
+        $this->assertTrue($auto['swallowed'], 'what the autonomy design says they swallow');
+        foreach (['back', 'later', 'morning'] as $label) $this->assertNothingRefused(self::LYNLY, $label);
+        // the controlling one starts a conflict
+        $this->assertSame('immature', $k['Muiri']['maturity'], $why);
+        $this->assertSame('control', $k['Muiri']['style'], $why);
+        $this->assertSame('controlling', $k['Muiri']['band'], $why);
+        $this->assertTrue($k['Muiri']['conflict'], "the fear has held at its worst: a fight {$why}");
+        $this->assertSame(1, $k['Muiri']['count'], $why);
+        $this->assertTrue(self::reads((string) $line['Muiri'], 'has started a fight with Kaida to keep Kaida from going: accusations, demands to know where Kaida has been and with whom, ultimatums that are really pleas. Muiri wants Kaida to stay'), (string) $line['Muiri']);
+        foreach (['back', 'later', 'morning'] as $label) $this->assertNothingRefused('Muiri', $label);
+        // the avoidant one withdraws
+        $this->assertSame('withdraw', $k[self::AELA]['response'], $why);
+        $this->assertFalse($k[self::AELA]['conflict'], $why);
+        $this->assertNotNull($line[self::AELA], 'Aela says it, in her way');
+        $this->assertMatchesRegularExpression('/distance|room|shell|cold|quiet|shut/', (string) $line[self::AELA], 'withdraws');
+        foreach (['back', 'later', 'morning'] as $label) $this->assertNothingRefused(self::AELA, $label);
+        // four characters, four ways, none of them a verdict, a number or a pronoun of RelDyn's own
+        $said = array_filter($line, fn($l) => $l !== null);
+        $this->assertGreaterThanOrEqual(3, count(array_unique($said)), 'meaningfully apart');
+        foreach ($said as $npc => $text) {
+            $this->assertDoesNotMatchRegularExpression('/\b(abus\w*|toxic|unfair|deserv\w*|cruel|manipulat\w*|refus\w*)\b/i', $text, $npc);
+            $this->assertDoesNotMatchRegularExpression('/\b(he|she|his|her|hers|him)\b/i', $text, $npc);
+            $this->assertDoesNotMatchRegularExpression('/\d/', $text, $npc);
+        }
+        // Jev gets the numbers: the response and the conflict
+        $now = (float) RelationshipDynamics::currentGamets();
+        $jev = RelDynJev::state('Muiri', $this->dynamics('Muiri'), $now);
+        $this->assertSame('express', $jev['keeping']['response']);
+        $this->assertSame(true, $jev['keeping']['conflict']['open']);
+        $this->assertStringContainsString(' conflict', $jev['text']);
+        $this->assertSame('appease', RelDynJev::state(self::LYNLY, $this->dynamics(self::LYNLY), $now)['keeping']['response']);
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+        $this->assertSame([], $this->db->failures);
     }
 }

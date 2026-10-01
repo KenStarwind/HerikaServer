@@ -105,7 +105,10 @@
  *                     'target' => ?0..1, 'stakes' => ?0..1 (what there is to lose), 'disposition' => 0..1 (who she is:
  *                     her attachment corners x insecurity x possessiveness), 'threat' => ['absence', 'jealousy', 'deficit',
  *                     'grievance', 'threat'] each 0..1, 'held' => ['trust' | 'comfort' => points <= 0 the grip holds
- *                     down], 'expression' / 'style' => how she shows it] (RelDynKeeping, decisions §20.3)
+ *                     down], 'expression' / 'style' => how the NPC shows it, 'response' => appease (a people-pleaser) |
+ *                     withdraw | express (what the fear makes the NPC do, by who they are), 'lean' => avoidance minus
+ *                     anxiety, 'conflict' => ['open' => bool (a conflict the fear started is open), 'count' => int]]
+ *                     (RelDynKeeping, decisions §20.3 and §23)
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
  *   governor         null | ['tier' => distant|friendly|crush|committed|hostile, 'passion_floor',
  *                    'passion_ceiling' (passion points), 'raised' => bool] (MDD 8 tiered governors,
@@ -398,7 +401,8 @@ final class RelDynJev
         $kp = $s['keeping'] ?? null;
         if (is_array($kp) && !empty($kp['enabled']) && in_array($kp['band'], ['clinging', 'controlling'], true)) {
             $parts[] = 'keeping=' . number_format((float) $kp['fear'], 2, '.', '') . "({$kp['band']} {$kp['expression']}/{$kp['style']})"
-                . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '');
+                . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '')
+                . (($kp['response'] ?? 'express') !== 'express' ? ' response=' . $kp['response'] : '') . (!empty($kp['conflict']['open']) ? ' conflict' : '');
         }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];
