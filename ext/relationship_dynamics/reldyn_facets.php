@@ -274,6 +274,15 @@ class RelDynFacets
         return $keys;
     }
 
+    /**
+     * Is the sky clear: a known weather with no rain, snow, cloud or fog in it (the keys of weatherKeys)?
+     * No known weather is not "clear". Night stars (clear_night) and a vampire's direct sunlight both read it.
+     */
+    public static function skyIsClear(array $weather): bool
+    {
+        return !empty($weather) && empty(array_intersect($weather, ['rain', 'snow', 'cloudy', 'fog']));
+    }
+
     /** Time-of-day period for a game hour (0 <= h < 24) from place_facets.time_of_day_hours. */
     public static function timeOfDay(?float $hour): ?string
     {
