@@ -371,6 +371,7 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
             'charisma' => 'none',     // rulings 2026-09-25 §18 #11: always asked; a reply without it reads as none
             'reply_mood' => 'pleased',   // the mood she answered in (moods_issued at the postrequest), code-written
             'request_type' => 'inputtext',   // whose exchange it was (the player's input), code-written
+            'handover_tags' => [],   // the item handovers its exchange held (none: no itemfound row), code-written (batch T review fix)
             'tags' => ['gift', 'praise'],
             'grievance' => ['flag' => false, 'kind' => null, 'severity' => 0],
             'jealousy' => ['flag' => false, 'rival' => null, 'intensity' => 0],
