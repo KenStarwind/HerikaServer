@@ -332,7 +332,10 @@ final class RelDynUReviewFixesTest extends TestCase
         $this->assertGreaterThan(0.0, $p[0]['weight']);
         $this->assertLessThan(0.6, $p[0]['weight'], 'less than a moment she showed: only what is unvoiced counts');
         $interest = RelDynAttraction::interest($shy)['interest'];
-        $this->assertEqualsWithDelta(0.6 * $interest * RelDynAttraction::shyness($shy), $p[0]['weight'], 1e-6, 'her interest x how shy she is x the moment');
+        $this->assertEqualsWithDelta(0.6 * $interest, $p[0]['weight'], 1e-6, 'her interest x the moment, at her shyest');
+        $mid = $this->drawn(40.0, 32.5);   // shyness 0.5, of which 0.2 / 0.7 is past where it reads as shyness
+        RelDynRomance::noteMoment($mid, $this->moment());
+        $this->assertEqualsWithDelta(0.6 * $interest * (0.5 - 0.3) / 0.7, self::pending($mid)[0]['weight'], 1e-6, 'a ramp from where her unvoiced pull reads as shyness');
     }
 
     public function testHowMuchOfItCountsIsWhoSheIs(): void
@@ -342,9 +345,11 @@ final class RelDynUReviewFixesTest extends TestCase
             RelDynRomance::noteMoment($d, $this->moment());
             return floatval(self::pending($d)[0]['weight'] ?? 0.0);
         };
-        $this->assertGreaterThan($weight(40.0), $weight(15.0), 'the shyer she is, the more of her pull is hidden');
+        $this->assertGreaterThan($weight(30.0), $weight(15.0), 'the shyer she is, the more of her pull is hidden');
+        $this->assertGreaterThan($weight(40.0), $weight(30.0));
         $this->assertGreaterThan($weight(15.0, 10.0), $weight(15.0, 45.0), 'and the more drawn she is');
-        $this->assertSame(0.0, $weight(50.0), 'one who shows what she feels has nothing hidden: her passion signal is the whole of it');
+        $this->assertSame(0.0, $weight(40.0), 'a little unsure is not hiding it: her passion signal is the whole of it');
+        $this->assertSame(0.0, $weight(50.0), 'one who shows what she feels has nothing hidden');
     }
 
     public function testNoInterestNoHiddenMomentAndAShownOneIsWholeAsBefore(): void

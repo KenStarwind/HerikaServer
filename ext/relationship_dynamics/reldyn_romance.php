@@ -18,7 +18,8 @@
  *        - tagged with a moment tag (intimacy, quality_time) at significance >= the
  *          moment threshold with a positive passion signal, or the same without one when she is
  *          drawn to the player and too shy to show it (rulings 2026-10-01 §20 #3: hidden interest
- *          counts): it weighs its significance x her interest x her shyness (hiddenShare), or
+ *          counts): it weighs its significance x her interest x her shyness past where it reads as
+ *          shyness (hiddenShare), or
  *        - tagged 'confession' (the player openly declared feelings) at significance >=
  *          the confession threshold; it weighs at least confession_weight.
  *      A SETBACK (a grievance, or a significant non-positive exchange) resets momentum.
@@ -115,9 +116,11 @@ final class RelDynRomance
             'moment_min_passion_signal' => 1.0,
             // Rulings 2026-10-01 §20 #3: hidden interest counts. A moment (tagged, significant) in which the eval saw
             // no passion in what she showed still moves the romance when she is drawn to the player and too shy to
-            // show it: it weighs its significance x her interest x how shy she is (the unvoiced share of her pull,
-            // RelDynAttraction::interest / shyness). One who shows what she feels has nothing hidden: her passion
-            // signal is the whole of it. false = only a shown moment counts, as before.
+            // show it: it weighs its significance x her interest x how far her shyness is past the point where her
+            // unvoiced pull reads as shyness (attraction.interest.shy_text_from; none at it, whole at full shyness):
+            // the unvoiced share of her pull, RelDynAttraction::interest / shyness. One who shows what she feels,
+            // or is only a little unsure of herself, has nothing hidden: her passion signal is the whole of it.
+            // false = only a shown moment counts, as before.
             'hidden_interest_moments' => true,
             'confession_tag' => 'confession',
             'confession_min_significance' => 0.3,
@@ -218,13 +221,16 @@ final class RelDynRomance
 
     /**
      * The share of her pull she does not show (decisions §20 #3): her interest in the player (0..1, 0 unless she is
-     * drawn) x how shy she is about showing it (0..1). Pure.
+     * drawn) x how far her shyness (0..1) is past shy_text_from, where her unvoiced pull starts to read as shyness
+     * (0 at it and under, 1 at full shyness: a ramp, no cliff). Pure.
      */
     public static function hiddenShare(array $dynamics): float
     {
         $interest = RelDynAttraction::interest($dynamics);
         if (empty($interest['drawn'])) return 0.0;
-        return max(0.0, min(1.0, floatval($interest['interest']) * RelDynAttraction::shyness($dynamics)));
+        $from = max(0.0, min(0.99, floatval(RelDynAttraction::interestConfig()['shy_text_from'])));
+        $hiding = max(0.0, (RelDynAttraction::shyness($dynamics) - $from) / (1.0 - $from));
+        return max(0.0, min(1.0, floatval($interest['interest']) * $hiding));
     }
 
     // =========================================================================
