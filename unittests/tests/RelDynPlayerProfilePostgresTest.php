@@ -619,6 +619,81 @@ final class RelDynPlayerProfilePostgresTest extends TestCase
         $this->assertNoSqlFailures();
     }
 
+    /**
+     * prompt-gating-fame: the side a faction was joined on, from the quest editor ids only one side has
+     * (core's own quest data), counted beside the coarse questlines. A Volkihar player's DLC1 quests
+     * count for the Volkihar line and not the Dawnguard's.
+     */
+    public function testSideQuestlinesCountApartFromTheCoarseOnes(): void
+    {
+        $this->skills([]);
+        foreach (['CW01B', 'CW02B', 'CW03', 'DLC1VQ03Vampire', 'DLC1VampireBaseIntro', 'DLC1VQ01', 'BardsCollegeLute', 'MQ101'] as $q) {
+            $this->journalQuest($q, 10);
+        }
+        $p = $this->profile();
+        $lines = $p['facts']['questlines']['value'];
+        $this->assertSame(2, $lines['civil_war_stormcloak']);
+        $this->assertSame(0, $lines['civil_war_imperial']);
+        $this->assertSame(3, $lines['civil_war'], 'the coarse line still counts every CW quest (attraction markers, archetype deeds)');
+        $this->assertSame(2, $lines['volkihar']);
+        $this->assertSame(0, $lines['dawnguard_hunter']);
+        $this->assertSame(3, $lines['dawnguard'], 'the coarse line: every DLC1 quest');
+        $this->assertSame(1, $lines['bards_college']);
+        $this->assertSame(8, $p['facts']['questlines']['journal_quests']);
+        $scores = RelDynReputation::fameScores($p);
+        $this->assertEqualsWithDelta(0.6667, $scores['civil_war_stormcloak'], 1e-3);
+        $this->assertSame(0.0, $scores['civil_war_imperial']);
+        $this->assertEqualsWithDelta(0.6667, $scores['volkihar'], 1e-3);
+        $this->assertSame(0.0, $scores['dawnguard'], 'a Volkihar player is not rumoured to hunt vampires with the Dawnguard');
+        $this->assertEqualsWithDelta(0.3333, $scores['bards_college'], 1e-3, 'one Bards College quest: just over the line');
+        // and the other side
+        $this->journalQuest('DLC1HunterBaseIntro', 10);
+        $p = $this->profile();
+        $this->assertSame(1, $p['facts']['questlines']['value']['dawnguard_hunter']);
+        $this->assertEqualsWithDelta(0.5, RelDynReputation::fameScores($p)['dawnguard'], 1e-3);
+        $this->assertNoSqlFailures();
+    }
+
+    /**
+     * prompt-gating-fame, thane: no core source for titles, so the stage of the quest that grants it:
+     * Dragon Rising (MQ104) stage 160, the Jarl names the Dragonborn Thane of Whiterun. The stage log
+     * (questlog) is the history and the journal row the last stage sent; unknown while neither holds a quest.
+     */
+    public function testThaneOfWhiterunComesFromTheQuestStageThatGrantsIt(): void
+    {
+        $this->skills([]);
+        $this->assertNull($this->profile()['facts']['thane_holds']['value'], 'no quest row at all: unknown');
+        $this->assertNull(RelDynReputation::fameScores($this->profile())['thane_whiterun']);
+
+        foreach ([10, 40, 90] as $stage) $this->questlogUpdate('MQ104', $stage, 'Dragon Rising');
+        $this->journalQuest('MQ101', 10);
+        $p = $this->profile();
+        $this->assertSame(0, $p['facts']['quest:MQ104@160']['value'], 'the dragon is killed, the title not yet given');
+        $this->assertSame([], $p['facts']['thane_holds']['value']);
+        $this->assertSame(0.0, RelDynReputation::fameScores($p)['thane_whiterun']);
+
+        $this->questlogUpdate('MQ104', 160, 'Speak to Jarl Balgruuf');
+        $p = $this->profile();
+        $this->assertSame(1, $p['facts']['quest:MQ104@160']['value']);
+        $this->assertSame(['Whiterun Hold'], $p['facts']['thane_holds']['value']);
+        $this->assertEqualsWithDelta(0.8, RelDynReputation::fameScores($p)['thane_whiterun'], 1e-3);
+        $this->assertStringContainsString('questlog', $p['facts']['quest:MQ104@160']['source']);
+        $this->assertNoSqlFailures();
+    }
+
+    /** The journal row's stage counts too (a game whose stage log was pruned), and another quest's stage never does. */
+    public function testThaneFromTheJournalRowAloneAndNotFromAnotherQuest(): void
+    {
+        $this->skills([]);
+        $this->questlogUpdate('MQ105', 160, 'The Way of the Voice');
+        $this->assertSame(0, $this->profile()['facts']['quest:MQ104@160']['value'], 'MQ105 stage 160 is not MQ104');
+        $this->journalQuest('MQ104', 165);
+        $p = $this->profile();
+        $this->assertSame(1, $p['facts']['quest:MQ104@160']['value']);
+        $this->assertSame(['Whiterun Hold'], $p['facts']['thane_holds']['value']);
+        $this->assertNoSqlFailures();
+    }
+
     /** core_player (playthrough-scoped, gamedata skyrim_stats) wins over the global conf_opts row. */
     public function testPlaythroughScopedStatWinsOverGlobalConfOpts(): void
     {

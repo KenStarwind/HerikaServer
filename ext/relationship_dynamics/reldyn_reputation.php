@@ -57,7 +57,7 @@ final class RelDynReputation
 
     public static function configDefaults(): array
     {
-        return [
+        $cfg = [
             'enabled' => true,
             // evidence key => [half, weight] (RelDynPlayer evidence format; 'stat:' = Skyrim tracked stat)
             'fame' => [
@@ -99,7 +99,12 @@ final class RelDynReputation
             // fame_location_gating home_hold / max_distance); text: the rumour ({NAME} the NPC,
             // {PLAYER} the player's name, or a stranger's description when she does not know it;
             // a fame never tells her the name).
-            // Nothing in CHIM 3.4.1 core tells thane titles, faction ranks or the civil-war side.
+            // Nothing in CHIM 3.4.1 core tells thane titles, faction ranks or the civil-war side, so
+            // those are read from the journal's quest editor ids (the questlines_fine prefixes,
+            // RelDynPlayer) and, for a thane title, the quest stage log ('quest:<editor id>@<stage>'
+            // evidence: that quest reached that stage). superseded_by: the fame is left out of what is
+            // heard when any of the listed fames is heard (the side-less civil war line, once the side
+            // is known).
             'fames' => [
                 'dragonborn' => ['evidence' => ['dragons' => [2, 1.0], 'stat:Shouts Learned' => [3, 0.5], 'stat:Words Of Power Learned' => [6, 0.4]],
                     'min_score' => 0.3, 'home' => null, 'reach' => 9,
@@ -121,20 +126,76 @@ final class RelDynReputation
                 'dark_brotherhood' => ['evidence' => ['stat:The Dark Brotherhood Quests Completed' => [3, 1.0], 'questline:dark_brotherhood' => [3, 0.6]],
                     'min_score' => 0.3, 'home' => null, 'reach' => 9,
                     'text' => '{NAME} has heard dark rumours tying {PLAYER} to the Dark Brotherhood.'],
+                // The war when only its tracked stat is known (the side is not): the side's own line, once
+                // a side quest is in the journal, replaces it
                 'civil_war' => ['evidence' => ['stat:Civil War Quests Completed' => [4, 1.0], 'questline:civil_war' => [4, 0.6]],
                     'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'superseded_by' => ['civil_war_imperial', 'civil_war_stormcloak'],
                     'text' => '{NAME} has heard that {PLAYER} has fought in the war between the Legion and the Stormcloaks.'],
-                'dawnguard' => ['evidence' => ['stat:Dawnguard Quests Completed' => [3, 1.0], 'questline:dawnguard' => [3, 0.6]],
+                // One side-bearing quest is the decisive act (joining), so one is enough: [1, 1.0] reads 0.5
+                'civil_war_imperial' => ['evidence' => ['questline:civil_war_imperial' => [1, 1.0]],
+                    'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'text' => '{NAME} has heard that {PLAYER} fights for the Imperial Legion in the civil war.'],
+                'civil_war_stormcloak' => ['evidence' => ['questline:civil_war_stormcloak' => [1, 1.0]],
+                    'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'text' => '{NAME} has heard that {PLAYER} fights for the Stormcloaks in the civil war.'],
+                // The Dawnguard's own side only (questline dawnguard_hunter): the old evidence, every DLC1
+                // quest and a side-less stat, rumoured a Volkihar player to hunt vampires
+                'dawnguard' => ['evidence' => ['questline:dawnguard_hunter' => [1, 1.0]],
                     'min_score' => 0.3, 'home' => 'The Rift', 'reach' => 3,
                     'text' => '{NAME} has heard that {PLAYER} hunts vampires with the Dawnguard.'],
+                'volkihar' => ['evidence' => ['questline:volkihar' => [1, 1.0]],
+                    'min_score' => 0.3, 'home' => null, 'reach' => 9,
+                    'text' => '{NAME} has heard dark whispers that {PLAYER} has ties to vampiric powers.'],
+                // No tracked stat exists for the Bards College: two quests of it make a member (one reads 0.33)
+                'bards_college' => ['evidence' => ['questline:bards_college' => [2, 1.0]],
+                    'min_score' => 0.3, 'home' => 'Haafingar', 'reach' => 2,
+                    'text' => '{NAME} has heard that {PLAYER} is a member of the Bards College in Solitude.'],
+            ],
+            // Thane titles by hold (the April thane fame): hold => title and the quest stages that grant
+            // it ('quest:<editor id>@<stage>': any one reached). Only what core's own quest data
+            // (data/skyrim_quest_definitions.json) confirms is shipped: MQ104 Dragon Rising, stage 160,
+            // the Jarl names the Dragonborn Thane of Whiterun. The other holds' titles are earned by
+            // counting favours and errands (Freeform* quests), not by one quest: add them here once
+            // Ken's save confirms the editor ids and stages (each hold becomes a 'thane_<hold>' fame
+            // heard in that hold only, reach 0).
+            'thane_holds' => [
+                'Whiterun Hold' => ['title' => 'Thane of Whiterun', 'quests' => ['MQ104' => 160]],
             ],
         ];
+        $cfg['fames'] += self::thaneFames($cfg['thane_holds']);
+        return $cfg;
+    }
+
+    /**
+     * The 'thane_<hold>' fames of a thane table (config 'thane_holds'): evidence = one
+     * 'quest:<editor id>@<stage>' entry per quest, heard in that hold only (reach 0). A hold with no
+     * quest to read is not a fame.
+     */
+    public static function thaneFames(array $holds): array
+    {
+        $out = [];
+        foreach ($holds as $hold => $spec) {
+            $quests = is_array($spec) ? (array) ($spec['quests'] ?? []) : [];
+            if (!$quests || trim((string) $hold) === '') continue;
+            $evidence = [];
+            foreach ($quests as $id => $stage) $evidence['quest:' . $id . '@' . intval($stage)] = [0.25, 1.0];
+            $title = trim((string) ($spec['title'] ?? '')) ?: 'Thane of ' . $hold;
+            $out['thane_' . str_replace(' ', '_', RelDynGating::holdKey((string) $hold))] = [
+                'evidence' => $evidence, 'min_score' => 0.3, 'home' => (string) $hold, 'reach' => 0,
+                'text' => '{NAME} has heard that {PLAYER} holds the title of ' . $title . ', a person of some standing in the hold.',
+            ];
+        }
+        return $out;
     }
 
     public static function config(): array
     {
         $stored = RelationshipDynamics::configValue('reputation');
-        return array_replace(self::configDefaults(), is_array($stored) ? $stored : []);
+        $cfg = array_replace(self::configDefaults(), is_array($stored) ? $stored : []);
+        // a stored fames table, saved before the thane keys, still gets them (from the thane table in force)
+        $cfg['fames'] = (array) $cfg['fames'] + self::thaneFames((array) ($cfg['thane_holds'] ?? []));
+        return $cfg;
     }
 
     /** The evidence tables, the fames' own included (RelDynPlayer reads the tracked stats they name). */

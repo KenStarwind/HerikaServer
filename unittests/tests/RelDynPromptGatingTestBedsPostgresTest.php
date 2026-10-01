@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../lib/relationship_manager.php';
 require_once __DIR__ . '/../../lib/core/npc_master.class.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
+require_once __DIR__ . '/../../ext/relationship_dynamics/tools/replay_prompt.php';
 
 /**
  * `sql`-compatible adapter over one pg connection (CHIM conventions: fetchOne returns [] on a failed
@@ -205,6 +206,11 @@ final class RelDynPromptGatingTestBedsPostgresTest extends TestCase
             name text, editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
             stage integer, briefing text, briefing2 text, localts bigint NOT NULL, gamets bigint NOT NULL, data text,
             status text, rowid bigserial PRIMARY KEY)");
+        // data/database_default.sql questlog: comm.php _uquest, one row per quest stage change
+        pg_query($admin, "CREATE TABLE questlog (ts text, sess varchar(1024), id_quest varchar(1024), name text,
+            editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
+            stage integer, briefing text, briefing2 text, localts bigint, gamets bigint, data text, status text,
+            rowid serial PRIMARY KEY)");
         pg_query($admin, "CREATE TABLE diarylog (ts text NOT NULL, sess character varying(1024), topic text, content text,
             tags text, people text, localts bigint NOT NULL, location text, gamets bigint NOT NULL, rowid bigserial NOT NULL)");
         pg_query($admin, "CREATE TABLE oghma (topic character varying NOT NULL, topic_desc character varying,
@@ -335,6 +341,21 @@ final class RelDynPromptGatingTestBedsPostgresTest extends TestCase
     {
         pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value',
             [$stat, (string) $value]);
+    }
+
+    /** comm.php _quest: the journal row of an active quest (editor id in id_quest; one row per quest). */
+    private function journalQuest(string $editorId, int $stage = 10): void
+    {
+        pg_query_params($this->db->link, 'DELETE FROM quests WHERE id_quest = $1', [$editorId]);
+        pg_query_params($this->db->link, "INSERT INTO quests (ts, id_quest, name, stage, localts, gamets) VALUES ('0', $1, $2, $3, $4, $5)",
+            [$editorId, "Quest {$editorId}", $stage, $this->realTs, $this->gamets]);
+    }
+
+    /** comm.php _uquest: one stage change in the quest stage log. */
+    private function questStage(string $editorId, int $stage): void
+    {
+        pg_query_params($this->db->link, "INSERT INTO questlog (ts, id_quest, stage, briefing, data, localts, gamets) VALUES ('0', $1, $2, 'objective', 'objective', $3, $4)",
+            [$editorId, $stage, $this->realTs, $this->gamets]);
     }
 
     private function setCoreAffinity(string $npc, int $aff): void
@@ -648,6 +669,226 @@ final class RelDynPromptGatingTestBedsPostgresTest extends TestCase
         $this->assertStringContainsString(self::BIO, $aela['nearby']);
         $this->assertNoDbFailures();
         $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /**
+     * Audit bug: the Dawnguard's fame came from every DLC1 quest, so a Volkihar player was rumoured to
+     * hunt vampires with the Dawnguard. The Volkihar side is its own fame (heard everywhere), told in
+     * its own words. The four beds: Aela knows him well (no rumours), Ashe and Muiri know the name,
+     * Lynly and Hulda have not met him.
+     */
+    public function testAVolkiharPlayerIsRumouredToVampiricTiesNeverToHuntingThem(): void
+    {
+        foreach (['DLC1VQ03Vampire', 'DLC1VampireBaseIntro', 'DLC1VQ01'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStrangerTo($hulda, 'Hulda', 'Whiterun', 'renowned');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStringContainsString("Hulda has heard dark whispers that someone of this stranger's description has ties to vampiric powers.", $know);
+        $this->assertStringNotContainsString('Dawnguard', $know);
+        $this->assertStringContainsString('Companions', $know, 'the other thing he is known for, second');
+
+        // Heard everywhere: Raven Rock, off the hold map, where the Companions do not reach
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStrangerTo($geldis, 'Geldis Sadri', 'Raven Rock', 'renowned');
+        $this->assertStringContainsString('ties to vampiric powers', self::knowledgeBlock($geldis));
+        $this->assertStringNotContainsString('Companions', self::knowledgeBlock($geldis));
+
+        $aela = $this->turn(self::AELA, 'jorrvaskr', 'Good hunt today.');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $muiri = $this->turn('Muiri', 'markarth', 'How is the shop?');
+        $lynly = $this->turn(self::LYNLY, 'dragonbridge', 'Play something cheerful.');
+        $this->assertStringNotContainsString('vampiric', self::knowledgeBlock($aela), 'no rumours about someone she knows well');
+        $this->assertStringContainsString('Ashe has heard dark whispers that Kaida has ties to vampiric powers.', self::knowledgeBlock($ashe));
+        $this->assertStringContainsString('Muiri has heard dark whispers that Kaida has ties to vampiric powers.', self::knowledgeBlock($muiri));
+        $this->assertStrangerTo($lynly, self::LYNLY, 'Lynly', 'renowned');
+        $this->assertStringContainsString("Lynly Star-Sung has heard dark whispers that someone of this stranger's description has ties", self::knowledgeBlock($lynly));
+        foreach ([$aela, $ashe, $muiri, $lynly] as $t) $this->assertStringNotContainsString('Dawnguard', self::reldynText($t));
+        $this->assertCount(4, array_unique(array_map(fn($t) => self::knowledgeBlock($t), [$aela, $ashe, $muiri, $lynly])), 'four bonds, four readings');
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /** The Dawnguard side: heard where the Rift's word reaches (three holds), not past it (design: the Rift, 3). */
+    public function testADawnguardPlayerIsRumouredToHuntVampiresWhereTheRiftsWordReaches(): void
+    {
+        foreach (['DLC1VQ03Hunter', 'DLC1HunterBaseIntro'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description hunts vampires with the Dawnguard.", self::knowledgeBlock($hulda), 'Whiterun: two holds from the Rift');
+        $this->assertStringNotContainsString('vampiric', self::knowledgeBlock($hulda));
+        $birna = $this->turn('Birna', 'winterhold', 'Any news?');
+        $this->assertStringContainsString('hunts vampires with the Dawnguard', self::knowledgeBlock($birna), 'Winterhold: two holds from the Rift');
+        $lynly = $this->turn(self::LYNLY, 'dragonbridge', 'Play something cheerful.');
+        $this->assertStringNotContainsString('Dawnguard', self::knowledgeBlock($lynly), 'Dragon Bridge: four holds out');
+        $this->assertStringContainsString('Companions', self::knowledgeBlock($lynly), 'what does reach her');
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringNotContainsString('Dawnguard', self::knowledgeBlock($geldis), 'off the map');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida hunts vampires with the Dawnguard.', self::knowledgeBlock($ashe));
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /** The civil war by side; with only the war's tracked stat the side is not known and the old line stands. */
+    public function testTheCivilWarSideIsHeardNotTheSidelessLineOnceItIsKnown(): void
+    {
+        $this->trackedStat('Civil War Quests Completed', 6);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description has fought in the war between the Legion and the Stormcloaks.", self::knowledgeBlock($hulda));
+
+        foreach (['CW01B', 'CW02B'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'Any news?');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description fights for the Stormcloaks in the civil war.", $know);
+        $this->assertStringNotContainsString('Imperial', $know);
+        $this->assertStringNotContainsString('war between the Legion and the Stormcloaks', $know, 'the side-less line is superseded');
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringContainsString('fights for the Stormcloaks', self::knowledgeBlock($geldis), 'a war heard of everywhere');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida fights for the Stormcloaks in the civil war.', self::knowledgeBlock($ashe));
+
+        // He changes sides (a new character, a new journal): the Legion, in the Legion's words
+        pg_query($this->db->link, "DELETE FROM quests WHERE id_quest IN ('CW01B', 'CW02B')");
+        foreach (['CW00A', 'CW02A'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'And now?');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStringContainsString("fights for the Imperial Legion in the civil war.", $know);
+        $this->assertStringNotContainsString('Stormcloaks', $know);
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /** The Bards College: heard in Haafingar and the two holds around it, not across Skyrim. Lynly is a bard of Solitude's road. */
+    public function testTheBardsCollegeIsHeardNearSolitudeOnly(): void
+    {
+        $this->journalQuest('BardsCollegeLute');
+        $lynly = $this->turn(self::LYNLY, 'dragonbridge', 'Play something cheerful.');
+        $this->assertStrangerTo($lynly, self::LYNLY, 'Lynly, Haafingar', 'renowned');
+        $this->assertStringContainsString("Lynly Star-Sung has heard that someone of this stranger's description is a member of the Bards College in Solitude.", self::knowledgeBlock($lynly));
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringContainsString('Bards College', self::knowledgeBlock($hulda), 'Whiterun: two holds from Solitude');
+        $birna = $this->turn('Birna', 'winterhold', 'Any news?');
+        $this->assertStringNotContainsString('Bards College', self::knowledgeBlock($birna), 'Winterhold: three holds out');
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringNotContainsString('Bards College', self::knowledgeBlock($geldis), 'off the map');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida is a member of the Bards College in Solitude.', self::knowledgeBlock($ashe));
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /**
+     * Thane of Whiterun (Dragon Rising, stage 160 of MQ104, read from the quest stage log): said in
+     * Whiterun and nowhere else; a quest only started does not make him a thane. Said first: it is
+     * the most famous thing he is there. The strangers' rumour lines stay at two.
+     */
+    public function testTheThaneOfWhiterunIsHeardInWhiterunOnly(): void
+    {
+        foreach ([10, 40, 90] as $stage) $this->questStage('MQ104', $stage);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($hulda), 'the dragon is dead but the title is not given yet');
+
+        $this->questStage('MQ104', 160);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStrangerTo($hulda, 'Hulda', 'Whiterun', 'renowned');
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description holds the title of Thane of Whiterun, a person of some standing in the hold.", $know);
+        $this->assertLessThan(strpos($know, 'Companions'), strpos($know, 'Thane of Whiterun'), 'the title first');
+        $this->assertSame(2, substr_count($know, 'has heard'), 'at most two rumour lines');
+
+        $brina = $this->turn('Brina Merilis', 'dawnstar', 'Any news?');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($brina), 'Dawnstar: a hold out, and a title is only heard where it is held');
+        $this->assertStringContainsString('Companions', self::knowledgeBlock($brina));
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($geldis));
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida holds the title of Thane of Whiterun', self::knowledgeBlock($ashe));
+        $aela = $this->turn(self::AELA, 'jorrvaskr', 'Good hunt today.');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($aela), 'she knows him well: no rumours');
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /**
+     * replay-integration-testing: the four beds' real turns (the real hooks, this file's turn()) written as
+     * captures in the connectors' own format (date, "=", var_export, "=") and put through replay_prompt:
+     * list, diff and replay against a stub connector (no LLM; the live replay is Ken's). The prompts
+     * diverge exactly where the bonds do, and the replay can cut one RelDyn block out to A/B it.
+     */
+    public function testTheBedsRealPromptsReplayThroughTheToolAndDivergeWhereTheBondDoes(): void
+    {
+        $turns = [
+            self::AELA => $this->turn(self::AELA, 'jorrvaskr', 'Good hunt today.'),
+            'Muiri' => $this->turn('Muiri', 'markarth', 'How is the shop?'),
+            self::LYNLY => $this->turn(self::LYNLY, 'dragonbridge', 'Play something cheerful.'),
+            'Hulda' => $this->turn('Hulda', 'mare', 'A room for the night.'),
+        ];
+        $log = tempnam(sys_get_temp_dir(), 'rdbedlog') ?: $this->fail('temp');
+        try {
+            $i = 0;
+            foreach ($turns as $npc => $t) {
+                $system = "<character>\nRoleplay as {$npc}\n{$t['pers']}\n</character>\n\n<nearby_actors>\n{$t['nearby']}\n</nearby_actors>\n\n"
+                    . "<relationships>\n{$t['relationships']}\n</relationships>\n" . $t['command'];
+                $messages = [['role' => 'system', 'content' => $system]];
+                foreach ($t['blocks'] as $block) {
+                    if (trim($block) !== '') $messages[] = ['role' => 'user', 'content' => $block];
+                }
+                $messages[] = ['role' => 'user', 'content' => self::PLAYER . ": line {$i} (Talking to {$npc})"];
+                $messages[] = ['role' => 'user', 'content' => "Use ONLY this JSON object to give your answer: {\"character\":\"{$npc}\",\"message\":\"...\"}"];
+                $data = ['model' => 'deepseek/deepseek-v4-flash', 'messages' => $messages, 'stream' => true, 'max_tokens' => 1024,
+                    'temperature' => 0.7, 'top_p' => 1.0, 'stop' => ['USER']];
+                // the connectors' writer (connector/openrouterjson.php open())
+                file_put_contents($log, sprintf('2026-09-30T19:%02d:00+02:00', $i) . "\n=\n" . var_export($data, true) . "\n=\n", FILE_APPEND);
+                $i++;
+            }
+            $captures = RelDynReplay::loadLog($log);
+            $this->assertCount(4, $captures);
+            $this->assertSame(['request', 'request', 'request', 'request'], array_column($captures, 'kind'));
+            $this->assertSame([self::AELA, 'Muiri', self::LYNLY, 'Hulda'], array_map(fn($c) => RelDynReplay::speaker($c['payload']), $captures));
+            $list = RelDynReplay::cmdList($captures);
+            foreach ([self::AELA, 'Muiri', self::LYNLY, 'Hulda'] as $npc) $this->assertStringContainsString($npc, $list);
+            $this->assertStringContainsString('4 captures in the log', $list);
+
+            // four bonds, four readings of who he is: the prompts differ where the bond does
+            $know = array_map(function ($c) {
+                preg_match('~<knowledge_of_player>.*?</knowledge_of_player>~s', RelDynReplay::systemPrompt($c['payload']), $m);
+                return $m[0] ?? '';
+            }, $captures);
+            $this->assertCount(4, array_unique($know), implode("\n", $know));
+            $diff = RelDynReplay::cmdDiff($captures, 1, 3);
+            $this->assertStringContainsString('Aela the Huntress knows Kaida well', $diff);
+            $this->assertMatchesRegularExpression('/^- .*Aela the Huntress knows Kaida well/m', $diff);
+            $this->assertMatchesRegularExpression("/^\\+ .*Lynly Star-Sung has never met this stranger/m", $diff);
+            $this->assertMatchesRegularExpression("/^\\+ .*Lynly Star-Sung does not know this person's name/m", $diff, 'a stranger is told not to use the name');
+            $this->assertMatchesRegularExpression('/^- .*' . preg_quote(self::BIO, '/') . '/m', $diff, 'the story only the friend knows');
+            $this->assertStringNotContainsString(self::BIO, RelDynReplay::systemPrompt($captures[2]['payload']));
+            $this->assertStringContainsString(self::BIO, RelDynReplay::systemPrompt($captures[0]['payload']));
+
+            // replay through the connector stub: unchanged, then with the knowledge block cut and another model
+            $endpoint = ['id' => 1, 'label' => 'Main', 'driver' => 'openrouterjson', 'model' => 'deepseek/deepseek-v4-flash',
+                'url' => 'https://openrouter.ai/api/v1/chat/completions', 'api_key' => 'sk-test', 'headers' => ['Content-Type: application/json']];
+            $sent = [];
+            $transport = function (string $url, array $headers, string $body, int $timeout) use (&$sent): array {
+                $sent = json_decode($body, true);
+                return ['status' => 200, 'body' => 'data: ' . json_encode(['choices' => [['delta' => ['content' => '{"character":"x","message":"Aye."}']]]]) . "\n\ndata: [DONE]\n", 'error' => null];
+            };
+            $same = RelDynReplay::replay($captures[0], [], $endpoint, $transport);
+            $this->assertSame($captures[0]['payload'], $sent, 'the real prompt goes out exactly as captured');
+            $this->assertSame('Aye.', $same['fields']['message']);
+            $cut = RelDynReplay::replay($captures[0], ['without' => 'knowledge_of_player', 'model' => 'x-ai/grok-4.3'], $endpoint, $transport);
+            $this->assertSame('x-ai/grok-4.3', $sent['model']);
+            $this->assertStringNotContainsString('knows Kaida well', $sent['messages'][0]['content'], 'the block is gone');
+            $this->assertStringContainsString('Roleplay as ' . self::AELA, $sent['messages'][0]['content']);
+            $this->assertStringContainsString('<relationships>', $sent['messages'][0]['content'], "core's block stays");
+            $this->assertCount(2, $cut['notes']);
+            $out = '';
+            $code = RelDynReplay::main(['replay_prompt.php', 'replay', '3', "--log={$log}", '--dry-run', '--without=knowledge_of_player'], function (string $s) use (&$out): void { $out .= $s; }, $transport);
+            $this->assertSame(0, $code);
+            $this->assertMatchesRegularExpression('/^- .*Lynly Star-Sung has never met this stranger/m', $out);
+            $this->assertNoDbFailures();
+            $this->assertSame(0, $this->llmCalls, 'no LLM call');
+        } finally {
+            @unlink($log);
+        }
     }
 
     public function testWithGatingOffOrNoGateCoreBehavesAsItAlwaysDid(): void

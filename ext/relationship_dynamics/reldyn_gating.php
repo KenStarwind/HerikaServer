@@ -226,7 +226,8 @@ final class RelDynGating
     {
         $cfg = $cfg ?? self::config();
         $out = [];
-        foreach ((array) (RelDynReputation::config()['fames'] ?? []) as $key => $spec) {
+        $fames = (array) (RelDynReputation::config()['fames'] ?? []);
+        foreach ($fames as $key => $spec) {
             $score = $scores[$key] ?? null;
             if (!is_array($spec) || $score === null || floatval($score) < floatval($spec['min_score'] ?? 0)) continue;
             $home = trim((string) ($spec['home'] ?? ''));
@@ -234,6 +235,15 @@ final class RelDynGating
             if ($dist === null) $dist = intval($cfg['unknown_hold_distance']);
             if ($dist > intval($spec['reach'] ?? 0)) continue;
             $out[(string) $key] = ['score' => round(floatval($score), 4), 'distance' => $dist, 'text' => (string) ($spec['text'] ?? '')];
+        }
+        // A fame the finer ones replace (the side-less civil war line, once a side is heard) is left out
+        foreach (array_keys($out) as $key) {
+            foreach ((array) ($fames[$key]['superseded_by'] ?? []) as $finer) {
+                if (isset($out[(string) $finer])) {
+                    unset($out[$key]);
+                    break;
+                }
+            }
         }
         uasort($out, fn($a, $b) => $b['score'] <=> $a['score']);
         return $out;
