@@ -81,9 +81,14 @@ final class RelDynReadCalibrationTest extends TestCase
         $this->assertSame($LL('LL_TIME'), RelationshipDynamics::raceToLoveLanguage(null));
     }
 
-    public function testTheSecondaryLoveLanguageTableCoversEveryPresetWithAValidLanguage(): void
+    public function testTheLoveLanguageTablesCoverEveryPresetWithAValidLanguage(): void
     {
-        $table = RelationshipDynamics::defaultConfig()['love_language_secondary'];
+        foreach (['love_language_primary', 'love_language_secondary'] as $key) $this->checkLoveLanguageTable($key);
+    }
+
+    private function checkLoveLanguageTable(string $key): void
+    {
+        $table = RelationshipDynamics::defaultConfig()[$key];
         $valid = [RelationshipDynamics::LL_WORDS, RelationshipDynamics::LL_TIME, RelationshipDynamics::LL_TOUCH,
                   RelationshipDynamics::LL_SERVICE, RelationshipDynamics::LL_GIFTS];
         $this->assertSame([], array_values(array_diff(array_keys(RelDynTraits::PRESET_TRAITS), array_keys($table))));
@@ -112,7 +117,7 @@ final class RelDynReadCalibrationTest extends TestCase
 
     public function testAnLlmReadTraitIsMovedByItsLeniencyAtItsOwnWeight(): void
     {
-        RelDynTraits::$readCalibrationOverride = ['enabled' => true, 'read_mean' => ['guard' => 0.66, 'warmth' => 0.50]];
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'leniency' => true, 'read_mean' => ['guard' => 0.66, 'warmth' => 0.50]];
         $d = self::stored(['guard' => [0.8, 0.6], 'warmth' => [0.3, 0.9], 'pride' => [0.7, 0.6]]);
         $raw = RelDynTraits::fromStored($d['trait_vector']);
         $x = RelDynTraits::readVector($d);
@@ -129,7 +134,7 @@ final class RelDynReadCalibrationTest extends TestCase
 
     public function testTheCorrectionKeepsTheSpreadOfTheReads(): void
     {
-        RelDynTraits::$readCalibrationOverride = ['enabled' => true, 'read_mean' => ['guard' => 0.66]];
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'leniency' => true, 'read_mean' => ['guard' => 0.66]];
         $hi = self::stored(['guard' => [0.9, 0.9]]);
         $lo = self::stored(['guard' => [0.5, 0.9]]);
         $rawGap = RelDynTraits::fromStored($hi['trait_vector'])['G'] - RelDynTraits::fromStored($lo['trait_vector'])['G'];
@@ -143,7 +148,7 @@ final class RelDynReadCalibrationTest extends TestCase
 
     public function testTheCorrectedValueIsClampedToTheUnitInterval(): void
     {
-        RelDynTraits::$readCalibrationOverride = ['enabled' => true, 'read_mean' => ['guard' => 0.9, 'warmth' => 0.1]];
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'leniency' => true, 'read_mean' => ['guard' => 0.9, 'warmth' => 0.1]];
         $d = self::stored(['guard' => [0.05, 1.0], 'warmth' => [0.99, 1.0]]);
         $x = RelDynTraits::readVector($d);
         // guard read 0.05 - 0.9 + 0.5 < 0 -> 0; warmth 0.99 - 0.1 + 0.5 > 1 -> 1, each blended at weight 0.8 over the 0.5 prior
@@ -157,7 +162,7 @@ final class RelDynReadCalibrationTest extends TestCase
 
     public function testOnlyAnLlmReadIsCorrected(): void
     {
-        RelDynTraits::$readCalibrationOverride = ['enabled' => true, 'read_mean' => array_fill_keys(RelDynTraits::TRAITS, 0.8)];
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'leniency' => true, 'read_mean' => array_fill_keys(RelDynTraits::TRAITS, 0.8)];
         $read = ['guard' => [0.9, 0.9], 'warmth' => [0.9, 0.9], 'confidence' => [0.9, 0.9]];
         $base = self::stored($read);
         $raw = RelDynTraits::fromStored($base['trait_vector']);
@@ -193,13 +198,19 @@ final class RelDynReadCalibrationTest extends TestCase
 
     public function testDisabledIsTodayExactly(): void
     {
-        RelDynTraits::$readCalibrationOverride = ['enabled' => false, 'read_mean' => array_fill_keys(RelDynTraits::TRAITS, 0.8)];
+        RelDynTraits::$readCalibrationOverride = ['relevel' => false, 'leniency' => false, 'read_mean' => array_fill_keys(RelDynTraits::TRAITS, 0.8)];
         $d = self::stored(['guard' => [0.9, 0.9], 'warmth' => [0.2, 0.7], 'pride' => [0.7, 0.6]]);
         $this->assertSame(json_encode(RelDynTraits::fromStored($d['trait_vector'])), json_encode(RelDynTraits::readVector($d)));
-        $this->assertFalse(RelDynTraits::readCalibrationEnabled());
-        // a stored row without read_calibration: on, with the seed's means
+        $this->assertFalse(RelDynTraits::leniencyEnabled());
+        $this->assertFalse(RelDynTraits::relevelEnabled());
+        // leniency on, relevel off: the correction alone moves the vector
+        RelDynTraits::$readCalibrationOverride = ['relevel' => false, 'leniency' => true, 'read_mean' => array_fill_keys(RelDynTraits::TRAITS, 0.8)];
+        $this->assertNotSame(json_encode(RelDynTraits::fromStored($d['trait_vector'])), json_encode(RelDynTraits::readVector($d)));
+        // a stored row without read_calibration: relevel on, leniency off (the read is used as read), the seed's means
         RelDynTraits::$readCalibrationOverride = [];
-        $this->assertTrue(RelDynTraits::readCalibrationEnabled());
+        $this->assertTrue(RelDynTraits::relevelEnabled());
+        $this->assertFalse(RelDynTraits::leniencyEnabled());
+        $this->assertSame(json_encode(RelDynTraits::fromStored($d['trait_vector'])), json_encode(RelDynTraits::readVector($d)), 'default: the read as read');
         $this->assertSame(array_keys(array_filter(RelDynTraits::seedReadStats(), fn($s) => $s['n'] >= RelDynTraits::READ_CALIBRATION_MIN_READS)),
             array_keys(RelDynTraits::readMeans()));
     }
@@ -210,7 +221,8 @@ final class RelDynReadCalibrationTest extends TestCase
     {
         $stats = RelDynTraits::seedReadStats();
         $shipped = RelationshipDynamics::defaultConfig()['traits']['read_calibration'];
-        $this->assertTrue($shipped['enabled']);
+        $this->assertTrue($shipped['relevel']);
+        $this->assertFalse($shipped['leniency'], 'the read is the profile: the leniency shift ships off');
         foreach ($stats as $name => $s) {
             if ($s['n'] >= RelDynTraits::READ_CALIBRATION_MIN_READS) {
                 $this->assertEqualsWithDelta($s['mean'], $shipped['read_mean'][$name], 0.0005, "{$name} read_mean");
@@ -256,7 +268,7 @@ final class RelDynReadCalibrationTest extends TestCase
     {
         $out = [];
         foreach (RelDynTraits::columns() as $id => $c) {
-            if ($c['rule'] === 'R' && $c['model'] !== null && isset(RelDynTraits::RELEVEL_UNITS[$c['unit']])) $out[$id] = [$c['unit'], RelDynTraits::RELEVEL_UNITS[$c['unit']]];
+            if ($c['rule'] === 'R' && $c['model'] !== null && isset(RelDynTraits::RELEVEL_UNITS[$c['unit']]) && !in_array($id, RelDynTraits::RELEVEL_EXCLUDED, true)) $out[$id] = [$c['unit'], RelDynTraits::RELEVEL_UNITS[$c['unit']]];
         }
         return $out;
     }
@@ -280,7 +292,12 @@ final class RelDynReadCalibrationTest extends TestCase
     {
         $half = array_fill_keys(array_keys(RelDynTraits::TRAITS), 0.5) + ['maturity_start' => 50.0];
         $rules = self::relevelled();
-        $this->assertCount(13, $rules, 'the Rule R regressions in the offset / mult units');
+        $this->assertCount(8, $rules, 'the Rule R regressions in the offset / mult units, less the five that break the wrong-way guard');
+        // y_affinity_up keeps its textbook intercept (re-levelled it would break the 20% wrong-way guard)
+        $this->assertSame(['y_affinity_up', 'y_affinity_down', 'y_valence_up', 'y_respect_up', 'resist_trust'], RelDynTraits::RELEVEL_EXCLUDED);
+        foreach (['y_affinity_up' => 0.865, 'y_affinity_down' => 0.865, 'y_valence_up' => 0.785, 'y_respect_up' => 0.675, 'resist_trust' => 0.76] as $id => $middle) {
+            $this->assertEqualsWithDelta($middle, RelDynTraits::value($half, $id), 1e-12, "{$id} keeps its textbook intercept");
+        }
         foreach ($rules as $id => [$unit, $neutral]) {
             $this->assertEqualsWithDelta($neutral, RelDynTraits::value($half, $id), 1e-12, "{$id} at the all-0.5 vector");
         }
@@ -291,8 +308,8 @@ final class RelDynReadCalibrationTest extends TestCase
         }
         $this->assertSame(0.925, $old['passion_mult']);
         $this->assertSame(1.185, $old['jealousy_mult']);
-        $this->assertSame(0.865, $old['y_affinity_up']);
-        $this->assertSame(0.76, $old['resist_trust']);
+        $this->assertSame(0.925, $old['passion_mult']);
+        $this->assertSame(0.91, $old['y_warmth_up']);
         // A26 and C2 (rowParam rules): the +0.20 emotional offset at a middle read, and avoidance
         $this->assertEqualsWithDelta(0.20, RelDynTraits::modelAtMiddle(RelDynIntimacy::TEMPERAMENT_RULES['emotional'][1], 'offset')['old'], 1e-12);
         $this->assertEqualsWithDelta(0.01, RelDynTraits::modelAtMiddle(RelDynIntimacy::TEMPERAMENT_RULES['physical'][1], 'offset')['old'], 1e-12);
@@ -311,9 +328,9 @@ final class RelDynReadCalibrationTest extends TestCase
             $c = RelDynTraits::columns()[$id];
             $delta = RelDynTraits::modelAtMiddle($c['model'], $unit)['old'] - $neutral;
             foreach ($vectors as $x) {
-                RelDynTraits::$readCalibrationOverride = ['enabled' => true];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => true];
                 $on = RelDynTraits::value($x, $id);
-                RelDynTraits::$readCalibrationOverride = ['enabled' => false];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => false];
                 $off = RelDynTraits::value($x, $id);
                 $this->assertEqualsWithDelta(self::legacyR($c['model'], RelDynTraits::table($id), $x), $off, 1e-9, "{$id} off = today's Rule R");
                 $this->assertEqualsWithDelta($off - $delta, $on, 1e-9, "{$id}: the same slopes, the intercept moved by the middle's offset");
@@ -323,9 +340,9 @@ final class RelDynReadCalibrationTest extends TestCase
         foreach (RelDynTraits::columns() as $id => $c) {
             if (isset($rules[$id])) continue;
             foreach (array_slice($vectors, 0, 5) as $x) {
-                RelDynTraits::$readCalibrationOverride = ['enabled' => true];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => true];
                 $on = RelDynTraits::value($x, $id);
-                RelDynTraits::$readCalibrationOverride = ['enabled' => false];
+                RelDynTraits::$readCalibrationOverride = ['relevel' => false];
                 $this->assertEqualsWithDelta($on, RelDynTraits::value($x, $id), 1e-12, "{$id} is not re-levelled");
             }
         }
@@ -334,7 +351,7 @@ final class RelDynReadCalibrationTest extends TestCase
     public function testEveryPresetIsExactOnOrOff(): void
     {
         foreach ([true, false] as $enabled) {
-            RelDynTraits::$readCalibrationOverride = ['enabled' => $enabled];
+            RelDynTraits::$readCalibrationOverride = ['relevel' => $enabled, 'leniency' => $enabled];
             foreach (RelDynTraits::points() as $preset => $p) {
                 foreach (RelDynTraits::columns() as $id => $c) {
                     $this->assertSame(RelDynTraits::table($id)[$preset], RelDynTraits::value($p, $id), "{$id} at {$preset}, calibration " . ($enabled ? 'on' : 'off'));
@@ -351,7 +368,7 @@ final class RelDynReadCalibrationTest extends TestCase
         // the label assignment: the vector is the label's preset point, so every column is its table value
         RelDynTraits::$assignmentOverride = 'label';
         foreach ([true, false] as $enabled) {
-            RelDynTraits::$readCalibrationOverride = ['enabled' => $enabled];
+            RelDynTraits::$readCalibrationOverride = ['relevel' => $enabled, 'leniency' => $enabled];
             foreach (array_keys(RelDynTraits::PRESET_TRAITS) as $preset) {
                 $d = ['inferred_temperament' => $preset];
                 $this->assertEqualsWithDelta(RelationshipDynamics::TEMPERAMENT_PASSION_MULT[$preset] ?? 1.0, RelDynTraits::param($preset, 'passion_mult', 1.0, $d), 1e-12, $preset);
@@ -391,13 +408,20 @@ final class RelDynReadCalibrationTest extends TestCase
     {
         $npcs = self::seedNpcs();
         $this->assertCount(100, $npcs);
-        RelDynTraits::$readCalibrationOverride = ['enabled' => true];
-        $on = self::meanA26($npcs);
-        $this->assertEqualsWithDelta(0.0, $on['emotional'], 0.05, 'emotional offset, calibration on');
-        $this->assertEqualsWithDelta(0.0, $on['physical'], 0.05, 'physical offset, calibration on');
+        // both corrections (leniency explicitly on): the seed's population is centred on the middle
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'leniency' => true];
+        $both = self::meanA26($npcs);
+        $this->assertEqualsWithDelta(0.0, $both['emotional'], 0.05, 'emotional offset, relevel + leniency');
+        $this->assertEqualsWithDelta(0.0, $both['physical'], 0.05, 'physical offset, relevel + leniency');
+        // the shipped defaults (relevel on, the read used as read): these reads are guarded and confident
+        // named people, so their offsets are theirs; the unchosen intercept is gone
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'leniency' => false];
+        $shipped = self::meanA26($npcs);
+        $this->assertEqualsWithDelta(0.0, $shipped['emotional'], 0.06, 'emotional offset, shipped defaults');
+        $this->assertEqualsWithDelta(0.0, $shipped['physical'], 0.05, 'physical offset, shipped defaults');
         // today's behaviour: a typical read carries +0.2 emotional need nobody chose
-        RelDynTraits::$readCalibrationOverride = ['enabled' => false];
+        RelDynTraits::$readCalibrationOverride = ['relevel' => false, 'leniency' => false];
         $off = self::meanA26($npcs);
-        $this->assertGreaterThan(0.15, $off['emotional'], 'calibration off: the unchosen offset');
+        $this->assertGreaterThan(0.15, $off['emotional'], 'both off: the unchosen offset');
     }
 }

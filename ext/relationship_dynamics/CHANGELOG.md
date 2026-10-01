@@ -4,18 +4,21 @@ Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer)
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
 ## Unreleased — love languages that work, and bio reads that are not inflated
-Love languages came out the same for everyone (quality time, then words of affirmation): the race map never matched
-CHIM's race names ("NordRace", "NordRaceVampire") and the secondary read MARAS, which is retired. The primary now
-follows the core race (Nord, Orc, Redguard: acts of service; Breton, Dunmer: words; High elf, Imperial: gifts; Khajiit,
-Wood elf: touch) and the secondary the NPC's own temperament, the nearest preset of her trait vector, from a table in
-the config (`love_language_secondary`). Love languages already stored are kept.
-The bio read is now taken as the profile, and the two things that made it read high are corrected, behind one switch
-(`traits.read_calibration.enabled`; off is the earlier behaviour exactly). The model reads people warm, guarded and
-proud: over the 100 seed reads the middle of guard is 0.66, not 0.5. Each trait the model read is moved at use time by
-its leniency (`x' = x - read_mean + 0.5`, stored reads stay raw; a hand-set vector, a preset or a label is never touched),
-and the regressions that turn a trait into an offset or a multiplier are re-levelled so that a middle (all 0.5) vector
-adds nothing and multiplies by one, with the slopes unchanged; a preset still gets exactly its table row. Aela's
-intimacy need is physical (0.89 against 0.47 emotional) instead of both high; Ashe's stays connection.
+Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
+which is retired, and the race map never matched CHIM's race names ("NordRace", "NordRaceVampire"). The primary now
+follows the NPC's own temperament (the nearest preset of her trait vector, config `love_language_primary`), the
+secondary likewise (`love_language_secondary`); when the two come out equal the secondary is the language of her
+next-nearest temperament, and only then rotated. The core race (normalised: Nord, Orc, Redguard: acts of service;
+Breton, Dunmer: words; High elf, Imperial: gifts; Khajiit, Wood elf: touch) is a minor prior used only when there is no
+temperament. Love languages already stored are kept.
+Two corrections on how traits turn into numbers, each behind its own switch (`traits.read_calibration`; off is the
+earlier behaviour exactly). `relevel` (on): the regressions that turn a trait into an offset or a multiplier were fitted
+on the 13 presets, whose averages are not the middle, so a middle (all 0.5) vector carried an offset nobody chose (+0.20
+emotional need); they are re-levelled so that it adds nothing and multiplies by one, with the slopes unchanged, and a
+preset still gets exactly its table row (one column, y_affinity_up, keeps its fit: re-levelled it broke the wrong-way
+guard). `leniency` (off): the bio read is the profile and is used as read; switched on, each trait the model read is
+moved at use time by the seed population's mean (`x' = x - read_mean + 0.5`; stored reads stay raw; a hand-set vector,
+a preset or a label is never touched).
 
 ## reldyn-v0.19 — RelDyn gets its own pages: the hub, every part of her, and how they see you
 The plugin button in CHIM's Server Plugins page now opens RelDyn's hub, and from there every RelDyn page is a click

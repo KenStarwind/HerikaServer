@@ -283,7 +283,7 @@ final class RelDynTraitBlendTest extends TestCase
             // (all 0.5) vector is neutral (rulings 2026-09-30; offset / mult units of Rule R). The residuals
             // the bound sums are taken against it, as blend() takes them.
             $shift = RelDynTraits::modelAtMiddle($m, $spec['unit']);
-            $shift = $shift['old'] - $shift['new'];
+            $shift = in_array($col, RelDynTraits::RELEVEL_EXCLUDED, true) ? 0.0 : $shift['old'] - $shift['new'];
             $f = function (array $x) use ($m, $shift) {
                 $v = floatval($m[0] ?? 0.0);
                 foreach ($m as $k => $c) if ($k !== 0) $v += floatval($c) * floatval($x[$k]);

@@ -41,8 +41,10 @@
  *           table lookup. trait_vector mirrors the label's preset point and is not read.
  * Either way a textbook preset reproduces every old table value exactly.
  *
- * READ CALIBRATION (config traits.read_calibration {enabled, read_mean}; rulings 2026-09-30):
- * presets do not define what normal is; the bio read is the profile. Two corrections, one switch.
+ * READ CALIBRATION (config traits.read_calibration {relevel, leniency, read_mean}; rulings 2026-09-30):
+ * presets do not define what normal is; the bio read is the profile. Two corrections, two switches:
+ * relevel (default ON) is 2, leniency (default OFF) is 1: the seed's reads are mostly named followers
+ * and warriors, so their mean is characterisation, not LLM leniency, and the read is used as read.
  *   1. Leniency (calibrateRead, applied at USE time in readVector, stored reads stay raw): the LLM
  *      reads high (guard .66 where the middle of a population is .5), so each trait the bio read
  *      supplied is moved by x' = clamp01(r - read_mean + 0.5), spread unchanged, before it is
@@ -56,7 +58,7 @@
  *      re-levelled model, so every preset still returns its table row exactly. Rule RI is not
  *      re-levelled: its normalised residual blend absorbs any shift of the model (no-op), the
  *      level at a middle vector is the preset table's own.
- * enabled = false restores the pre-calibration behaviour exactly (both corrections).
+ * Each switch off restores the pre-calibration behaviour of its correction exactly.
  *
  * Units: traits 0..1 (unitless); every column's unit is listed in columns() and §2.4.
  */
@@ -112,8 +114,8 @@ final class RelDynTraits
     // =========================================================================
 
     /**
-     * Pins the calibration regardless of config (null = config): ['enabled' => bool, 'read_mean' =>
-     * storage name => 0..1]. For tests and tools.
+     * Pins the calibration regardless of config (null = config): ['relevel' => bool, 'leniency' => bool,
+     * 'read_mean' => storage name => 0..1]. For tests and tools.
      */
     public static $readCalibrationOverride = null;
 
@@ -130,11 +132,18 @@ final class RelDynTraits
         return is_array($t) && is_array($t['read_calibration'] ?? null) ? $t['read_calibration'] : [];
     }
 
-    /** Is the read calibration (leniency correction and neutral intercepts) on? A row without 'enabled' is on. */
-    public static function readCalibrationEnabled(): bool
+    /** Are the neutral intercepts of the Rule R offset / mult regressions on? Default (a row without 'relevel'): on. */
+    public static function relevelEnabled(): bool
     {
         $row = self::readCalibrationRow();
-        return !array_key_exists('enabled', $row) || !empty($row['enabled']);
+        return !array_key_exists('relevel', $row) || !empty($row['relevel']);
+    }
+
+    /** Is the leniency correction of LLM-read traits on? Default (a row without 'leniency'): off, the read is used as read. */
+    public static function leniencyEnabled(): bool
+    {
+        $row = self::readCalibrationRow();
+        return !empty($row['leniency']);
     }
 
     /**
@@ -200,7 +209,7 @@ final class RelDynTraits
      */
     public static function calibrateRead(array $x, array $src): array
     {
-        if (!self::readCalibrationEnabled()) return $x;
+        if (!self::leniencyEnabled()) return $x;
         if (($src['composed'] ?? 'auto') !== 'auto') return $x;
         $means = self::readMeans();
         if (!$means) return $x;
@@ -220,6 +229,19 @@ final class RelDynTraits
         return $x;
     }
 
+    /**
+     * Columns left at their textbook intercept: re-levelling them steepens the residual ramps (the
+     * value must go from neutral at the middle to the table row at the preset inside the reach) until
+     * they turn the wrong way near a preset by more than the phase-3 guard of 20% of the table span
+     * (RelDynTraitBlendTest): y_affinity_up (0.206 against 0.200) and its twin y_affinity_down (the
+     * same model), y_valence_up (0.302 against 0.140), y_respect_up (0.295 against 0.100) and
+     * resist_trust (0.224 against 0.140). They keep their fit (their middle values: 0.865, 0.785,
+     * 0.675, 0.76).
+     */
+    const RELEVEL_EXCLUDED = ['y_affinity_up', 'y_affinity_down', 'y_valence_up', 'y_respect_up', 'resist_trust'];
+
+    private static $relevelHeld = false;
+
     /** Units whose Rule R / RI regressions are re-levelled, and the value a middle (all-0.5) vector gets. */
     const RELEVEL_UNITS = ['offset' => 0.0, 'mult' => 1.0];
 
@@ -232,7 +254,7 @@ final class RelDynTraits
      */
     private static function relevelModel($model, ?string $unit)
     {
-        if ($unit === null || !isset(self::RELEVEL_UNITS[$unit]) || !self::readCalibrationEnabled()) return $model;
+        if ($unit === null || self::$relevelHeld || !isset(self::RELEVEL_UNITS[$unit]) || !self::relevelEnabled()) return $model;
         $half = array_fill_keys(array_keys(self::TRAITS), 0.5) + ['maturity_start' => 50.0];
         $delta = self::evalModel($model, $half) - self::RELEVEL_UNITS[$unit];
         if (abs($delta) < 1e-15) return $model;
@@ -424,6 +446,15 @@ final class RelDynTraits
             if ($d < $bestD) { $bestD = $d; $best = $name; }
         }
         return ['name' => $best, 'distance' => $bestD];
+    }
+
+    /** The $n nearest presets' names, nearest first (ties: MDD 1.3 order). */
+    public static function nearestPresets(array $x, int $n): array
+    {
+        $d = [];
+        foreach (self::points() as $name => $p) $d[$name] = self::distance($x, $p);
+        asort($d);   // stable on PHP 8: ties keep the MDD order
+        return array_slice(array_keys($d), 0, max(0, $n));
     }
 
     /** A partial or full vector (codes or storage names) completed with 0.5 and clamped to 0..1. */
@@ -955,7 +986,13 @@ final class RelDynTraits
     {
         $spec = self::columns()[$col] ?? null;
         if ($spec === null) throw new \InvalidArgumentException("RelDynTraits: unknown column {$col}");
-        return self::blend($x, self::table($col), $spec['rule'], $spec['model'], $spec['unit']);
+        if (!in_array($col, self::RELEVEL_EXCLUDED, true)) return self::blend($x, self::table($col), $spec['rule'], $spec['model'], $spec['unit']);
+        self::$relevelHeld = true;
+        try {
+            return self::blend($x, self::table($col), $spec['rule'], $spec['model'], $spec['unit']);
+        } finally {
+            self::$relevelHeld = false;
+        }
     }
 
     /**

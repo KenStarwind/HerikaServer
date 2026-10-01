@@ -1062,18 +1062,27 @@ class RelationshipDynamics
             // (phase 2: override > preset > bio read over priors > priors) or 'label' (phase 1
             // legacy: the old vote's preset point); residual_reach = Rule R reach (trait-space distance).
             // read_calibration (rulings 2026-09-30): the bio read IS the profile, presets do not define
-            // normal. enabled = the leniency correction of LLM-read traits (x' = x - read_mean + 0.5,
-            // at use time) AND the neutral intercepts of the 'offset' / 'mult' regressions (all-0.5 vector
-            // = no offset / x1.0); false restores the earlier behaviour exactly. read_mean = the committed
-            // seed's mean over its evidenced reads, per trait (a trait with under 30 reads has none: no
-            // shift). A stored 'traits' row without read_calibration takes the seed's computed means.
+            // normal. relevel (default on) = the neutral intercepts of the 'offset' / 'mult' regressions
+            // (all-0.5 vector = no offset / x1.0). leniency (default OFF: the bio read is used as read; the
+            // seed's reads are mostly named followers and warriors, so their mean is characterisation) =
+            // the leniency correction of LLM-read traits (x' = x - read_mean + 0.5, at use time). Each off
+            // restores the earlier behaviour exactly. read_mean = the committed seed's mean over its
+            // evidenced reads, per trait (a trait with under 30 reads has none: no shift); a stored 'traits'
+            // row without read_calibration takes the seed's computed means.
             'traits' => ['assignment' => RelDynTraits::ASSIGNMENT, 'residual_reach' => RelDynTraits::RESIDUAL_REACH,
-                         'read_calibration' => ['enabled' => true, 'read_mean' => [
+                         'read_calibration' => ['relevel' => true, 'leniency' => false, 'read_mean' => [
                              'guard' => 0.660, 'expressiveness' => 0.517, 'confidence' => 0.659, 'pride' => 0.636,
                              'resilience' => 0.629, 'reactivity' => 0.553, 'warmth' => 0.503, 'restraint' => 0.618]]],
-            // Love language (ensureLoveLanguage): the secondary love language of the NPC's temperament
-            // (nearest preset of its own trait vector); the primary comes from MARAS / Sharmat when they
-            // have data, else the core race (raceToLoveLanguage). A secondary equal to the primary rotates.
+            // Love language (ensureLoveLanguage): the primary comes from MARAS / Sharmat when they have
+            // data, else from the NPC's own temperament (nearest preset of its trait vector: this table),
+            // else (no temperament) the core race (raceToLoveLanguage; race is a minor prior, rulings #7).
+            // The secondary is the temperament's too (the next table). A secondary equal to the primary rotates.
+            'love_language_primary' => [
+                'Romantic' => self::LL_WORDS, 'Anxious' => self::LL_TIME, 'Bold' => self::LL_TOUCH, 'Playful' => self::LL_TOUCH,
+                'Humble' => self::LL_GIFTS, 'Nurturing' => self::LL_SERVICE, 'Gentle' => self::LL_TIME, 'Jealous' => self::LL_WORDS,
+                'Proud' => self::LL_SERVICE, 'Defiant' => self::LL_TOUCH, 'Guarded' => self::LL_TIME, 'Independent' => self::LL_SERVICE,
+                'Stoic' => self::LL_TIME,
+            ],
             'love_language_secondary' => [
                 'Romantic' => self::LL_TOUCH, 'Playful' => self::LL_TOUCH, 'Bold' => self::LL_TOUCH, 'Defiant' => self::LL_TOUCH,
                 'Nurturing' => self::LL_SERVICE, 'Humble' => self::LL_TIME, 'Gentle' => self::LL_TIME,
@@ -3454,7 +3463,12 @@ class RelationshipDynamics
             }
         }
 
-        // Priority 3: CHIM race fallback
+        // Priority 3: the NPC's own temperament (nearest preset of its trait vector; config love_language_primary)
+        if (!$primary && $temperament !== null) {
+            $primary = self::temperamentToPrimaryLoveLanguage($temperament, $dynamics);
+        }
+
+        // Priority 4: CHIM race, only when there is no temperament (race is a minor prior)
         if (!$primary) {
             $race = self::getNpcRace($npcName);
             $primary = self::raceToLoveLanguage($race);
@@ -3467,8 +3481,13 @@ class RelationshipDynamics
             ? self::socialClassToLoveLanguage($socialClass)
             : self::temperamentToSecondaryLoveLanguage($temperament, $dynamics);
 
-        // If secondary == primary, rotate
-        if ($secondary === $primary) {
+        // A secondary equal to the primary: the language of the NPC's runner-up temperament (the next
+        // nearest presets of her vector; a read vector sits far from every preset, so two NPCs with
+        // the same nearest preset still differ here), else rotate
+        if ($secondary === $primary && $temperament !== null) {
+            $secondary = self::runnerUpLoveLanguage($temperament, $dynamics, $primary);
+        }
+        if ($secondary === $primary || $secondary === null) {
             $secondary = self::rotateLoveLanguage($primary);
         }
 
@@ -3494,6 +3513,34 @@ class RelationshipDynamics
     private static function temperamentToLoveLanguage($temperament, ?array $dynamics = null)
     {
         return RelDynTraits::labelParam($temperament, self::TEMPERAMENT_LOVE_LANGUAGE, self::LL_TIME, $dynamics);
+    }
+
+    /**
+     * The love language (config love_language_primary) of the nearest preset after the NPC's own
+     * (up to RUNNER_UP_PRESETS of them) whose language differs from $primary, or null.
+     */
+    private static function runnerUpLoveLanguage($temperament, ?array $dynamics, ?string $primary)
+    {
+        $x = RelDynTraits::vectorFor($temperament, $dynamics);
+        if ($x === null) return null;
+        $table = self::getConfig()['love_language_primary'] ?? null;
+        $table = is_array($table) ? $table : (array) self::defaultConfig()['love_language_primary'];
+        foreach (array_slice(RelDynTraits::nearestPresets($x, self::RUNNER_UP_PRESETS + 1), 1) as $name) {
+            $ll = $table[$name] ?? null;
+            if (is_string($ll) && $ll !== '' && $ll !== $primary) return $ll;
+        }
+        return null;
+    }
+
+    const RUNNER_UP_PRESETS = 3;
+
+    /** The primary love language of a temperament through the trait engine: the nearest preset's (config love_language_primary), null without one. */
+    private static function temperamentToPrimaryLoveLanguage($temperament, ?array $dynamics = null)
+    {
+        $table = self::getConfig()['love_language_primary'] ?? null;
+        $table = is_array($table) ? $table : (array) self::defaultConfig()['love_language_primary'];
+        $ll = RelDynTraits::labelParam($temperament, $table, null, $dynamics);
+        return is_string($ll) && $ll !== '' ? $ll : null;
     }
 
     /** The secondary love language of a temperament through the trait engine: the nearest preset's (config love_language_secondary), null without one. */

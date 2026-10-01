@@ -178,9 +178,7 @@ final class RelDynTraitPhase3Test extends TestCase
         // model), and losing it is betrayal-sensitive but moderate (low possessiveness; Rule RI:
         // the model plus the inverse-distance residual)
         $ashe = self::at(self::asheVector());
-        // (the model's intercept is re-levelled so a middle guard resists nothing, rulings 2026-09-30: 1.19 - 0.86 x 0.5 = 0.76
-        // at the all-0.5 vector becomes 1.0, +0.24; the slope on guard is the same)
-        $this->assertEqualsWithDelta(1.19 - 0.86 * 0.75 + 0.24, $R($ashe, 'trust', false), 1e-9);
+        $this->assertEqualsWithDelta(1.19 - 0.86 * 0.75, $R($ashe, 'trust', false), 1e-9);
         $this->assertEqualsWithDelta(0.80 + 0.93 * 0.20 + 0.40 * 0.40, $R($ashe, 'trust', true), 0.1);
         // between presets the loss side rises with possessiveness and pride (betrayal sensitivity)
         $prev = -INF;

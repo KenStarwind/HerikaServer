@@ -75,8 +75,8 @@ final class RelDynReadCalibrationPgDb
  * 'NordRace', 'BretonRace') and the committed trait-read seed. What it pins (rulings 2026-09-24 §10:
  * Aela's need is physical, visceral; Ashe's is connection): the intimacy need per bed, the love
  * languages (race primary, temperament secondary), a hand-set vector untouched by the calibration,
- * a stored love language kept, and the switch (traits.read_calibration.enabled) restoring the raw
- * read. No LLM call.
+ * a stored love language kept, and the two switches (traits.read_calibration.relevel, leniency).
+ * No LLM call.
  *
  * Opt-in: RELDYN_TEST_PG_DSN must point at a THROWAWAY database (never dbname=dwemer).
  */
@@ -257,11 +257,12 @@ final class RelDynReadCalibrationTestBedsPostgresTest extends TestCase
         return $this->stored($npc);
     }
 
-    /** Turn the read calibration (config traits.read_calibration.enabled) on or off, as the settings row would. */
-    private function calibration(bool $on): void
+    /** Set the read calibration switches (config traits.read_calibration relevel / leniency), as the settings row would. */
+    private function calibration(bool $leniency, bool $relevel = true): void
     {
         $cfg = array_replace(RelationshipDynamics::defaultConfig(), ['internal_weather_enabled' => false]);
-        $cfg['traits']['read_calibration']['enabled'] = $on;
+        $cfg['traits']['read_calibration']['leniency'] = $leniency;
+        $cfg['traits']['read_calibration']['relevel'] = $relevel;
         pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $1 WHERE id = $2', [json_encode($cfg), RelationshipDynamics::CONFIG_ROW_ID]);
         RelationshipDynamics::clearConfigCache();
     }
@@ -289,14 +290,14 @@ final class RelDynReadCalibrationTestBedsPostgresTest extends TestCase
 
     public function testAsheNeedsConnectionNotSexAndHerHandSetVectorIsUntouched(): void
     {
-        $this->calibration(true);
+        $this->calibration(true);   // leniency explicitly on
         $on = $this->profile('Ashe');
         $this->assertGreaterThanOrEqual(0.6, $on['emotional'], 'Ashe is about connection');
         $this->assertLessThanOrEqual(0.25, $on['physical'], 'Ashe is not about sex');
         $this->assertSame('hand-set', $on['d']['_trait_vector_src']['traits']['guard']['preset']);
         $this->calibration(false);
         $off = $this->profile('Ashe');
-        // a hand-set vector is nobody's read: byte-identical with the calibration on or off, stored and used
+        // a hand-set vector is nobody's read: byte-identical with the leniency on or off, stored and used
         $this->assertSame(json_encode($on['vec']), json_encode($off['vec']));
         $this->assertSame(json_encode($on['d']['trait_vector']), json_encode($off['d']['trait_vector']));
         $this->assertEqualsWithDelta(0.75, $on['vec']['G'], 1e-12);
@@ -314,22 +315,22 @@ final class RelDynReadCalibrationTestBedsPostgresTest extends TestCase
         $this->assertNotSame($aela['ll'], $this->profile('Muiri')['ll'], "Muiri's love languages are not Aela's");
     }
 
-    public function testLoveLanguagesFollowTheCoreRaceAndTheTemperament(): void
+    public function testLoveLanguagesFollowTheNpcsOwnTemperamentAndTheBedsDiverge(): void
     {
+        $LL = fn(string $c) => constant("RelationshipDynamics::{$c}");
         $pairs = [];
         foreach (array_keys(self::BEDS) as $npc) {
             $pairs[$npc] = $this->profile($npc)['ll'];
-            $this->assertNotSame($pairs[$npc][0], $pairs[$npc][1], "{$npc}: a secondary equal to the primary rotates");
+            $this->assertNotSame($pairs[$npc][0], $pairs[$npc][1], "{$npc}: a secondary equal to the primary is replaced");
         }
-        // NordRace: acts of service (Aela, Lynly); BretonRace: words of affirmation (Ashe, Muiri)
-        $this->assertSame(RelationshipDynamics::LL_SERVICE, $pairs[self::AELA][0]);
-        $this->assertSame(RelationshipDynamics::LL_SERVICE, $pairs[self::LYNLY][0]);
-        $this->assertSame(RelationshipDynamics::LL_WORDS, $pairs['Ashe'][0]);
-        $this->assertSame(RelationshipDynamics::LL_WORDS, $pairs['Muiri'][0]);
+        // the primary is the nearest preset's (config love_language_primary), not the race's: Aela and Lynly
+        // (NordRace) and Ashe, Muiri (BretonRace) are not told apart by it
+        $this->assertSame($LL('LL_TOUCH'), $pairs[self::AELA][0], 'Bold-leaning: touch');
+        $this->assertSame($LL('LL_TIME'), $pairs['Ashe'][0], 'Stoic-leaning: quality time');
+        $this->assertSame($LL('LL_SERVICE'), $pairs['Ashe'][1]);
         $this->assertGreaterThan(1, count(array_unique(array_map('json_encode', $pairs))), 'the four beds do not all share one pair');
-        // the secondary is the temperament's: Aela's (Bold-leaning) is touch, Ashe's (Stoic-leaning) service
-        $this->assertSame(RelationshipDynamics::LL_TOUCH, $pairs[self::AELA][1]);
-        $this->assertSame(RelationshipDynamics::LL_SERVICE, $pairs['Ashe'][1]);
+        $this->assertNotSame($pairs[self::AELA], $pairs['Muiri'], "Muiri's love languages are not Aela's");
+        $this->assertNotSame($pairs[self::AELA], $pairs[self::LYNLY], "Lynly's are not Aela's");
     }
 
     public function testAStoredLoveLanguageIsKept(): void
@@ -342,18 +343,21 @@ final class RelDynReadCalibrationTestBedsPostgresTest extends TestCase
         $this->assertSame(RelationshipDynamics::LL_TIME, $d['love_language_secondary']);
     }
 
-    public function testTheSwitchRestoresTheRawReadAndTheOldRules(): void
+    public function testTheTwoSwitches(): void
     {
-        $this->calibration(true);
-        $on = $this->profile(self::AELA);
-        $this->calibration(false);
+        // shipped defaults: relevel on, leniency off: the read is the vector, as read
+        $this->calibration(false, true);
+        $def = $this->profile(self::AELA);
+        $raw = RelDynTraits::fromStored($def['d']['trait_vector']);
+        $this->assertSame(json_encode($raw), json_encode($def['vec']), 'leniency off: the stored read is the vector');
+        // leniency on: her guard read is corrected for the population's leniency, at use time (the stored vector is raw)
+        $this->calibration(true, true);
+        $len = $this->profile(self::AELA);
+        $this->assertLessThan($raw['G'] - 0.02, $len['vec']['G']);
+        $this->assertSame(json_encode($def['d']['trait_vector']), json_encode($len['d']['trait_vector']));
+        // relevel off: the textbook intercepts, so a middle-ish read carries the old +0.2 emotional offset
+        $this->calibration(false, false);
         $off = $this->profile(self::AELA);
-        $raw = RelDynTraits::fromStored($off['d']['trait_vector']);
-        $this->assertSame(json_encode($raw), json_encode($off['vec']), 'off: the stored read is the vector, as before');
-        $this->assertLessThan($raw['G'] - 0.02, $on['vec']['G'], "on: her guard read is corrected for the LLM's leniency");
-        // the stored vector is the raw read either way (the correction is applied at use time)
-        $this->assertSame(json_encode($on['d']['trait_vector']), json_encode($off['d']['trait_vector']));
-        // off: the textbook intercepts, so a middle-ish read carries the old +0.2 emotional offset
-        $this->assertGreaterThan($on['emotional'] + 0.1, $off['emotional']);
+        $this->assertGreaterThan($def['emotional'] + 0.1, $off['emotional']);
     }
 }
