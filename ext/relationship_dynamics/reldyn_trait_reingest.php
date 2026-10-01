@@ -392,7 +392,7 @@ final class RelDynTraitReingest
             error_log('[RelDyn-TRAITS] ERROR live read lookup for ' . $npcName . ': ' . $e->getMessage());
             $out['status'] = 'error';
         }
-        if ($token !== null && $out['status'] !== 'pending') self::$liveMemo[$mk] = $out;
+        if ($token !== null) self::$liveMemo[$mk] = $out;   // one lookup per request, whatever the answer
         return $out;
     }
 
@@ -422,6 +422,7 @@ final class RelDynTraitReingest
                 $pf = (floatval($y['Y_up']) + floatval($y['Y_down'])) / 2.0;
             }
         } catch (\Throwable $e) {
+            error_log('[RelDyn-TRAITS] ERROR bio re-ingest plasticity lookup failed (an average NPC is assumed): ' . $e->getMessage());
             $pf = 1.0;
         }
         $m = $dynamics['dimensions']['maturity']['x'] ?? ($dynamics['dimensions']['maturity']['baseline'] ?? ($dynamics['trait_vector']['maturity_start'] ?? 50.0));

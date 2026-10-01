@@ -680,7 +680,7 @@ TXT;
     {
         $db = self::db();
         $row = $db->fetchOne('SELECT to_regclass($1) IS NOT NULL AS present', [self::TABLE]);
-        if (self::isTrue($row['present'] ?? null)) return;
+        if (self::isTrue($row['present'] ?? null)) { self::$tables[spl_object_id($db) . ':' . self::TABLE] = true; return; }
         $db->fetchOne('CREATE TABLE IF NOT EXISTS ' . self::TABLE . " (
             template_key text NOT NULL,
             src_hash text NOT NULL,
@@ -697,6 +697,7 @@ TXT;
         if (!self::isTrue($check['present'] ?? null)) {
             throw new RuntimeException('RelDynTraitRead: could not create ' . self::TABLE);
         }
+        self::$tables[spl_object_id($db) . ':' . self::TABLE] = true;   // the existence memo may hold an earlier "no"
     }
 
     /** The committed seed: ['meta' => ..., 'reads' => [template_key => entry]] ([] when absent/invalid). */
