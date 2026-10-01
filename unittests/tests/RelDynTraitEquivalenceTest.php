@@ -53,7 +53,9 @@ final class RelDynTraitEquivalenceTest extends TestCase
         // trust +3 no longer goes to a healer TEMPERAMENT but to the NPC who heals the player
         // (RelationshipDynamics::consumeHealEvents), and the 'dirty' respect -2 only to the proud (Pd >= 0.5);
         // asserted by RelDynPhysicalStatesTestBedsPostgresTest and RelDynPhysicalStatesTraitsTest
-        'physical_healer_and_pride' => ['*/physical/injured/injured*', '*/physical/dirty/dirty*'],
+        // Exactly those two keys (a deliberate key the new capture no longer has is allowed to be missing, see
+        // assertSameShape): every other value of the injured and dirty rows is still today's value.
+        'physical_healer_and_pride' => ['*/physical/injured/injured/trust', '*/physical/dirty/dirty/respect'],
     ];
 
     /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */
@@ -121,8 +123,19 @@ final class RelDynTraitEquivalenceTest extends TestCase
         }
         if (is_array($expected)) {
             $this->assertIsArray($actual, $path);
-            $this->assertSame(array_keys($expected), array_keys($actual), "{$path}: keys");
-            foreach ($expected as $k => $v) $this->assertSameShape($v, $actual[$k], "{$path}/{$k}");
+            // a key a deliberate fix removed (the injured trust of a non-healer, the dirty respect of the humble) may be
+            // gone; no other key may be, and none may appear
+            $keys = array_keys($expected);
+            foreach ($keys as $i => $k) {
+                if (!array_key_exists($k, $actual) && self::deliberate("{$path}/{$k}") !== null) {
+                    $this->changed[] = "{$path}/{$k}";
+                    unset($keys[$i]);
+                }
+            }
+            $this->assertSame(array_values($keys), array_keys($actual), "{$path}: keys");
+            foreach ($expected as $k => $v) {
+                if (in_array($k, $keys, true)) $this->assertSameShape($v, $actual[$k], "{$path}/{$k}");
+            }
             return;
         }
         if (is_int($expected) || is_float($expected)) {
