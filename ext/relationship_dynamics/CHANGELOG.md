@@ -44,6 +44,16 @@ registered idempotently beside other extensions' sources and switchable.
 Prompt gating learns more fame: the civil war sides, the Bards College, the Volkihar, a thane of Whiterun, and the Dawnguard
 as its own side only. Two tools join the repo: a replay tool for captured prompts (list, show, diff, replay with a block
 removed or patched) and a read-only seam check for the live pipeline.
+Batch T review fixes. Two overlapping requests for the same NPC no longer apply the same hearsay ripple twice (a request
+applies a target's ripples under a lock of its own, and the ids another request already applied are read after it holds
+it). An eval "gift" or "help" tag counts as the delivery of a handed-over item only when that exchange really held the
+handover (the eval item carries `handover_tags`, written from the eventlog), so helping her with a wolf next to a potion
+is two deliveries, not one; the local give / trade action reading is documented as dormant on 3.4.1, where the item row
+and the eval's tag are the live paths. A side taken in the civil war or the Dawnguard / Volkihar outlives its quest (the
+side quests are also read from the stage log once they reach a journal-visible stage), a fames table saved whole from the
+settings hub gains the new fames and the corrected Dawnguard and civil-war entries, and a stored creatures
+`post_transform` table keeps the maturity recovery it was saved without. The love-language hint of a local gesture is
+kept whether or not it raised passion, as the eval path does.
 
 ## reldyn-v0.20 — love languages that work, and bio reads that are not inflated
 Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
