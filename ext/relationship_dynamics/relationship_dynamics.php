@@ -1060,8 +1060,26 @@ class RelationshipDynamics
             'temperament_autogen' => self::temperamentAutogenDefaults(),
             // Personality traits (D:\docs\reldyn-personality-traits-design.md): assignment 'read'
             // (phase 2: override > preset > bio read over priors > priors) or 'label' (phase 1
-            // legacy: the old vote's preset point); residual_reach = Rule R reach (trait-space distance)
-            'traits' => ['assignment' => RelDynTraits::ASSIGNMENT, 'residual_reach' => RelDynTraits::RESIDUAL_REACH],
+            // legacy: the old vote's preset point); residual_reach = Rule R reach (trait-space distance).
+            // read_calibration (rulings 2026-09-30): the bio read IS the profile, presets do not define
+            // normal. enabled = the leniency correction of LLM-read traits (x' = x - read_mean + 0.5,
+            // at use time) AND the neutral intercepts of the 'offset' / 'mult' regressions (all-0.5 vector
+            // = no offset / x1.0); false restores the earlier behaviour exactly. read_mean = the committed
+            // seed's mean over its evidenced reads, per trait (a trait with under 30 reads has none: no
+            // shift). A stored 'traits' row without read_calibration takes the seed's computed means.
+            'traits' => ['assignment' => RelDynTraits::ASSIGNMENT, 'residual_reach' => RelDynTraits::RESIDUAL_REACH,
+                         'read_calibration' => ['enabled' => true, 'read_mean' => [
+                             'guard' => 0.660, 'expressiveness' => 0.517, 'confidence' => 0.659, 'pride' => 0.636,
+                             'resilience' => 0.629, 'reactivity' => 0.553, 'warmth' => 0.503, 'restraint' => 0.618]]],
+            // Love language (ensureLoveLanguage): the secondary love language of the NPC's temperament
+            // (nearest preset of its own trait vector); the primary comes from MARAS / Sharmat when they
+            // have data, else the core race (raceToLoveLanguage). A secondary equal to the primary rotates.
+            'love_language_secondary' => [
+                'Romantic' => self::LL_TOUCH, 'Playful' => self::LL_TOUCH, 'Bold' => self::LL_TOUCH, 'Defiant' => self::LL_TOUCH,
+                'Nurturing' => self::LL_SERVICE, 'Humble' => self::LL_TIME, 'Gentle' => self::LL_TIME,
+                'Proud' => self::LL_WORDS, 'Anxious' => self::LL_WORDS, 'Jealous' => self::LL_TIME,
+                'Guarded' => self::LL_SERVICE, 'Stoic' => self::LL_SERVICE, 'Independent' => self::LL_TIME,
+            ],
             // The bio trait read (reldyn_trait_read.php): its own queue, drained after the eval
             'trait_reader' => RelDynTraitRead::defaultConfig(),
             // Attachment on two axes (decisions 2026-09-24 §12): derivation, style regions,
@@ -3442,9 +3460,12 @@ class RelationshipDynamics
             $primary = self::raceToLoveLanguage($race);
         }
 
-        // Secondary from social context
+        // Secondary: MARAS social class when it has one (retired: no-op), else the temperament's
+        // own (nearest preset of the NPC's trait vector; config love_language_secondary)
         $socialClass = self::getSocialClass($npcName);
-        $secondary = self::socialClassToLoveLanguage($socialClass);
+        $secondary = $socialClass !== null
+            ? self::socialClassToLoveLanguage($socialClass)
+            : self::temperamentToSecondaryLoveLanguage($temperament, $dynamics);
 
         // If secondary == primary, rotate
         if ($secondary === $primary) {
@@ -3473,6 +3494,15 @@ class RelationshipDynamics
     private static function temperamentToLoveLanguage($temperament, ?array $dynamics = null)
     {
         return RelDynTraits::labelParam($temperament, self::TEMPERAMENT_LOVE_LANGUAGE, self::LL_TIME, $dynamics);
+    }
+
+    /** The secondary love language of a temperament through the trait engine: the nearest preset's (config love_language_secondary), null without one. */
+    private static function temperamentToSecondaryLoveLanguage($temperament, ?array $dynamics = null)
+    {
+        $table = self::getConfig()['love_language_secondary'] ?? null;
+        $table = is_array($table) ? $table : (array) self::defaultConfig()['love_language_secondary'];
+        $ll = RelDynTraits::labelParam($temperament, $table, null, $dynamics);
+        return is_string($ll) && $ll !== '' ? $ll : null;
     }
 
     private static function speechStyleToLoveLanguage($style)
@@ -3509,9 +3539,22 @@ class RelationshipDynamics
         return $map[$style] ?? null;
     }
 
-    private static function raceToLoveLanguage($race)
+    /**
+     * A core race ("NordRace", "NordRaceVampire", "Dark Elf", "wood_elf") as the race keys below
+     * spell it: lower-case letters and digits only, a trailing "vampire" (the vampire variants of the
+     * playable races) and then a trailing "race" dropped ("nord", "darkelf", "woodelf").
+     */
+    public static function normalizeRaceKey($race): string
     {
-        $race = strtolower(trim($race ?? ''));
+        $k = preg_replace('/[^a-z0-9]/', '', strtolower((string) $race)) ?? '';
+        $k = preg_replace('/vampire$/', '', $k) ?? $k;
+        return preg_replace('/race$/', '', $k) ?? $k;
+    }
+
+    /** The primary love language of a core race (CHIM core_npc_master.race), LL_TIME for an unknown one. */
+    public static function raceToLoveLanguage($race)
+    {
+        $race = self::normalizeRaceKey($race);
         $map = [
             'khajiit' => self::LL_TOUCH, 'woodelf' => self::LL_TOUCH, 'bosmer' => self::LL_TOUCH,
             'highelf' => self::LL_GIFTS, 'altmer' => self::LL_GIFTS, 'imperial' => self::LL_GIFTS,

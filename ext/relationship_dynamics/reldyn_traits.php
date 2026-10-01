@@ -41,6 +41,23 @@
  *           table lookup. trait_vector mirrors the label's preset point and is not read.
  * Either way a textbook preset reproduces every old table value exactly.
  *
+ * READ CALIBRATION (config traits.read_calibration {enabled, read_mean}; rulings 2026-09-30):
+ * presets do not define what normal is; the bio read is the profile. Two corrections, one switch.
+ *   1. Leniency (calibrateRead, applied at USE time in readVector, stored reads stay raw): the LLM
+ *      reads high (guard .66 where the middle of a population is .5), so each trait the bio read
+ *      supplied is moved by x' = clamp01(r - read_mean + 0.5), spread unchanged, before it is
+ *      blended with the prior at the read's own weight. Only LLM-read traits (source 'bio', not
+ *      overridden, vector composed from the auto read): a hand-set vector (Ashe), a preset or a
+ *      label-assigned vector is never touched. read_mean defaults to the committed seed's mean
+ *      over its evidenced reads (seedReadStats), for traits with READ_CALIBRATION_MIN_READS reads.
+ *   2. Neutral intercepts (relevelModel, in blend): every Rule R regression whose unit is 'offset'
+ *      or 'mult' evaluates as neutral + sum slope (x - 0.5), neutral 0 / 1.0: the all-0.5 vector (a
+ *      middle read) adds nothing. Slopes are unchanged; the residual terms are taken against the
+ *      re-levelled model, so every preset still returns its table row exactly. Rule RI is not
+ *      re-levelled: its normalised residual blend absorbs any shift of the model (no-op), the
+ *      level at a middle vector is the preset table's own.
+ * enabled = false restores the pre-calibration behaviour exactly (both corrections).
+ *
  * Units: traits 0..1 (unitless); every column's unit is listed in columns() and §2.4.
  */
 
@@ -78,6 +95,8 @@ final class RelDynTraits
     /**
      * The NPC's own vector under the read assignment: its stored trait_vector when the read
      * assignment wrote it (_trait_vector_src.assignment 'read'), else null. Codes + maturity_start.
+     * The traits an LLM bio read supplied are corrected for the LLM's leniency here, at use time
+     * (calibrateRead; config traits.read_calibration), so the stored vector stays the raw read.
      */
     public static function readVector(?array $dynamics): ?array
     {
@@ -85,7 +104,148 @@ final class RelDynTraits
         $v = $dynamics['trait_vector'] ?? null;
         $src = $dynamics['_trait_vector_src'] ?? null;
         if (!is_array($v) || !is_array($src) || ($src['assignment'] ?? null) !== 'read') return null;
-        return self::fromStored($v);
+        return self::calibrateRead(self::fromStored($v), $src);
+    }
+
+    // =========================================================================
+    // READ CALIBRATION (config traits.read_calibration)
+    // =========================================================================
+
+    /**
+     * Pins the calibration regardless of config (null = config): ['enabled' => bool, 'read_mean' =>
+     * storage name => 0..1]. For tests and tools.
+     */
+    public static $readCalibrationOverride = null;
+
+    /** A trait's seed read_mean is used only from this many evidenced reads (a rarely evidenced trait's mean is selection, not scale). */
+    const READ_CALIBRATION_MIN_READS = 30;
+
+    private static $seedStats = null;
+
+    /** The stored (or pinned) read_calibration config row, [] when none. */
+    private static function readCalibrationRow(): array
+    {
+        if (is_array(self::$readCalibrationOverride)) return self::$readCalibrationOverride;
+        $t = class_exists('RelationshipDynamics') ? (RelationshipDynamics::getConfig()['traits'] ?? null) : null;
+        return is_array($t) && is_array($t['read_calibration'] ?? null) ? $t['read_calibration'] : [];
+    }
+
+    /** Is the read calibration (leniency correction and neutral intercepts) on? A row without 'enabled' is on. */
+    public static function readCalibrationEnabled(): bool
+    {
+        $row = self::readCalibrationRow();
+        return !array_key_exists('enabled', $row) || !empty($row['enabled']);
+    }
+
+    /**
+     * The seed's evidenced-read statistics per trait storage name: ['mean' => float, 'n' => int]
+     * over the committed seed's reads that carry evidence (conf > 0: the others are placeholders,
+     * not reads). Cached; resetReadCalibrationCache() drops it.
+     */
+    public static function seedReadStats(): array
+    {
+        if (self::$seedStats !== null) return self::$seedStats;
+        $sum = array_fill_keys(self::TRAITS, 0.0);
+        $n = array_fill_keys(self::TRAITS, 0);
+        $seed = class_exists('RelDynTraitRead') ? RelDynTraitRead::loadSeedFile() : [];
+        foreach ((array) ($seed['reads'] ?? []) as $entry) {
+            foreach ((array) ($entry['result']['traits'] ?? []) as $name => $t) {
+                if (!isset($sum[$name]) || !is_array($t) || !is_numeric($t['value'] ?? null) || floatval($t['conf'] ?? 0) <= 0.0) continue;
+                $sum[$name] += floatval($t['value']);
+                $n[$name]++;
+            }
+        }
+        $out = [];
+        foreach (self::TRAITS as $name) {
+            $out[$name] = ['mean' => $n[$name] > 0 ? $sum[$name] / $n[$name] : 0.5, 'n' => $n[$name]];
+        }
+        return self::$seedStats = $out;
+    }
+
+    public static function resetReadCalibrationCache(): void
+    {
+        self::$seedStats = null;
+    }
+
+    /**
+     * The per-trait read_mean (storage name => 0..1) the calibration subtracts: the config row's
+     * read_mean when it has one, else the seed's (traits with READ_CALIBRATION_MIN_READS reads).
+     */
+    public static function readMeans(): array
+    {
+        $row = self::readCalibrationRow();
+        $out = [];
+        if (is_array($row['read_mean'] ?? null)) {
+            foreach (self::TRAITS as $name) {
+                $m = $row['read_mean'][$name] ?? null;
+                if (is_numeric($m) && floatval($m) >= 0.0 && floatval($m) <= 1.0) $out[$name] = floatval($m);
+            }
+            return $out;
+        }
+        foreach (self::seedReadStats() as $name => $s) {
+            if ($s['n'] >= self::READ_CALIBRATION_MIN_READS) $out[$name] = $s['mean'];
+        }
+        return $out;
+    }
+
+    /**
+     * Leniency correction of a stored read vector ($x codes, $src = _trait_vector_src). Each trait
+     * the LLM read supplied (src.traits.<name>.source 'bio'), when the vector is composed from the
+     * auto read (not a preset override or stored preset) and the trait has no per-trait override:
+     * the read r becomes clamp01(r - read_mean + 0.5), spread unchanged, and the trait is blended
+     * with its prior again at the read's own weight (min(1, READ_WEIGHT x conf)):
+     *   x' = clamp01(x + w (clamp01(r - read_mean + 0.5) - r)).
+     * A hand-set or preset or label vector has no 'bio' trait and is returned as is, as is
+     * maturity_start (a stored seed, not a use-time value).
+     */
+    public static function calibrateRead(array $x, array $src): array
+    {
+        if (!self::readCalibrationEnabled()) return $x;
+        if (($src['composed'] ?? 'auto') !== 'auto') return $x;
+        $means = self::readMeans();
+        if (!$means) return $x;
+        $traits = is_array($src['traits'] ?? null) ? $src['traits'] : [];
+        $overridden = (array) ($src['overridden'] ?? []);
+        foreach (self::TRAITS as $code => $name) {
+            $s = $traits[$name] ?? null;
+            if (!isset($means[$name]) || !is_array($s) || ($s['source'] ?? null) !== 'bio' || !is_numeric($s['read'] ?? null)
+                || in_array($name, $overridden, true)) {
+                continue;
+            }
+            $w = min(1.0, max(0.0, floatval($s['conf'] ?? 0) * RelDynTraitAssign::READ_WEIGHT));
+            $r = floatval($s['read']);
+            $calibrated = max(0.0, min(1.0, $r - $means[$name] + 0.5));
+            $x[$code] = max(0.0, min(1.0, floatval($x[$code]) + $w * ($calibrated - $r)));
+        }
+        return $x;
+    }
+
+    /** Units whose Rule R / RI regressions are re-levelled, and the value a middle (all-0.5) vector gets. */
+    const RELEVEL_UNITS = ['offset' => 0.0, 'mult' => 1.0];
+
+    /**
+     * The one mechanism of the neutral intercepts: a Rule R model in a re-levelled unit evaluates as
+     * neutral + (model(x) - model(all 0.5)), i.e. neutral + sum slope (x - 0.5) for a linear model.
+     * Slopes unchanged; the residual terms blend() takes against this model keep every preset exact,
+     * and a point out of every preset's reach (the all-0.5 vector is 0.50 from the nearest) gets the
+     * neutral value. Other units, and calibration off: the model as is.
+     */
+    private static function relevelModel($model, ?string $unit)
+    {
+        if ($unit === null || !isset(self::RELEVEL_UNITS[$unit]) || !self::readCalibrationEnabled()) return $model;
+        $half = array_fill_keys(array_keys(self::TRAITS), 0.5) + ['maturity_start' => 50.0];
+        $delta = self::evalModel($model, $half) - self::RELEVEL_UNITS[$unit];
+        if (abs($delta) < 1e-15) return $model;
+        return fn(array $x) => self::evalModel($model, $x) - $delta;
+    }
+
+    /** A Rule R model's value at the all-0.5 vector, before and after re-levelling (reporting and tests). */
+    public static function modelAtMiddle($model, ?string $unit): array
+    {
+        $half = array_fill_keys(array_keys(self::TRAITS), 0.5) + ['maturity_start' => 50.0];
+        $old = self::evalModel($model, $half);
+        $new = self::evalModel(self::relevelModel($model, $unit), $half);
+        return ['old' => $old, 'new' => $new];
     }
 
     /** Trait code => storage name (design §1, §4.2 output keys). Order is the vector order. */
@@ -341,6 +501,7 @@ final class RelDynTraits
         $on = self::presetAt($x);
         if ($on !== null) return $table[$on];
         $pts = self::points();
+        if ($rule === 'R' && $model !== null) $model = self::relevelModel($model, $unit);
         if ($rule === 'RI' && $model !== null) {
             // residual_reach 0 = the pure trait model, as for Rule R (the tuning knob, design §3.3)
             if (self::residualReach() <= 0.0) return self::clampUnit(self::evalModel($model, $x), $unit);

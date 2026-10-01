@@ -54,6 +54,16 @@ class RelDynIntimacy
     /** Short keys of the axes in the config tables and overrides. */
     const KEYS = ['physical' => self::PHYSICAL, 'emotional' => self::EMOTIONAL];
 
+    /**
+     * A26 through the trait engine: the temperament row's Rule R models (physical E, D; emotional
+     * W, G, E), offsets on the 0..1 need scale. The intercepts are the textbook fit; the engine
+     * evaluates them neutral at a middle (all 0.5) vector (RelDynTraits::relevelModel).
+     */
+    const TEMPERAMENT_RULES = [
+        'physical'  => ['R', [0.02, 'E' => 0.19, 'D' => -0.21]],
+        'emotional' => ['R', [-0.64, 'W' => 0.96, 'G' => 0.54, 'E' => 0.18]],
+    ];
+
     // =====================================================================
     // CONFIG
     // =====================================================================
@@ -295,10 +305,8 @@ class RelDynIntimacy
         }
         if (!empty($in['creature'])) $add(((array) $cfg['creature'])[$in['creature']] ?? [], 1.0, "creature:{$in['creature']}");
         // A26 through the trait engine (Rule R: physical E, D; emotional W, G, E)
-        if (!empty($in['temperament'])) $add(RelDynTraits::rowParam($in['temperament'], (array) $cfg['temperament'], [
-            'physical'  => ['R', [0.02, 'E' => 0.19, 'D' => -0.21]],
-            'emotional' => ['R', [-0.64, 'W' => 0.96, 'G' => 0.54, 'E' => 0.18]],
-        ], 'offset', is_array($in['dynamics'] ?? null) ? $in['dynamics'] : null), 1.0, "temperament:{$in['temperament']}");
+        if (!empty($in['temperament'])) $add(RelDynTraits::rowParam($in['temperament'], (array) $cfg['temperament'],
+            self::TEMPERAMENT_RULES, 'offset', is_array($in['dynamics'] ?? null) ? $in['dynamics'] : null), 1.0, "temperament:{$in['temperament']}");
         // attachment: a style name (a textbook NPC of it) or style => corner weight
         $att = $in['attachment'] ?? null;
         foreach (is_array($att) ? $att : (is_string($att) && $att !== '' ? [$att => 1.0] : []) as $style => $w) {
