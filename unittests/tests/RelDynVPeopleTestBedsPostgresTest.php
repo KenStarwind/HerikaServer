@@ -678,4 +678,118 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
         $this->assertSame(0, $this->llmCalls, 'no LLM call');
         $this->assertSame([], $this->db->failures);
     }
+
+    // ------------------------------------------------------------------ §22 the fearful morning after
+
+    /** A Sharmat scene stage with the player and $npc (ext_nsfw_sexcene, as Sharmat's OStim handler reports it), alone. */
+    private function scene(string $npc, int $gamets, string $label): void
+    {
+        $data = 'OStimScene/vaginal,romantic/Stage1_A1/' . self::PLAYER . "^dom,vaginal/{$npc}^sub,vaginal";
+        $this->people = "|{$npc}|" . self::PLAYER . '|';
+        $this->event('ext_nsfw_sexcene', $data, $gamets);
+        $this->request($npc, ['ext_nsfw_sexcene', (string) $this->realTs, (string) $gamets, $data], self::PLAYER, $label);
+        $this->people = null;
+    }
+
+    /** The pull-back's numbers for $npc now. */
+    private function pull(string $npc): array
+    {
+        $d = $this->dynamics($npc);
+        $p = (array) ($d['_pullback'] ?? []);
+        return ['active' => !empty($p['active']), 'cause' => $p['cause'] ?? null, 'pressure' => round(floatval($p['pressure'] ?? 0.0), 3),
+            'size' => round(floatval($p['aftermath']['size'] ?? 0.0), 3), 'target' => $p['last']['target'] ?? null, 'on' => $p['last']['on'] ?? null,
+            'episodes' => intval($p['episodes'] ?? 0), 'let_in' => round(RelDynPullback::letIn($d), 1),
+            'fear' => round(RelDynPullback::fearfulness($d), 3)];
+    }
+
+    /**
+     * post-intimacy x pull-back x attachment (decisions §22). Four partners (core romantic, affinity 60, comfort and trust high:
+     * let in) spend an evening with the player, then a scene with each, alone, as Sharmat reports it. The act is the same; what
+     * follows is who they are: the fearful Muiri pulls back by the morning (and says so, by how mature she is), Ashe (avoidant)
+     * carries a part of the same push and Aela and Lynly, secure, only a trace, which does not pull anyone back; it fades like any
+     * pull-back (open again within two days); and nobody is shamed: no resentment toward themselves, no trust cut. A reassuring word
+     * the morning after takes some of it off.
+     */
+    public function testAFearfulNpcPullsBackTheMorningAfterTheOthersDoNotAndNoOneIsShamed(): void
+    {
+        $this->seed(60);
+        $t = $this->hello();
+        $this->floors(30.0);
+        $this->setBeds(function (array &$d): void {
+            foreach (['comfort' => 82.0, 'trust' => 84.0, 'respect' => 70.0] as $dim => $v) {
+                $d['dimensions'][$dim]['x'] = $v;
+                $d['dimensions'][$dim]['baseline'] = $v;
+            }
+            $d['dimensions']['resentment_self']['x'] = 0.0;
+        });
+        $t = $this->play($t + 600, 10.0);
+        $t = $this->alone('I missed you today. Tell me about your evening.', $t + 600, 'evening');
+        $beds = array_keys(self::BEDS);
+        $pre = [];
+        foreach ($beds as $npc) {
+            $d = $this->dynamics($npc);
+            $pre[$npc] = ['trust' => self::x($d, 'trust'), 'resentment_self' => self::x($d, 'resentment_self'), 'pull' => $this->pull($npc)];
+            $this->assertFalse($pre[$npc]['pull']['active'], "{$npc}: nothing presses yet");
+        }
+        $night = $t + 600;
+        foreach ($beds as $i => $npc) $this->scene($npc, $night + 1200 * $i, 'scene');
+        $sizes = [];
+        foreach ($beds as $npc) $sizes[$npc] = $this->pull($npc)['size'];
+        // an hour on, a few hours on, the morning (9 game hours after the night), and a day and two on
+        $trace = [];
+        foreach ([1.0 => 'hour', 4.0 => 'late', 10.0 => 'morning', 15.0 => 'noon', 30.0 => 'day', 60.0 => 'days'] as $hours => $label) {
+            $at = $this->play((int) round($night + 1200 * count($beds) + $hours * self::HOUR), 1.0);
+            $this->alone($label === 'morning' ? 'Good morning.' : 'Anything on your mind?', $at, $label);
+            foreach ($beds as $npc) $trace[$npc][$label] = $this->pull($npc);
+        }
+        $this->probe('the morning after', ['sizes' => $sizes, 'trace' => $trace]);
+        $why = json_encode(['sizes' => $sizes, 'trace' => $trace]);
+        // sized by how fearful: the fearful Muiri most, Ashe a part of it, the secure only a trace; and it is never zero
+        foreach ($beds as $npc) $this->assertGreaterThan(0.0, $sizes[$npc], "{$npc}: no one is immune {$why}");
+        $this->assertGreaterThan($sizes[self::AELA], $sizes['Muiri'], $why);
+        $this->assertGreaterThan($sizes[self::LYNLY], $sizes['Muiri'], $why);
+        $this->assertGreaterThan(2.0 * max($sizes[self::AELA], $sizes[self::LYNLY]), $sizes['Muiri'], "meaningfully apart {$why}");
+        $this->assertGreaterThanOrEqual($sizes[self::AELA], $sizes['Ashe'], $why);
+        // the fearful one pulls back for the morning, the secure ones do not, and it is the morning after, not the weather
+        $first = null;
+        foreach (['hour', 'late', 'morning', 'noon', 'day', 'days'] as $label) {
+            if ($trace['Muiri'][$label]['active']) { $first = $first ?? $label; $this->assertSame('aftermath', $trace['Muiri'][$label]['cause'], "{$label} {$why}"); }
+        }
+        $this->assertContains($first, ['morning', 'noon'], "Muiri pulls back by midday {$why}");
+        $this->assertTrue($trace['Muiri']['noon']['active'], $why);
+        foreach (['hour', 'late', 'morning', 'noon', 'day', 'days'] as $label) {
+            $this->assertFalse($trace[self::AELA][$label]['active'], "Aela {$label} {$why}");
+            $this->assertFalse($trace[self::LYNLY][$label]['active'], "Lynly {$label} {$why}");
+            $this->assertFalse($trace['Ashe'][$label]['active'], "Ashe: a part of the push does not pull back alone {$label} {$why}");
+        }
+        $this->assertGreaterThan($trace[self::AELA]['noon']['pressure'], $trace['Muiri']['noon']['pressure'], $why);
+        $this->assertGreaterThan($trace[self::LYNLY]['noon']['pressure'], $trace['Ashe']['noon']['pressure'], $why);
+        // she says it, once, to the player's face, as the morning after: a distance, never shame, feelings never numbers
+        $said = (string) ($this->felt['Muiri'][$first]['pullback_enter'] ?? $this->felt['Muiri'][$first]['enter'] ?? '');
+        $this->assertNotSame('', $said, 'Muiri says it ' . json_encode(array_keys($this->felt['Muiri'][$first] ?? [])));
+        $this->probe('said', [$said, $this->felt['Muiri'][$first]]);
+        $this->assertStringContainsString('Muiri', $said);
+        $this->assertDoesNotMatchRegularExpression('/\b(shame|ashamed|regret|mistake|guilt)\b/i', $said);
+        $this->assertDoesNotMatchRegularExpression('/\b(he|she|his|her|hers|him)\b/i', $said, 'the NPC\'s own pronoun vars or the name, never a hard-coded one');
+        $this->assertStringNotContainsString('missing', $said, 'it is the closeness, not unmet needs');
+        // distance for a while: it fades like any pull-back, within two days
+        $this->assertFalse($trace['Muiri']['days']['active'], "open again {$why}");
+        $this->assertSame(1, $trace['Muiri']['days']['episodes'], $why);
+        // no one is shamed: no resentment toward themselves, no trust cut
+        foreach ($beds as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertEqualsWithDelta($pre[$npc]['resentment_self'], self::x($d, 'resentment_self'), 0.01, "{$npc}: no shame {$why}");
+            $this->assertGreaterThanOrEqual($pre[$npc]['trust'] - 0.5, self::x($d, 'trust'), "{$npc}: no trust cut {$why}");
+        }
+        $jev = $this->jev('Muiri', $night + 1200 * count($beds) + 600);
+        $this->assertGreaterThan(0.4, $jev['pullback']['aftermath']['fearfulness']);
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+        $this->assertSame([], $this->db->failures);
+    }
+
+    /** Jev's block for $npc now (the numbers; decisions §3). */
+    private function jev(string $npc, int $gamets): array
+    {
+        return RelDynJev::state($npc, $this->dynamics($npc), (float) $gamets);
+    }
 }

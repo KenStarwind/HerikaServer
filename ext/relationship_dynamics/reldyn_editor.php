@@ -1263,8 +1263,9 @@ final class RelDynEditor
             ? 'yes, ' . self::num($pb['pressure'], 2) . ' (on ' . self::num((float) $pb['on'], 2) . ', off ' . self::num((float) $pb['off'], 2) . '), '
                 . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
                 . ($pb['since_game_hours'] !== null ? ', ' . self::num($pb['since_game_hours'], 1) . ' game hours' : '') . ($pb['voiced'] ? ', voiced' : '')
+                . (($pb['cause'] ?? null) === 'aftermath' ? ', the morning after intimacy' : '')
             : 'no (pressure ' . self::num($pb['pressure'], 2) . ')', ['state' => 'state',
-            'hint' => 'temporary: the weather, unmet needs and resentment press on her; reset lets her open up at once (it comes back if the pressure does)',
+            'hint' => 'temporary: the weather, unmet needs, resentment and, after intimacy, a fear of closeness press on the NPC; reset lets them open up at once (it comes back if the pressure does)',
             'reset' => isset($d[RelDynPullback::KEY]) ? function (array &$dd) { unset($dd[RelDynPullback::KEY]); } : null]);
         $walk = (string) ($d['_walkaway_state'] ?? 'normal');
         $fields[] = self::field('state:walkaway', 'Walkaway', 'readonly', $walk . (isset($d['_walkaway_reason']) ? ' (' . (string) $d['_walkaway_reason'] . ')' : ''), [

@@ -64,6 +64,10 @@
  * diary or another scene of that night already asked (RelDynSubstances::nightVerdict, the night
  * the encounter began in; the draft's worked example has one sober verdict).
  *
+ * The FEARFUL MORNING AFTER (decisions §22) is no outcome row: every encounter, whatever its outcome, hands the NPC's fear of
+ * closeness to the pull-back (RelDynPullback::onIntimacy: an input sized by how fearful the NPC is, held for a night, fading
+ * like any pull-back, no shame, no held points of its own).
+ *
  * Felt text (feelings, never numbers; RelDynFelt 'post_intimacy', bond scope): the row's glow
  * while the afterglow holds ('moment' for a row with a correction still to come), its 'after'
  * text from the correction for regret_felt_game_hours (the uncertain morning: the words of its size,
@@ -417,6 +421,8 @@ final class RelDynPostIntimacy
             }
             $state['felt_until'] = max(floatval($state['felt_until'] ?? 0), floatval($state['held_until'] ?? 0));
             $dynamics[self::KEY] = $state;
+            // the morning after counts from the encounter's last request (decisions §22, RelDynPullback::onIntimacy)
+            RelDynPullback::onIntimacy($npcName, $dynamics, $now);
             return null;
         }
         $deferred = $state !== null ? self::finish($dynamics, 'a new encounter') : [];
@@ -472,6 +478,10 @@ final class RelDynPostIntimacy
         if ($outcome === self::DRUNK) {
             RelDynSubstances::markUncertainNight($dynamics, RelDynSubstances::sessionKey($dynamics));
         }
+        // Decisions §22 (Ken, 2026-10-01): a fearful NPC (anxious and avoidant, the fearful corner) pulls back after
+        // intimacy, sized by how fearful they are: distance for a while, never shame, fading like any pull-back
+        // (an input to reldyn_pullback.php; the shame rows of the draft stay retired, vulnerable_fear stays opt-in)
+        RelDynPullback::onIntimacy($npcName, $dynamics, $now);
         RelationshipDynamics::log(sprintf('[POST-INTIMACY] %s: %s (core %s, trust %.1f, maturity %.1f, %s, avoidance %.2f%s) held %s lasting %s mood %s',
             $npcName, $outcome, $ctx['core_type'] !== '' ? $ctx['core_type'] : 'none', $ctx['trust'], $ctx['maturity'],
             $ctx['intoxicated'] ? 'intoxicated' : 'sober', $ctx['avoidance'],

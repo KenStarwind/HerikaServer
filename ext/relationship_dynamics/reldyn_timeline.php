@@ -707,6 +707,8 @@ final class RelDynTimeline
         foreach (['gamets', 'since_gamets', 'ended_gamets', 'ease_until_gamets'] as $stamp) {
             self::clampIn($d, [RelDynPullback::KEY, $stamp], $T);
         }
+        // ... and the morning after intimacy it holds from (a scene the load undid is held from the loaded time)
+        self::clampIn($d, [RelDynPullback::KEY, 'aftermath', 'last'], $T);
         // Keeping (reldyn_keeping.php): its clock on the loaded time at the latest
         self::clampIn($d, [RelDynKeeping::KEY, 'gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
