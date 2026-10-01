@@ -207,6 +207,14 @@ final class RelDynBioReingestTest extends TestCase
         $this->assertSame(-0.2, $drifted['src']['warmth']['drift']);
         $this->assertArrayNotHasKey('drift', $plain['src']['warmth']);
         $this->assertEqualsWithDelta($plain['x']['G'], $drifted['x']['G'], 1e-12, 'untouched traits stay');
+        // a trait the first read had no evidence for, that a re-read gave some: the bio's now (and says so)
+        $learned = RelDynTraitAssign::resolve(['read' => $read, 'drift' => ['x' => ['guard' => 0.2], 'known' => ['guard' => 0.72]]]);
+        $this->assertSame('prior', $plain['src']['guard']['source']);
+        $this->assertSame('bio', $learned['src']['guard']['source']);
+        $this->assertSame(0.9, $learned['src']['guard']['conf']);
+        $this->assertTrue($learned['src']['guard']['reingest']);
+        $this->assertSame('bio', $learned['src']['warmth']['source'], 'a trait the first read knew stays as it was');
+        $this->assertArrayNotHasKey('reingest', $learned['src']['warmth']);
         $clamped = RelDynTraitAssign::resolve(['read' => $read, 'drift' => ['x' => ['warmth' => 0.9], 'known' => []]]);
         $this->assertSame(1.0, $clamped['x']['W']);
     }

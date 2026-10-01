@@ -3,6 +3,15 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Unreleased — the bio read keeps up
+An NPC's personality is read from their bio once, but CHIM's dynamic profile keeps rewriting bios as the story goes on. Now
+every ~90 game days, or soon after a milestone (a romance, a bond break, a betrayal, a marriage), RelDyn checks whether the
+NPC's bio actually changed. Only a changed bio is read again, in the same background queue as the first read; an unchanged
+one costs nothing. The new read moves the personality instead of replacing it, by who the NPC is: someone set in their ways
+moves less, someone volatile or still finding themselves moves more, and nobody is immune. A trait the first read knew
+nothing about simply fills in. Hand-set vectors and presets chosen in the editor are never re-read. The editor shows when the
+profile was last read, what moved, and has a "Read again" button. One switch and the cadence live in the trait reader config.
+
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or
 looks up to them; otherwise it climbs like any other gain. Interest that isn't shown still counts toward a romance, and

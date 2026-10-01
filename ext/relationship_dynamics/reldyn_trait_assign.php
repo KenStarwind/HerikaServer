@@ -295,6 +295,13 @@ final class RelDynTraitAssign
                 $hi = $name === 'maturity_start' ? 100.0 : 1.0;
                 $x[$code] = max(0.0, min($hi, floatval($x[$code]) + floatval($drift[$name])));
                 $src[$name]['drift'] = round(floatval($drift[$name]), 4);
+                // evidence a re-read supplied for a trait the first read knew nothing about: it is the bio's now
+                $known = floatval($in['drift']['known'][$name] ?? 0);
+                if (in_array($src[$name]['source'] ?? null, ['prior', 'model'], true) && $known > 0) {
+                    $src[$name]['source'] = 'bio';
+                    $src[$name]['conf'] = round(min(1.0, $known / self::READ_WEIGHT), 2);
+                    $src[$name]['reingest'] = true;
+                }
             }
         }
         $label = null;

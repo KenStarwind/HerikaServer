@@ -242,10 +242,13 @@ final class RelDynTraitReingest
         $before = $dynamics[self::KEY] ?? null;
         $s = self::state($dynamics);
         if (self::exemption($npcName, $dynamics) !== null) {
-            if ($s['pending'] === null && $s['milestone'] === null) return false;
+            // nothing is read, queued or kept for an exempt NPC: a pending read and a milestone mark are dropped,
+            // and a state with no drift or history behind it goes away (a hand-set vector never carries one)
+            if (!$had) return false;
             $s['pending'] = null;
             $s['milestone'] = null;
-            $dynamics[self::KEY] = $s;
+            if ($s['drift'] === [] && $s['history'] === [] && intval($s['reads']) === 0) unset($dynamics[self::KEY]);
+            else $dynamics[self::KEY] = $s;
             return true;
         }
         if (($src['read_status'] ?? null) !== 'done') return false;   // the first read has not landed
