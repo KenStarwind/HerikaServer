@@ -92,7 +92,7 @@ final class RelDynSettingsText
         'intimacy_need' => 'How much physical and emotional closeness she needs (from her traits), and what deprivation does.',
         'impulse' => 'The want layer: short-term urges (romantic, protective, social, survival, curiosity), how they decay, and how she acts on them.',
         'creatures' => 'Vampire and werewolf mood changes: detection, the moon, night and day, the return from beast form.',
-        'combat' => 'Combat as bonding: witness, shared and danger multipliers, kill streaks, rescue.',
+        'combat' => 'Combat as bonding: witness, shared and danger multipliers, kill streaks, rescue. There is no flat cost for a defeat: her own fall in a fight (the bleedout response) drains or fires her by who she is.',
         'governors' => 'The passion floor and ceiling of each bond tier, and the attracted NPC\'s raise.',
         'exclusivity' => 'The natural pull toward the player (drive, disposition, title), how suitors change it, and the words between NPCs.',
         'romance_promotion' => 'How a bond climbs the romance ladder: moments, confession, momentum, and the handoff to Sharmat.',
