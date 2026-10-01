@@ -311,7 +311,9 @@ final class RelDynCascade
         if (!self::enabled()) return [];
         $npcId = RelDynStorage::resolveNpcId($npcName);
         if ($npcId === null) return [];
-        $items = RelDynStorage::peekItems($npcId, self::INBOX_KEY);
+        // one small read of the inbox key, not the whole namespace (the dynamics blob is large and this runs every request)
+        $stored = RelDynStorage::readKeyForUpdate($npcId, self::INBOX_KEY);
+        $items = is_array($stored['value'] ?? null) && array_is_list($stored['value']) ? $stored['value'] : [];
         if ($items === []) return [];
 
         $cfg = self::config();

@@ -39,7 +39,10 @@ final class RelDynNpcFacts
     /** dynamics key: the words the facts source reads. */
     const KEY = '_npc_facts';
 
-    /** Trait code => [low word, high word] for the trait keywords (bands as RelDynTraits::TRAIT_BAND_EDGES). */
+    /**
+     * Trait code => [low word, high word] for the trait keywords (bands as RelDynTraits::TRAIT_BAND_EDGES). A null
+     * word is never named: not being possessive or protective is not a trait worth telling an evaluator.
+     */
     const TRAIT_WORDS = [
         'G'  => ['open', 'guarded'],
         'E'  => ['reserved', 'expressive'],
@@ -49,8 +52,8 @@ final class RelDynNpcFacts
         'L'  => ['steady', 'reactive'],
         'W'  => ['cool', 'warm'],
         'D'  => ['impulsive', 'dutiful'],
-        'Po' => ['unpossessive', 'possessive'],
-        'Pr' => ['hands-off', 'protective'],
+        'Po' => [null, 'possessive'],
+        'Pr' => [null, 'protective'],
     ];
 
     // =====================================================================
@@ -105,8 +108,8 @@ final class RelDynNpcFacts
         $cands = [];
         foreach (self::TRAIT_WORDS as $code => [$low, $high]) {
             $v = floatval($vector[$code] ?? 0.5);
-            if ($v >= $edges['high']) $cands[] = [$v - 0.5, $high];
-            elseif ($v <= $edges['low']) $cands[] = [0.5 - $v, $low];
+            if ($v >= $edges['high'] && $high !== null) $cands[] = [$v - 0.5, $high];
+            elseif ($v <= $edges['low'] && $low !== null) $cands[] = [0.5 - $v, $low];
         }
         usort($cands, fn($a, $b) => $b[0] <=> $a[0]);
         return array_slice(array_column($cands, 1), 0, max(0, $n));
@@ -148,7 +151,7 @@ final class RelDynNpcFacts
             return true;
         }
         $words = self::words($dynamics);
-        if (($dynamics[self::KEY] ?? null) === $words) return false;
+        if (($dynamics[self::KEY] ?? null) == $words) return false;   // loose: stored JSON keeps no key order
         $dynamics[self::KEY] = $words;
         return true;
     }
