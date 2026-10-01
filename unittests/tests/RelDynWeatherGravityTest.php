@@ -23,9 +23,10 @@ final class RelDynWeatherGravityConfigDb
 /**
  * Weather emotional gravity (roadmap weather-gravity-pull; MDD 4.1 "Weather sets a Target Node,
  * current mood experiences constant pull"; chunk9 plan Feature 3): the weather no longer pushes
- * dimensions by a fixed amount every game hour. It sets a target offset per dimension (sunny
- * {warmth +5, valence +10}, overcast {warmth -3, valence -8, passion -3}, stormy {warmth -8,
- * valence -15, arousal +10}; comfort stripped) and the held offset closes 10% of its gap per game
+ * dimensions by a fixed amount every game hour. It sets a target offset per dimension (the
+ * dimension draft's, decisions 2026-10-01 §22: sunny {warmth +5, passion +5, valence +10}, overcast
+ * {warmth -5, passion -10, valence -8}, stormy {warmth -8, valence -15, arousal +10, passion -10};
+ * comfort stripped) and the held offset closes 10% of its gap per game
  * hour, capped at 20: self-limiting, and it relaxes when the weather turns. Mood dimensions carry
  * it in x as a held temporary offset (taken back exactly, out of the physics and the drift);
  * passion (the effective passion) and warmth (derived) read it at display time.
@@ -108,17 +109,42 @@ final class RelDynWeatherGravityTest extends TestCase
     {
         $d = $this->npc('overcast');
         RelationshipDynamics::applyWeatherGravity('Tester', $d, self::T0 + 100 * self::HOUR);
-        $this->assertEqualsWithDelta(-3.0, RelationshipDynamics::weatherGravityOffset($d, 'passion'), 1e-3);
+        // The draft's overcast: passion -10, warmth -5 (§22: "overcast cools harder"; April's chunk9 had -3 / -3)
+        $this->assertEqualsWithDelta(-10.0, RelationshipDynamics::weatherGravityOffset($d, 'passion'), 1e-3);
         $this->assertSame(30.0, RelationshipDynamics::getPassion($d), 'the earned floor is not the weather\'s');
-        $this->assertEqualsWithDelta(27.0, RelationshipDynamics::getEffectivePassion($d), 1e-3);
-        // Derived warmth: the overcast node's warmth column (-3) stands for the weather, once; its
-        // pull on passion is not counted into the root as well (batch-Q review): sqrt(30 x 50) - 3
-        $this->assertEqualsWithDelta(sqrt(30.0 * 50.0) - 3.0, RelDynPassion::warmth($d, false), 1e-3);
-        // A sunny day lifts it
+        $this->assertEqualsWithDelta(20.0, RelationshipDynamics::getEffectivePassion($d), 1e-3);
+        // Derived warmth: the overcast node's warmth column (-5) stands for the weather, once; its
+        // pull on passion is not counted into the root as well (batch-Q review): sqrt(30 x 50) - 5
+        $this->assertEqualsWithDelta(sqrt(30.0 * 50.0) - 5.0, RelDynPassion::warmth($d, false), 1e-3);
+        // A sunny day lifts it: the draft's passion +5 and warmth +5
         $s = $this->npc('sunny');
         RelationshipDynamics::applyWeatherGravity('Tester', $s, self::T0 + 100 * self::HOUR);
         $this->assertEqualsWithDelta(sqrt(30.0 * 50.0) + 5.0, RelDynPassion::warmth($s, false), 1e-3);
+        $this->assertEqualsWithDelta(5.0, RelationshipDynamics::weatherGravityOffset($s, 'passion'), 1e-3);
+        $this->assertEqualsWithDelta(35.0, RelationshipDynamics::getEffectivePassion($s), 1e-3);
         $this->assertEqualsWithDelta(10.0, self::x($s, 'valence'), 1e-3);
+    }
+
+    /** §22: the shipped nodes are the draft's, and a storm is never milder than a grey day. */
+    public function testTheShippedNodesAreTheDraftsOffsets(): void
+    {
+        $t = RelDynFacets::appraisalDefaults()['weather_gravity']['targets'];
+        $this->assertEqualsWithDelta(-10.0, $t['overcast']['passion'], 1e-9);
+        $this->assertEqualsWithDelta(-5.0, $t['overcast']['warmth'], 1e-9);
+        $this->assertEqualsWithDelta(5.0, $t['sunny']['passion'], 1e-9);
+        $this->assertEqualsWithDelta(5.0, $t['sunny']['warmth'], 1e-9);
+        $this->assertSame([], $t['clear'], 'clear has no pull');
+        $this->assertLessThanOrEqual($t['overcast']['passion'], $t['stormy']['passion']);
+        $this->assertLessThanOrEqual($t['overcast']['warmth'], $t['stormy']['warmth']);
+        // the pull closes in on the node and stops there: near -10 on passion after a long grey day, back to 0 when it clears
+        $d = $this->npc('overcast');
+        RelationshipDynamics::applyWeatherGravity('Tester', $d, self::T0 + 24 * self::HOUR);
+        $day = RelationshipDynamics::weatherGravityOffset($d, 'passion');
+        $this->assertLessThan(-8.0, $day, 'a day of grey sits near the node');
+        $this->assertGreaterThan(-10.0 - 1e-9, $day);
+        $d['_internal_weather'] = 'clear';
+        RelationshipDynamics::applyWeatherGravity('Tester', $d, self::T0 + 400 * self::HOUR);
+        $this->assertEqualsWithDelta(0.0, RelationshipDynamics::weatherGravityOffset($d, 'passion'), 1e-3);
     }
 
     public function testNoTimeNoPullAndTheCapHolds(): void

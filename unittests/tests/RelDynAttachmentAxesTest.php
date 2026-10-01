@@ -434,8 +434,12 @@ final class RelDynAttachmentAxesTest extends TestCase
         $this->assertEqualsWithDelta(1.3, $m('anxious', 10, ['quality_time'])['anxious_reassurance'], 1e-9);
         $this->assertEqualsWithDelta(0.5, $m('avoidant', -10, ['neglect'])['avoidant_neglect'], 1e-9);
         $this->assertEqualsWithDelta(0.6, $m('avoidant', 10, ['touch'], ['dimensions' => ['comfort' => ['x' => 40]]])['avoidant_closeness'], 1e-9);
-        $this->assertEqualsWithDelta(1.4, $m('toxic', 10, ['help'])['toxic_all'], 1e-9);
-        $this->assertSame([], array_intersect(array_keys($m('secure', -10, ['neglect'])), ['anxious_abandonment', 'avoidant_neglect', 'toxic_all']));
+        // decisions 2026-10-01 §22: toxic is asymmetric, idealise then devalue (x1.2 gains, x1.6 losses)
+        $this->assertEqualsWithDelta(1.2, $m('toxic', 10, ['help'])['toxic_gains'], 1e-9);
+        $this->assertEqualsWithDelta(1.6, $m('toxic', -10, ['insult'])['toxic_losses'], 1e-9);
+        $this->assertArrayNotHasKey('toxic_losses', $m('toxic', 10, ['help']));
+        $this->assertArrayNotHasKey('toxic_gains', $m('toxic', -10, ['insult']));
+        $this->assertSame([], array_intersect(array_keys($m('secure', -10, ['neglect'])), ['anxious_abandonment', 'avoidant_neglect', 'toxic_gains', 'toxic_losses']));
         // Categorical choices read the region
         $this->assertSame('manipulative', RelationshipDynamics::getRefusalType(self::textbook('toxic')));
         $this->assertTrue(RelationshipDynamics::isHooverSleeper(self::textbook('toxic', ['dimensions' => ['maturity' => ['x' => 20]]])));

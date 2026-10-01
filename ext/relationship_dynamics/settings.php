@@ -221,7 +221,7 @@ if (!$embed) {
     <section class="rd-section" id="rd-reference">
         <div class="rd-section-head"><h2>Passion (RPM)</h2></div>
         <div class="rd-formula">affinity_gain_mult = 0.3 + (passion / 100) x 1.7
-  passion 0  = x0.3 (idling)    passion 50 = x1.15 (cruising)    passion 100 = x2.0 (redline)</div>
+  passion 0  = x0.3 (idling)    passion 50 = x1.15 (cruising)    passion 100 = x2.0 (burning)</div>
         <div class="rd-section-head"><h2>Dimensions</h2></div>
         <div class="rd-formula">actual_delta = raw_eval_delta * Y_resistance * Z_distance_decay
   Z_decay(away)  = 1 / (1 + |X - baseline| / Z)    Z_decay(toward) = min(3.0, 1 + |X - baseline| / Z)</div>

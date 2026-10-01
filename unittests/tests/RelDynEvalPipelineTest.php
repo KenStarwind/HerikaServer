@@ -147,8 +147,8 @@ final class RelDynEvalPipelineTest extends TestCase
             'avoidant: touch at comfort 40'     => [['attachment' => 'avoidant', 'comfort' => 40], 10, ['touch'], 0.6, ['avoidant_closeness']],
             'avoidant: touch at comfort 60'     => [['attachment' => 'avoidant', 'comfort' => 60], 10, ['touch'], 1.0, []],
             'avoidant: neglect loss x0.5'       => [['attachment' => 'avoidant'], -10, ['neglect'], 0.5, ['maturity_losses', 'avoidant_neglect']],
-            'toxic: gains x1.4'                 => [['attachment' => 'toxic'], 10, ['help'], 1.4, ['toxic_all']],
-            'toxic: losses x1.4'                => [['attachment' => 'toxic'], -10, ['insult'], 1.4, ['maturity_losses', 'toxic_all']],
+            'toxic: gains x1.2'                 => [['attachment' => 'toxic'], 10, ['help'], 1.2, ['toxic_gains']],
+            'toxic: losses x1.6'                => [['attachment' => 'toxic'], -10, ['insult'], 1.6, ['maturity_losses', 'toxic_losses']],
             'egocentric: gift x1.5'             => [['traits' => ['egocentric']], 10, ['gift'], 1.5, ['egocentric_flattery']],
             'egocentric: praise x1.5'           => [['traits' => ['egocentric']], 10, ['praise'], 1.5, ['egocentric_flattery']],
             'egocentric: criticism x1.5'        => [['traits' => ['egocentric']], -10, ['criticism'], 1.5, ['maturity_losses', 'egocentric_slight']],
@@ -165,7 +165,7 @@ final class RelDynEvalPipelineTest extends TestCase
             'stormy: gains untouched'           => [['weather' => 'stormy'], 10, ['help'], 1.0, []],
             // Product, then clamp 0.25..3.0
             'immature + jealous 65: 1.3 x 1.5'  => [['maturity' => 20, 'jealousy' => 65], -10, ['insult'], 1.95, ['maturity_losses', 'jealousy_losses']],
-            'clamp at 3.0'                      => [['maturity' => 0, 'jealousy' => 100, 'attachment' => 'toxic'], -10, ['insult'], 3.0, ['maturity_losses', 'jealousy_losses', 'toxic_all']],
+            'clamp at 3.0'                      => [['maturity' => 0, 'jealousy' => 100, 'attachment' => 'toxic'], -10, ['insult'], 3.0, ['maturity_losses', 'jealousy_losses', 'toxic_losses']],
             'clamp at 0.25'                     => [['resentment' => 60, 'traits' => ['egocentric'], 'attachment' => 'avoidant', 'comfort' => 10], 10, ['help', 'touch'], 0.25, ['avoidant_closeness', 'egocentric_outshone', 'resentment_blocks_gains']],
         ];
     }
@@ -182,9 +182,9 @@ final class RelDynEvalPipelineTest extends TestCase
     public function testClampReportsTheUnclampedProduct(): void
     {
         $this->setConfig(['passion_enabled' => false]);
-        // 1.5 (maturity 0) x 2.0 (jealousy 100) x 1.4 (toxic) = 4.2, clamped to 3.0
+        // 1.5 (maturity 0) x 2.0 (jealousy 100) x 1.6 (toxic losses) = 4.8, clamped to 3.0
         $m = RelationshipDynamics::affinityModifiers($this->npc(['maturity' => 0, 'jealousy' => 100, 'attachment' => 'toxic']), -10, ['insult']);
-        $this->assertEqualsWithDelta(4.2, $m['product'], 1e-9);
+        $this->assertEqualsWithDelta(4.8, $m['product'], 1e-9);
         $this->assertSame(3.0, $m['M']);
     }
 

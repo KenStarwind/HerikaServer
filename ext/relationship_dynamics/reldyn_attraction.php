@@ -317,7 +317,7 @@ class RelDynAttraction
                 // how the player loves her always outweighs how far past her floor he is. The
                 // MDD 1.1 drive (0.3..2.0) reads the passion POOL (0..100), not the gain rate:
                 // the surplus only fills the pool at most 25% faster than a player at her floor,
-                // it never raises the drive's 2.0 redline.
+                // it never raises the drive's 2.0 peak.
                 'surplus_max' => 1.25,
                 // Charm climbs the hill (decisions §13; MDD 2.5 "up to ~15%"): below the floor
                 // Speech closes up to this fraction of the gap between the hill and 1.0 (her

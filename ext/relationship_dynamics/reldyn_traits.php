@@ -43,8 +43,9 @@
  *
  * READ CALIBRATION (config traits.read_calibration {relevel, relevel_mult, leniency, read_mean};
  * rulings 2026-09-30): presets do not define what normal is; the bio read is the profile. Two
- * corrections, three switches: relevel (default ON; the offset-unit rules) and relevel_mult (default
- * OFF; the multiplier rules, whose values are tuned against rulings) are 2, leniency (default OFF) is 1:
+ * corrections, three switches: relevel (default ON; the offset-unit rules) and relevel_mult (a list of multiplier
+ * columns, default passion_mult and jealousy_mult: neutral x1.0 at a middle vector, decisions §21 #10; true = every
+ * re-levellable multiplier rule, false = none) are 2, leniency (default OFF) is 1:
  * the seed's reads are mostly named followers and warriors, so their mean is characterisation, not LLM
  * leniency, and the read is used as read.
  *   1. Leniency (calibrateRead, applied at USE time in readVector, stored reads stay raw): the LLM
@@ -141,11 +142,38 @@ final class RelDynTraits
         return !array_key_exists('relevel', $row) || !empty($row['relevel']);
     }
 
-    /** Are the neutral intercepts of the Rule R multiplier regressions on? Default: off (their values are tuned against rulings). */
+    /**
+     * The multiplier columns that are neutral at a middle vector (all 0.5 = x1.0), config relevel_mult: a list of column ids,
+     * true (every re-levellable multiplier column), or false (none). Default (a row without 'relevel_mult'): passion_mult and
+     * jealousy_mult (decisions 2026-10-01 §21 #10: unknown traits must not bias, an NPC in the middle of the road feels
+     * passion and jealousy at face value). Returns the list, or true for all.
+     */
+    public static function relevelMultSetting()
+    {
+        $row = self::readCalibrationRow();
+        if (!array_key_exists('relevel_mult', $row)) return self::RELEVEL_MULT_DEFAULT;
+        $v = $row['relevel_mult'];
+        if (is_array($v)) return array_values(array_filter($v, 'is_string'));
+        return !empty($v) ? true : [];
+    }
+
+    /** Is any multiplier regression re-levelled? */
     public static function relevelMultEnabled(): bool
     {
-        return !empty(self::readCalibrationRow()['relevel_mult']);
+        $s = self::relevelMultSetting();
+        return $s === true || $s !== [];
     }
+
+    /** Is $col (a multiplier column id; null = unknown) re-levelled under relevel_mult? */
+    public static function relevelMultFor(?string $col): bool
+    {
+        $s = self::relevelMultSetting();
+        if ($s === true) return true;
+        return $col !== null && in_array($col, $s, true);
+    }
+
+    /** The shipped multiplier columns that are neutral at the middle (decisions §21 #10). */
+    const RELEVEL_MULT_DEFAULT = ['passion_mult', 'jealousy_mult'];
 
     /** Is the leniency correction of LLM-read traits on? Default (a row without 'leniency'): off, the read is used as read. */
     public static function leniencyEnabled(): bool
@@ -250,6 +278,9 @@ final class RelDynTraits
 
     private static $relevelHeld = false;
 
+    /** The column whose value() is being computed (the multiplier switch is per column); null outside value(). */
+    private static $relevelCol = null;
+
     /** Units whose Rule R / RI regressions are re-levelled, and the value a middle (all-0.5) vector gets. */
     const RELEVEL_UNITS = ['offset' => 0.0, 'mult' => 1.0];
 
@@ -263,7 +294,7 @@ final class RelDynTraits
     private static function relevelModel($model, ?string $unit)
     {
         if ($unit === null || self::$relevelHeld || !isset(self::RELEVEL_UNITS[$unit])) return $model;
-        if (!($unit === 'offset' ? self::relevelEnabled() : self::relevelMultEnabled())) return $model;
+        if (!($unit === 'offset' ? self::relevelEnabled() : self::relevelMultFor(self::$relevelCol))) return $model;
         $half = array_fill_keys(array_keys(self::TRAITS), 0.5) + ['maturity_start' => 50.0];
         $delta = self::evalModel($model, $half) - self::RELEVEL_UNITS[$unit];
         if (abs($delta) < 1e-15) return $model;
@@ -271,11 +302,17 @@ final class RelDynTraits
     }
 
     /** A Rule R model's value at the all-0.5 vector, before and after re-levelling (reporting and tests). */
-    public static function modelAtMiddle($model, ?string $unit): array
+    public static function modelAtMiddle($model, ?string $unit, ?string $col = null): array
     {
         $half = array_fill_keys(array_keys(self::TRAITS), 0.5) + ['maturity_start' => 50.0];
         $old = self::evalModel($model, $half);
-        $new = self::evalModel(self::relevelModel($model, $unit), $half);
+        $prev = self::$relevelCol;
+        self::$relevelCol = $col;
+        try {
+            $new = self::evalModel(self::relevelModel($model, $unit), $half);
+        } finally {
+            self::$relevelCol = $prev;
+        }
         return ['old' => $old, 'new' => $new];
     }
 
@@ -995,12 +1032,16 @@ final class RelDynTraits
     {
         $spec = self::columns()[$col] ?? null;
         if ($spec === null) throw new \InvalidArgumentException("RelDynTraits: unknown column {$col}");
-        if (!in_array($col, self::RELEVEL_EXCLUDED, true)) return self::blend($x, self::table($col), $spec['rule'], $spec['model'], $spec['unit']);
-        self::$relevelHeld = true;
+        $excluded = in_array($col, self::RELEVEL_EXCLUDED, true);
+        $prevHeld = self::$relevelHeld;
+        $prevCol = self::$relevelCol;
+        if ($excluded) self::$relevelHeld = true;
+        self::$relevelCol = $col;
         try {
             return self::blend($x, self::table($col), $spec['rule'], $spec['model'], $spec['unit']);
         } finally {
-            self::$relevelHeld = false;
+            self::$relevelHeld = $prevHeld;
+            self::$relevelCol = $prevCol;
         }
     }
 

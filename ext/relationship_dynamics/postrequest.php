@@ -351,7 +351,7 @@ if (!$evalOwnsExchange && $interactionLL !== null) {
 // Formula: aff_delta = base × passion_multiplier
 //   passion 0   → ×0.3  (idling — affinity barely moves)
 //   passion 50  → ×1.15 (cruising — normal pace)
-//   passion 100 → ×2.0  (redline — maximum)
+//   passion 100 → ×2.0  (burning — maximum)
 $affinityGainMult = RelationshipDynamics::getAffinityGainMultiplier($dynamics);
 $baseDelta = $positiveExchange ? 1 : 0; // +1 per positive interaction
 
