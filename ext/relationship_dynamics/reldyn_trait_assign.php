@@ -276,6 +276,9 @@ final class RelDynTraitAssign
      *   'prior_in'        prior() inputs
      *   'read'            validated read result or null; 'read_state' its status; 'template_key', 'src_hash'
      *   'screened'        true for a skip-listed NPC (no evidence is ever stored)
+     *   'drift'           the bio re-ingest's offsets (RelDynTraitReingest): ['x' => storage name (or maturity_start)
+     *                     => offset, 'known' => name => evidence weight]; moves the read-and-prior blend, never a
+     *                     preset, a hand-set vector or a screened NPC (those are not read)
      * Returns ['x', 'src', 'label', 'label_source', 'nearest' => [name, distance], 'prior' => prior()].
      */
     public static function resolve(array $in): array
@@ -285,6 +288,15 @@ final class RelDynTraitAssign
         $blend = self::combine($prior['x'], $read);
         $x = $blend['x'];
         $src = $blend['src'];
+        $drift = is_array($in['drift']['x'] ?? null) ? $in['drift']['x'] : [];
+        if ($drift && empty($in['screened']) && !is_array($in['hand_set'] ?? null) && !RelDynTraits::isPreset($in['preset'] ?? null)) {
+            foreach (array_merge(RelDynTraits::TRAITS, ['maturity_start' => 'maturity_start']) as $code => $name) {
+                if (!is_numeric($drift[$name] ?? null) || !isset($x[$code])) continue;
+                $hi = $name === 'maturity_start' ? 100.0 : 1.0;
+                $x[$code] = max(0.0, min($hi, floatval($x[$code]) + floatval($drift[$name])));
+                $src[$name]['drift'] = round(floatval($drift[$name]), 4);
+            }
+        }
         $label = null;
         $labelSource = $read !== null ? 'read' : 'prior';
 

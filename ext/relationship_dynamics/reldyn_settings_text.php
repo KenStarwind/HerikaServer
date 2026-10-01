@@ -128,6 +128,8 @@ final class RelDynSettingsText
         'player_mirror.enabled' => 'Builds the player\'s behaviour profile from how NPCs experience them (the Player profile page). Off: nothing new is observed.',
         'player_mirror.reputation.enabled' => 'Lets the profile set a stranger\'s first impression: new NPCs start with a little trust or distrust from how the player has treated others.',
         'player_mirror.prompt.enabled' => 'NPCs sense the player\'s profile: the most telling bands reach their prompts as one felt line, in words. Ships off (opt-in); the Player profile page has the same switch.',
+        'trait_reader.reingest.enabled' => 'Every ~90 game days, or after a milestone (romance, bond break, betrayal, marriage), checks whether the live bio of an NPC changed (the dynamic profile of CHIM rewrites bios). Only a changed bio is read again, in the same background queue, and the new read moves the traits by an amount set by who the NPC is: set-in-their-ways NPCs move less, nobody is immune. Hand-set vectors and editor presets are exempt. Off: no check, no re-read.',
+        'trait_reader.reingest.every_game_days' => 'Game days between bio checks (a milestone checks sooner, never within min_gap_days of the last check).',
         'trait_reader.enabled' => 'Reads each NPC\'s bio once with a model to set her traits (a background queue that runs after the evaluation). Off: no bio is read.',
         'attachment.drift.enabled' => 'Lived experience slowly moves her attachment axes (earned security, and the slingshot back).',
         'passion_dynamics.spike.enabled' => 'Passion spikes: fast, event-driven passion on top of the slowly earned floor. Off: only the floor.',

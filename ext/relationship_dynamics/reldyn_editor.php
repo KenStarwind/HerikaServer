@@ -529,6 +529,8 @@ final class RelDynEditor
             'label_source' => $src['auto_source'] ?? null, 'read_status' => $src['read_status'] ?? $readState['status'],
             'template_key' => $src['template_key'] ?? $readState['key'], 'model' => $src['model'] ?? $readState['model'],
             'nearest' => $nearest, 'traits' => $traitSrc, 'screened' => ($readState['status'] ?? null) === 'skip']];
+        // when the profile was last read, a queued re-read, the history, and the "read again" button (op reread)
+        $blocks[] = ['type' => 'reingest'] + RelDynTraitReingest::describe($npc, $d, RelationshipDynamics::currentGamets());
 
         $reset = function (array &$dd) {
             foreach (['trait_vector', 'temperament', 'maturity_type', 'traits'] as $f) RelationshipDynamics::setProfileOverride($dd, $f, null);
@@ -1344,6 +1346,8 @@ final class RelDynEditor
      *   op = reset_field|<id>   clear one field's override
      *   op = reset_section      section = id
      *   op = reset_npc          confirm = 'yes': a fresh start (the affinity mirror is kept, core is not touched)
+     *   op = reread             queue a fresh read of the NPC's live bio (RelDynTraitReingest::requestRead); the model runs
+     *                           later, in the background reader, never in this request
      * Returns ['ok' => bool, 'changed' => field ids, 'errors' => [id => message], 'message' => string, 'section' => ?string].
      */
     public static function apply(string $npc, array $post): array
@@ -1397,6 +1401,15 @@ final class RelDynEditor
                     }
                     ($found['reset'])($d);
                     $changed[] = $id;
+                } elseif ($op === 'reread') {
+                    $section = 'personality';
+                    $r = RelDynTraitReingest::requestRead($name, $d);
+                    if (!$r['ok']) return ['ok' => false, 'changed' => [], 'errors' => ['reread' => $r['message']], 'message' => $r['message'], 'section' => $section];
+                    if (!RelationshipDynamics::saveDynamics($name, $d)) {
+                        return ['ok' => false, 'changed' => [], 'errors' => ['save' => 'save failed'], 'section' => $section,
+                            'message' => 'The save did not go through (the NPC changed under every retry, or a save load is pending). Nothing was queued; reload and try again.'];
+                    }
+                    return ['ok' => true, 'changed' => ['reread'], 'errors' => [], 'message' => $r['message'], 'section' => $section];
                 } elseif ($op === 'reset_section') {
                     $sec = $cat['sections'][$section] ?? null;
                     if ($sec === null || $sec['reset'] === null) {
@@ -1753,6 +1766,7 @@ CSS;
     {
         switch ($b['type']) {
             case 'trait_sources': return self::renderTraitSources($b);
+            case 'reingest': return self::renderReingest($b);
             case 'attraction_eval': return self::renderAttractionEval($b);
             case 'spider': return self::renderSpider($b);
             case 'timers':
@@ -1806,6 +1820,56 @@ CSS;
                 . '<td class="num">' . self::h(self::num($s['read'] ?? null, 2)) . '</td><td class="num">' . self::h(self::num($s['conf'] ?? null, 2)) . '</td><td>' . $quote . '</td></tr>';
         }
         return $out . '</tbody></table></div>';
+    }
+
+    /** The bio re-ingest's view: when the profile was last read, what is queued, the history, and the button (op reread). */
+    private static function renderReingest(array $b): string
+    {
+        $perDay = floatval(RelationshipDynamics::GAMETS_PER_DAY);
+        $day = fn($g) => is_numeric($g) ? 'game day ' . self::num(floatval($g) / $perDay, 1) : '—';
+        $out = '<h3 class="rd-intro">Bio read</h3><p class="rd-intro" data-reingest="status">';
+        if (($b['read_status'] ?? '') !== 'done') {
+            $out .= 'No bio read has landed yet; the priors are in use.';
+        } elseif ($b['last_read'] === null) {
+            $out .= 'Profile last read: with the first bio read (the day was not recorded).';
+        } else {
+            $now = floatval(RelationshipDynamics::currentGamets());
+            $ago = $now > 0 ? ' (' . self::num(max(0.0, $now - floatval($b['last_read'])) / $perDay, 1) . ' game days ago)' : '';
+            $out .= 'Profile last read: ' . self::h($day($b['last_read'])) . $ago . '; ' . intval($b['reads']) . ' re-read'
+                . (intval($b['reads']) === 1 ? '' : 's') . ' so far.';
+        }
+        $out .= '</p>';
+        if (!empty($b['exempt'])) {
+            return $out . '<p class="rd-intro">This NPC is not re-read: ' . self::h($b['exempt']) . '.</p>';
+        }
+        if (empty($b['enabled'])) {
+            return $out . '<p class="rd-intro">Re-reading changed bios is switched off (trait_reader.reingest.enabled).</p>';
+        }
+        $out .= '<p class="rd-intro">The bio is checked for changes every ' . self::h(self::num($b['every_days'], 0)) . ' game days and after a milestone '
+            . '(a romance, a bond break, a betrayal, a marriage); only a changed bio is read again. Last check: ' . self::h($day($b['last_check'])) . '.</p>';
+        if (is_array($b['pending'])) {
+            $out .= '<p class="rd-intro" data-reingest="pending">A re-read is queued since ' . self::h($day($b['pending']['since'] ?? null))
+                . ' (' . self::h((string) ($b['pending']['reason'] ?? '')) . '). It lands the next time the background reader runs.</p>';
+        }
+        if (is_string($b['last_error']) && $b['last_error'] !== '') {
+            $out .= '<p class="rd-intro">The last re-read failed: ' . self::h($b['last_error']) . '. It is tried again at the next check.</p>';
+        }
+        if ($b['history'] !== []) {
+            $out .= '<div class="rd-scroll"><table class="rd-table" data-reingest="history"><thead><tr><th>Blended</th><th>Why</th><th>Inertia (share moved)</th><th>Moved</th></tr></thead><tbody>';
+            foreach (array_reverse((array) $b['history']) as $h) {
+                $h = (array) $h;
+                $moved = [];
+                foreach ((array) ($h['moved'] ?? []) as $name => $delta) $moved[] = $name . ' ' . ($delta >= 0 ? '+' : '') . self::num($delta, 2);
+                $out .= '<tr><td>' . self::h($day($h['at'] ?? null)) . '</td><td>' . self::h((string) ($h['reason'] ?? '')) . '</td><td class="num">'
+                    . self::h(self::num($h['k'] ?? null, 2)) . '</td><td>' . self::h($moved === [] ? 'nothing' : implode(', ', $moved)) . '</td></tr>';
+            }
+            $out .= '</tbody></table></div>';
+        }
+        if (!empty($b['can_reread'])) {
+            $out .= '<div class="rd-actions"><button type="submit" class="rd-reset" name="op" value="reread" formnovalidate '
+                . 'title="Queue a fresh read of the current bio. Unsaved slider edits above are not saved.">Read again</button></div>';
+        }
+        return $out;
     }
 
     private static function renderAttractionEval(array $b): string
