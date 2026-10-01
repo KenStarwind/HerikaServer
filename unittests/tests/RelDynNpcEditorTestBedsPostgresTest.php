@@ -619,6 +619,38 @@ final class RelDynNpcEditorTestBedsPostgresTest extends TestCase
         $this->assertNull($d[RelationshipDynamics::ATTACHMENT_DRIFT_KEY]);
     }
 
+    /**
+     * Ken caught the editor showing Aela 0.58 / 0.68: the page derived the need without her race /
+     * creature (the Circle's werewolf blood) and without her love languages. The page now shows the
+     * need her next turn would store, on every bed, and still writes nothing.
+     */
+    public function testTheIntimacyNeedShownIsTheOneHerNextTurnStores(): void
+    {
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->track($npc);
+            $before = $this->rawBlob($npc);
+            $model = RelDynEditor::model($npc);
+            $this->assertSame($before, $this->rawBlob($npc), "{$npc}: a page view writes nothing");
+            RelationshipDynamics::ensureLoveLanguage($npc, $d);
+            RelDynIntimacy::ensureNeed($npc, $d);
+            $want = RelDynIntimacy::need($d);
+            foreach (RelDynIntimacy::KEYS as $axis => $_) {
+                $f = $model['sections']['intimacy']['fields']["need:{$axis}"];
+                $this->assertEqualsWithDelta($want[$axis], $f['value'], 1e-9, "{$npc} {$axis}: the value shown");
+                $this->assertEqualsWithDelta($want[$axis], $f['derived'], 1e-9, "{$npc} {$axis}: the derived value shown");
+            }
+        }
+        $this->assertContains('creature:werewolf', $this->derivedSignals(self::AELA), 'the Circle blood is an input');
+    }
+
+    private function derivedSignals(string $npc): array
+    {
+        $d = $this->track($npc);
+        RelationshipDynamics::ensureLoveLanguage($npc, $d);
+        RelDynIntimacy::ensureNeed($npc, $d);
+        return (array) ($d['_intimacy_need']['signals'] ?? []);
+    }
+
     public function testFacetIntimacyAndLoveLanguageOverridesRoundTrip(): void
     {
         $model = RelDynEditor::model(self::AELA);

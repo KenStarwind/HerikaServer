@@ -320,7 +320,7 @@ final class RelDynEditor
         $sections['attachment'] = self::attachmentSection($d, $jev);
         $sections['love'] = self::loveSection($npc, $d);
         $sections['facets'] = self::facetSection($npc, $d);
-        $sections['intimacy'] = self::intimacySection($d);
+        $sections['intimacy'] = self::intimacySection($npc, $d);
         $sections['attraction'] = self::attractionSection($npc, $d, $jev);
         $sections['jealousy'] = self::jealousySection($d);
         $sections['resentment'] = self::resentmentSection($d, $jev);
@@ -713,10 +713,19 @@ final class RelDynEditor
 
     // ---- intimacy need --------------------------------------------------
 
-    private static function intimacySection(array $d): array
+    private static function intimacySection(string $npc, array $d): array
     {
-        $need = RelDynIntimacy::need($d);
-        $bare = $d;
+        // The need as her next turn would store it (on a copy, reads only): race / creature from
+        // core and her love languages are inputs, which need()'s stateless fallback leaves out.
+        $probe = $d;
+        try {
+            RelationshipDynamics::ensureLoveLanguage($npc, $probe);
+            RelDynIntimacy::ensureNeed($npc, $probe);
+        } catch (Throwable $e) {
+            RelationshipDynamics::logError('editor intimacy need derivation', $e);
+        }
+        $need = RelDynIntimacy::need($probe);
+        $bare = $probe;
         unset($bare['intimacy_need_overrides']);
         $derived = RelDynIntimacy::need($bare);
         $over = (array) ($d['intimacy_need_overrides'] ?? []);
