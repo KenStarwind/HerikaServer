@@ -15,6 +15,18 @@ the NPC actually is. There is one set of passion words everywhere now (none, fai
 the older "cold to redline" set is gone. CHIM's own NPC-to-NPC romance, already damped once by the fork hook for someone
 committed to the player, is no longer damped a second time when RelDyn's suitor ledger reads the same gain.
 Settings saved by an older install read the new defaults for these (config schema 5); anything someone changed stays.
+## unreleased (batch V, people) — the fear of losing someone shows as who they are, the morning after, and fighting side by side
+The fear of losing the player is answered by who the NPC is, never by a verdict on the player. An NPC who is a
+people-pleaser appeases and complies, even with a player who treats them badly; an immature NPC whose way is control may
+start a conflict once the fear has held at its worst; one who leans avoidant goes quiet and distant instead of asking;
+the others cling or say it plainly as before. None of it refuses anything the player asks, and the NPC's own fight is not
+counted as the player's sign of leaving.
+After intimacy, an NPC who fears closeness (anxious and avoidant at once; part-way counts for part) pulls back for a
+while, by how fearful they are: it holds through the night and fades like any pull-back, a kind word eases it, and it is said
+as a need for room, never as shame. Anyone can feel a trace of it; few cross the line.
+Fighting side by side is now contact: the neglect and the absence count from the fight, not from the last word. It is still
+time together by how much the NPC enjoys a fight, and for one who does not it also takes a little off the things they do
+enjoy ("I wish it was something I enjoy"). An NPC's own standing is a field in the editor, shown with the value derived for it.
 
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or

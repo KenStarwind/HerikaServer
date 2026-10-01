@@ -94,7 +94,7 @@ final class RelDynTimeline
 
     /** Top-level dynamics keys holding a game-calendar checkpoint (raw gamets). */
     const CALENDAR_CLOCK_KEYS = [
-        '_last_contact_gamets', '_previous_contact_gamets', '_decay_last_game_gamets', '_last_gamets',
+        '_last_contact_gamets', '_previous_contact_gamets', '_decay_last_game_gamets', '_last_gamets', '_fight_contact_gamets',
         '_weather_gravity_gamets', '_presence_scan_gamets', '_neglect_resentment_since_gamets',
         '_walkaway_started_calendar_gamets', '_walkaway_activated_calendar_gamets',
         '_boundary_test_started_calendar_gamets', '_walkaway_recovery_calendar_gamets',
@@ -707,8 +707,12 @@ final class RelDynTimeline
         foreach (['gamets', 'since_gamets', 'ended_gamets', 'ease_until_gamets'] as $stamp) {
             self::clampIn($d, [RelDynPullback::KEY, $stamp], $T);
         }
+        // ... and the morning after intimacy it holds from (a scene the load undid is held from the loaded time)
+        self::clampIn($d, [RelDynPullback::KEY, 'aftermath', 'last'], $T);
         // Keeping (reldyn_keeping.php): its clock on the loaded time at the latest
         self::clampIn($d, [RelDynKeeping::KEY, 'gamets'], $T);
+        self::clampIn($d, [RelDynKeeping::KEY, 'controlling_since'], $T);
+        self::clampIn($d, [RelDynKeeping::KEY, 'conflict', 'opened'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'at_gamets'], $T);
         // Combat's rescue response (reldyn_combat.php): a fall the load discarded never happened (no

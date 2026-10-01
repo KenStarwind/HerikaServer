@@ -27,6 +27,13 @@
  *            is then met (a positive exchange: the eval's positive_interaction / goal_addressed /
  *            a reassurance or quality-time tag) reopens faster.
  *
+ * THE MORNING AFTER (Ken, 2026-10-01 §22): after intimacy a fearful NPC (anxious AND avoidant: the fearful corner of
+ * the attachment axes) pulls back for a while: a fourth input, 'aftermath', sized by how fearful the NPC is (the corners
+ * blended at the NPC's own axes, so a half-fearful NPC gets half; the avoidant corner part of it, the secure
+ * the least, never zero) and by nothing else: it holds for a night, then fades like any pull-back, and a reassuring
+ * exchange takes some of it off. Distance for a while, never shame: its words say the closeness was welcome and a lot, and that
+ * room is what is needed (RelDynPostIntimacy::onIntimateRequest hands the encounter to onIntimacy()).
+ *
  * How it shows is RelDynConcern::expression (one mechanism for every channel, with this lane's
  * own style table): mature voices it plainly and asks for it, an in-between NPC means to and it
  * comes out sharp, an immature one pouts or picks a fight (reactivity L); the attachment corner
@@ -69,6 +76,21 @@ class RelDynPullback
                 'weather'   => 0.45,   // the internal weather and its gravity, x her mood gain
                 'deficit'   => 0.60,   // the relationship's fulfillment deficit (unmet needs)
                 'grievance' => 0.35,   // unresolved resentment or an open conflict
+                'aftermath' => 2.00,   // the morning after intimacy, for the one who fears the closeness (aftermath below): at half the push it presses in full
+            ],
+            // Decisions §22 (Ken, 2026-10-01): the fearful morning after, through the pull-back. The input is
+            // size x shape: size = push x how fearful the NPC is (fearful: the attachment corner => 0..1,
+            // blended at the NPC's two axes; the fearful corner, anxious and avoidant at once, in full), shape =
+            // 1 for hold_game_hours after the encounter's last scene request, then falling to nothing over
+            // fade_game_hours. A positive exchange that meets the NPC (met.tags / met.flags) takes met_relief of what
+            // is left. Not shame: a distance, said as one (felt_text 'enter_aftermath_*').
+            'aftermath' => [
+                'enabled' => true,
+                'fearful' => ['secure' => 0.03, 'anxious' => 0.1, 'avoidant' => 0.3, 'toxic' => 1.0],
+                'push' => 1.0,
+                'hold_game_hours' => 12.0,
+                'fade_game_hours' => 24.0,
+                'met_relief' => 0.5,
             ],
             // weather => how hard it pushes (0 none .. 1 full)
             'weather_push' => ['sunny' => 0.0, 'clear' => 0.0, 'overcast' => 0.45, 'stormy' => 1.0],
@@ -130,6 +152,15 @@ class RelDynPullback
                 'enter_accusation' => "{NAME} picks at {PLAYER}: where were they, why is it always like this, does any of it matter. It is really about missing {NEEDS}, and it comes out as a fight.",
                 'enter_sulking'    => "{NAME} withdraws from {PLAYER}: short answers, eyes elsewhere, no warmth, waiting to be asked what is wrong and not offering it.",
                 // said once, when she opens up again
+                // the morning after intimacy for the one who fears the closeness (Ken §22: distance for a while, never shame)
+                'standing_aftermath_mature'     => "Needs a little distance from {PLAYER} after getting so close, and has said so: the closeness was welcome and it is a lot all at once; the care is all still there.",
+                'standing_aftermath_mixed'      => "Keeping some distance from {PLAYER} after getting so close: means to say plainly that it is a lot all at once, and says it {HOW} instead.",
+                'standing_aftermath_accusation' => "Spiky with {PLAYER} after getting so close: small things become proof of something, and it comes out as blame; it is the closeness that frightens, not {PLAYER}.",
+                'standing_aftermath_sulking'    => "Quiet and a step away from {PLAYER} after getting so close: short answers, room left between them, waiting to be asked what is wrong.",
+                'enter_aftermath_mature'     => "{NAME} tells {PLAYER} plainly that being that close was welcome and is a lot all at once, and that a little distance would help {NAME} feel steady again. Nothing {PLAYER} did; a request for room, and then room for {PLAYER} to answer.",
+                'enter_aftermath_mixed'      => "{NAME} means to say evenly that getting that close was a lot and some room would help, but it comes out {HOW}.",
+                'enter_aftermath_accusation' => "{NAME} picks at {PLAYER} the morning after: how quickly it all went, what it was supposed to mean. It is really the closeness that frightens {NAME}, and it comes out as a fight.",
+                'enter_aftermath_sulking'    => "{NAME} keeps {PLAYER} at arm's length the morning after: short answers, room left between them, waiting to be asked what is wrong and not offering it.",
                 'reopen_mature'    => "Something in {NAME} eases: what was missing has been given, and the distance closes without a speech.",
                 'reopen_immature'  => "The mood lifts without anyone saying so: {NAME} is warmer toward {PLAYER} again, a little grudgingly.",
             ],
@@ -157,7 +188,7 @@ class RelDynPullback
     }
 
     private const MERGED_TABLES = ['let_in', 'weights', 'weather_push', 'gravity', 'grievance', 'mood_gain', 'threshold', 'rates', 'met',
-        'salience', 'felt_text', 'style_phrases', 'attachment_phrases'];
+        'aftermath', 'salience', 'felt_text', 'style_phrases', 'attachment_phrases'];
 
     /** The pullback settings: stored config per setting, its nested tables merged per entry ('styles' whole). */
     public static function config(): array
@@ -169,6 +200,7 @@ class RelDynPullback
         foreach (self::MERGED_TABLES as $t) {
             $cfg[$t] = array_replace($defaults[$t], is_array($stored[$t] ?? null) ? $stored[$t] : []);
         }
+        $cfg['aftermath']['fearful'] = array_replace($defaults['aftermath']['fearful'], is_array($stored['aftermath']['fearful'] ?? null) ? $stored['aftermath']['fearful'] : []);
         return $cfg;
     }
 
@@ -213,6 +245,38 @@ class RelDynPullback
     }
 
     // =====================================================================
+    // THE FEARFUL MORNING AFTER (pure)
+    // =====================================================================
+
+    /**
+     * How fearful of closeness the NPC is (0..1), for the push after intimacy: the attachment corners blended at the NPC's
+     * two axes (RelationshipDynamics::attachmentBlend over aftermath.fearful): the fearful corner (anxious and avoidant at
+     * once) in full, the avoidant corner a part of it, the anxious a little, the secure the least; continuous, never a label.
+     */
+    public static function fearfulness(array $dynamics, ?array $cfg = null): float
+    {
+        $a = (array) (($cfg ?? self::config())['aftermath']);
+        return self::clamp01(RelationshipDynamics::attachmentBlend($dynamics, (array) $a['fearful'], 0.0));
+    }
+
+    /**
+     * The aftermath input at $now (0..1, game calendar): the stored size, held hold_game_hours after the encounter's last
+     * scene request, then falling linearly to nothing over fade_game_hours. $at: the stored ['size', 'last'] (the state's
+     * 'aftermath'); null / past the fade: 0. Pure.
+     */
+    public static function aftermathInput(?array $at, float $now, ?array $cfg = null): float
+    {
+        $a = (array) (($cfg ?? self::config())['aftermath']);
+        if (empty($a['enabled']) || !is_array($at) || $now <= 0) return 0.0;
+        $size = self::clamp01(floatval($at['size'] ?? 0));
+        $hours = max(0.0, ($now - floatval($at['last'] ?? 0)) / self::hour());
+        $over = $hours - max(0.0, floatval($a['hold_game_hours']));
+        if ($over <= 0.0) return $size;
+        $fade = max(1e-6, floatval($a['fade_game_hours']));
+        return $over >= $fade ? 0.0 : $size * (1.0 - $over / $fade);
+    }
+
+    // =====================================================================
     // THE PRESSURE (pure)
     // =====================================================================
 
@@ -243,7 +307,7 @@ class RelDynPullback
     }
 
     /**
-     * The inputs ('weather', 'deficit', 'grievance', each 0..1, and 'gravity' the part of weather
+     * The inputs ('weather', 'deficit', 'grievance', 'aftermath', each 0..1, and 'gravity' the part of weather
      * that is the held pull) at $now from the NPC's own state. Pure.
      */
     public static function inputs(array $dynamics, float $now, ?array $cfg = null): array
@@ -270,7 +334,9 @@ class RelDynPullback
             $open = floatval($g['conflict']) * (1.0 - self::clamp01(intval($dynamics['conflict_positive_count'] ?? 0) * floatval($g['repair_relief'])));
             $grievance = max($grievance, self::clamp01($open));
         }
-        return ['weather' => round($weather, 4), 'gravity' => round($gravity, 4), 'deficit' => round($deficit, 4), 'grievance' => round($grievance, 4)];
+        $aftermath = self::aftermathInput(is_array($dynamics[self::KEY]['aftermath'] ?? null) ? $dynamics[self::KEY]['aftermath'] : null, $now, $cfg);
+        return ['weather' => round($weather, 4), 'gravity' => round($gravity, 4), 'deficit' => round($deficit, 4), 'grievance' => round($grievance, 4),
+                'aftermath' => round($aftermath, 4)];
     }
 
     /** The pressure the inputs pull toward (0..1): the weighted sum, the weather x the mood gain. */
@@ -279,7 +345,8 @@ class RelDynPullback
         $w = (array) (($cfg ?? self::config())['weights']);
         return self::clamp01(floatval($w['weather']) * $moodGain * floatval($inputs['weather'] ?? 0)
             + floatval($w['deficit']) * floatval($inputs['deficit'] ?? 0)
-            + floatval($w['grievance']) * floatval($inputs['grievance'] ?? 0));
+            + floatval($w['grievance']) * floatval($inputs['grievance'] ?? 0)
+            + floatval($w['aftermath'] ?? 0) * floatval($inputs['aftermath'] ?? 0));
     }
 
     /** The pressure after $hours game hours toward $target: up at rise_per_game_hour, down at fall_per_game_hour. */
@@ -360,10 +427,15 @@ class RelDynPullback
         return $phrases === [] ? $last : implode(', ', $phrases) . ' and ' . $last;
     }
 
-    /** The text key of a line ('standing' | 'enter') by her expression: mature, mixed, or the immature style. */
-    private static function expressionKey(string $kind, array $e): string
+    /**
+     * The text key of a line ('standing' | 'enter') by the NPC's expression: mature, mixed, or the immature style; for the
+     * fearful morning after ($cause 'aftermath') the line of that cause when the config has one.
+     */
+    private static function expressionKey(string $kind, array $e, ?string $cause = null, ?array $cfg = null): string
     {
-        return $kind . '_' . ($e['band'] === 'mature' ? 'mature' : ($e['band'] === 'mixed' ? 'mixed' : $e['style']));
+        $how = $e['band'] === 'mature' ? 'mature' : ($e['band'] === 'mixed' ? 'mixed' : $e['style']);
+        if ($cause === 'aftermath' && isset((($cfg ?? self::config())['felt_text'])["{$kind}_aftermath_{$how}"])) return "{$kind}_aftermath_{$how}";
+        return $kind . '_' . $how;
     }
 
     private static function colour(array $e, array $vars, array $cfg): string
@@ -389,15 +461,23 @@ class RelDynPullback
         $e = self::expression($dynamics, $cfg);
         $needs = self::needsText($dynamics, floatval($dynamics[self::KEY]['gamets'] ?? 0), $cfg);
         $vars = self::vars($npc, $player, $e, $needs, $cfg);
-        $text = rtrim(strtr((string) $cfg['felt_text'][self::expressionKey('standing', $e)], $vars), '.');
+        $text = rtrim(strtr((string) $cfg['felt_text'][self::expressionKey('standing', $e, self::cause($dynamics), $cfg)], $vars), '.');
         return $text . self::colour($e, $vars, $cfg) . '.';
     }
 
     /** Does the standing line name what is missing (so the generic unmet line beside it would only repeat)? */
     public static function namesNeeds(array $dynamics, ?array $cfg = null): bool
     {
+        if (self::cause($dynamics) === 'aftermath') return false;   // the morning after names the closeness, not what is missing
         $e = self::expression($dynamics, $cfg);
         return !($e['band'] === 'immature' && $e['style'] === 'sulking');
+    }
+
+    /** What the current pull-back is mostly about: 'aftermath' (the fearful morning after) or null (the weather, the needs, a grievance). */
+    public static function cause(array $dynamics): ?string
+    {
+        $c = $dynamics[self::KEY]['cause'] ?? null;
+        return !empty($dynamics[self::KEY]['active']) && is_string($c) && $c !== '' ? $c : null;
     }
 
     // =====================================================================
@@ -442,14 +522,22 @@ class RelDynPullback
             $state['voiced'] = false;
             $state['met'] = 0;
             $state['episodes'] = intval($state['episodes'] ?? 0) + 1;
-            self::queue($state, ['key' => 'enter', 'band' => $e['band'], 'style' => $e['style'], 'attachment' => $e['attachment']]);
+            // the morning after is the cause when it is the largest of what presses (weights x inputs, the weather x the mood gain)
+            $w = (array) $cfg['weights'];
+            $parts = ['weather' => floatval($w['weather']) * self::moodGain($e['w'], $cfg) * floatval($inputs['weather']),
+                'deficit' => floatval($w['deficit']) * floatval($inputs['deficit']), 'grievance' => floatval($w['grievance']) * floatval($inputs['grievance']),
+                'aftermath' => floatval($w['aftermath'] ?? 0) * floatval($inputs['aftermath'])];
+            arsort($parts);
+            $cause = array_key_first($parts) === 'aftermath' && $parts['aftermath'] > 0.0 ? 'aftermath' : null;
+            $state['cause'] = $cause;
+            self::queue($state, ['key' => 'enter', 'band' => $e['band'], 'style' => $e['style'], 'attachment' => $e['attachment'], 'cause' => $cause]);
             $out['entered'] = true;
             RelationshipDynamics::log("[PULLBACK] {$npcName}: pulls back (pressure " . round($pressure, 3) . " >= {$thr['on']}, let-in " . round($letIn, 1)
                 . ", {$e['band']}/{$e['style']}" . ($e['attachment'] !== null ? "/{$e['attachment']}" : '') . ')');
         } elseif ($was && !$is) {
             $state['active'] = false;
             $state['ended_gamets'] = $now;
-            unset($state['ease_until_gamets'], $state['ease']);
+            unset($state['ease_until_gamets'], $state['ease'], $state['cause']);
             // she says the reopening only for a pull-back she showed
             self::queue($state, ['key' => 'reopen', 'band' => $e['band'], 'style' => $e['style'], 'attachment' => $e['attachment']]);
             $out['left'] = true;
@@ -478,6 +566,31 @@ class RelDynPullback
     }
 
     // =====================================================================
+    // THE FEARFUL MORNING AFTER (the post-intimacy hook)
+    // =====================================================================
+
+    /**
+     * A scene request that reports intimacy with the player (RelDynPostIntimacy::onIntimateRequest, a new encounter or the
+     * same one going on) at $now (raw gamets): the NPC's fear of the closeness (fearfulness) sizes the push the aftermath input
+     * will carry, held from this request (an encounter goes on: the morning counts from its last request), never lower than what
+     * is left of an earlier one. Returns the size stored (0 for one who does not fear it, or with the switch off).
+     */
+    public static function onIntimacy(string $npcName, array &$dynamics, float $now): float
+    {
+        $cfg = self::config();
+        $a = (array) $cfg['aftermath'];
+        if (!self::enabled() || empty($a['enabled']) || $now <= 0) return 0.0;
+        $size = self::clamp01(floatval($a['push'])) * self::fearfulness($dynamics, $cfg);
+        $left = self::aftermathInput(is_array($dynamics[self::KEY]['aftermath'] ?? null) ? $dynamics[self::KEY]['aftermath'] : null, $now, $cfg);
+        $state = &self::state($dynamics);
+        $state['aftermath'] = ['size' => round(max($size, $left), 4), 'last' => $now];
+        $out = $state['aftermath']['size'];
+        unset($state);
+        RelationshipDynamics::log("[PULLBACK] {$npcName}: after intimacy the closeness weighs " . round($out, 3) . ' (fearfulness ' . round(self::fearfulness($dynamics, $cfg), 3) . ')');
+        return $out;
+    }
+
+    // =====================================================================
     // BEING MET (the eval consumer)
     // =====================================================================
 
@@ -488,7 +601,10 @@ class RelDynPullback
      */
     public static function onEvalItem(string $npcName, array $n, array &$dynamics, float $at): float
     {
-        if (!self::enabled() || empty($dynamics[self::KEY]['active'])) return 0.0;
+        if (!self::enabled()) return 0.0;
+        $active = !empty($dynamics[self::KEY]['active']);
+        $morning = is_array($dynamics[self::KEY]['aftermath'] ?? null);
+        if (!$active && !$morning) return 0.0;
         $cfg = self::config();
         $met = (array) $cfg['met'];
         $positive = false;
@@ -499,6 +615,13 @@ class RelDynPullback
             if (in_array($tag, (array) $met['tags'], true)) $positive = true;
         }
         if (!$positive) return 0.0;
+        // a kind word the morning after takes some of the closeness's weight off, pulled back or not
+        if ($morning) {
+            $relief = self::clamp01(floatval(((array) $cfg['aftermath'])['met_relief']));
+            $size = floatval($dynamics[self::KEY]['aftermath']['size'] ?? 0);
+            $dynamics[self::KEY]['aftermath']['size'] = round($size * (1.0 - $relief), 4);
+        }
+        if (!$active) return 0.0;
         $state = &self::state($dynamics);
         $w = self::expression($dynamics, $cfg)['w'];
         $floor = floatval($met['significance_floor']);
@@ -539,7 +662,7 @@ class RelDynPullback
             $e = ['band' => (string) ($s['band'] ?? 'mixed'), 'style' => (string) ($s['style'] ?? 'sulking'), 'attachment' => $s['attachment'] ?? null];
             $vars = self::vars($npcName, $playerName, $e, $needs, $cfg);
             if ($key === 'enter') {
-                $textKey = self::expressionKey('enter', $e);
+                $textKey = self::expressionKey('enter', $e, is_string($s['cause'] ?? null) ? $s['cause'] : null, $cfg);
                 // the one who meant to say it evenly and could not has still said it
                 if ($e['band'] !== 'immature') $state['voiced'] = true;
             } elseif ($key === 'reopen') {
@@ -567,7 +690,8 @@ class RelDynPullback
 
     /**
      * Let-in and the pull-back state for Jev: let_in (points), the state's pressure, thresholds and inputs (0..1), whether it is
-     * active, how long (game hours), whether she voiced it, her expression and attachment corner.
+     * active, how long (game hours), whether the NPC voiced it, what it is about (cause), the morning after's size, the NPC's
+     * expression and attachment corner.
      */
     public static function jev(array $dynamics, float $now): array
     {
@@ -590,6 +714,9 @@ class RelDynPullback
             'since_game_hours' => $since !== null ? round($since, 2) : null,
             'voiced' => $active && !empty($s['voiced']),
             'episodes' => intval($s['episodes'] ?? 0),
+            'cause' => $active && is_string($s['cause'] ?? null) ? $s['cause'] : null,
+            'aftermath' => ['fearfulness' => round(self::fearfulness($dynamics, $cfg), 3), 'size' => round(floatval($s['aftermath']['size'] ?? 0.0), 3),
+                'input' => $now > 0 ? round(self::aftermathInput(is_array($s['aftermath'] ?? null) ? $s['aftermath'] : null, $now, $cfg), 3) : null],
             'band' => $e['band'], 'style' => $e['style'], 'attachment' => $e['attachment'],
         ];
     }

@@ -454,7 +454,7 @@ class RelDynAbsence
     private static function rotRunsUntil(string $condition, array $dynamics, float $to): float
     {
         if ($condition !== 'low_passion') return $to;
-        $contact = floatval($dynamics['_last_contact_gamets'] ?? 0);   // raw gamets
+        $contact = RelationshipDynamics::lastContactGamets($dynamics);   // raw gamets (a shared fight is contact, §23)
         if ($contact <= 0) return $to;
         $grace = RelationshipDynamics::neglectGraceGameDays($dynamics) ?? 0.0;   // game days
         return min($to, $contact + $grace * RelationshipDynamics::GAMETS_PER_DAY);

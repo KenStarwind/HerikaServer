@@ -131,17 +131,29 @@ class RelDynFulfillment
             'place_units_per_game_hour' => 0.5,   // per game hour spent in a place (placeTurn exposure)
             'experience_units'          => 0.5,   // per discrete experience (a fight, a gift's facets)
             // Decisions §20.4 (Ken, 2026-10-01): fighting side by side counts as time together, weighted by
-            // whether she likes it (not everyone's favourite activity). A fight she was in beside the
+            // whether the NPC likes it (not everyone's favourite activity). A fight the NPC was in beside the
             // player delivers `units` of the time-together love-language axis (the same scale as
-            // experience_units), x her weight for it: the signed mean of her combat / adventure / danger
+            // experience_units), x the NPC's weight for it: the signed mean of their combat / adventure / danger
             // facet preferences (facets: facet => weight in that mean), 0.5 + 0.5 x the mean, never under
-            // min_weight (a fight she dreads is still a little time together, never nothing, never a
+            // min_weight (a fight they dread is still a little time together, never nothing, never a
             // penalty). Aela (combat high) gets nearly all of it; a scholarly NPC a fifth of it.
+            //
+            // Decisions §23 (Ken, 2026-10-01): a fight beside the player is also contact for the neglect and
+            // absence rules ('contact': the fight stamps the contact those count from, RelationshipDynamics::
+            // markFightContact, and the contact_window_game_hours before it are no absence for the affinity decay
+            // either), and for the NPC who does not enjoy it a fight reads as partly unfulfilling ("I wish it was
+            // something I enjoy"): 'unmet' takes units x how far the NPC dislikes it (their signed liking under -from,
+            // 0..1 of the rest) off the levels of the things they DO enjoy (their strongest `axes` facet needs, by
+            // weight; their other needs when they have no facet need), never more than that. A shrug (liking above
+            // -from) takes nothing.
             'shared_fight' => [
                 'enabled' => true,
                 'units' => 0.5,
                 'facets' => ['combat' => 1.0, 'adventure' => 0.6, 'danger' => 0.5],
                 'min_weight' => 0.1,
+                'contact' => true,
+                'contact_window_game_hours' => 1.0,
+                'unmet' => ['units' => 0.5, 'from' => 0.1, 'axes' => 2],
             ],
 
             // --- levels -> coverage ---
@@ -252,6 +264,7 @@ class RelDynFulfillment
         $s = is_array($cfg['shared_fight'] ?? null) ? $cfg['shared_fight'] : [];
         $out = array_replace($d, $s);
         $out['facets'] = is_array($s['facets'] ?? null) ? $s['facets'] : $d['facets'];
+        $out['unmet'] = array_replace($d['unmet'], is_array($s['unmet'] ?? null) ? $s['unmet'] : []);
         return $out;
     }
 
@@ -700,11 +713,18 @@ class RelDynFulfillment
     }
 
     /**
-     * Decisions §20.4: how much a fight beside the player is time together for HER (min_weight..1): the
-     * signed mean of her combat / adventure / danger preferences ($prefs: facet => -1..+1, shared_fight.facets
+     * Decisions §20.4: how much a fight beside the player is time together for THE NPC (min_weight..1): the
+     * signed mean of their combat / adventure / danger preferences ($prefs: facet => -1..+1, shared_fight.facets
      * the weights), 0.5 + 0.5 x the mean. Pure.
      */
     public static function sharedFightWeight(array $prefs, ?array $cfg = null): float
+    {
+        $sf = self::sharedFightConfig($cfg);
+        return max(max(0.0, min(1.0, floatval($sf['min_weight']))), min(1.0, 0.5 + 0.5 * self::sharedFightLiking($prefs, $cfg)));
+    }
+
+    /** How much the NPC likes a fight beside the player, -1 (dreads it) .. +1 (lives for it): the signed mean of their combat / adventure / danger preferences. Pure. */
+    public static function sharedFightLiking(array $prefs, ?array $cfg = null): float
     {
         $sf = self::sharedFightConfig($cfg);
         $sum = 0.0;
@@ -714,8 +734,35 @@ class RelDynFulfillment
             $sum += floatval($weight) * max(-1.0, min(1.0, floatval($prefs[$facet] ?? 0.0)));
             $w += floatval($weight);
         }
-        $liking = $w > 0.0 ? $sum / $w : 0.0;
-        return max(max(0.0, min(1.0, floatval($sf['min_weight']))), min(1.0, 0.5 + 0.5 * $liking));
+        return $w > 0.0 ? $sum / $w : 0.0;
+    }
+
+    /**
+     * Decisions §23: what a fight the NPC does not enjoy takes off the things they do ("I wish it was something I
+     * enjoy"): axis => units (<= 0). Their dislike (liking under -from, 0..1 of the rest) x unmet.units, spread by weight
+     * over their strongest `axes` facet needs ($state: the pair's stored state, its 'w' the needs), or over their other
+     * needs when they have no facet need (never the time-together axis the fight gave, nor the intimacy axes). Pure.
+     */
+    public static function sharedFightUnmet(array $state, array $prefs, ?array $cfg = null): array
+    {
+        $u = (array) self::sharedFightConfig($cfg)['unmet'];
+        $units = max(0.0, floatval($u['units']));
+        $from = max(0.0, min(0.99, floatval($u['from'])));
+        $dislike = max(0.0, min(1.0, (-self::sharedFightLiking($prefs, $cfg) - $from) / (1.0 - $from)));
+        if ($units <= 0.0 || $dislike <= 0.0) return [];
+        $needs = array_filter(array_map('floatval', (array) ($state['w'] ?? [])), fn($w) => $w > 0.0);
+        $pool = array_filter($needs, fn($w, $axis) => self::axisKind((string) $axis) === self::KIND_FACET, ARRAY_FILTER_USE_BOTH);
+        if ($pool === []) {
+            $pool = array_filter($needs, fn($w, $axis) => (string) $axis !== RelationshipDynamics::LL_TIME
+                && self::axisKind((string) $axis) !== self::KIND_INTIMACY, ARRAY_FILTER_USE_BOTH);
+        }
+        if ($pool === []) return [];
+        arsort($pool);
+        $pool = array_slice($pool, 0, max(1, intval($u['axes'])), true);
+        $total = array_sum($pool);
+        $out = [];
+        foreach ($pool as $axis => $w) $out[(string) $axis] = -round($units * $dislike * $w / $total, 6);
+        return $out;
     }
 
     /**
@@ -723,11 +770,18 @@ class RelDynFulfillment
      * fighting (sharedFightWeight): deliver units x weight of the time-together axis at $at to the pair
      * (no-op without state, or for an NPC with no such axis). Returns the levels applied by axis.
      */
-    public static function recordSharedFight(array &$dynamics, array $prefs, float $at, string $target = self::PLAYER): array
+    public static function recordSharedFight(array &$dynamics, array $prefs, float $at, string $target = self::PLAYER, ?array &$unmet = null): array
     {
+        $unmet = [];
         $sf = self::sharedFightConfig();
         if (empty($sf['enabled']) || floatval($sf['units']) <= 0.0) return [];
-        return self::deliver($dynamics, [RelationshipDynamics::LL_TIME => floatval($sf['units']) * self::sharedFightWeight($prefs)], $at, $target);
+        $amounts = [RelationshipDynamics::LL_TIME => floatval($sf['units']) * self::sharedFightWeight($prefs)];
+        // what a fight the NPC does not enjoy takes off what they do (decisions §23): delivered with the time together
+        $state = self::pairState($dynamics, $target);
+        $wish = is_array($state) ? self::sharedFightUnmet($state, $prefs) : [];
+        $applied = self::deliver($dynamics, $amounts + $wish, $at, $target);
+        $unmet = array_diff_key($applied, [RelationshipDynamics::LL_TIME => 1]);
+        return array_intersect_key($applied, [RelationshipDynamics::LL_TIME => 1]);
     }
 
     /** Places / things experienced together: deliver $facets x $units at $at to the pair (no-op without state). */

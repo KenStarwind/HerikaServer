@@ -57,10 +57,13 @@
  *   pullback         ['enabled' => bool, 'let_in' => points, 'not_let_in_yet' => bool (let-in below pullback.let_in.low),
  *                     'active' => bool (she is pulled back now, temporary), 'pressure' => 0..1, 'on' / 'off' => the
  *                     hysteresis thresholds (0..1; guard lowers them, a deeper let-in raises them), 'target' => 0..1
- *                     the pressure is moving toward, 'inputs' => ['weather', 'gravity', 'deficit', 'grievance'] each
- *                     0..1, 'mood_gain' => multiplier on the weather input (immaturity amplifies it), 'since_game_hours'
+ *                     the pressure is moving toward, 'inputs' => ['weather', 'gravity', 'deficit', 'grievance', 'aftermath']
+ *                     each 0..1, 'mood_gain' => multiplier on the weather input (immaturity amplifies it), 'since_game_hours'
  *                     => ?game hours pulled back, 'voiced' => bool (a mature NPC said it to the player's face),
- *                     'episodes' => int, 'band' / 'style' / 'attachment' => how she shows it (RelDynConcern::expression
+ *                     'episodes' => int, 'cause' => ?'aftermath' (what the current pull-back is mostly about: the fearful
+ *                     morning after intimacy, decisions §22), 'aftermath' => ['fearfulness' => 0..1 (how fearful of
+ *                     closeness the NPC is), 'size' => 0..1 (the push the last intimacy left), 'input' => ?0..1 (it now)],
+ *                     'band' / 'style' / 'attachment' => how the NPC shows it (RelDynConcern::expression
  *                     mature|mixed|immature, accusation|sulking, anxious|avoidant|toxic|null)] (RelDynPullback)
  *   walkaway         string normal|pending|active|boundary_test|recovery|permanent
  *   resentment_arc   ['confrontation_threshold' => resentment points, 'confrontations' => int said
@@ -102,7 +105,10 @@
  *                     'target' => ?0..1, 'stakes' => ?0..1 (what there is to lose), 'disposition' => 0..1 (who she is:
  *                     her attachment corners x insecurity x possessiveness), 'threat' => ['absence', 'jealousy', 'deficit',
  *                     'grievance', 'threat'] each 0..1, 'held' => ['trust' | 'comfort' => points <= 0 the grip holds
- *                     down], 'expression' / 'style' => how she shows it] (RelDynKeeping, decisions §20.3)
+ *                     down], 'expression' / 'style' => how the NPC shows it, 'response' => appease (a people-pleaser) |
+ *                     withdraw | express (what the fear makes the NPC do, by who they are), 'lean' => avoidance minus
+ *                     anxiety, 'conflict' => ['open' => bool (a conflict the fear started is open), 'count' => int]]
+ *                     (RelDynKeeping, decisions §20.3 and §23)
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
  *   governor         null | ['tier' => distant|friendly|crush|committed|hostile, 'passion_floor',
  *                    'passion_ceiling' (passion points), 'raised' => bool] (MDD 8 tiered governors,
@@ -171,7 +177,8 @@ final class RelDynJev
         'concern.pattern' => 'kind => counted nights in the values window',
         'let_in' => 'points 0..100 (sqrt(comfort x trust))', 'pullback.let_in' => 'points 0..100',
         'pullback.pressure' => '0..1', 'pullback.on' => 'pressure 0..1', 'pullback.off' => 'pressure 0..1',
-        'pullback.target' => 'pressure 0..1', 'pullback.inputs' => 'each 0..1 (weather, gravity, deficit, grievance)',
+        'pullback.target' => 'pressure 0..1', 'pullback.inputs' => 'each 0..1 (weather, gravity, deficit, grievance, aftermath)',
+        'pullback.aftermath' => 'fearfulness, size and input each 0..1',
         'pullback.mood_gain' => 'multiplier on the weather input', 'pullback.since_game_hours' => 'game hours',
         'resentment_arc.confrontation_threshold' => 'resentment points 0..100',
         'resentment_arc.self_baseline_offsets' => 'baseline points', 'resentment_arc.guilt_bleed' => 'comfort points',
@@ -386,14 +393,16 @@ final class RelDynJev
             $parts[] = 'pullback=on ' . number_format((float) $pb['pressure'], 2, '.', '')
                 . ($pb['on'] !== null ? '/' . number_format((float) $pb['on'], 2, '.', '') : '')
                 . ' let_in=' . $f((float) $pb['let_in']) . ' ' . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
-                . ($pb['since_game_hours'] !== null ? ' ' . $f((float) $pb['since_game_hours']) . 'h' : '') . (!empty($pb['voiced']) ? ' voiced' : '');
+                . ($pb['since_game_hours'] !== null ? ' ' . $f((float) $pb['since_game_hours']) . 'h' : '') . (!empty($pb['voiced']) ? ' voiced' : '')
+                . (!empty($pb['cause']) ? ' cause=' . $pb['cause'] : '');
         }
         // compact: only while she fears losing the player and says so ("keeping=<fear>(<band> <expression>/<style>) held trust <points>");
         // an uneasy worry is in the structured fields, not spent on every prompt
         $kp = $s['keeping'] ?? null;
         if (is_array($kp) && !empty($kp['enabled']) && in_array($kp['band'], ['clinging', 'controlling'], true)) {
             $parts[] = 'keeping=' . number_format((float) $kp['fear'], 2, '.', '') . "({$kp['band']} {$kp['expression']}/{$kp['style']})"
-                . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '');
+                . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '')
+                . (($kp['response'] ?? 'express') !== 'express' ? ' response=' . $kp['response'] : '') . (!empty($kp['conflict']['open']) ? ' conflict' : '');
         }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];

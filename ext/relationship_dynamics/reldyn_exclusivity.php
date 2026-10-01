@@ -324,7 +324,7 @@ final class RelDynExclusivity
     {
         $graceEnd = RelationshipDynamics::neglectGraceEndGamets($dynamics);
         if ($graceEnd === null) return null;
-        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);
+        $lastContact = RelationshipDynamics::lastContactGamets($dynamics);   // (a shared fight is contact, §23)
         $days = array_values(array_filter((array) ($pairState['contact_days'] ?? []), 'is_int'));
         if ($days === []) return $graceEnd;
         $lastInteraction = min($lastContact, (max($days) + 1) * RelationshipDynamics::GAMETS_PER_DAY);
