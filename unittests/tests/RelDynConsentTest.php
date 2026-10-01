@@ -226,6 +226,18 @@ final class RelDynConsentTest extends TestCase
         $this->assertFalse($this->decide($d)['allow']);
     }
 
+    public function testTheMatrixsOwnHintWithNoPreferenceBehindItIsAWantNotAWall(): void
+    {
+        // the attraction has not passed (not drawn yet, not a friendzone): the old gate said intimacy false; here it is a lower want
+        $d = $this->npc();
+        $d['_attraction'] = ['enabled' => true, 'passes' => false, 'attracted' => false, 'friendzoned' => false, 'preference' => null, 'intimacy_allowed' => false];
+        $this->assertSame([], RelDynConsent::closedReasons($d));
+        $drawn = $this->decide($this->npc());
+        $r = $this->decide($d);
+        $this->assertLessThan($drawn['want'], $r['want'], 'not drawn reads as less wanting');
+        $this->assertNotSame('closed', $r['stance']);
+    }
+
     public function testWithTheMatrixAndTheFilterOffThereIsNoPreferenceToRead(): void
     {
         $d = $this->npc();

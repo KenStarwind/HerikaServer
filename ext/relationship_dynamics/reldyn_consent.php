@@ -12,9 +12,9 @@
  * THE DECISION. Three layers, from who the NPC is to how they feel today:
  *
  *   CLOSED (the answer is no, whatever the mood). The NPC's own identity and the bond's standing: an
- *     asexual NPC, an aromantic one (and "not interested"), a demisexual one before the bond, a bond-gated
- *     one before the bond (the attraction preference filter: intimacy_allowed false), a friendzoned NPC
- *     (they care, and not that way), one who has walked away. These are states, not permanent verdicts:
+ *     asexual NPC, an aromantic one (and "not interested"), a demisexual one before the bond (the attraction
+ *     preference filter: intimacy_allowed false), a friendzoned NPC (they care, and not that way), one who
+ *     has walked away. These are states, not permanent verdicts:
  *     a preference is changed in the editor, a friendzone ends when the attraction climbs, a walkaway
  *     ends with its boundary test. They are not appeased: nobody is argued out of who they are.
  *
@@ -35,7 +35,7 @@
  *
  * STANCES: willing | hesitant (yes, unsure) | appeasing (yes, unwilling) | declines (no) | closed (no).
  * allow is true for the first three. The reasons are codes (conflict, ick, withdrawn, resentful, pulled_back,
- * not_let_in, fear; for closed: asexual, aromantic, not_interested, not_bonded_yet, intimacy_not_allowed,
+ * not_let_in, fear; for closed: asexual, aromantic, not_interested, not_bonded_yet,
  * friendzoned, walked_away), strongest first. A felt line (feelings, the NPC's name, no pronoun, no
  * digits) says it in words.
  *
@@ -152,7 +152,6 @@ final class RelDynConsent
                     'aromantic'  => "{NAME} does not want romance, nor the intimacy that comes with it. A no here is nothing against {PLAYER}.",
                     'not_interested' => "{NAME} is not interested in {PLAYER} that way and does not want to be pushed toward it.",
                     'not_bonded_yet' => "{NAME} needs far more closeness and time with {PLAYER} before intimacy is even a question.",
-                    'intimacy_not_allowed' => "{NAME} is not open to intimacy with {PLAYER}, and that is not about to change tonight.",
                     'friendzoned' => "{NAME} cares for {PLAYER} as a friend, and not in the way that would make this right. The answer is no.",
                     'walked_away' => "{NAME} has walked away from {PLAYER} and is not open to any closeness at all right now.",
                     'default'    => "{NAME} is not open to intimacy with {PLAYER}. The answer is no.",
@@ -235,7 +234,7 @@ final class RelDynConsent
 
     /**
      * The reasons the answer is no whatever the mood, strongest first: the attraction preference filter
-     * (asexual, aromantic, not interested, demisexual or a bond-gated NPC before the bond), a friendzone, a
+     * (asexual, aromantic, not interested, demisexual before the bond), a friendzone, a
      * walkaway. [] when none. The preference reads the attraction summary the prerequest stored
      * ($dynamics['_attraction']): with the settings page's type filter off there is none, as everywhere.
      */
@@ -252,7 +251,8 @@ final class RelDynConsent
             elseif ($pref === 'aromantic') $out[] = 'aromantic';
             elseif ($pref === 'not_interested') $out[] = 'not_interested';
             elseif ($pref === 'demisexual') $out[] = 'not_bonded_yet';
-            elseif (!$friendzoned) $out[] = 'intimacy_not_allowed';
+            // no preference behind it: the Matrix's own hint (the attraction has not passed, a bond-first NPC before the
+            // bond) is a want and a bar here, not a wall: it reads in the willingness
         }
         if ($friendzoned) $out[] = 'friendzoned';
         $walk = $dynamics['_walkaway_state'] ?? 'normal';
