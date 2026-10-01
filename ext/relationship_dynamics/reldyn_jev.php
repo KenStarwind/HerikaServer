@@ -23,7 +23,10 @@
  *   post_intimacy    null | ['outcome' => RelDynPostIntimacy outcome, 'held' => dimension => points held
  *                    now, 'held_ends_in_game_hours', 'correction_in_game_hours' (null = none pending),
  *                    'correction' / 'lasting' => dimension => points applied, 'deferred_corrections'
- *                    => earlier encounters whose sober verdict still waits]
+ *                    => earlier encounters whose sober verdict still waits, 'wobble' => null | the
+ *                    uncertainty a drunken night left: ['comfort' => points held, 'uncertainty' 0..1,
+ *                    'tier', 'need' => the trust she would normally need, 'gap' 0..1]; the block
+ *                    outlives the encounter while the wobble does]
  *   passion          float  0..100 the floor: passion earned through play (the Attraction Matrix's uphill)
  *   passion_spike    float  0..100 the moment on top of it (roadmap passion-floor-spike: fades per exchange)
  *   passion_effective float 0..100 floor + spike + the weather's pull (what she feels right now)

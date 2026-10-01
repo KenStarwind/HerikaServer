@@ -178,8 +178,9 @@ final class RelDynBatchRFixTest extends TestCase
         RelDynSubstances::update(self::NPC, $d, $t);
         $this->assertFalse(RelDynSubstances::intoxicated($d));
         $first = RelDynPostIntimacy::tick(self::NPC, $d, $t)['corrected'];
-        $this->assertLessThan(0.0, $first['comfort'] ?? 0.0, json_encode($first));
-        $this->assertGreaterThan(0.0, $first['resentment_self'] ?? 0.0, json_encode($first));
+        // decisions §20 #27: the sober self's verdict is a small comfort wobble, never shame
+        $this->assertSame(['comfort'], array_keys($first), json_encode($first));
+        $this->assertLessThan(0.0, $first['comfort'], json_encode($first));
         $this->assertSame('after', RelDynPostIntimacy::feltText($d, $t)['phase'] ?? null, 'the sober self shows');
         $comfort1 = self::ownComfort($d);
         $rs1 = self::x($d, 'resentment_self');
@@ -192,20 +193,22 @@ final class RelDynBatchRFixTest extends TestCase
         $this->assertArrayNotHasKey('resentment_self', $second, 'one shame for one night ' . json_encode($second));
         $this->assertEqualsWithDelta($comfort1, self::ownComfort($d), 1e-6);
         $this->assertEqualsWithDelta($rs1, self::x($d, 'resentment_self'), 1e-9);
-        $P = RelDynPostIntimacy::resentmentSelf(12.0, RelDynDiary::ownMaturity($d));
-        $this->assertSame([round($P, 4), round($P, 4)], $this->shame($d), 'both verdicts on the night, recorded');
+        $this->assertSame([], $this->shame($d), 'no shame verdict on the night: the scenes judge only its comfort');
+        $asks = array_map(fn($v) => floatval($v[1]), (array) array_values($d['_substances']['shame'])[0]['dims']['comfort']);
+        $this->assertCount(2, $asks, 'both scenes asked the night\'s comfort, recorded');
+        $this->assertEqualsWithDelta($asks[0], $asks[1], 0.5, 'the same night, the same doubt');
         // Nothing pending, the after-text fades on its clock, then the state ends
         $this->assertSame([], $d[RelDynPostIntimacy::KEY]['deferred'] ?? []);
         $end = RelDynPostIntimacy::tick(self::NPC, $d, $this->clock(self::T0 + 40 * self::HOUR));
         $this->assertTrue($end['ended']);
     }
 
-    /** A romance drunk twice in one night: trust -5 is one verdict, not two. */
-    public function testARomanceDrunkTwiceInOneNightLosesTrustOnce(): void
+    /** A romance drunk twice in one night (decisions §20 #27): no trust cut at all, and one wobble, not two. */
+    public function testARomanceDrunkTwiceInOneNightLosesNoTrustAndWondersOnce(): void
     {
         $d = $this->npc();
         RelationshipDynamics::setCoreRelationshipType($d, 'romantic');
-        $d['dimensions']['trust']['x'] = 25.0;   // as it reads toward him, below trust_deep: the draft's "Bonded, drunk, regret next day"
+        $d['dimensions']['trust']['x'] = 25.0;   // as it reads toward him, below trust_deep: drunk with a bond she had not trusted enough yet
         $this->drinks($d, self::T0, 5);
         $this->scene($d, self::T0 + 0.2 * self::HOUR);
         $trust0 = self::x($d, 'trust');
@@ -216,20 +219,19 @@ final class RelDynBatchRFixTest extends TestCase
         $t = $this->clock(self::T0 + 9.0 * self::HOUR);
         RelDynSubstances::update(self::NPC, $d, $t);
         $out = RelDynPostIntimacy::tick(self::NPC, $d, $t);
-        $this->assertLessThan(0.0, $out['corrected']['trust'] ?? 0.0, 'the second (current) encounter corrects ' . json_encode($out));
+        $this->assertArrayNotHasKey('trust', $out['corrected'], 'no trust cut: ' . json_encode($out));
+        $this->assertLessThan(0.0, $out['corrected']['comfort'] ?? 0.0, 'the sober self wonders ' . json_encode($out));
         $this->assertSame([], $d[RelDynPostIntimacy::KEY]['deferred'] ?? [], 'both due and sober: both landed');
-        $lost = $trust0 - self::x($d, 'trust');
-        $once = $d;
-        $once['dimensions']['trust']['x'] = $trust0;
-        $want = -RelationshipDynamics::applyDelta('trust', $once, -5.0, 'Bold');
-        $this->assertGreaterThan(0.5, $want);
-        $this->assertEqualsWithDelta($want, $lost, 0.05, 'one verdict of trust for one night');
+        $this->assertEqualsWithDelta($trust0, self::x($d, 'trust'), 1e-9, 'no verdict of trust for the night');
+        $max = RelDynPostIntimacy::config()['uncertainty']['wobble_comfort_max'];
+        $this->assertGreaterThan(-$max - 1e-6, $d[RelDynPostIntimacy::WOBBLE_KEY]['comfort'], 'one small wobble for one night');
     }
 
     /**
      * The sober diary and the scene both judge a drunken night's comfort (draft: one diary verdict,
-     * "comfort toward Mikael: -20"). Whichever comes second adds only what exceeds the first; what
-     * only one of them judges (the flirting's affinity and passion) is still taken back.
+     * "comfort toward Mikael: -20"; the scene's is now the small wobble of §20 #27). Whichever comes
+     * second adds only what exceeds the first; what only one of them judges (the flirting's affinity
+     * and passion) is still taken back.
      */
     public function testTheDiaryAndTheSceneShareTheNightsComfort(): void
     {
@@ -244,7 +246,7 @@ final class RelDynBatchRFixTest extends TestCase
             RelDynPostIntimacy::tick(self::NPC, $d, $this->clock($start + 2.5 * self::HOUR));   // the afterglow ends
             $this->assertSame([], $d[RelDynPostIntimacy::KEY]['held']);
             $diaryAsk = -2.0 * 0.75 * 10.0;    // regret_mult x (1 - E) x the night's comfort gain
-            $sceneAsk = -20.0;                 // the draft's "Stranger, drunk, one-night"
+            $sceneAsk = null;                  // the scene's wobble, read where it lands (below)
             $applied = [];
             $before = [];
             $steps = $order === 'diary first'
@@ -257,11 +259,15 @@ final class RelDynBatchRFixTest extends TestCase
                 if ($who === 'diary') {
                     $applied['diary'] = array_values(RelDynSubstances::soberReflection(self::NPC, $d, 'examination'))[0]['applied'];
                 } else {
+                    // the uncertainty (trust gap, openness) x the wobble's comfort points, as she stands when she reflects
+                    $size = RelDynPostIntimacy::uncertainty(RelationshipDynamics::getEffectiveDimensionValue($d, 'trust'), RelDynPostIntimacy::soberOpenness($d))['size'];
+                    $sceneAsk = -RelDynPostIntimacy::config()['uncertainty']['wobble_comfort_max'] * $size;
                     $applied['scene'] = RelDynPostIntimacy::tick(self::NPC, $d, $t)['corrected'];
                 }
             }
             $why = $order . ' ' . json_encode($applied);
             // the night's comfort is judged once: the first verdict whole, the second only past it
+            $this->assertGreaterThan($diaryAsk, $sceneAsk, 'the morning\'s doubt is smaller than the page\'s verdict');
             [$firstWho, $secondWho] = array_values($steps);
             $firstAsk = $firstWho === 'diary' ? $diaryAsk : $sceneAsk;
             $secondAsk = $secondWho === 'diary' ? $diaryAsk : $sceneAsk;
@@ -273,12 +279,14 @@ final class RelDynBatchRFixTest extends TestCase
             $want = $excess < 0.0 ? RelationshipDynamics::applyDelta('comfort', $copy, $excess, 'Bold') : 0.0;
             $this->assertEqualsWithDelta($want, $applied[$secondWho]['comfort'] ?? 0.0, 0.01, "the second only past the first: {$why}");
             if ($order === 'scene first') {
-                $this->assertArrayNotHasKey('comfort', $applied['diary'], "the diary adds no second crash: {$why}");
+                // the wobble is whole, the page then adds only what it asks past it (a smaller crash than alone)
+                $this->assertLessThan(0.0, $applied['diary']['comfort'] ?? 0.0, "the page asks more: the excess lands: {$why}");
+                $alone = $before['diary'];
+                $this->assertGreaterThan(RelationshipDynamics::applyDelta('comfort', $alone, $diaryAsk, 'Bold'), $applied['diary']['comfort'], "the excess only: {$why}");
             } else {
-                $this->assertLessThan(0.0, $applied['scene']['comfort'] ?? 0.0, "the scene asks more than the page: the excess lands: {$why}");
-                $this->assertGreaterThan($applied['diary']['comfort'], $applied['scene']['comfort'], "the excess only: {$why}");
+                $this->assertArrayNotHasKey('comfort', $applied['scene'], "the scene asks less than the page: no second dip: {$why}");
             }
-            $this->assertEqualsWithDelta([$firstAsk, $secondAsk], array_map(fn($v) => $v[1], array_values($d['_substances']['shame'])[0]['dims']['comfort']),
+            $this->assertEqualsWithDelta([round($firstAsk, 4), round($secondAsk, 4)], array_map(fn($v) => $v[1], array_values($d['_substances']['shame'])[0]['dims']['comfort']),
                 0.0, "both asks on the night's record: {$why}");
             foreach (['affinity', 'passion'] as $sig) {
                 $this->assertLessThan(0.0, $applied['diary'][$sig] ?? 0.0, "only the diary judges the flirting's {$sig}: {$why}");

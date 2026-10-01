@@ -542,8 +542,8 @@ final class RelDynBatchRFixTestBedsPostgresTest extends TestCase
      * Five meads (a round with the player after each), a scene at eight, a second at half past
      * nine: a new encounter, and she is still drunk. The first scene's sober verdict does not land
      * then (no shame, no crash, the glow still shows); it waits for the sober morning, where the
-     * night is judged once: the second scene's verdict adds nothing past the first. The shame is
-     * her own size (maturity), so the four diverge.
+     * night is judged once: the second scene's verdict adds nothing past the first. The morning is
+     * uncertainty, not shame (decisions §20 #27): her own size (trust gap, openness), so the four diverge.
      */
     public function testASecondSceneWaitsForTheSoberMorning(): void
     {
@@ -609,22 +609,21 @@ final class RelDynBatchRFixTestBedsPostgresTest extends TestCase
             $this->assertTrue($m['state']['corrected'] ?? false, "{$npc}: the second verdict landed too {$why}");
             if (RelDynDiary::depth($m['maturity']) === 'shallow') continue;   // a shallow mind never looks back
             $this->assertCount(1, $m['shame'], "{$npc}: one night {$why}");
-            $rs = array_map(fn($v) => floatval($v[1]), $m['shame'][0]['verdicts']);
-            $this->assertCount(2, $rs, "{$npc}: both scenes asked {$why}");
-            $this->assertEqualsWithDelta($rs[0], $rs[1], 1e-6, "{$npc}: the same ask {$why}");
-            $asked[$npc] = $rs[0];
+            $this->assertSame([], $m['shame'][0]['verdicts'], "{$npc}: no shame verdict: the scenes judge only the night's comfort {$why}");
+            $this->assertEqualsWithDelta(self::x($before[$npc], 'resentment_self'), $m['rs'], 1e-6, "{$npc}: no shame {$why}");
             $comfort = array_map(fn($v) => floatval($v[1]), $m['shame'][0]['dims']['comfort'] ?? []);
             $this->assertCount(2, $comfort, "{$npc}: both scenes' comfort on the night's record {$why}");
-            // one shame: the rise is one verdict's, not two
-            $once = $before[$npc];
-            $wantRs = RelationshipDynamics::applyDelta('resentment_self', $once, $rs[0], $once['inferred_temperament'] ?? null);
-            $rise = $m['rs'] - self::x($before[$npc], 'resentment_self');
-            $this->assertLessThan(1.5 * $wantRs, $rise, "{$npc}: not two shames {$why}");
-            $this->assertGreaterThan(0.5 * $wantRs, $rise, "{$npc}: one shame {$why}");
+            $this->assertEqualsWithDelta($comfort[0], $comfort[1], 1e-6, "{$npc}: the same ask {$why}");
+            // one wobble, not two: the second scene's ask adds nothing past the first
+            $wobble = $d[RelDynPostIntimacy::WOBBLE_KEY] ?? null;
+            $this->assertIsArray($wobble, "{$npc}: she is still wondering {$why}");
+            $this->assertLessThan(0.0, $wobble['comfort'], "{$npc}: one wobble {$why}");
+            $this->assertArrayNotHasKey('comfort', (array) ($m['state']['correction'] ?? []), "{$npc}: the second scene adds no second one {$why}");
             $this->assertIsString($m['felt'], "{$npc}: the sober self shows in the morning {$why}");
+            $asked[$npc] = $wobble['uncertainty'];
         }
         $this->assertGreaterThanOrEqual(2, count($asked), "most of them look back {$why}");
-        $this->assertGreaterThanOrEqual(2, count(array_unique(array_map(fn($v) => round($v, 2), $asked))), "each her own size of shame {$why}");
+        $this->assertGreaterThanOrEqual(2, count(array_unique(array_map(fn($v) => round($v, 2), $asked))), "each her own size of doubt {$why}");
         $this->assertClean();
     }
 

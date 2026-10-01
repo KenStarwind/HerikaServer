@@ -462,12 +462,14 @@ final class RelDynP4rIntegrationTestBedsPostgresTest extends TestCase
      * in her, so it is the drunken night of the draft for all four. The sober self then judges it:
      * Aela and Muiri write their diary page in the small hours, before the scene's morning verdict
      * is due; Ashe and Lynly write theirs after breakfast, so the morning comes first. Whatever the
-     * order, one night is one shame: the heavier verdict counts, never both. Each verdict keeps the
-     * rest of what it says: the scene's comfort crash for all four, the flirting's gains taken back
-     * by the diary of a bed who is not drawn to the player (Aela, Ashe); the diary of one who is
-     * (Muiri, Lynly) has nothing to add.
+     * order, one night is judged once per dimension. Decisions §20 #27: the scene's morning is not
+     * shame but uncertainty ("was that too soon?"), a small comfort wobble and no resentment_self;
+     * the shame, where there is any, is the diary's alone (a bed who is not drawn to the player,
+     * Aela and Ashe: the flirting's gains taken back too; the diary of one who is, Muiri and
+     * Lynly, has nothing to add). The night's comfort is judged once: whichever speaks second
+     * adds only what it asks past the first (Aela's page asked more than the morning's wobble).
      */
-    public function testOneDrunkenNightIsOneShameWhoeverJudgesFirst(): void
+    public function testOneDrunkenNightIsUncertaintyFromTheSceneAndShameFromTheDiaryAlone(): void
     {
         $this->seed();
         $beds = array_keys(self::BEDS);
@@ -516,6 +518,7 @@ final class RelDynP4rIntegrationTestBedsPostgresTest extends TestCase
         $after = $this->all();
 
         $info = [];
+        $sizes = [];
         foreach ($beds as $npc) {
             $s = $after[$npc][RelDynPostIntimacy::KEY] ?? null;
             $info[$npc] = ['verdicts' => self::verdicts($after[$npc]), 'endorsed' => $after[$npc][RelDynSubstances::KEY]['last_sober']['endorsed'] ?? 'none',
@@ -526,55 +529,51 @@ final class RelDynP4rIntegrationTestBedsPostgresTest extends TestCase
                               'after' => self::x($after[$npc], 'comfort') - RelationshipDynamics::heldTemporaryOffset($after[$npc], 'comfort')],
                 'felt' => array_keys($this->felt[$npc]['morning'] ?? [])];
         }
-        $this->probe('one night, one shame', $info);
+        $this->probe('one night, uncertainty and shame', $info);
         $why = json_encode($info);
 
+        $max = RelDynPostIntimacy::config()['uncertainty']['wobble_comfort_max'];
         foreach ($beds as $npc) {
             $this->assertNotSame('shallow', RelDynDiary::depth($info[$npc]['maturity']), "{$npc}: a diary that looks back {$why}");
             $s = $after[$npc][RelDynPostIntimacy::KEY];
             $this->assertTrue($s['corrected'], "{$npc}: the scene's verdict landed {$why}");
-            $this->assertArrayHasKey('comfort', $s['correction'], "{$npc}: the scene's comfort crash is whole {$why}");
+            $this->assertArrayNotHasKey('resentment_self', (array) $s['correction'], "{$npc}: the morning is uncertainty, not shame {$why}");
+            $this->assertArrayNotHasKey('trust', (array) $s['correction'], "{$npc}: no trust cut {$why}");
             $this->assertArrayHasKey('post_intimacy', $this->felt[$npc]['morning'], "{$npc}: the sober self shows {$why}");
-            $this->assertGreaterThan($info[$npc]['rs']['night'], $info[$npc]['rs']['after'], "{$npc}: ashamed of the night {$why}");
+            $this->assertIsArray($after[$npc][RelDynPostIntimacy::WOBBLE_KEY] ?? null, "{$npc}: she is still wondering, until a reassuring word {$why}");
+            $this->assertGreaterThan(-$max - 1e-6, floatval($s['correction']['comfort'] ?? 0.0), "{$npc}: a small wobble {$why}");
+            $sizes[$npc] = $s['uncertainty'];
         }
 
-        // Aela, diary first, not drawn to him: the page asked its share, the morning only the excess
+        // Aela, diary first, not drawn to him: the shame is her page's alone, and the page already asked the night's comfort,
+        // more than the morning's wobble does
         $this->assertLessThan(0.5, $info[self::AELA]['endorsed'], $why);
         $v = array_values($info[self::AELA]['verdicts'])[0] ?? [];
-        $this->assertCount(2, $v, "Aela: two verdicts on one night {$why}");
-        [$S, $P] = $v;
+        $this->assertCount(1, $v, "Aela: one shame verdict on one night, the page's {$why}");
         $this->assertGreaterThan($info[self::AELA]['rs']['night'], $info[self::AELA]['rs']['late'], "Aela: the page's shame first {$why}");
-        $excess = $late[self::AELA];
-        $wantExcess = RelationshipDynamics::applyDelta('resentment_self', $excess, max(0.0, $P - $S), $late[self::AELA]['inferred_temperament'] ?? null);
-        $whole = $late[self::AELA];
-        $wantWhole = RelationshipDynamics::applyDelta('resentment_self', $whole, $P, $late[self::AELA]['inferred_temperament'] ?? null);
-        $this->assertEqualsWithDelta($wantExcess, floatval($info[self::AELA]['correction']['resentment_self'] ?? 0.0), 0.25,
-            "Aela: the morning adds only what exceeds the page {$why}");
-        $this->assertLessThan($wantWhole - 0.5, floatval($info[self::AELA]['correction']['resentment_self'] ?? 0.0), "Aela: not a second whole shame {$why}");
+        $this->assertEqualsWithDelta($info[self::AELA]['rs']['late'], $info[self::AELA]['rs']['after'], 0.25, "Aela: the morning adds no shame {$why}");
+        $this->assertArrayNotHasKey('comfort', (array) $info[self::AELA]['correction'], "Aela: the page judged the night's comfort already {$why}");
 
-        // Ashe, the morning first, not drawn to him: the page takes back the flirting, adds no shame past the morning's
+        // Ashe, the morning first, not drawn to him: the morning's wobble is whole, the page then brings its own shame and the flirting's gains back
         $this->assertLessThan(0.5, $info['Ashe']['endorsed'], $why);
         $v = array_values($info['Ashe']['verdicts'])[0] ?? [];
-        $this->assertCount(2, $v, "Ashe: two verdicts on one night {$why}");
-        [$P, $S] = $v;
-        $morningRise = $info['Ashe']['rs']['after'] - $info['Ashe']['rs']['late'];
-        $pageOnTop = $morningRise - floatval($info['Ashe']['correction']['resentment_self']);
-        $onTop = $after['Ashe'];
-        $wantOnTop = $S > $P ? RelationshipDynamics::applyDelta('resentment_self', $onTop, $S - $P, $after['Ashe']['inferred_temperament'] ?? null) : 0.0;
-        $this->assertEqualsWithDelta($wantOnTop, $pageOnTop, 0.25, "Ashe: the page adds only what exceeds the morning {$why}");
+        $this->assertCount(1, $v, "Ashe: one shame verdict on one night, the page's {$why}");
+        $this->assertEqualsWithDelta($info['Ashe']['rs']['night'], $info['Ashe']['rs']['late'], 0.25, "Ashe: nothing before her page {$why}");
+        $this->assertGreaterThan($info['Ashe']['rs']['late'], $info['Ashe']['rs']['after'], "Ashe: her page's shame {$why}");
+        $this->assertLessThan(0.0, floatval($info['Ashe']['correction']['comfort'] ?? 0.0), "Ashe: the morning's wobble is whole {$why}");
         $this->assertLessThan(RelationshipDynamics::getCoreAffinity($night['Ashe']), RelationshipDynamics::getCoreAffinity($after['Ashe']),
             "Ashe: the flirting's gains are taken back {$why}");
 
-        // Muiri and Lynly are drawn to him: their page stands behind the night and adds nothing; the scene's verdict is whole
+        // Muiri and Lynly are drawn to him: their page stands behind the night and adds nothing, and the morning is only the wobble
         foreach (['Muiri', self::LYNLY] as $npc) {
             $this->assertEqualsWithDelta(1.0, $info[$npc]['endorsed'], 1e-9, "{$npc}: drawn to him soberly {$why}");
-            foreach ($info[$npc]['verdicts'] as $list) $this->assertCount(1, $list, "{$npc}: only the scene's verdict {$why}");
+            foreach ($info[$npc]['verdicts'] as $list) $this->assertCount(0, $list, "{$npc}: no shame verdict at all {$why}");
+            $this->assertEqualsWithDelta($info[$npc]['rs']['night'], $info[$npc]['rs']['after'], 0.5, "{$npc}: no shame {$why}");
+            $this->assertLessThan(0.0, floatval($info[$npc]['correction']['comfort'] ?? 0.0), "{$npc}: the morning's wobble {$why}");
         }
-        $this->assertEqualsWithDelta($info['Muiri']['rs']['night'], $info['Muiri']['rs']['late'], 0.5, "Muiri: her page added no shame {$why}");
 
-        // Divergence: who she is and when she writes decide which verdict speaks first and whether the page adds anything
-        $this->assertNotEquals(array_map('count', array_map(fn($v) => array_values($v)[0] ?? [], array_column($info, 'verdicts'))),
-            [2, 2, 2, 2], $why);
+        // Divergence: who she is (trust gap, openness) makes the four unsure by different amounts
+        $this->assertGreaterThanOrEqual(3, count(array_unique(array_map(fn($v) => round($v, 2), $sizes))), "each her own doubt {$why}");
         // Jev has the numbers of both
         foreach ($beds as $npc) {
             $j = RelDynJev::state($npc, $after[$npc], (float) self::at(self::N0 + 1, 9.0));

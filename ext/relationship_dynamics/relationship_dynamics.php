@@ -9505,6 +9505,10 @@ class RelationshipDynamics
         // mature and has voiced it (RelDynPullback::onEvalItem)
         $met = RelDynPullback::onEvalItem((string) $npcName, $n, $dynamics, floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
         if ($met > 0) $feelings['pullback_met'] = round($met, 4);
+        // A reassuring exchange settles the doubt a drunken night left (RelDynPostIntimacy::onEvalItem, decisions §20 #27)
+        if (RelDynPostIntimacy::onEvalItem((string) $npcName, $n, $dynamics, floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets())) {
+            $feelings['post_intimacy_resolved'] = true;
+        }
         // What the exchange gave against the NPC's needs (rulings §9 fulfillment; its physical /
         // emotional intimacy axes, rulings §10), at its game time.
         // A 'gift' or 'help' the player's handover row already delivered (processGift) is that
