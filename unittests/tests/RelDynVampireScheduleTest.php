@@ -307,7 +307,7 @@ final class RelDynVampireScheduleTest extends TestCase
         $t0 = self::at(40, 12.0);
         $s = RelDynCreatures::observeFeeding('Serana', null, $t0);
         $this->assertSame(['fed_at' => $t0, 'seen' => $t0], $s, 'first sight: fed (history is not replayed)');
-        $this->death('Serana has defeated Wolf', self::at(39, 22.0));   // before she was ever watched
+        $this->death('Serana has defeated Wolf', self::at(39, 22.0));   // before the NPC was ever watched
         $s = RelDynCreatures::observeFeeding('Serana', $s, $t0 + self::HOUR);
         $this->assertSame($t0, $s['fed_at'], 'the earlier kill counts for nothing');
         $this->assertSame($t0 + self::HOUR, $s['seen']);

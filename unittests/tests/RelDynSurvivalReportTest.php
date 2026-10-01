@@ -354,7 +354,7 @@ final class RelDynSurvivalReportTest extends TestCase
 
     public function testTheSurvivalReaderNamesNoPronouns(): void
     {
-        // RelDyn is for every character (Ken, §21): nothing here may assume she or he
+        // RelDyn is for every character (Ken, §21): no text may assume a gender
         $src = (string) file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/reldyn_survival.php');
         $this->assertSame(0, preg_match('/\b(she|her|hers|he|his|him|herself|himself)\b/i', $src), 'no gendered pronoun in the survival reader');
     }

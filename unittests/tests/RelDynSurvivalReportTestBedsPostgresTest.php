@@ -360,7 +360,7 @@ final class RelDynSurvivalReportTestBedsPostgresTest extends TestCase
                 $this->assertContains($s, $now[$follower]['_active_physical_states'], "{$follower}: {$s}");
             }
         }
-        // Not travelling with the player: their own body, not the party's. Muiri is tracked fed and has a mark of her own
+        // Not travelling with the player: their own body, not the party's. Muiri is tracked fed and carries a mark of their own
         $this->assertNotContains('hungry', $now['Muiri']['_active_physical_states']);
         $this->assertNotContains('exhausted', $now['Muiri']['_active_physical_states']);
         $this->assertContains('warm_fire', $now['Muiri']['_active_physical_states'], 'the fire is within reach of anyone beside the player');
@@ -381,7 +381,7 @@ final class RelDynSurvivalReportTestBedsPostgresTest extends TestCase
             $this->assertGreaterThan(0.0, $applied['warm_fire']['warmth'], "{$follower}: warmth toward whoever built it");
         }
 
-        // Who she is scales it: the same report does not move everyone the same
+        // Who they are scales it: the same report does not move everyone the same
         $hungryMaturity = [];
         $fireWarmth = [];
         foreach (['Aela the Huntress', 'Ashe'] as $f) {

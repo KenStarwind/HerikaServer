@@ -357,7 +357,7 @@ final class RelDynVampireScheduleTestBedsPostgresTest extends TestCase
         $this->event('infoloc', self::OUTSIDE, self::at(61, 17.0), $this->people());
         $this->turn(self::AELA, 'Hello.', self::at(61, 19.0), 'seven');
         $this->assertSame('werewolf', $this->creature(self::AELA)['type']);
-        $this->assertSame('werewolf_day', $this->creature(self::AELA)['state'], '19:00 is still her day (the vampire dusk is theirs)');
+        $this->assertSame('werewolf_day', $this->creature(self::AELA)['state'], '19:00 is still the werewolf day (the 18:00 dusk belongs to the vampires)');
         $this->turn(self::AELA, 'Hello again.', self::at(61, 21.0), 'nine');
         $this->assertContains($this->creature(self::AELA)['state'], ['werewolf_night', 'werewolf_moon']);
         $this->assertArrayNotHasKey('thirst', $this->creature(self::AELA));
@@ -436,7 +436,7 @@ final class RelDynVampireScheduleTestBedsPostgresTest extends TestCase
         // The others have no thirst at all
         foreach (['Ashe', 'Muiri', 'Lynly Star-Sung', self::AELA] as $npc) $this->assertArrayNotHasKey('thirst', $this->creature($npc), $npc);
 
-        // Serana fights and kills that night (22:00); Harkon does not; someone else's kill is not hers
+        // Serana fights and kills that night (22:00); Harkon does not; someone else's kill is not Serana's
         $this->event('death', 'Serana has defeated Bandit Chief with Dagger', self::at(72, 22.0), $this->people());
         $this->event('death', 'Aela the Huntress has defeated Wolf', self::at(72, 22.5), $this->people());
         $this->round($npcs, 'Quiet night.', self::at(72, 23.0), 'sated');
