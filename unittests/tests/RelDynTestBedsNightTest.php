@@ -274,6 +274,16 @@ final class RelDynTestBedsNightTest extends TestCase
                 VALUES (\$1, \$2, \$3, 'done', 1, \$4, \$5::jsonb)",
                 [$key, RelDynTraitRead::srcHash($fields), RelDynTraitRead::PROMPT_V, 'seed:' . $e['model'], json_encode($e['result'])]);
         }
+        // Aela and Muiri keep the love languages this story was written for (quality time, words: before the
+        // race keys matched, inference gave every NPC those, and days 1-3 are praise and fire evenings). With
+        // their inferred ones Muiri ends one affinity point under bonded (prebond, not drawn) and Aela's bond,
+        // and so her worry on the bard night, grows a shade slower (1.115x Muiri's, under the 1.12 margin).
+        // Real inference is covered by RelDynReadCalibrationTestBedsPostgresTest. Stored languages are kept.
+        foreach (['Aela the Huntress', 'Muiri'] as $npc) {
+            pg_query_params($this->db->link, 'UPDATE core_npc_master SET plugin_extended_data = $1::jsonb WHERE npc_name = $2',
+                [json_encode(['reldyn' => ['dynamics' => ['love_language_primary' => RelationshipDynamics::LL_TIME,
+                    'love_language_secondary' => RelationshipDynamics::LL_WORDS]]]), $npc]);
+        }
         // Core's locations rows: the Bannered Mare is an Inn, Breezehome a player house
         pg_query($this->db->link, "INSERT INTO locations (name, hold, tags, is_interior, world) VALUES
             ('The Bannered Mare', 'Whiterun', 'Inn,', 1, 'WhiterunWorld'), ('Breezehome', 'Whiterun', 'House,Player House,', 1, 'WhiterunWorld')");
