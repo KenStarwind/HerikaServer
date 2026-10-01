@@ -560,7 +560,7 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
 
 // ========== INTERACTION PATTERN TRACKING (PR 12; MDD 6.2 Parasite, reldyn_protocols.php) ==========
 // This exchange in the transactional ledger, keyed by its game time: a gift seen this request
-// (core's eventlog "gave X to" row or the request's give action), else a positive exchange the
+// (core's eventlog "gave X to" row), else a positive exchange the
 // local classifier scored, else nothing yet (its eval item, same game time, may say what it was).
 if (!empty($reldynCfg['parasite_detection_enabled'])) {
     $giftSeen = !empty($itemResults['gift'] ?? null);

@@ -13803,8 +13803,7 @@ class RelationshipDynamics
 
         $giftCfg = RelDynGifts::config();
         // The handover as a delivery to fulfillment (interaction-classification): once per row. A gift
-        // (a food or potion is service) already delivered from the request's side (the eval's tag, or
-        // the local classifier's reading of a give / trade action) is that delivery. An inverted gift
+        // (a food or potion is service) already delivered from the request's side (the eval's tag) is that delivery. An inverted gift
         // (stolen, a re-gift) is no gift: it delivers nothing, and a 'gift' tag the eval gave the same
         // exchange is not one either.
         $handoverAt = isset($event['gamets']) && is_numeric($event['gamets']) && floatval($event['gamets']) > 0

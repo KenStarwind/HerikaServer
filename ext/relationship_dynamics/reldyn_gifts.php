@@ -61,8 +61,8 @@ final class RelDynGifts
             // whole words of an item name that make it fungible (besides every consumable): money
             // and ammunition, one coin or arrow is any other
             'regift_fungible_words' => ['gold', 'septim', 'septims', 'coin', 'coins', 'arrow', 'arrows', 'bolt', 'bolts', 'lockpick', 'lockpicks'],
-            // The handover as a delivery to fulfillment (interaction-classification): a gift row (or
-            // a give / trade request) delivers the 'gift' tag of fulfillment.tag_delivery (food,
+            // The handover as a delivery to fulfillment (interaction-classification): a gift row
+            // delivers the 'gift' tag of fulfillment.tag_delivery (food,
             // drink and potions deliver 'help': service) once, at this significance (0..1: the
             // eval's units scale, fulfillment.significance_floor).
             'handover_significance' => 0.5,
