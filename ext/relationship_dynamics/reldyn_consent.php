@@ -539,13 +539,4 @@ final class RelDynConsent
         }
         return $decision;
     }
-
-    /** Jev / editor view: the numbers of the last decision (the working numbers, not what Sharmat reads). */
-    public static function jev(string $npcName, array $dynamics): array
-    {
-        $d = self::decide($npcName, $dynamics);
-        return ['enabled' => self::enabled(), 'stance' => $d['stance'], 'allow' => $d['allow'], 'reasons' => $d['reasons'],
-            'willingness' => $d['willingness'], 'bar' => $d['bar'], 'want' => $d['want'], 'weight' => $d['weight'],
-            'appeasement' => $d['appeasement'], 'gate' => $d['gate'], 'effects' => $d['effects']];
-    }
 }
