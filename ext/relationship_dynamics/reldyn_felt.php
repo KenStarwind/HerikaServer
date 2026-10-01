@@ -149,9 +149,13 @@ final class RelDynFelt
             'emergent_romantic_passion_min' => 40.0,
             // Bands written by hand (the extreme low ones): no automatic degradation on top.
             'handwritten_bands' => ['maturity' => ['Chaotic'], 'resentment_self' => ['Crisis']],
-            // Knowledge-of-player tension bridges (dimension points 0..100).
+            // Knowledge-of-player tension bridges (dimension points 0..100). With the pullback section on
+            // (reldyn_pullback.php): the guarded half of drawn_but_guarded is guarded_let_in_max (let-in =
+            // sqrt(comfort x trust), not passion-derived warmth), and 'cares but closed' is only while she has
+            // not let the player in yet (pullback.let_in.low). guarded_warmth_max and closed_warmth_max are the
+            // old rule, used when pullback is switched off.
             'bridge' => [
-                'drawn_passion_min' => 56.0, 'guarded_warmth_max' => 40.0,
+                'drawn_passion_min' => 56.0, 'guarded_warmth_max' => 40.0, 'guarded_let_in_max' => 40.0,
                 'closed_warmth_max' => 35.0, 'wary_trust_max' => 35.0,
                 'worn_resentment_min' => 51.0,
                 'uneasy_comfort_max' => 30.0,
@@ -215,7 +219,10 @@ final class RelDynFelt
         ],
         'bridge' => [
             'drawn_but_guarded' => "Drawn to {PLAYER} and fighting it: the pull shows in glances, never in words.",
-            'cares_but_closed'  => "Cares more than {NAME} lets show; the feeling is there, the openness is not.",
+            // she has not let the player in yet: not "never" (RelDynPullback::notLetInYet)
+            'cares_but_closed'  => "{NAME} has not let {PLAYER} in yet: whatever is felt stays behind a guard, and the openness has to be earned, not assumed.",
+            // the old wording, with pullback switched off (the closed rule it belonged to)
+            'cares_but_closed_legacy' => "Cares more than {NAME} lets show; the feeling is there, the openness is not.",
             'fond_but_wary'     => "Fond of {PLAYER} and still keeps one eye open; closeness has not become trust.",
             'close_but_uneasy'  => "Close to {PLAYER} and still never quite at ease with them; stiff where it should be easy.",
             'worn_out'          => "Cares for {PLAYER} and is worn thin by them at once; patience frayed to the bone.",
@@ -667,6 +674,19 @@ final class RelDynFelt
                 $lines[] = self::line("fulfillment_{$kind}", self::SCOPE_BOND, self::LANE_CORE,
                     floatval($sal[$kind === 'probation' ? 'probation' : 'unmet']), $text);
             }
+        }
+
+        // --- Pulling back (reldyn_pullback.php): the state itself stands in knowledge_of_player; its entering and
+        // its reopening are said to the player's face, once ---
+        $pull = RelDynPullback::takeFeltLines($dynamics, $npc, $player, $now, !empty($env['player_addressed']));
+        if ($pull['changed']) $changed = true;
+        foreach ($pull['lines'] as $l) {
+            $lines[] = self::line('pullback_' . $l['key'], self::SCOPE_BOND, self::LANE_TURN, floatval($l['salience']), (string) $l['text'],
+                ['must' => !empty($l['must']), 'intense' => !empty($l['intense'])]);
+        }
+        // One voice: the standing pull-back that names what is missing makes the generic unmet line beside it a repeat
+        if ($tier >= 1 && RelDynPullback::active($dynamics) && !RelDynPullback::notLetInYet($dynamics) && RelDynPullback::namesNeeds($dynamics)) {
+            $lines = array_values(array_filter($lines, fn($l) => $l['key'] !== 'fulfillment_unmet'));
         }
 
         // --- Protective concern and the values path (traits design §1): worry, stated values,
@@ -1220,7 +1240,12 @@ final class RelDynFelt
         $text = strtr((string) $t['knowledge'][$key], $vars);
         if ($tier >= 1) {
             $bridge = self::bridge($dynamics, $tier, $current, $cfg);
-            if ($bridge !== null) $text .= ' ' . strtr((string) $t['bridge'][$bridge], $vars);
+            if ($bridge === 'pulling_back') {
+                // she has let the player in and is pulled back for now: how it shows is who she is
+                $text .= ' ' . RelDynPullback::standingText($npc, $vars['{PLAYER}'], $dynamics);
+            } elseif ($bridge !== null) {
+                $text .= ' ' . strtr((string) $t['bridge'][$bridge], $vars);
+            }
         }
         if ($knowledge !== null) {
             $text = RelDynGating::withRumours($text, $npc, $vars['{PLAYER}'] === $player ? $player : null, $knowledge);
@@ -1228,20 +1253,43 @@ final class RelDynFelt
         return $text;
     }
 
-    /** The one tension bridge that applies (first match), or null. */
+    /**
+     * The one tension bridge that applies (first match), or null.
+     *
+     * With pullback on (reldyn_pullback.php) "closed" is no longer one permanent rule read off passion:
+     *   drawn_but_guarded  the pull (passion) and she has not let the player in (let-in <= guarded_let_in_max)
+     *   pulling_back       she has let the player in and is pulled back for now (the stored state)
+     *   cares_but_closed   she has not let the player in yet (let-in below pullback.let_in.low), any tier
+     * and the others as they were. pulling_back stands before worn_out (resentment is one of its inputs: the
+     * state is the stance she takes, which says more than the strain behind it) and fond_but_wary before
+     * cares_but_closed (a distrusting friend reads wary, as before: low trust now also lowers let-in).
+     * With pullback off, the old rule exactly: derived warmth <= closed_warmth_max at tier 2+.
+     */
     private static function bridge(array $dynamics, int $tier, int $current, array $cfg): ?string
     {
         $b = (array) $cfg['bridge'];
         $dims = $dynamics['dimensions'] ?? [];
         $v = fn(string $d, float $def) => is_numeric($dims[$d]['x'] ?? null) ? floatval($dims[$d]['x']) : $def;
-        $warmth = RelDynPassion::warmth($dynamics, false) ?? 50.0;   // raw, like every tension check
         $trust = $v('trust', 50.0);
         $resentment = $v('resentment', 0.0);
         $passion = RelationshipDynamics::getEffectivePassion($dynamics);
-        if ($passion >= floatval($b['drawn_passion_min']) && $warmth <= floatval($b['guarded_warmth_max'])) return 'drawn_but_guarded';
+        if (!RelDynPullback::enabled()) {
+            $warmth = RelDynPassion::warmth($dynamics, false) ?? 50.0;   // raw, like every tension check
+            if ($passion >= floatval($b['drawn_passion_min']) && $warmth <= floatval($b['guarded_warmth_max'])) return 'drawn_but_guarded';
+            if ($current >= 2 && $resentment >= floatval($b['worn_resentment_min'])) return 'worn_out';
+            if ($current >= 2 && $warmth <= floatval($b['closed_warmth_max'])) return 'cares_but_closed_legacy';
+            if ($current >= 2 && $trust <= floatval($b['wary_trust_max'])) return 'fond_but_wary';
+            if ($current >= 2 && $v('comfort', 50.0) <= floatval($b['uneasy_comfort_max'])) return 'close_but_uneasy';
+            if ($tier >= 3 && $trust >= floatval($b['steady_trust_min']) && $resentment <= floatval($b['steady_resentment_max'])) return 'steady';
+            return null;
+        }
+        $letIn = RelDynPullback::letIn($dynamics);
+        $notYet = RelDynPullback::notLetInYet($dynamics);
+        if ($passion >= floatval($b['drawn_passion_min']) && $letIn <= floatval($b['guarded_let_in_max'] ?? 40.0)) return 'drawn_but_guarded';
+        if (!$notYet && RelDynPullback::active($dynamics)) return 'pulling_back';
         if ($current >= 2 && $resentment >= floatval($b['worn_resentment_min'])) return 'worn_out';
-        if ($current >= 2 && $warmth <= floatval($b['closed_warmth_max'])) return 'cares_but_closed';
         if ($current >= 2 && $trust <= floatval($b['wary_trust_max'])) return 'fond_but_wary';
+        if ($notYet) return 'cares_but_closed';
         if ($current >= 2 && $v('comfort', 50.0) <= floatval($b['uneasy_comfort_max'])) return 'close_but_uneasy';
         if ($tier >= 3 && $trust >= floatval($b['steady_trust_min']) && $resentment <= floatval($b['steady_resentment_max'])) return 'steady';
         return null;

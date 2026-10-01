@@ -49,6 +49,16 @@
  *                     'protective_incidents' => the channel's highest pattern[kind] in the values
  *                     window (§1.5), 'pattern' => kind => counted nights of that kind,
  *                     'values_boundary' => none|pending|probation|failed]
+ *   let_in           float  dimension points 0..100: how far she has let the player in, sqrt(comfort x trust)
+ *                           (durable, earned, any bond type; no passion term)
+ *   pullback         ['enabled' => bool, 'let_in' => points, 'not_let_in_yet' => bool (let-in below pullback.let_in.low),
+ *                     'active' => bool (she is pulled back now, temporary), 'pressure' => 0..1, 'on' / 'off' => the
+ *                     hysteresis thresholds (0..1; guard lowers them, a deeper let-in raises them), 'target' => 0..1
+ *                     the pressure is moving toward, 'inputs' => ['weather', 'gravity', 'deficit', 'grievance'] each
+ *                     0..1, 'mood_gain' => multiplier on the weather input (immaturity amplifies it), 'since_game_hours'
+ *                     => ?game hours pulled back, 'voiced' => bool (a mature NPC said it to the player's face),
+ *                     'episodes' => int, 'band' / 'style' / 'attachment' => how she shows it (RelDynConcern::expression
+ *                     mature|mixed|immature, accusation|sulking, anxious|avoidant|toxic|null)] (RelDynPullback)
  *   walkaway         string normal|pending|active|boundary_test|recovery|permanent
  *   resentment_arc   ['confrontation_threshold' => resentment points, 'confrontations' => int said
  *                     this episode, 'confrontation_pending' => ?mature|mixed|immature,
@@ -147,6 +157,10 @@ final class RelDynJev
         'attachment_avoidance' => 'axis 0..1 (discomfort with closeness once in)',
         'concern.level' => 'concern points 0..100', 'concern.incidents' => 'highest pattern[kind] per channel in the values window (counted nights)',
         'concern.pattern' => 'kind => counted nights in the values window',
+        'let_in' => 'points 0..100 (sqrt(comfort x trust))', 'pullback.let_in' => 'points 0..100',
+        'pullback.pressure' => '0..1', 'pullback.on' => 'pressure 0..1', 'pullback.off' => 'pressure 0..1',
+        'pullback.target' => 'pressure 0..1', 'pullback.inputs' => 'each 0..1 (weather, gravity, deficit, grievance)',
+        'pullback.mood_gain' => 'multiplier on the weather input', 'pullback.since_game_hours' => 'game hours',
         'resentment_arc.confrontation_threshold' => 'resentment points 0..100',
         'resentment_arc.self_baseline_offsets' => 'baseline points', 'resentment_arc.guilt_bleed' => 'comfort points',
         'place.valence' => '-1..1', 'place.intensity' => '0..1', 'goal.priority' => '0..1',
@@ -270,6 +284,8 @@ final class RelDynJev
             'conflict_repairs' => intval($dynamics['conflict_positive_count'] ?? 0),
             'boundary' => is_string($boundary) ? $boundary : 'none',
             'concern' => RelDynConcern::jev($dynamics, $now),
+            'let_in' => round(RelDynPullback::letIn($dynamics), 2),
+            'pullback' => RelDynPullback::jev($dynamics, $now),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'resentment_arc' => RelDynResentment::jev($dynamics),
             'absence' => RelDynAbsence::jev($dynamics),
@@ -345,6 +361,15 @@ final class RelDynJev
         $parts[] = 'concern=' . $f($c['level']) . "({$c['band']}) incidents=" . $c['possessive_incidents'] . '/' . $c['protective_incidents']
             . ($pattern ? ' pattern=' . implode(',', $pattern) : '')
             . ($c['values_boundary'] !== 'none' ? " values_boundary={$c['values_boundary']}" : '');
+        // compact: "let_in=<points>" (not yet when below the line) and, while she is pulled back, "pullback=<pressure>/<on> ..."
+        $pb = $s['pullback'];
+        $parts[] = 'let_in=' . $f($s['let_in']) . ($pb['not_let_in_yet'] ? '(not yet)' : '');
+        if ($pb['enabled'] && ($pb['active'] || $pb['pressure'] > 0.2)) {
+            $parts[] = 'pullback=' . ($pb['active'] ? 'on' : 'off') . ' ' . number_format($pb['pressure'], 2, '.', '')
+                . ($pb['on'] !== null ? '/' . number_format($pb['on'], 2, '.', '') : '')
+                . ($pb['active'] ? ' ' . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
+                    . ($pb['since_game_hours'] !== null ? ' ' . $f($pb['since_game_hours']) . 'h' : '') . ($pb['voiced'] ? ' voiced' : '') : '');
+        }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];
         $offsets = [];

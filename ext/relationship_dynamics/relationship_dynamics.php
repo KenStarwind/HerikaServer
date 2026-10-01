@@ -1350,6 +1350,10 @@ class RelationshipDynamics
             // Risk appraisal, concern gains, repetition counter, routes A/B, felt text
             // (reldyn_concern.php, RelDynConcern::configDefaults()).
             'concern' => RelDynConcern::configDefaults(),
+            // ===== Let in, and pulling back (Ken 2026-10-01: closed off is neither pass / fail nor permanent) =====
+            // How far she has let the player in (comfort x trust), and the temporary state of pulling back
+            // when the weather is inclement and she feels unfulfilled (reldyn_pullback.php, RelDynPullback::configDefaults()).
+            'pullback' => RelDynPullback::configDefaults(),
             // ===== Resentment threshold events (MDD 15.5, dimension design resentment_self) =====
             // Confrontation at the NPC's threshold, resentment_self's thresholds and recovery,
             // cross-bond guilt bleed, felt text (reldyn_resentment.php, RelDynResentment::configDefaults()).
@@ -9480,6 +9484,10 @@ class RelationshipDynamics
         if ($concern['events'] !== [] || $concern['concern'] > 0 || $concern['jealousy'] > 0) {
             $feelings['concern'] = $concern;
         }
+        // A positive exchange that addresses a pull-back meets her: she reopens faster, most when she is
+        // mature and has voiced it (RelDynPullback::onEvalItem)
+        $met = RelDynPullback::onEvalItem((string) $npcName, $n, $dynamics, floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
+        if ($met > 0) $feelings['pullback_met'] = round($met, 4);
         // What the exchange gave against the NPC's needs (rulings §9 fulfillment; its physical /
         // emotional intimacy axes, rulings §10), at its game time.
         // A 'gift' or 'help' the player's handover row already delivered (processGift) is that
@@ -19327,6 +19335,8 @@ require_once __DIR__ . '/reldyn_felt.php';
 require_once __DIR__ . '/reldyn_jev.php';
 // Protective concern and the values path of both channels (traits design §1); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_concern.php';
+// Let in (comfort x trust) and the temporary state of pulling back; defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_pullback.php';
 // Resentment threshold events: the MDD 15.5 confrontation, resentment_self, guilt bleed; defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_resentment.php';
 // Creature moodifications (vampires, werewolves; Skyrim's moon cycle)

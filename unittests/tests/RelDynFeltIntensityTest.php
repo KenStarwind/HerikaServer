@@ -213,9 +213,15 @@ final class RelDynFeltIntensityTest extends TestCase
         // passion 70, comfort 20: warmth 37 (drawn, and guarded)
         $this->assertStringContainsString('fighting it',
             RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(45, ['passion' => 70.0, 'comfort' => 20.0])));
-        // no passion: warmth 0 (cares, closed)
-        $this->assertStringContainsString('lets show',
-            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(80, ['passion' => 0.0, 'comfort' => 50.0])));
+        // no passion: warmth 0. The old rule read that as "cares, closed" for good, whatever the comfort and trust; closed is
+        // now only while she has not let the player in (let-in = sqrt(comfort x trust), no passion term;
+        // RelDynPullbackTest has the rest): comfort 50 and the default trust have let them in
+        $noPassion = RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(80, ['passion' => 0.0, 'comfort' => 50.0]));
+        $this->assertStringNotContainsString('lets show', $noPassion);
+        $this->assertStringNotContainsString('not let Kaida in yet', $noPassion);
+        // the same bond at low comfort and trust: not let in yet (the wording says yet, not never)
+        $this->assertStringContainsString('has not let Kaida in yet',
+            RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(80, ['passion' => 0.0, 'comfort' => 25.0, 'trust' => 40.0])));
         // passion 45, comfort 50: warmth 47
         $this->assertStringContainsString('one eye open',
             RelDynFelt::knowledgeOfPlayer('Serana', 'Kaida', $this->atCore(45, ['passion' => 45.0, 'comfort' => 50.0, 'trust' => 20.0])));
