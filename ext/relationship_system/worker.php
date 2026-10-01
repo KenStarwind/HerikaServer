@@ -118,16 +118,15 @@ try {
     // Set up minimal globals that LLM connector needs
     $GLOBALS['HERIKA_NAME'] = 'Worker';
     $GLOBALS['PLAYER_NAME'] = 'Player';
+    // The player's name lives in core_player ('player_name'); chimLoadPlayerNameIntoGlobals() reads
+    // it the same way the main request does and keeps 'Player' if nothing is stored yet.
     try {
-        $playerRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='PLAYER_NAME' LIMIT 1");
-        if ($playerRow && !empty($playerRow['value'])) {
-            $GLOBALS['PLAYER_NAME'] = trim((string)$playerRow['value']);
-        }
+        chimLoadPlayerNameIntoGlobals();
     } catch (Throwable $e) {
         @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " WARN: Failed to load PLAYER_NAME: " . $e->getMessage() . "\n", FILE_APPEND);
     }
 
-    Logger::info("[REL-WORKER] Starting relationship worker" . ($daemon ? " in daemon mode" : ""));
+    Logger::info("[REL-WORKER] Starting relationship worker" . ($daemon ? " in daemon mode" : "") . ", player name: " . $GLOBALS['PLAYER_NAME']);
 } catch (Throwable $e) {
     $msg = date('[Y-m-d H:i:s]') . " BOOTSTRAP ERROR: " . get_class($e) . ": " . $e->getMessage() . "\n";
     @file_put_contents($logFile, $msg, FILE_APPEND);
@@ -142,6 +141,9 @@ require_once __DIR__ . '/async_queue.php';
  * @return int Number of items processed
  */
 function processOneBatch() {
+    // The daemon is long-lived; pick up a renamed player (core_player) without a restart.
+    chimLoadPlayerNameIntoGlobals();
+
     $evalResults = _relProcessQueue(10);  // Process up to 10 evals per batch
     $initResults = _relProcessInitQueue(5); // Process up to 5 inits per batch
 
