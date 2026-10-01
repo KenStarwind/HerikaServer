@@ -64,10 +64,13 @@ final class RelDynVPeoplePgDb
  * Muiri (toxic) and Lynly Star-Sung (a bard; the bio does not establish shyness, so none is forced on her), on CHIM 3.4.1
  * core-shaped rows and the committed seed's reads, through the real hooks as main.php runs them (prerequest -> core's action
  * list with the ext functions.php -> context_pre -> context -> postrequest), the real eval producer and worker (LLM stubbed at
- * the connector boundary). No LLM call; feelings, never numbers, in front of the LLM; Jev gets the numbers. Gender: each bed
- * answers to the pronoun vars of its own core row, never a hard-coded one.
+ * the connector boundary). No LLM call; feelings, never numbers, in front of the LLM; Jev gets the numbers. Gender: every line
+ * asserted on is free of a hard-coded pronoun (the names and the NPC's own vars only).
  *   the fight     §23: a fight beside the player is contact for the neglect and the absence and time together by the NPC's
  *                 taste, and for the one who does not enjoy it it also reads as partly unfulfilling.
+ *   the morning   §22: after intimacy a fearful NPC pulls back for a while, by how fearful they are; the others do not; no shame.
+ *   keeping       §23: the fear of losing the player is answered by who the NPC is (appease, a conflict, withdraw, or the
+ *                 NPC's own way), never a refused command, never a verdict on the player.
  *
  * Opt-in: RELDYN_TEST_PG_DSN must point at a THROWAWAY database (never dbname=dwemer).
  */
