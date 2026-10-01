@@ -720,7 +720,9 @@ final class RelDynFelt
             $lines[] = self::line('creature', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['creature']), $creature);
         }
 
-        // --- Emergent emotions (dimension combinations), romance-only ones inside a romance ---
+        // --- Emergent emotions (dimension combinations), romance-only ones inside a romance;
+        // the window of recent respect / resentment the delta-based ones read is sampled first ---
+        if (RelationshipDynamics::noteEmotionWindow($dynamics, $now > 0 ? $now : RelationshipDynamics::currentGamets())) $changed = true;
         $emotions = RelationshipDynamics::detectEmergentEmotions($dynamics);
         $romantic = $coreRomance || (!$platonic && $passion >= floatval($cfg['emergent_romantic_passion_min']));
         $emotions = array_values(array_filter($emotions,

@@ -483,6 +483,179 @@ final class RelDynFeltLaneTestBedsPostgresTest extends TestCase
         $this->assertSame([], $this->db->failures);
     }
 
+    // ------------------------------------------------------------------ the emergent emotions
+
+    /** Set the same circumstance on every bed's stored dimensions (as the editor would): dim => points. */
+    private function circumstance(array $dims): void
+    {
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->editDynamics($npc, function (array &$d) use ($dims): void {
+                foreach ($dims as $dim => $x) $d['dimensions'][$dim]['x'] = $x;
+            });
+        }
+    }
+
+    /** The emergent emotions whose line is in $text (the player named however her tier names them). */
+    private function spoken(string $npc, ?string $text): array
+    {
+        $ids = [];
+        foreach (RelationshipDynamics::EMERGENT_EMOTIONS as $id => $spec) {
+            $re = preg_quote(str_replace('{NAME}', $npc, $spec['context']), '/');
+            $re = str_replace(preg_quote('the player', '/'), '(?:Kaida|the player|this stranger|this person)', $re);
+            if ($text !== null && preg_match('/' . $re . '/', $text)) $ids[] = $id;
+        }
+        return $ids;
+    }
+
+    private function emergent(string $npc, string $label): ?string
+    {
+        return $this->felt[$npc][$label]['emergent'] ?? null;
+    }
+
+    /**
+     * emergent-emotions, the absence. Two game weeks without a word, then the player is back: the
+     * return finds those whose nature is to want company (a high affinity baseline) and whose warmth
+     * has fallen lonely; Ashe, who rests lower and keeps to herself, is steady instead. The
+     * absence is on them (the contact that ends a long one) without any held fade being needed.
+     */
+    public function testAnAbsenceFindsTheLonelyOnesByWhoTheyAre(): void
+    {
+        $this->seed(80);
+        $t = $this->hello();
+        $this->floors(12.0);
+        $t = $this->play($t + 600, 10.0);
+        $t = $this->round('Come here, let me hold you.', $t + 600, 'hug');
+        $t = $this->play(self::at(self::N0 + 14, 18.0), 20.0);
+        $this->round('I am back.', $t, 'return');
+        $lonely = [];
+        foreach (array_keys(self::BEDS) as $npc) $lonely[$npc] = in_array('loneliness', $this->spoken($npc, $this->emergent($npc, 'return')), true);
+        $this->probe('absence', $lonely);
+        foreach (['Muiri', self::LYNLY] as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertGreaterThanOrEqual(30.0, floatval(RelationshipDynamics::getTemperamentBaseline($d['inferred_temperament'] ?? null, 'affinity', $d)), "{$npc}: wants company by nature");
+            $this->assertTrue($lonely[$npc], "{$npc}: the return finds her lonely " . json_encode($lonely));
+        }
+        $this->assertFalse($lonely['Ashe'], 'Ashe rests lower and keeps to herself: ' . json_encode($lonely));
+        $this->assertContains('quiet_devotion', $this->spoken('Ashe', $this->emergent('Ashe', 'return')), 'Ashe is steady, not lonely');
+        // said once and by the return: the next word, the contact is no absence any more
+        $this->round('Stay a while.', $t + 600, 'stay');
+        foreach (['Muiri', self::LYNLY] as $npc) $this->assertNotContains('loneliness', $this->spoken($npc, $this->emergent($npc, 'stay')), "{$npc}: it was the return's");
+        $this->assertClean();
+    }
+
+    /**
+     * emergent-emotions, earned security. The same long good run (trust and comfort high, a
+     * committed bond) is peace for the one whose nature can hold it, mature and sure of herself
+     * (Ashe's maturity 75 and self-confidence 65), and not yet for the three whose maturity or
+     * confidence is not there; the three do not get the composite by the circumstance alone.
+     */
+    public function testTheLongGoodRunSettlesOnlyThoseWhoseNatureCanHoldIt(): void
+    {
+        $this->seed(80);
+        $t = $this->hello();
+        $this->circumstance(['trust' => 80.0, 'comfort' => 80.0]);
+        $this->round('Good morning.', $t + 600, 'good');
+        $this->assertContains('earned_security', $this->spoken('Ashe', $this->emergent('Ashe', 'good')), 'Ashe is at peace');
+        foreach ([self::AELA, 'Muiri', self::LYNLY] as $npc) {
+            $this->assertNotContains('earned_security', $this->spoken($npc, $this->emergent($npc, 'good')), "{$npc}: not yet");
+        }
+        $this->assertClean();
+    }
+
+    /**
+     * emergent-emotions, suffocation fixed to the draft: high affinity + LOW comfort + RISING
+     * resentment. At ease (comfort 85, the old rule's 80+) with resentment climbing is not it for
+     * any of them; the same climb against low comfort is, for all four.
+     */
+    public function testSuffocationIsLowComfortWithResentmentRisingNotAtEase(): void
+    {
+        $this->seed(80);
+        $t = $this->hello();
+        $beds = array_keys(self::BEDS);
+        $this->circumstance(['comfort' => 85.0, 'resentment' => 20.0]);
+        $t = $this->round('Good morning.', $t + 600, 'a');
+        $this->circumstance(['comfort' => 85.0, 'resentment' => 40.0]);
+        $t = $this->round('Well?', $t + 600, 'b');
+        foreach ($beds as $npc) {
+            $this->assertNotContains('suffocation', $this->spoken($npc, $this->emergent($npc, 'b')), "{$npc}: at ease is not suffocating, whatever the resentment does");
+        }
+        $this->circumstance(['comfort' => 30.0, 'resentment' => 46.0, 'respect' => 50.0]);
+        $t = $this->round('We need to talk.', $t + 600, 'c');
+        foreach ($beds as $npc) {
+            $this->assertContains('suffocation', $this->spoken($npc, $this->emergent($npc, 'c')), "{$npc}: low comfort, resentment rising: " . json_encode($this->emergent($npc, 'c')));
+        }
+        $this->assertClean();
+    }
+
+    /**
+     * emergent-emotions, at most two lines. A fall-out the same for all four (comfort and respect
+     * low, resentment climbing across two turns, still close): insecurity and suffocation. For Ashe,
+     * the mature one, contempt matches too (maturity 56+): three matched, two spoken, the shallowest
+     * stays quiet.
+     */
+    public function testAtMostTwoSpeakAndTheShallowestStaysQuiet(): void
+    {
+        $this->seed(80);
+        $t = $this->hello();
+        $this->circumstance(['trust' => 30.0, 'comfort' => 25.0, 'respect' => 20.0, 'resentment' => 30.0]);
+        $t = $this->round('We need to talk.', $t + 600, 'talk1');
+        $this->circumstance(['resentment' => 55.0, 'respect' => 5.0, 'comfort' => 25.0]);
+        $matched = [];
+        foreach (array_keys(self::BEDS) as $npc) $matched[$npc] = count(RelationshipDynamics::detectEmergentEmotions($this->dynamics($npc)));
+        $t = $this->round('Well?', $t + 600, 'talk2');
+        foreach (array_keys(self::BEDS) as $npc) {
+            $spoken = $this->spoken($npc, $this->emergent($npc, 'talk2'));
+            $this->assertCount(2, $spoken, "{$npc}: two speak " . json_encode([$spoken, $this->emergent($npc, 'talk2')]));
+            $this->assertContains('insecurity', $spoken, $npc);
+        }
+        $this->assertGreaterThanOrEqual(3, $matched['Ashe'], 'Ashe matches three: ' . json_encode($matched));
+        $this->assertNotContains('contempt', $this->spoken('Ashe', $this->emergent('Ashe', 'talk2')), 'the shallowest of her three stays quiet');
+        $this->assertClean();
+    }
+
+    /**
+     * emergent-emotions, contempt re-aligned to the draft (low respect + high resentment + HIGH
+     * maturity; no affinity input). The same cold turn, comfort untouched: the mature one (Ashe)
+     * has seen who the player is and is done; the three whose maturity is not there have no
+     * composite for it.
+     */
+    public function testContemptIsTheMatureOnesAndNoOneElses(): void
+    {
+        $this->seed(80);
+        $t = $this->hello();
+        $this->circumstance(['comfort' => 55.0, 'respect' => 5.0, 'resentment' => 55.0]);
+        $this->round('Well?', $t + 600, 'cold');
+        $this->assertSame(['contempt'], $this->spoken('Ashe', $this->emergent('Ashe', 'cold')));
+        foreach ([self::AELA, 'Muiri', self::LYNLY] as $npc) {
+            $this->assertNotContains('contempt', $this->spoken($npc, $this->emergent($npc, 'cold')), "{$npc}: maturity " . round(floatval($this->dynamics($npc)['dimensions']['maturity']['x']), 1));
+        }
+        $this->assertClean();
+    }
+
+    /**
+     * emergent-emotions, the romantic ones inside a romance only. The same state for Aela (her
+     * core bond is the romance) and Muiri (core says platonic, her passion under the line): both
+     * match longing by the dimensions; only Aela, in a romance, says it.
+     */
+    public function testTheRomanticOnesSpeakOnlyInsideARomance(): void
+    {
+        $this->seed(80);
+        $t = $this->hello();
+        $this->setCore('Muiri', 80, 'platonic');
+        foreach ([self::AELA, 'Muiri'] as $npc) {
+            $this->editDynamics($npc, function (array &$d): void {
+                RelationshipDynamics::setPassion($d, 10.0);
+                RelDynPassion::storeSpike($d, 25.0, 'touch');
+                $d['dimensions']['comfort']['x'] = 90.0;
+            });
+            $this->assertContains('longing', RelationshipDynamics::detectEmergentEmotions($this->dynamics($npc)), "{$npc}: longing by the dimensions");
+        }
+        $this->round('Good morning.', $t + 600, 'l');
+        $this->assertContains('longing', $this->spoken(self::AELA, $this->emergent(self::AELA, 'l')), 'in a romance');
+        $this->assertNull($this->emergent('Muiri', 'l'), 'between friends it is not said: ' . json_encode($this->emergent('Muiri', 'l')));
+        $this->assertClean();
+    }
+
     // ------------------------------------------------------------------ the love-language hints
 
     /** The languages each bed infers today (a story pin: these tests are about the hint, not the inference). */
