@@ -205,6 +205,11 @@ final class RelDynPromptGatingTestBedsPostgresTest extends TestCase
             name text, editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
             stage integer, briefing text, briefing2 text, localts bigint NOT NULL, gamets bigint NOT NULL, data text,
             status text, rowid bigserial PRIMARY KEY)");
+        // data/database_default.sql questlog: comm.php _uquest, one row per quest stage change
+        pg_query($admin, "CREATE TABLE questlog (ts text, sess varchar(1024), id_quest varchar(1024), name text,
+            editor_id text, giver_actor_id text, reward text, target_id text, is_unique boolean, mod text,
+            stage integer, briefing text, briefing2 text, localts bigint, gamets bigint, data text, status text,
+            rowid serial PRIMARY KEY)");
         pg_query($admin, "CREATE TABLE diarylog (ts text NOT NULL, sess character varying(1024), topic text, content text,
             tags text, people text, localts bigint NOT NULL, location text, gamets bigint NOT NULL, rowid bigserial NOT NULL)");
         pg_query($admin, "CREATE TABLE oghma (topic character varying NOT NULL, topic_desc character varying,
@@ -335,6 +340,21 @@ final class RelDynPromptGatingTestBedsPostgresTest extends TestCase
     {
         pg_query_params($this->db->link, 'INSERT INTO conf_opts (id, value) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value',
             [$stat, (string) $value]);
+    }
+
+    /** comm.php _quest: the journal row of an active quest (editor id in id_quest; one row per quest). */
+    private function journalQuest(string $editorId, int $stage = 10): void
+    {
+        pg_query_params($this->db->link, 'DELETE FROM quests WHERE id_quest = $1', [$editorId]);
+        pg_query_params($this->db->link, "INSERT INTO quests (ts, id_quest, name, stage, localts, gamets) VALUES ('0', $1, $2, $3, $4, $5)",
+            [$editorId, "Quest {$editorId}", $stage, $this->realTs, $this->gamets]);
+    }
+
+    /** comm.php _uquest: one stage change in the quest stage log. */
+    private function questStage(string $editorId, int $stage): void
+    {
+        pg_query_params($this->db->link, "INSERT INTO questlog (ts, id_quest, stage, briefing, data, localts, gamets) VALUES ('0', $1, $2, 'objective', 'objective', $3, $4)",
+            [$editorId, $stage, $this->realTs, $this->gamets]);
     }
 
     private function setCoreAffinity(string $npc, int $aff): void
@@ -646,6 +666,143 @@ final class RelDynPromptGatingTestBedsPostgresTest extends TestCase
         $aela = $this->turn(self::AELA, 'jorrvaskr', 'About earlier...');
         $this->assertTrue($aela['gate']['bio'], 'what she learned stays learned');
         $this->assertStringContainsString(self::BIO, $aela['nearby']);
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /**
+     * Audit bug: the Dawnguard's fame came from every DLC1 quest, so a Volkihar player was rumoured to
+     * hunt vampires with the Dawnguard. The Volkihar side is its own fame (heard everywhere), told in
+     * its own words. The four beds: Aela knows him well (no rumours), Ashe and Muiri know the name,
+     * Lynly and Hulda have not met him.
+     */
+    public function testAVolkiharPlayerIsRumouredToVampiricTiesNeverToHuntingThem(): void
+    {
+        foreach (['DLC1VQ03Vampire', 'DLC1VampireBaseIntro', 'DLC1VQ01'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStrangerTo($hulda, 'Hulda', 'Whiterun', 'renowned');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStringContainsString("Hulda has heard dark whispers that someone of this stranger's description has ties to vampiric powers.", $know);
+        $this->assertStringNotContainsString('Dawnguard', $know);
+        $this->assertStringContainsString('Companions', $know, 'the other thing he is known for, second');
+
+        // Heard everywhere: Raven Rock, off the hold map, where the Companions do not reach
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStrangerTo($geldis, 'Geldis Sadri', 'Raven Rock', 'renowned');
+        $this->assertStringContainsString('ties to vampiric powers', self::knowledgeBlock($geldis));
+        $this->assertStringNotContainsString('Companions', self::knowledgeBlock($geldis));
+
+        $aela = $this->turn(self::AELA, 'jorrvaskr', 'Good hunt today.');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $muiri = $this->turn('Muiri', 'markarth', 'How is the shop?');
+        $lynly = $this->turn(self::LYNLY, 'dragonbridge', 'Play something cheerful.');
+        $this->assertStringNotContainsString('vampiric', self::knowledgeBlock($aela), 'no rumours about someone she knows well');
+        $this->assertStringContainsString('Ashe has heard dark whispers that Kaida has ties to vampiric powers.', self::knowledgeBlock($ashe));
+        $this->assertStringContainsString('Muiri has heard dark whispers that Kaida has ties to vampiric powers.', self::knowledgeBlock($muiri));
+        $this->assertStrangerTo($lynly, self::LYNLY, 'Lynly', 'renowned');
+        $this->assertStringContainsString("Lynly Star-Sung has heard dark whispers that someone of this stranger's description has ties", self::knowledgeBlock($lynly));
+        foreach ([$aela, $ashe, $muiri, $lynly] as $t) $this->assertStringNotContainsString('Dawnguard', self::reldynText($t));
+        $this->assertCount(4, array_unique(array_map(fn($t) => self::knowledgeBlock($t), [$aela, $ashe, $muiri, $lynly])), 'four bonds, four readings');
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /** The Dawnguard side: heard where the Rift's word reaches (three holds), not past it (design: the Rift, 3). */
+    public function testADawnguardPlayerIsRumouredToHuntVampiresWhereTheRiftsWordReaches(): void
+    {
+        foreach (['DLC1VQ03Hunter', 'DLC1HunterBaseIntro'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description hunts vampires with the Dawnguard.", self::knowledgeBlock($hulda), 'Whiterun: two holds from the Rift');
+        $this->assertStringNotContainsString('vampiric', self::knowledgeBlock($hulda));
+        $birna = $this->turn('Birna', 'winterhold', 'Any news?');
+        $this->assertStringContainsString('hunts vampires with the Dawnguard', self::knowledgeBlock($birna), 'Winterhold: two holds from the Rift');
+        $lynly = $this->turn(self::LYNLY, 'dragonbridge', 'Play something cheerful.');
+        $this->assertStringNotContainsString('Dawnguard', self::knowledgeBlock($lynly), 'Dragon Bridge: four holds out');
+        $this->assertStringContainsString('Companions', self::knowledgeBlock($lynly), 'what does reach her');
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringNotContainsString('Dawnguard', self::knowledgeBlock($geldis), 'off the map');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida hunts vampires with the Dawnguard.', self::knowledgeBlock($ashe));
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /** The civil war by side; with only the war's tracked stat the side is not known and the old line stands. */
+    public function testTheCivilWarSideIsHeardNotTheSidelessLineOnceItIsKnown(): void
+    {
+        $this->trackedStat('Civil War Quests Completed', 6);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description has fought in the war between the Legion and the Stormcloaks.", self::knowledgeBlock($hulda));
+
+        foreach (['CW01B', 'CW02B'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'Any news?');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description fights for the Stormcloaks in the civil war.", $know);
+        $this->assertStringNotContainsString('Imperial', $know);
+        $this->assertStringNotContainsString('war between the Legion and the Stormcloaks', $know, 'the side-less line is superseded');
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringContainsString('fights for the Stormcloaks', self::knowledgeBlock($geldis), 'a war heard of everywhere');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida fights for the Stormcloaks in the civil war.', self::knowledgeBlock($ashe));
+
+        // He changes sides (a new character, a new journal): the Legion, in the Legion's words
+        pg_query($this->db->link, "DELETE FROM quests WHERE id_quest IN ('CW01B', 'CW02B')");
+        foreach (['CW00A', 'CW02A'] as $quest) $this->journalQuest($quest);
+        $hulda = $this->turn('Hulda', 'mare', 'And now?');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStringContainsString("fights for the Imperial Legion in the civil war.", $know);
+        $this->assertStringNotContainsString('Stormcloaks', $know);
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /** The Bards College: heard in Haafingar and the two holds around it, not across Skyrim. Lynly is a bard of Solitude's road. */
+    public function testTheBardsCollegeIsHeardNearSolitudeOnly(): void
+    {
+        $this->journalQuest('BardsCollegeLute');
+        $lynly = $this->turn(self::LYNLY, 'dragonbridge', 'Play something cheerful.');
+        $this->assertStrangerTo($lynly, self::LYNLY, 'Lynly, Haafingar', 'renowned');
+        $this->assertStringContainsString("Lynly Star-Sung has heard that someone of this stranger's description is a member of the Bards College in Solitude.", self::knowledgeBlock($lynly));
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringContainsString('Bards College', self::knowledgeBlock($hulda), 'Whiterun: two holds from Solitude');
+        $birna = $this->turn('Birna', 'winterhold', 'Any news?');
+        $this->assertStringNotContainsString('Bards College', self::knowledgeBlock($birna), 'Winterhold: three holds out');
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringNotContainsString('Bards College', self::knowledgeBlock($geldis), 'off the map');
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida is a member of the Bards College in Solitude.', self::knowledgeBlock($ashe));
+        $this->assertNoDbFailures();
+        $this->assertSame(0, $this->llmCalls, 'no LLM call');
+    }
+
+    /**
+     * Thane of Whiterun (Dragon Rising, stage 160 of MQ104, read from the quest stage log): said in
+     * Whiterun and nowhere else; a quest only started does not make him a thane. Said first: it is
+     * the most famous thing he is there. The strangers' rumour lines stay at two.
+     */
+    public function testTheThaneOfWhiterunIsHeardInWhiterunOnly(): void
+    {
+        foreach ([10, 40, 90] as $stage) $this->questStage('MQ104', $stage);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($hulda), 'the dragon is dead but the title is not given yet');
+
+        $this->questStage('MQ104', 160);
+        $hulda = $this->turn('Hulda', 'mare', 'A room for the night.');
+        $know = self::knowledgeBlock($hulda);
+        $this->assertStrangerTo($hulda, 'Hulda', 'Whiterun', 'renowned');
+        $this->assertStringContainsString("Hulda has heard that someone of this stranger's description holds the title of Thane of Whiterun, a person of some standing in the hold.", $know);
+        $this->assertLessThan(strpos($know, 'Companions'), strpos($know, 'Thane of Whiterun'), 'the title first');
+        $this->assertSame(2, substr_count($know, 'has heard'), 'at most two rumour lines');
+
+        $brina = $this->turn('Brina Merilis', 'dawnstar', 'Any news?');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($brina), 'Dawnstar: a hold out, and a title is only heard where it is held');
+        $this->assertStringContainsString('Companions', self::knowledgeBlock($brina));
+        $geldis = $this->turn('Geldis Sadri', 'ravenrock', 'A room, please.');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($geldis));
+        $ashe = $this->turn('Ashe', 'jorrvaskr', 'Ready to move out?');
+        $this->assertStringContainsString('Ashe has heard that Kaida holds the title of Thane of Whiterun', self::knowledgeBlock($ashe));
+        $aela = $this->turn(self::AELA, 'jorrvaskr', 'Good hunt today.');
+        $this->assertStringNotContainsString('Thane', self::knowledgeBlock($aela), 'she knows him well: no rumours');
         $this->assertNoDbFailures();
         $this->assertSame(0, $this->llmCalls, 'no LLM call');
     }
