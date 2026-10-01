@@ -265,13 +265,19 @@ if ($evalOwnsExchange) {
 
         // Store passion delta for blush self-awareness in next context.php cycle
         $dynamics['_last_passion_delta'] = round($passionGain, 2);
+    }
+}
 
-        // How it landed, kept for her next word: core runs the context hook before this one, so
-        // the global set above is never there when the context composes (RelDynFelt::noteGesture)
-        $reldynGesture = RelDynFelt::legacyGestureLL($interactionLL, $GLOBALS['gameRequest']);
-        if ($reldynGesture !== null) {
-            RelDynFelt::noteGesture($dynamics, $reldynGesture, RelationshipDynamics::currentGamets());
-        }
+// How the gesture landed, kept for her next word (the love-language hint): core runs the context hook
+// before this one, so the global set above is never there when the context composes
+// (RelDynFelt::noteGesture). The eval path notes it for any welcome gesture (noteEvalGesture) whether or not
+// it raised passion, so the local path does too: a touch, a gift or a shared fight lands by who she is even when
+// her passion is shut (a bond the attraction keeps platonic, her passion at the tier's ceiling, passion
+// switched off); only the blush needs the moment.
+if (!$evalOwnsExchange && $interactionLL !== null) {
+    $reldynGesture = RelDynFelt::legacyGestureLL($interactionLL, $GLOBALS['gameRequest']);
+    if ($reldynGesture !== null && RelDynFelt::legacyGestureWelcome($dynamics, $reldynGesture)) {
+        RelDynFelt::noteGesture($dynamics, $reldynGesture, RelationshipDynamics::currentGamets());
     }
 }
 

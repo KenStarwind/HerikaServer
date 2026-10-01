@@ -785,6 +785,53 @@ final class RelDynFeltLaneTestBedsPostgresTest extends TestCase
         $this->assertClean(false);
     }
 
+    /**
+     * Review fix (ll-discovery-hints): the local path notes the gesture when the classifier read one and it was
+     * welcome, as the eval path does, not only when it also raised passion. A touch from the player to an NPC
+     * whose passion is shut (passion switched off for the bond, or already at its ceiling) still lands by who
+     * she is: the next word finds her reacting, once, and a miss reads as a miss. No moment, so no blush.
+     */
+    public static function shutPassionModes(): array
+    {
+        return ['passion switched off' => ['off', 0.0], 'passion at its ceiling' => ['ceiling', 100.0]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('shutPassionModes')]
+    public function testALocalTouchIsReadEvenWhenItRaisesNoPassion(string $mode, float $level): void
+    {
+        $label = $mode;
+        $this->seed(80);
+        $t = $this->hello();
+        $this->pinLanguages();
+        $this->floors($level);
+        if ($mode === 'off') {
+            pg_query_params($this->db->link, 'UPDATE conf_opts SET value = $2 WHERE id = $1', [RelationshipDynamics::CONFIG_ROW_ID,
+                json_encode(array_merge(RelationshipDynamics::defaultConfig(), ['log_enabled' => true, 'internal_weather_enabled' => false, 'passion_enabled' => false]))]);
+            RelationshipDynamics::clearConfigCache();
+        }
+        unset($GLOBALS['RELLLM_CONNECTOR']);
+        $beds = array_keys(self::BEDS);
+        foreach ($beds as $i => $npc) {
+            $this->request($npc, ['ext_nsfw_physics', (string) $this->realTs, (string) ($t + 600 * $i), 'Kaida puts an arm around ' . $npc], self::PLAYER, 'touch');
+            $d = $this->dynamics($npc);
+            $this->assertEqualsWithDelta(0.0, floatval($d['_last_passion_delta'] ?? 0), 0.001, "{$label} {$npc}: the touch raised no passion");
+            $this->assertSame('physical_touch', $d['_last_interaction_ll'] ?? null, "{$label} {$npc}: the touch is how it landed");
+        }
+        $t += 600 * count($beds);
+        $reaction = [self::AELA => 'physical_touch', 'Ashe' => 'miss', 'Muiri' => 'secondary', self::LYNLY => 'physical_touch'];
+        foreach ($beds as $i => $npc) {
+            $this->turn($npc, 'How are you feeling?', $t + 600 * $i, 'after');
+            $this->assertSame($this->hintText($reaction[$npc], $npc), $this->felt[$npc]['after']['ll_reaction'] ?? null, "{$label} {$npc}");
+            $this->assertArrayNotHasKey('blush', $this->felt[$npc]['after'], "{$label} {$npc}: no moment, no blush");
+        }
+        $t += 600 * count($beds);
+        foreach ($beds as $i => $npc) {
+            $this->turn($npc, 'Shall we go on?', $t + 600 * $i, 'third');
+            $this->assertArrayNotHasKey('ll_reaction', $this->felt[$npc]['third'], "{$label} {$npc}: said once");
+        }
+        $this->assertClean(false);
+    }
+
     // ------------------------------------------------------------------ the reunion
 
     /** The prose getReunionText gives this NPC from her stored state, the player named by $playerToken. */

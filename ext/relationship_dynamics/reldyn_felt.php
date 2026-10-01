@@ -1521,6 +1521,18 @@ final class RelDynFelt
     }
 
     /**
+     * Was the gesture the local classifier read welcome (the eval path's test is no grievance and no net loss
+     * across the signals; the classifier has no signals)? Not while the Ick lasts (every gain is a loss then),
+     * and only where a gesture of that language would be worth anything to her at all (the raw passion gain
+     * before the attraction gate: the gate decides what passion it becomes, not whether it was welcome).
+     */
+    public static function legacyGestureWelcome(array $dynamics, string $ll): bool
+    {
+        if (!empty($dynamics['_ick_tracker']['ick_active']) && !empty(RelationshipDynamics::getConfig()['ick_system_enabled'] ?? true)) return false;
+        return RelationshipDynamics::calculatePassionGain($dynamics, $ll) > 0.0;
+    }
+
+    /**
      * An eval item's gesture: its love-language tags (affinity_tag_love_language) are how the
      * exchange landed, the one she likes best (primary, then secondary, else the first listed).
      * Only a gesture that was welcome counts (no grievance, no net loss across affinity / trust /
