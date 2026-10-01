@@ -3,7 +3,7 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## Unreleased — love languages that work, and bio reads that are not inflated
+## reldyn-v0.20 — love languages that work, and bio reads that are not inflated
 Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
 which is retired, and the race map never matched CHIM's race names ("NordRace", "NordRaceVampire"). The primary now
 follows her attachment first (anxious and toxic corner weights summing to 0.5 or more seek reassurance: words of
