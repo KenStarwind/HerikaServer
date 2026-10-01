@@ -4138,40 +4138,7 @@ function clearNpcCache() {
 }
 
 // ── AI1: Cascade triggers on significant delta ──
-try {
-    clearBondCache();
-    clearNpcCache();
-    $ai1Saved = setDIConfig(['cascade_network_enabled' => true, 'cascade_threshold' => 15, 'cascade_decay' => 0.3]);
-    $GLOBALS['PLAYER_NAME'] = 'Kaida';
-
-    // Set Ashe's bonds: one bond to TestNPC_Cascade with aff=70
-    setBondCache('Ashe', [
-        'TestNPC_Cascade' => ['aff' => 70, 'type' => 'friend', 'trust' => 50],
-    ]);
-
-    // Inject dynamics for TestNPC_Cascade so getDynamics returns something
-    // Must set affinity.x > 0 so social sensitivity (open_heart = sqrt(bond)/10) doesn't zero out delta
-    $ai1TargetDyn = RelationshipDynamics::defaultDynamics();
-    $ai1TargetDyn['inferred_temperament'] = 'Bold'; // Bold = uniform_mid = 0.7 sensitivity
-    $ai1TargetDyn['dimensions']['affinity']['x'] = 50;
-    setNpcCache('TestNPC_Cascade', $ai1TargetDyn);
-    // TestNPC_Cascade has no bonds back (empty)
-    setBondCache('TestNPC_Cascade', []);
-
-    $ai1Results = RelationshipDynamics::propagateAffinityChange('Ashe', -20.0, 'Kaida');
-    check('AI1a: Cascade returns non-empty results', count($ai1Results) > 0, true);
-    if (!empty($ai1Results)) {
-        check('AI1b: Target is TestNPC_Cascade', $ai1Results[0]['target'], 'TestNPC_Cascade');
-        check('AI1c: cascade_delta is negative', $ai1Results[0]['cascade_delta'] < 0, true);
-        echo "      Cascade result: target=" . $ai1Results[0]['target']
-            . " delta=" . $ai1Results[0]['cascade_delta']
-            . " bond=" . $ai1Results[0]['bond_strength'] . "\n";
-    }
-    restoreDIConfig($ai1Saved);
-} catch (Throwable $e) {
-    skip('AI1', 'Exception: ' . $e->getMessage());
-    try { restoreDIConfig($ai1Saved ?? null); } catch (Throwable $e2) {}
-}
+skip('AI1', 'the cascade is lazy now (RelDynCascade: ripples queue on the NPCs holding a bond to the source, read from the relationship maps of core, and each applies at its own next prerequest); covered by RelDynCascadeNetworkTestBedsPostgresTest');
 
 // ── AI2: No cascade below threshold ──
 try {
@@ -4205,76 +4172,10 @@ try {
 }
 
 // ── AI4: Weak bonds don't propagate ──
-try {
-    clearBondCache();
-    clearNpcCache();
-    $ai4Saved = setDIConfig(['cascade_network_enabled' => true, 'cascade_threshold' => 15, 'cascade_decay' => 0.3]);
-
-    // Bond with aff=-60: normalized = (-60+100)/200 = 0.2 → not > 0.2, skip at < 0.2
-    // Use aff=-65 to be clearly below: (-65+100)/200 = 0.175
-    setBondCache('Ashe', [
-        'TestNPC_Weak' => ['aff' => -65, 'type' => 'hostile', 'trust' => 0],
-    ]);
-    $ai4TargetDyn = RelationshipDynamics::defaultDynamics();
-    setNpcCache('TestNPC_Weak', $ai4TargetDyn);
-    setBondCache('TestNPC_Weak', []);
-
-    $ai4Results = RelationshipDynamics::propagateAffinityChange('Ashe', -25.0, 'Kaida');
-    // Weak bond should be filtered out
-    $ai4Found = false;
-    foreach ($ai4Results as $r) {
-        if ($r['target'] === 'TestNPC_Weak') $ai4Found = true;
-    }
-    check('AI4: Weak bond (aff=-65, norm=0.175) not in cascade results', $ai4Found, false);
-    echo "      Results count: " . count($ai4Results) . " (weak bond filtered)\n";
-    restoreDIConfig($ai4Saved);
-} catch (Throwable $e) {
-    skip('AI4', 'Exception: ' . $e->getMessage());
-    try { restoreDIConfig($ai4Saved ?? null); } catch (Throwable $e2) {}
-}
+skip('AI4', 'the cascade is lazy now (RelDynCascade: ripples queue on the NPCs holding a bond to the source, read from the relationship maps of core, and each applies at its own next prerequest); covered by RelDynCascadeNetworkTestBedsPostgresTest');
 
 // ── AI5: Enemy inverse cascade ──
-try {
-    clearBondCache();
-    clearNpcCache();
-    $ai5Saved = setDIConfig(['cascade_network_enabled' => true, 'cascade_threshold' => 15, 'cascade_decay' => 0.3]);
-
-    // Ashe has a bond to TestFriend (aff=80, strong ally)
-    setBondCache('Ashe', [
-        'TestFriend_Inv' => ['aff' => 80, 'type' => 'friend', 'trust' => 60],
-    ]);
-
-    // TestFriend has a bond BACK to Ashe with aff=-60 (enemy of source)
-    // Normalized: (-60+100)/200 = 0.2 → < 0.3, triggers inverse
-    setBondCache('TestFriend_Inv', [
-        'Ashe' => ['aff' => -60, 'type' => 'hostile', 'trust' => 0],
-    ]);
-
-    $ai5TargetDyn = RelationshipDynamics::defaultDynamics();
-    $ai5TargetDyn['inferred_temperament'] = 'Bold'; // Bold = uniform_mid = 0.7 sensitivity
-    $ai5TargetDyn['dimensions']['affinity']['x'] = 50;
-    setNpcCache('TestFriend_Inv', $ai5TargetDyn);
-
-    // Positive delta for Ashe (+20) → TestFriend (who hates Ashe) should get inverse (negative)
-    $ai5Results = RelationshipDynamics::propagateAffinityChange('Ashe', 20.0, 'Kaida');
-    $ai5TargetResult = null;
-    foreach ($ai5Results as $r) {
-        if ($r['target'] === 'TestFriend_Inv') $ai5TargetResult = $r;
-    }
-    if ($ai5TargetResult) {
-        check('AI5: Enemy inverse — cascade_delta is negative for hater', $ai5TargetResult['cascade_delta'] < 0, true);
-        echo "      Inverse cascade: delta=" . $ai5TargetResult['cascade_delta']
-            . " bond=" . $ai5TargetResult['bond_strength'] . "\n";
-    } else {
-        // Might have been filtered by abs < 1.0 check; report
-        check('AI5: Enemy target found in cascade results', $ai5TargetResult !== null, true);
-        echo "      Results: " . json_encode($ai5Results) . "\n";
-    }
-    restoreDIConfig($ai5Saved);
-} catch (Throwable $e) {
-    skip('AI5', 'Exception: ' . $e->getMessage());
-    try { restoreDIConfig($ai5Saved ?? null); } catch (Throwable $e2) {}
-}
+skip('AI5', 'the cascade is lazy now (RelDynCascade: ripples queue on the NPCs holding a bond to the source, read from the relationship maps of core, and each applies at its own next prerequest); covered by RelDynCascadeNetworkTestBedsPostgresTest');
 
 // ── AI6: No cascade when disabled ──
 try {

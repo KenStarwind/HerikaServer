@@ -856,6 +856,9 @@ class RelationshipDynamics
         if (!$db) return false;
         $config = array_intersect_key($config, self::defaultConfig());
         $config['config_schema'] = self::CONFIG_SCHEMA;   // this row's toggles are real choices
+        // The NPC-NPC eval's facts source follows the npc_npc_facts section (reldyn_npc_facts.php): when
+        // the save changes it, the registration in conf_opts is brought in step after the write
+        $factsBefore = self::loadStoredConfig()['npc_npc_facts'] ?? null;
         try {
             $json = json_encode($config, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             $row = $db->fetchOne(
@@ -872,6 +875,13 @@ class RelationshipDynamics
         if (!isset($row['id'])) {
             error_log("[RelDyn] ERROR saveConfig: conf_opts " . self::CONFIG_ROW_ID . " was not written");
             return false;
+        }
+        if (($config['npc_npc_facts'] ?? null) != $factsBefore) {
+            try {
+                RelDynNpcFacts::sync($db);
+            } catch (Throwable $e) {
+                self::logError('saveConfig facts source', $e);
+            }
         }
         return true;
     }
@@ -954,6 +964,10 @@ class RelationshipDynamics
             'cascade_network_enabled' => true,
             'cascade_threshold' => 15,               // core affinity points (|delta| that ripples)
             'cascade_decay' => 0.3,                  // fraction
+            // Cascade: who hears, the defining moments, her felt line (reldyn_cascade.php)
+            'cascade' => RelDynCascade::configDefaults(),
+            // Tiered personality facts for core's NPC-to-NPC eval (reldyn_npc_facts.php)
+            'npc_npc_facts' => RelDynNpcFacts::configDefaults(),
             'duty_override_enabled' => true,
             // Quests (reldyn_quests.php): the duty override's dampening and hostility tests, the
             // questlog consumer of the quest event hook, life-changing stages
@@ -8530,6 +8544,13 @@ class RelationshipDynamics
             // Betrayal by a bonded partner (Divine Intervention) is read per applied item
             // (RelDynProtocols::onEvalItem): the contract's trust signal never reaches -50.
         }
+        // The ripples her items made reach the NPCs who care about her (cascade-network): queued on
+        // them now, applied at each one's own next prerequest (lazy, MDD 10.1)
+        try {
+            RelDynCascade::flush($npcName, $dynamics);
+        } catch (\Throwable $e) {
+            self::logError("cascade ripples of {$npcName}", $e);
+        }
         // Romance promotion (rulings §9): the moments these items carried, checked on core's
         // fresh type and affinity (after the commit above); saves what it consumed.
         $reldynTypeBefore = (string) ($dynamics['_core_rel_type'] ?? '');
@@ -9402,6 +9423,9 @@ class RelationshipDynamics
                 self::storeDimensionalMemory($dynamics, $signal, $r['actual'], $anchor, $bondName, $itemGamets);
             }
         }
+        // A big enough change of her affinity ripples to the NPCs who care about her (cascade-network,
+        // MDD 10: lazy; noted on her state with the item, queued on the targets by applyEvalInbox)
+        RelDynCascade::noteItem((string) $npcName, $n, $totals, $dynamics, $itemGamets, $fingerprint, $anchor);
         // The drunk self's gains go to the night's ledger for the sober diary (RelDynSubstances)
         RelDynSubstances::afterEvalItem((string) $npcName, $n, $totals, $dynamics, $itemGamets);
         // The player's first exchange after her fall, answered with care or not (MDD 3.3 rescue
@@ -15726,74 +15750,27 @@ class RelationshipDynamics
     // ========== CASCADING AFFINITY NETWORK (PR 12) ==========
 
     /**
-     * Propagate a significant affinity change to bonded NPCs.
-     * One hop only — no recursive cascading.
-     * Uses social sensitivity curves to modulate impact per receiving NPC.
+     * Ripple a significant change of $sourceNpc's affinity toward the player to the NPCs who care
+     * about her. LAZY (MDD section 10.1): nothing is applied here; the ripple is queued on each
+     * target (one hop only, the strongest CASCADE_MAX_TARGETS bonds, each through the bond filter
+     * and the enemy inversion, RelDynCascade::targetsFor) and the target applies it at ITS next
+     * prerequest, through its own social sensitivity curve, into core's Player.aff
+     * (RelDynCascade::onPrerequest). The eval consumer's items reach the same queue through
+     * RelDynCascade::noteItem / flush; this entry point is for a caller that has only a delta.
      *
      * @param string $sourceNpc   NPC whose affinity changed
-     * @param float  $affinityDelta The delta that triggered the cascade
-     * @param string $playerName  Player name (excluded from cascade targets)
-     * @return array  Results per affected NPC
+     * @param float  $affinityDelta The delta that triggered the cascade (core affinity points)
+     * @param string $playerName  Player name (never a target)
+     * @return array  One row per target the ripple was queued for: target, cascade_delta (core
+     *                points, before the target's own curve), bond_strength (0..1)
      */
     public static function propagateAffinityChange(string $sourceNpc, float $affinityDelta, string $playerName): array
     {
-        $config = self::getConfig();
-        if (empty($config['cascade_network_enabled'])) return [];
-
-        $threshold = floatval($config['cascade_threshold'] ?? self::CASCADE_THRESHOLD);
-        if (abs($affinityDelta) < $threshold) return [];
-
-        $decay = floatval($config['cascade_decay'] ?? self::CASCADE_DECAY);
-        $sourceBonds = self::getAllBondsForNpc($sourceNpc);
-        $results = [];
-        $count = 0;
-
-        foreach ($sourceBonds as $targetName => $bond) {
-            if ($count >= self::CASCADE_MAX_TARGETS) break;
-            if (strcasecmp($targetName, $playerName) === 0 || self::isPlayerRelationshipKey($targetName)) continue;
-
-            $bondAff = ($bond['aff'] + 100) / 200.0; // Normalize to 0-1
-            if ($bondAff < 0.2) continue; // Weak bonds don't propagate
-
-            // Load target NPC dynamics
-            $targetDynamics = self::getDynamics($targetName);
-            if (empty($targetDynamics) || !is_array($targetDynamics)) continue;
-
-            $targetTemperament = $targetDynamics['inferred_temperament'] ?? $targetDynamics['temperament'] ?? 'Stoic';
-
-            // Calculate base cascade delta
-            $cascadeDelta = $affinityDelta * $bondAff * $decay;
-
-            // Check if target dislikes source — inverse cascade (enemy of my enemy)
-            $targetBonds = self::getAllBondsForNpc($targetName);
-            $targetToSource = $targetBonds[$sourceNpc] ?? null;
-            if ($targetToSource) {
-                $targetSourceAff = ($targetToSource['aff'] + 100) / 200.0;
-                if ($targetSourceAff < 0.3) {
-                    $cascadeDelta *= -0.5; // Weaker inverse
-                }
-            }
-
-            // Apply social sensitivity curve (at the target's bond on the mirror scale)
-            $cascadeDelta = self::cascadeSocialSensitivity($targetDynamics, $cascadeDelta, $targetTemperament);
-
-            if (abs($cascadeDelta) < 1.0) continue; // Too small to matter
-
-            // Apply to target's affinity toward player
-            self::applyDelta('affinity', $targetDynamics, $cascadeDelta, $targetTemperament);
-            self::saveDynamics($targetName, $targetDynamics);
-
-            $results[] = [
-                'target' => $targetName,
-                'cascade_delta' => round($cascadeDelta, 2),
-                'bond_strength' => round($bondAff, 2),
-            ];
-
-            $count++;
-            self::log("[CASCADE] {$sourceNpc} -> {$targetName}: delta=" . round($cascadeDelta, 2) . " (bond=" . round($bondAff, 2) . ")");
-        }
-
-        return $results;
+        if (!RelDynCascade::enabled()) return [];
+        if (abs($affinityDelta) < floatval(self::configValue('cascade_threshold'))) return [];
+        $entry = ['fp' => sha1($sourceNpc . '|' . $affinityDelta . '|' . microtime(true)), 'delta' => $affinityDelta,
+                  'gamets' => self::currentGamets(), 'anchor' => null, 'defining' => false];
+        return RelDynCascade::queue($sourceNpc, $entry) ?? [];
     }
 
     // ========== END CASCADING AFFINITY NETWORK (PR 12) ==========
@@ -19379,3 +19356,6 @@ require_once __DIR__ . '/reldyn_gifts.php';
 // Memory translation layer + semantic anchors (MDD §12, Addendum 12) and the player mirror
 require_once __DIR__ . '/reldyn_memory.php';
 require_once __DIR__ . '/reldyn_mirror.php';
+// The cascading affinity network (cascade-network) and the NPC-NPC eval's tiered facts (npc-npc-tiered-eval)
+require_once __DIR__ . '/reldyn_cascade.php';
+require_once __DIR__ . '/reldyn_npc_facts.php';

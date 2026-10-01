@@ -83,7 +83,8 @@ final class RelDynSettings
         'thing_appraisal' => 'world', 'physical_states' => 'world', 'item_modifiers' => 'world', 'creatures' => 'world',
         'creature_moodifications_enabled' => 'world', 'combat' => 'world', 'combat_enabled' => 'world', 'substances' => 'world',
         'gift_delta' => 'world', 'quests' => 'world', 'duty_override_enabled' => 'world', 'cascade_network_enabled' => 'world',
-        'cascade_threshold' => 'world', 'cascade_decay' => 'world',
+        'cascade_threshold' => 'world', 'cascade_decay' => 'world', 'cascade' => 'world',
+        'npc_npc_facts' => 'steering',
         'fulfillment' => 'inner', 'concern' => 'inner', 'impulse' => 'inner', 'intrinsic_goals' => 'inner',
         'director_goals' => 'inner', 'director_goals_enabled' => 'inner', 'diary_reflection' => 'inner',
         'diary_reflection_mode' => 'inner', 'autonomous_diary_enabled' => 'inner', 'diary_interaction_gap' => 'inner',
@@ -135,7 +136,8 @@ final class RelDynSettings
         'attachment_style_enabled' => ['Attachment styles', 'Attachment axes modify decay, resentment and absence.'],
         'attraction_matrix_enabled' => ['Attraction Matrix', 'Her attraction lens gates romance and scales passion.'],
         'attraction_eval_interval' => ['Attraction re-evaluation (interactions)', 'How often the attraction matrix is recalculated.'],
-        'cascade_network_enabled' => ['Cascading affinity', 'Actions ripple to NPCs bonded to her.'],
+        'cascade_network_enabled' => ['Cascading affinity', 'A big change in how she feels about the player ripples to the NPCs who care about her; each hears of it the next time they deal with the player (lazy, never all at once).'],
+        'npc_npc_facts.enabled' => ['NPC-to-NPC eval facts (switch)', 'Tells the NPC-to-NPC evaluation of core who each NPC is, in proportion to how well the player knows them: nothing for strangers, temperament and traits for acquaintances, personality and speech style for close bonds. Registers (or removes) the RelDyn entry in the facts-source list the evaluation reads; takes effect when the relationship worker next starts.'],
         'duty_override_enabled' => ['Duty override', 'Quest dialogue dampens negative deltas during obligations.'],
         'parasite_detection_enabled' => ['Parasite detection', 'She notices a gift-only relationship.'],
         'significance_scaling_enabled' => ['Significance scaling', 'Deltas scale with how much an exchange mattered.'],
@@ -246,6 +248,8 @@ final class RelDynSettings
             'mood_axes'          => [RelDynMoodAxes::class, 'config'],
             'post_intimacy'      => [RelDynPostIntimacy::class, 'config'],
             'gift_delta'         => [RelDynGifts::class, 'config'],
+            'cascade'            => [RelDynCascade::class, 'config'],
+            'npc_npc_facts'      => [RelDynNpcFacts::class, 'config'],
         ];
     }
 
@@ -279,6 +283,7 @@ final class RelDynSettings
             'protocols.*',
             'substances.drunk', 'substances.sober', 'substances.addiction',
             'facet_classifier.embedding', 'facet_classifier.build',
+            'cascade.defining', 'cascade.felt', 'cascade.felt_text',
         ]);
     }
 

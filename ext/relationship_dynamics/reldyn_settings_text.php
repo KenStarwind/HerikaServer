@@ -104,6 +104,8 @@ final class RelDynSettingsText
         'mood_axes' => 'The M and F coordinates, and arousal and valence as live state: how they are derived, settle and are fed.',
         'post_intimacy' => 'Aftermath states: afterglow, regret, the sober correction, and their words.',
         'gift_delta' => 'How a gift moves affinity: the base points, love language, and the stolen and re-gifted cases.',
+        'cascade' => 'The cascading affinity network: who hears of what the player did to an NPC (how strong her bond to that NPC must be, enemies inverted), what counts as a defining moment, and the felt line she says when she hears.',
+        'npc_npc_facts' => 'Which personality facts the NPC-to-NPC evaluation of core is told, by how well the player knows each NPC: where the tiers start, how many trait words, how much of her speech style.',
     ];
 
     /** Explicit hints (dotted path => sentence). Every switch has one; the plain top-level settings have one. */
@@ -137,6 +139,7 @@ final class RelDynSettingsText
         'governors.enabled' => 'Passion stays inside a floor and a ceiling set by the bond\'s tier. Off: no tier limits.',
         'exclusivity.enabled' => 'A natural pull toward the player that grows as the bond deepens, with its own reactions around suitors.',
         'romance_promotion.enabled' => 'A romance can climb its ladder (moments, confession, momentum) and hand over to Sharmat.',
+        'cascade.felt.enabled' => 'When she hears what the player did to someone she cares about, she says so once at her next turn with the player (a felt line, no numbers). Off: the affinity still ripples, silently.',
         'save_load.enabled' => 'Loading an earlier save puts RelDyn\'s state back in step with it (relationship state, gold ledger).',
         'substances.enabled' => 'Her own drinking and addiction: drunk levels, tolerance, craving, withdrawal.',
         'mood_axes.derived_coords.enabled' => 'The M and F coordinates are derived from respect, self-confidence, trust and comfort.',

@@ -698,6 +698,14 @@ final class RelDynFelt
                 ['must' => true, 'intense' => $l['key'] === 'confront']);
         }
 
+        // --- What she has heard of the player's dealings with those she cares about (cascade-network,
+        // MDD 10): said to the player's face, once ---
+        $heard = RelDynCascade::takeFeltLines($dynamics, $npc, $player, !empty($env['player_addressed']));
+        if ($heard['changed']) $changed = true;
+        foreach ($heard['lines'] as $l) {
+            $lines[] = self::line('cascade_' . $l['key'], self::SCOPE_BOND, self::LANE_TURN, floatval($l['salience']), (string) $l['text']);
+        }
+
         // --- Intimacy need (rulings §10) ---
         $intimacy = RelDynIntimacy::feltText($npc, $player, $dynamics, $now);
         if ($intimacy) $lines[] = self::line('intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['intimacy']), $intimacy);
