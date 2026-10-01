@@ -80,7 +80,7 @@ final class RelDynSettingsText
         'jealousy_bystander_commitment' => 'How much more jealous bystanders get, by their bond type, when the player is intimate with someone else.',
         'power_gap_core_types' => 'How little she can leave, by bond type (servant, fanatical, indebted, fearful).',
         'place_facets' => 'How places (by tag, name, inside or outside, time of day, weather) map onto the interests.',
-        'physical_states' => 'Thresholds for physical states such as being injured.',
+        'physical_states' => 'When the player reads as injured, which states (hunger, rest, dirt, a fire) have no game signal and stay inert, and the trust an NPC earns by healing the player.',
         'environment_facet_effects' => 'What certain kinds of place (danger, dark) do to anyone\'s dimensions.',
         'environment_time_effects' => 'What the hour (dawn, dusk...) does to anyone\'s dimensions.',
         'facet_classifier' => 'The tables that sort places, things, creatures, activities and spells into interests: keywords, priors and the text-matching settings.',

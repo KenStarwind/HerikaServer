@@ -36,7 +36,7 @@ final class RelDynTraitEquivalenceTest extends TestCase
         // lifts the reunion and trust GAINS, positive raws only), A18 is owned by possessiveness,
         // A20 codependence reads possessiveness (the preset labels; a missing one keeps its default)
         'attachment_dedup' => ['Anxious/reunion_mult', 'Anxious/jealousy_mult', 'Anxious/plasticity/trust/Y_up',
-            'Anxious/apply_delta/trust/*', '*/apply_delta/trust/[0-9]*', 'Anxious/physical/injured/injured/trust', '*/e2e/reunion',
+            'Anxious/apply_delta/trust/*', '*/apply_delta/trust/[0-9]*', '*/e2e/reunion',
             'Anxious/e2e/jealousy/*', 'Anxious/absence_decay', '[A-Z]*/neglect/*',
             'Anxious/column/reunion_mult', 'Anxious/column/jealousy_mult', 'Anxious/column/y_trust_up', 'Anxious/column/absence_decay'],
         // Bleedout redesign (design §2.5): the fall is fight C Pd (1 - D) - fear L (1 - C) at every
@@ -46,6 +46,11 @@ final class RelDynTraitEquivalenceTest extends TestCase
         // maturity <= 40 the Charmer's passion multiplier is charmer_friendzone_passion_mult,
         // whatever the temperament (RelDynBatchPReviewFixesTest)
         'charmer_friendzone' => ['*/charisma/charmer/*/passion'],
+        // Batch T traits, physical-state-bridges (review queue 2026-09-30, audit 'remaining'): the 'injured'
+        // trust +3 no longer goes to a healer TEMPERAMENT but to the NPC who heals the player
+        // (RelationshipDynamics::consumeHealEvents), and the 'dirty' respect -2 only to the proud (Pd >= 0.5);
+        // asserted by RelDynPhysicalStatesTestBedsPostgresTest and RelDynPhysicalStatesTraitsTest
+        'physical_healer_and_pride' => ['*/physical/injured/injured*', '*/physical/dirty/dirty*'],
     ];
 
     /** Paths that differ from the base fixture, filled by the consumer / column comparisons. */

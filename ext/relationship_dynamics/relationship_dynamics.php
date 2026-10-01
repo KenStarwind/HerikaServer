@@ -1284,7 +1284,24 @@ class RelationshipDynamics
             'environment_modifiers_enabled' => true,
             // Physical-state bridges (detectPhysicalStates): the player's live HP ratio under which
             // the scene reads as 'injured' (April's vitals rule).
-            'physical_states' => ['injured_health_ratio' => 0.3],
+            // inert: the states CHIM 3.4.1 core has no signal for (no hunger, rest, dirt, blood or fire
+            // report in lib/processor/gamedata.php): their rows stay in PHYSICAL_STATE_MODIFIERS, and
+            // detectPhysicalStates never reports one of these ("unknown, never assumed", as with creature
+            // thirst). Hunger has no row at all (the design's maturity -3 / resentment x1.3 is unbuilt).
+            // Take a state out of this list only when a plugin-side sensor for it exists (review queue
+            // 2026-09-30: ask Ken before building one on the AIAgent fork).
+            // healer_*: the trust an NPC earns by healing the player ('injured' trust +3, April): a
+            // heal spell she casts on the player (eventlog npcspellcast "<NPC> casts <spell> on <player>",
+            // spell name containing one of heal_spells) inside heal_max_age_game_hours, at most once per
+            // heal_cooldown_game_hours. Through applyDelta (trust): a gain that stays, scaled by who she is.
+            'physical_states' => [
+                'injured_health_ratio' => 0.3,
+                'inert' => ['hungry', 'warm_fire', 'well_rested', 'exhausted', 'dirty', 'bloody'],
+                'healer_trust' => 3.0,
+                'heal_spells' => ['heal', 'close wounds', 'restore health'],
+                'heal_max_age_game_hours' => 12.0,
+                'heal_cooldown_game_hours' => 1.0,
+            ],
             'environment_facet_effects' => [
                 'danger' => ['arousal' => 15],
                 'dark'   => ['arousal' => 5, 'comfort' => -3],
@@ -12842,31 +12859,38 @@ class RelationshipDynamics
     // condition is active and are reversed when it clears. No MinAI reads.
     // ====================================================
 
-    /** A23: temperaments whose trust answers 'injured' (healer gate) / respect answers 'bloody' (warrior gate). */
+    /**
+     * A23: temperaments whose trust answered 'injured' (the healer gate, the column healer_gate). The
+     * injured row no longer carries a trust part: the trust goes to the NPC who heals the player
+     * (consumeHealEvents), whatever her temperament. Kept for the column and its tests.
+     */
     const PHYSICAL_HEALER_TEMPERAMENTS  = ['Nurturing', 'Gentle', 'Anxious'];
     const PHYSICAL_WARRIOR_TEMPERAMENTS = ['Bold', 'Defiant', 'Proud'];
 
     /**
      * Mapping of physical state names to dimension deltas.
      *
-     * Each key is a detected state; each value is an array of
-     * dimensionId => raw delta to apply through applyDelta().
+     * Each key is a state; each value is an array of dimensionId => raw delta to apply through
+     * applyDelta(). The states core can see (config physical_states.inert lists the rest) are
+     * injured, raining, snowing + cold and clear_night: detectPhysicalStates. The others are the
+     * April survival rows, kept and INERT: no CHIM 3.4.1 signal exists for them, so detectPhysicalStates
+     * never reports them (config physical_states.inert). applyPhysicalStateModifiers applies whatever
+     * states it is handed, so a sensor only has to report one.
      *
-     * "trust_healer" and "respect_warrior" are NOT real dimensions --
-     * detectPhysicalStates() remaps them to 'trust' / 'respect' only
-     * when the NPC temperament matches (Nurturing->trust_healer,
-     * Bold/Defiant->respect_warrior).
+     * "respect_warrior" and "respect_proud" are NOT real dimensions: they are remapped to 'respect'
+     * only for an NPC the trait engine puts on that side (the A23 warrior gate for a 'bloody' row,
+     * pride for a 'dirty' row: Pd of 0.5 or more, "dirty: respect -2 for Proud/Noble").
      */
     const PHYSICAL_STATE_MODIFIERS = [
         'cold'        => ['comfort' => -10, 'arousal' => +20, 'valence' => -15],
         'warm_fire'   => ['comfort' => +10, 'warmth' => +5, 'passion' => +5],
-        'injured'     => ['arousal' => +30, 'valence' => -20, 'maturity' => -5, 'trust_healer' => +3],
+        'injured'     => ['arousal' => +30, 'valence' => -20, 'maturity' => -5],
         'well_rested' => ['maturity' => +2, 'comfort' => +5],
         'exhausted'   => ['maturity' => -5, 'comfort' => -8],
         'raining'     => ['comfort' => -3, 'warmth' => -2],
         'snowing'     => ['comfort' => -8, 'warmth' => -5, 'arousal' => +10, 'valence' => -10],
         'clear_night' => ['comfort' => +3, 'passion' => +3],
-        'dirty'       => ['comfort' => -3, 'respect' => -2],
+        'dirty'       => ['comfort' => -3, 'respect_proud' => -2],
         'bloody'      => ['arousal' => +5, 'respect_warrior' => +1],
     ];
 
@@ -12881,9 +12905,9 @@ class RelationshipDynamics
      * the plugin reports and whether the player is inside) and apply only outside:
      *   rain -> raining; snow -> snowing + cold; night with known clear/pleasant weather ->
      *   clear_night.
-     * Not detected (no CHIM 3.4.1 core source): hunger, dirty / bloody (April: Dirt and Blood),
-     * warm_fire; exhausted / well_rested were April's player-stamina proxy (stamina is a combat
-     * resource that refills in seconds, not rest), left unknown pending a rest signal.
+     * Not detected (no CHIM 3.4.1 core source; config physical_states.inert): hunger, dirty / bloody
+     * (April: Dirt and Blood), warm_fire; exhausted / well_rested were April's player-stamina proxy
+     * (stamina is a combat resource that refills in seconds, not rest), left unknown pending a rest signal.
      *
      * @param string $npcName    The NPC being spoken to
      * @param string $playerName The player character name (the injured read is the player's)
@@ -12900,7 +12924,7 @@ class RelationshipDynamics
 
         $place = RelDynFacets::currentPlaceContext((string) $npcName);
         if (empty($place['known']) || $place['is_interior'] !== false) {
-            return $states;   // indoors (or unknown): the weather outside does not reach the NPC
+            return self::activePhysicalStates($states, $cfg);   // indoors (or unknown): the weather outside does not reach the NPC
         }
 
         $weather = (array) $place['weather'];
@@ -12916,7 +12940,13 @@ class RelationshipDynamics
             $states[] = 'clear_night';
         }
 
-        return $states;
+        return self::activePhysicalStates($states, $cfg);
+    }
+
+    /** The states without the inert ones (config physical_states.inert: no game signal; whatever names one, it is unknown). */
+    private static function activePhysicalStates(array $states, array $cfg): array
+    {
+        return array_values(array_diff($states, array_map('strval', (array) ($cfg['inert'] ?? []))));
     }
 
     /**
@@ -12954,8 +12984,7 @@ class RelationshipDynamics
             $dynamics['_applied_physical_deltas'] = [];
         }
 
-        // Temperament-gated pseudo-dimension remapping (A23, membership through the trait engine)
-        $healerTemperaments  = self::PHYSICAL_HEALER_TEMPERAMENTS;
+        // Trait-gated pseudo-dimension remapping (A23 membership / pride, through the trait engine)
         $warriorTemperaments = self::PHYSICAL_WARRIOR_TEMPERAMENTS;
 
         foreach ($activeStates as $state) {
@@ -12973,11 +13002,13 @@ class RelationshipDynamics
 
             foreach ($modifiers as $dimId => $delta) {
                 // Remap pseudo-dimensions
-                if ($dimId === 'trust_healer') {
-                    if ($temperament && RelDynTraits::membership($temperament, $healerTemperaments, $dynamics) >= 0.5) {
-                        $dimId = 'trust';
+                if ($dimId === 'respect_proud') {
+                    // pride is her own trait (Pd), not a temperament label: a proud NPC loses face in front of the dirty
+                    $px = $temperament ? RelDynTraits::vectorFor($temperament, $dynamics) : null;
+                    if ($px !== null && floatval($px['Pd'] ?? 0.0) >= 0.5) {
+                        $dimId = 'respect';
                     } else {
-                        continue; // Skip -- temperament does not qualify
+                        continue;
                     }
                 }
                 if ($dimId === 'respect_warrior') {
@@ -13069,6 +13100,73 @@ class RelationshipDynamics
         // Update tracking: only keep states that are still active
         $dynamics['_active_physical_states']   = array_values(array_intersect($previousStates, $activeStates));
         $dynamics['_applied_physical_deltas']  = $appliedDeltas;
+    }
+
+    /**
+     * The trust a healer earns (A23 'injured' trust +3, April: "toward the healer"): the NPC who
+     * heals the player, not any NPC of a healer temperament. Reads the NPC's own heal casts on the
+     * player from core's eventlog (type npcspellcast, "<NPC> casts <spell> on <player>"; the plugin
+     * logs every actor's casts while DETECT_MAGIC_EVENT is on) since the last one this NPC saw
+     * (_heal_seen_rowid; the first sight anchors at the newest row, history is not replayed). A cast
+     * counts when its spell name holds one of physical_states.heal_spells, it is no older than
+     * heal_max_age_game_hours, and the previous award was heal_cooldown_game_hours or more before it
+     * (a healing hands spammed through one fight is one act of care). Each award is trust
+     * +physical_states.healer_trust through applyDelta, and remembered in _heal_last.
+     * No heal event is unknown, never "not healed". Returns the trust applied.
+     */
+    public static function consumeHealEvents(string $npcName, string $playerName, array &$dynamics, ?string $temperament = null): float
+    {
+        $db = $GLOBALS['db'] ?? null;
+        $cfg = (array) (self::configValue('physical_states') ?? []) + self::defaultConfig()['physical_states'];
+        $trust = floatval($cfg['healer_trust']);
+        if (!$db || $trust <= 0.0 || trim($npcName) === '' || trim($playerName) === '') return 0.0;
+        try {
+            $top = $db->fetchOne('SELECT rowid FROM eventlog ORDER BY rowid DESC LIMIT 1');
+            $newest = intval($top['rowid'] ?? 0);
+            $seen = $dynamics['_heal_seen_rowid'] ?? null;
+            if (!is_numeric($seen) || $newest < intval($seen)) {
+                $dynamics['_heal_seen_rowid'] = $newest;   // first sight (or a rebuilt eventlog): nothing before it counts
+                return 0.0;
+            }
+            $seen = intval($seen);
+            if ($newest === $seen) return 0.0;
+            $prefix = $db->escapeLiteral(self::escapeLike($npcName . ' casts ') . '%');
+            $limit = 50;
+            $rows = $db->fetchAll('SELECT rowid, data, gamets FROM eventlog WHERE rowid > ' . $seen . ' AND rowid <= ' . $newest
+                . " AND type = 'npcspellcast' AND data LIKE {$prefix} ESCAPE '\\' ORDER BY rowid LIMIT {$limit}");
+            $rows = is_array($rows) ? $rows : [];
+            $dynamics['_heal_seen_rowid'] = count($rows) >= $limit ? intval(end($rows)['rowid']) : $newest;
+        } catch (Throwable $e) {
+            self::logError('heal events', $e);
+            return 0.0;
+        }
+
+        $now = self::currentGamets();
+        $maxAge = floatval($cfg['heal_max_age_game_hours']) * self::GAMETS_PER_DAY / 24.0;
+        $cooldown = floatval($cfg['heal_cooldown_game_hours']) * self::GAMETS_PER_DAY / 24.0;
+        $applied = 0.0;
+        foreach ($rows as $r) {
+            $rest = substr((string) $r['data'], strlen($npcName . ' casts '));
+            $at = strrpos($rest, ' on ');
+            if ($at === false) continue;   // no target: a self-cast
+            $spell = strtolower(trim(substr($rest, 0, $at)));
+            $target = trim(preg_replace('/\s*\([^)]*\)\s*$|[.,!?\s]+$/u', '', substr($rest, $at + 4)));
+            if (strcasecmp($target, $playerName) !== 0) continue;
+            $isHeal = false;
+            foreach ((array) $cfg['heal_spells'] as $kw) {
+                if ($kw !== '' && strpos($spell, strtolower((string) $kw)) !== false) { $isHeal = true; break; }
+            }
+            if (!$isHeal) continue;
+            $gamets = floatval($r['gamets'] ?? 0);
+            if ($now > 0 && $gamets > 0 && $now - $gamets > $maxAge) continue;   // too long ago to be her act of the moment
+            $last = floatval($dynamics['_heal_last']['gamets'] ?? 0);
+            if ($last > 0 && $gamets > 0 && $gamets >= $last && $gamets - $last < $cooldown) continue;
+            $actual = self::applyDelta('trust', $dynamics, $trust, $temperament);
+            $applied += $actual;
+            $dynamics['_heal_last'] = ['gamets' => $gamets, 'spell' => trim(substr($rest, 0, $at)), 'trust' => round($actual, 3)];
+            self::log("[RelDyn-PHYS] {$npcName} healed {$playerName} ({$dynamics['_heal_last']['spell']}): trust " . round($actual, 2));
+        }
+        return $applied;
     }
 
     // ========== END PHYSICAL STATE BRIDGES ==========
