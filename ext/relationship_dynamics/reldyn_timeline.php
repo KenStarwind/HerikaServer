@@ -94,7 +94,7 @@ final class RelDynTimeline
 
     /** Top-level dynamics keys holding a game-calendar checkpoint (raw gamets). */
     const CALENDAR_CLOCK_KEYS = [
-        '_last_contact_gamets', '_previous_contact_gamets', '_decay_last_game_gamets', '_last_gamets',
+        '_last_contact_gamets', '_previous_contact_gamets', '_decay_last_game_gamets', '_last_gamets', '_fight_contact_gamets',
         '_weather_gravity_gamets', '_presence_scan_gamets', '_neglect_resentment_since_gamets',
         '_walkaway_started_calendar_gamets', '_walkaway_activated_calendar_gamets',
         '_boundary_test_started_calendar_gamets', '_walkaway_recovery_calendar_gamets',

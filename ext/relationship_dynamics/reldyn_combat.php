@@ -330,6 +330,7 @@ final class RelDynCombat
             $fall = null;
             $fought = false;
             $together = [];
+            $fightState = false;   // a fight beside the player left something in the NPC's state (time together, what they miss, contact)
             $threat = null;
 
             if ($type === 'bleedout') {
@@ -374,11 +375,27 @@ final class RelDynCombat
                 // Fighting side by side is time together (decisions §20.4), by how much she likes fighting:
                 // Aela's combat / adventure / danger tastes make it nearly a full evening, a scholar's a sliver
                 if ($fought) {
-                    $together = RelDynFulfillment::recordSharedFight($dynamics, $prefs, $at > 0 ? $at : RelationshipDynamics::currentGamets());
+                    $fightAt = $at > 0 ? $at : RelationshipDynamics::currentGamets();
+                    $unmet = [];
+                    $together = RelDynFulfillment::recordSharedFight($dynamics, $prefs, $fightAt, RelDynFulfillment::PLAYER, $unmet);
                     if ($together !== []) {
                         RelationshipDynamics::log(sprintf('Shared fight is time together: %s weight %.2f (%s)', $npc,
                             RelDynFulfillment::sharedFightWeight($prefs), json_encode($together)));
                     }
+                    // ... and where the NPC does not enjoy it, partly unfulfilling too (decisions §23)
+                    if ($unmet !== []) {
+                        RelationshipDynamics::log(sprintf('Shared fight is partly unfulfilling: %s liking %.2f (%s)', $npc,
+                            RelDynFulfillment::sharedFightLiking($prefs), json_encode($unmet)));
+                    }
+                    // ... and contact for the neglect and absence rules, and a day the pair was together (decisions §23)
+                    $sf = RelDynFulfillment::sharedFightConfig();
+                    if (!empty($sf['enabled']) && !empty($sf['contact']) && $fightAt > 0) {
+                        $contact = RelationshipDynamics::markFightContact($dynamics, $fightAt, floatval($sf['contact_window_game_hours']));
+                        $contact = RelDynFulfillment::recordContactDay($dynamics, $fightAt) || $contact;
+                        if ($contact) RelationshipDynamics::log("Shared fight is contact: {$npc} (neglect and absence count from it)");
+                        $fightState = $fightState || $contact;
+                    }
+                    $fightState = $fightState || $unmet !== [];
                 }
                 if ($fought && $gain > 0) {
                     // Shared danger: her live HP (an event of now only) under the MDD 3.3 threshold
@@ -413,8 +430,8 @@ final class RelDynCombat
                 RelationshipDynamics::saveDynamics($npc, $dynamics);
                 RelationshipDynamics::log("COMBAT EVENT: {$npc} type={$type} gain=" . round($gain, 2) . ' passion='
                     . round(RelationshipDynamics::getPassion($dynamics), 2) . ($fought ? ' [FOUGHT]' : '') . ($isWitness ? ' [WITNESS]' : ''));
-            } elseif ($together !== []) {
-                // A fight that moved no passion still gave her time with the player (decisions §20.4)
+            } elseif ($together !== [] || $fightState) {
+                // A fight that moved no passion still gave the NPC time with the player (decisions §20.4, §23)
                 RelationshipDynamics::saveDynamics($npc, $dynamics);
             } elseif ($fall !== null) {
                 // Inside the dead band the fall moves no passion; its arousal spike and valence stay

@@ -834,6 +834,19 @@ final class RelDynEditor
             'set' => self::numberSetter(fn(array &$dd, float $v) => self::setAttraction($dd, 'status_share', $v), 0, 1),
             'reset' => function (array &$dd) { self::clearAttraction($dd, 'status_share', null); },
         ]);
+        // Decisions §23 (Ken, 2026-10-01): the NPC's own standing is an editor field now (the thane / rank reporter
+        // comes later). It writes attraction_overrides.standing, which RelDynAttraction::definition reads over the
+        // preset and the derivation; the derived value (archetype + a status faction) is shown beside it.
+        $standingMax = floatval(((array) (RelDynAttraction::spikePrereqConfig($cfg)['own_standing'] ?? []))['max'] ?? 1.0);
+        $standingMax = $standingMax > 0 ? $standingMax : 1.0;
+        $fields[] = self::field('attr:standing', 'Own standing', 'number', round(floatval($def['own_standing']), 3), [
+            'min' => 0, 'max' => $standingMax, 'step' => 0.01, 'state' => $state('standing', null), 'derived' => round(floatval($base['own_standing']), 3),
+            'hint' => 'the NPC\'s own social standing, 0..' . self::num($standingMax, 2) . ' (a thane or a Circle member high, a barmaid or a whelp low): '
+                . 'the status gap to the player, where the NPC admires them, lets a spike skip the uphill. Derived from archetype and a status faction ('
+                . (string) ($def['sources']['standing'] ?? '?') . ') until the thane / rank reporter exists',
+            'set' => self::numberSetter(fn(array &$dd, float $v) => self::setAttraction($dd, 'standing', $v), 0, $standingMax),
+            'reset' => function (array &$dd) { self::clearAttraction($dd, 'standing', null); },
+        ]);
         $fields[] = self::field('attr:beauty_keywords', 'Beauty keywords', 'text', implode(', ', (array) $def['beauty_keywords']), [
             'state' => $state('beauty_keywords', 'beauty_keywords'), 'derived' => implode(', ', (array) $base['beauty_keywords']),
             'hint' => 'comma-separated words she finds beautiful in the player\'s appearance text',

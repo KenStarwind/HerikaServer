@@ -4675,6 +4675,56 @@ class RelationshipDynamics
         self::markPlayCheckpoint($dynamics, '_last_contact_play_gamets');
     }
 
+    /** dynamics key (raw gamets): the last fight the NPC was in beside the player (markFightContact). */
+    const FIGHT_CONTACT_KEY = '_fight_contact_gamets';
+
+    /**
+     * The contact the absence and neglect rules count from (raw gamets): the later of the last time the player spoke to
+     * this NPC (_last_contact_gamets) and the last fight the NPC was in beside the player (decisions §23: a shared
+     * fight is contact). The return from an absence (the reunion, the bond break, the walkaway's return) stays
+     * with the player's own word, markContact. 0 when there is neither.
+     */
+    public static function lastContactGamets(array $dynamics): float
+    {
+        return max(floatval($dynamics['_last_contact_gamets'] ?? 0), floatval($dynamics[self::FIGHT_CONTACT_KEY] ?? 0));
+    }
+
+    /**
+     * A fight beside the player at $at (raw gamets) is contact for neglect and absence (decisions §23, Ken
+     * 2026-10-01): the stamp moves the contact the absence and neglect charges count from, and the
+     * $windowHours before it (the fight went on that long) are not an absence for the affinity decay either (a
+     * closed decay pause, merged with any it overlaps). An older fight than the newest only adds its window.
+     * Returns true when the state changed.
+     */
+    public static function markFightContact(array &$dynamics, float $at, float $windowHours = 1.0): bool
+    {
+        if ($at <= 0) return false;
+        $changed = false;
+        if ($at > floatval($dynamics[self::FIGHT_CONTACT_KEY] ?? 0)) {
+            $dynamics[self::FIGHT_CONTACT_KEY] = $at;
+            $changed = true;
+        }
+        $window = max(0.0, $windowHours) * self::GAMETS_PER_DAY / 24.0;
+        if ($window > 0) {
+            $from = $at - $window;
+            $until = $at;
+            $rest = [];
+            foreach ((array) ($dynamics['_decay_paused_intervals'] ?? []) as $iv) {
+                if (!is_array($iv)) continue;
+                if (($iv['until'] ?? null) !== null && floatval($iv['from'] ?? 0) <= $until && floatval($iv['until']) >= $from) {
+                    $from = min($from, floatval($iv['from'] ?? $from));
+                    $until = max($until, floatval($iv['until']));
+                    continue;
+                }
+                $rest[] = $iv;
+            }
+            $rest[] = ['from' => $from, 'until' => $until];
+            $dynamics['_decay_paused_intervals'] = array_values($rest);
+            $changed = true;
+        }
+        return $changed;
+    }
+
     // =========================================================================
     // GAME-CALENDAR STEP (decisions 2026-09-23 §2: time does not heal, contact does)
     // =========================================================================
@@ -4796,7 +4846,7 @@ class RelationshipDynamics
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? 'Stoic';
         $maturity = floatval($dynamics['dimensions']['maturity']['x'] ?? 50);   // 0..100
         $away = ($dynamics['_walkaway_state'] ?? 'normal') !== 'normal';
-        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);       // raw gamets
+        $lastContact = self::lastContactGamets($dynamics);                     // raw gamets (a shared fight is contact, §23)
         $raw = 0.0;                                                            // raw resentment points (fester)
         $neglectRaw = 0.0;                                                     // raw resentment points (neglect)
 
@@ -5043,7 +5093,7 @@ class RelationshipDynamics
      */
     public static function neglectGraceEndGamets(array $dynamics): ?float
     {
-        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);   // raw gamets
+        $lastContact = self::lastContactGamets($dynamics);   // raw gamets (a shared fight is contact, §23)
         if ($lastContact <= 0) return null;
         $graceDays = self::neglectGraceGameDays($dynamics);
         return $graceDays === null ? null : $lastContact + $graceDays * self::GAMETS_PER_DAY;
@@ -5080,7 +5130,7 @@ class RelationshipDynamics
     {
         $out = ['raw' => 0.0, 'resentment' => 0.0, 'days' => 0];
         if (!self::configValue('neglect_enabled') || ($dynamics['_walkaway_state'] ?? 'normal') !== 'normal') return $out;
-        $lastContact = floatval($dynamics['_last_contact_gamets'] ?? 0);   // raw gamets
+        $lastContact = self::lastContactGamets($dynamics);   // raw gamets (a shared fight is contact, §23)
         if ($lastContact <= 0) return $out;
         $bond = self::neglectBond($dynamics);
         if ($bond === null) return $out;
