@@ -769,7 +769,7 @@ final class RelDynBatchTClassifyBedsPostgresTest extends TestCase
         foreach ($partners as $p) $this->assertSame(0.0, $this->jealousy($p), "{$p}: nobody is jealous yet");
 
         $trace = [];
-        for ($i = 1; $i <= 6; $i++) {
+        for ($i = 1; $i <= 8; $i++) {
             $at = $t + (int) ($i * 0.3 * self::HOUR);
             $this->round([self::LYNLY], 'You are the prettiest bard in all Whiterun, and I mean it.', $at, "flirt{$i}");
             foreach ($partners as $p) {
@@ -795,16 +795,19 @@ final class RelDynBatchTClassifyBedsPostgresTest extends TestCase
         $this->assertSame(0.0, $trace[6][self::LYNLY], 'the one flirted with is not jealous');
         // who she is decides how much: the toxic bed more than the Stoic-leaning one
         $this->assertGreaterThan($trace[6]['Ashe']['jealousy'], $trace[6]['Muiri']['jealousy'], "Muiri (toxic) is jealous well before Ashe {$why}");
-        // Aela end to end: six open flirts, and her next turn carries the edgy line (the band's text names no
-        // rival: the template names one from 'unsettled'; the rival is hers in her state)
-        $this->assertSame('edgy', $trace[6][self::AELA]['band'], "Aela's jealousy reached the edgy band {$why}");
-        $this->assertNotNull($trace[6][self::AELA]['line'], "Aela's next turn carries the edgy line {$why}");
+        // Aela end to end: open flirts, and her next turn carries the edgy line (the band's text names no rival: the
+        // template names one from 'unsettled'; the rival is hers in her state). It took six flirts while her jealousy
+        // multiplier carried the textbook lean (0.8 at her vector); neutral at the middle (decisions 2026-10-01 §21 #10,
+        // 0.615) the same flirting takes eight: a little jealousy is still wanted (§20 #6), a little later
+        $this->assertSame('none', $trace[6][self::AELA]['band'], "six flirts no longer reach it {$why}");
+        $this->assertSame('edgy', $trace[8][self::AELA]['band'], "Aela's jealousy reached the edgy band {$why}");
+        $this->assertNotNull($trace[8][self::AELA]['line'], "Aela's next turn carries the edgy line {$why}");
         // the toxic bed's reaches 'unsettled' and opens a conflict; the secure-leaning ones' do not yet
         $this->assertTrue($trace[6]['Muiri']['conflict'], "Muiri's jealousy opens a conflict {$why}");
-        $this->assertFalse($trace[6][self::AELA]['conflict'], $why);
+        $this->assertFalse($trace[8][self::AELA]['conflict'], $why);
         // the band reaches her next turn as a feeling: the edgy line from jealousy 20, the rival named from 'unsettled' (40)
         foreach ($partners as $p) {
-            for ($i = 1; $i <= 6; $i++) {
+            for ($i = 1; $i <= 8; $i++) {
                 $band = $trace[$i][$p]['band'];
                 if ($band === 'none') { $this->assertNull($trace[$i][$p]['line'], "{$p} round {$i}: below the bands, no jealousy line"); continue; }
                 // the line shows the NEXT turn after the item applied (the worker ran before it)

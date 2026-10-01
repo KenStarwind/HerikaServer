@@ -193,6 +193,28 @@ final class RelDynVTuningTest extends TestCase
         }
     }
 
+    /** The charm retune that keeps ruling #8 (RelDynAttractionUphillPostgresTest::testRulingEightUnderTheReadAssignment is the bed). */
+    public function testTheCharmLeverGaveBackWhatTheNeutralMiddleAddedToAela(): void
+    {
+        $cc = RelDynAttraction::curveConfig();
+        $this->assertEqualsWithDelta(0.13, $cc['charm_hill_max'], 1e-9);
+        // Ken's own examples are not touched: the foot of the hill and its steepness
+        $this->assertEqualsWithDelta(0.1, $cc['m_min'], 1e-9);
+        $this->assertEqualsWithDelta(3.0, $cc['steepness'], 1e-9);
+        // Aela's passion multiplier rose by the middle's lean (about 8%); the silver tongue's lift of the climb fell by the
+        // same share, so the pure charmer's multiplier (hill foot + charm) is where it was
+        $aela = RelDynTraits::readVector(self::beds()['Aela the Huntress']);
+        RelDynTraits::$readCalibrationOverride = ['relevel' => true, 'relevel_mult' => false];
+        $was = RelDynTraits::value($aela, 'passion_mult');
+        RelDynTraits::$readCalibrationOverride = null;
+        $is = RelDynTraits::value($aela, 'passion_mult');
+        $hill = $cc['m_min'];   // a score far below her floor: the foot
+        $charmWas = $hill + (1 - $hill) * 0.15;
+        $charmIs = $hill + (1 - $hill) * $cc['charm_hill_max'];
+        $this->assertEqualsWithDelta(1.0, ($is * $charmIs) / ($was * $charmWas), 0.04, 'the silver tongue climbs about as fast as before');
+        $this->assertLessThan(1.0, $charmIs / $charmWas);
+    }
+
     // ------------------------------------------------------------------ §22: toxic, x1.2 gains and x1.6 losses
 
     private static function bedWith(string $name, array $extra = []): array
@@ -247,6 +269,49 @@ final class RelDynVTuningTest extends TestCase
         // no toxic weight, no row effect (never a hard gate either way)
         $none = self::bedWith('Aela the Huntress', ['profile_overrides' => ['attachment_style' => 'secure'], 'dimensions' => ['maturity' => ['x' => 50.0]]]);
         $this->assertEqualsWithDelta(1.0, RelationshipDynamics::affinityModifiers($none, -10, ['insult'])['M'], 1e-9);
+    }
+
+    // ------------------------------------------------------------------ review queue FIX NEXT: one damping, not two
+
+    /** A bed held by the player: a fulfilled bond at affinity 60 and passion 45, from the bed's own vector (as RelDynExclusivityTest builds one). */
+    private static function heldBed(string $name, float $t0): array
+    {
+        $d = array_replace_recursive(RelationshipDynamics::migrateDimensions(RelationshipDynamics::defaultDynamics()), self::beds()[$name], [
+            'profile_overrides' => ['attachment_style' => 'secure'], 'love_language_primary' => RelationshipDynamics::LL_TIME, '_core_rel_type' => 'platonic']);
+        RelationshipDynamics::refreshAffinityMirror($d, 60.0);
+        RelationshipDynamics::setPassion($d, 45.0);
+        $d['dimensions']['maturity']['x'] = 60.0;
+        RelDynFulfillment::ensure($d, RelDynFacets::neutralPreferences(), $t0);
+        $s = RelDynFulfillment::pairState($d);
+        $s['lv'] = array_map(fn() => 2.25, $s['lv']);
+        RelDynFulfillment::setPairState($d, RelDynFulfillment::PLAYER, $s);
+        RelDynFulfillment::recordContactDay($d, $t0 + RelationshipDynamics::GAMETS_PER_HOUR);
+        $d['_last_contact_gamets'] = $t0 + RelationshipDynamics::GAMETS_PER_HOUR;
+        return $d;
+    }
+
+    public function testTheBedsCountCoresDampedGainOnceInTheirLedger(): void
+    {
+        $t0 = 300 * RelationshipDynamics::GAMETS_PER_DAY;
+        $at = $t0 + 2 * RelationshipDynamics::GAMETS_PER_HOUR;
+        $cfg = RelDynExclusivity::configDefaults();
+        $this->assertTrue(RelDynExclusivity::forkHookDamps($cfg));
+        $report = [];
+        foreach (self::beds() as $name => $_) {
+            $d = self::heldBed($name, $t0);
+            $pull = RelDynExclusivity::pull($d, $at)['pull'];
+            $this->assertGreaterThan(0.0, $pull, "{$name}: held by the player");
+            // core's NPC-to-NPC eval gives her +10 toward the suitor; the fork hook damps it on its way in (dampCoreDelta's arithmetic)
+            $landed = min(10, max((int) round(10 * (1.0 - $cfg['damping'] * $pull)), max(1, (int) $cfg['core_gain_floor'])));
+            $ledger = [];
+            RelDynExclusivity::recordExchange($ledger, 'Mikael', [], 20.0, true, $pull, $at, $cfg);
+            $added = RelDynExclusivity::recordExchange($ledger, 'Mikael', [], 20.0 + $landed, true, $pull, $at + RelationshipDynamics::GAMETS_PER_HOUR, $cfg);
+            $this->assertEqualsWithDelta((float) $landed, $added, 1e-9, "{$name}: what landed is what the ledger counts (pull {$pull})");
+            $report[$name] = ['pull' => round($pull, 3), 'landed' => $landed];
+        }
+        // who she is decides how held she is, so what lands differs across the beds
+        $pulls = array_column($report, 'pull');
+        $this->assertGreaterThan(0.02, max($pulls) - min($pulls), 'the beds are held differently: ' . json_encode($report));
     }
 
     // ------------------------------------------------------------------ §22: one passion band set, faint to burning

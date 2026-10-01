@@ -333,22 +333,24 @@ final class RelDynReadCalibrationTest extends TestCase
         $this->assertEqualsWithDelta(0.0, RelDynTraits::modelAtMiddle([0.08, 'W' => -0.21], 'offset')['new'], 1e-12, 'C2 avoidance');
     }
 
-    public function testTheShippedDefaultsReLevelOnlyTheOffsetRules(): void
+    public function testTheShippedDefaultsReLevelTheOffsetRulesAndThePassionJealousyPair(): void
     {
         $shipped = RelationshipDynamics::defaultConfig()['traits']['read_calibration'];
         $this->assertTrue($shipped['relevel']);
-        $this->assertFalse($shipped['relevel_mult'], 'the multiplier values are tuned against rulings: off');
+        // decisions 2026-10-01 §21 #10 (it was false: the multiplier values were tuned against rulings): a middle NPC feels
+        // passion and jealousy at face value; every other multiplier keeps its textbook intercept
+        $this->assertSame(['passion_mult', 'jealousy_mult'], $shipped['relevel_mult']);
         $half = array_fill_keys(array_keys(RelDynTraits::TRAITS), 0.5) + ['maturity_start' => 50.0];
         // the offset rules (A26, C2) are neutral at a middle vector ...
         foreach (RelDynIntimacy::TEMPERAMENT_RULES as $axis => [$rule, $model]) {
             $this->assertEqualsWithDelta(0.0, RelDynTraits::modelAtMiddle($model, 'offset')['new'], 1e-12, "A26 {$axis}");
         }
-        // ... the multiplier rules keep their textbook intercepts, the same as with relevel off
-        foreach (['passion_mult' => 0.925, 'jealousy_mult' => 1.185, 'y_warmth_up' => 0.91, 'y_arousal_up' => 0.865, 'resist_affinity' => 0.945] as $id => $middle) {
+        // ... passion and jealousy are neutral there, the other multiplier rules keep their textbook intercepts
+        foreach (['passion_mult' => 1.0, 'jealousy_mult' => 1.0, 'y_warmth_up' => 0.91, 'y_arousal_up' => 0.865, 'resist_affinity' => 0.945] as $id => $middle) {
             $this->assertEqualsWithDelta($middle, RelDynTraits::value($half, $id), 1e-12, "{$id} at the middle, shipped defaults");
         }
         foreach (RelDynTraits::columns() as $id => $c) {
-            if ($c['unit'] !== 'mult') continue;
+            if ($c['unit'] !== 'mult' || in_array($id, RelDynTraits::RELEVEL_MULT_DEFAULT, true)) continue;
             foreach (array_slice(self::middleVectors(4), 0, 4) as $x) {
                 RelDynTraits::$readCalibrationOverride = null;
                 $default = RelDynTraits::value($x, $id);
