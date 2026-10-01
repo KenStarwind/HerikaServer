@@ -146,6 +146,8 @@ final class RelDynSettingsText
         'gift_delta.value_base.enabled' => 'Ships off. A gift\'s worth in gold scales how much it moves her (between the minimum and maximum multiplier below). Off: every gift counts the same.',
         'gift_delta.stolen.enabled' => 'A gift that was stolen costs the player trust and respect (and a grievance).',
         'gift_delta.regift.enabled' => 'Giving her back something she gave away costs the player trust and respect.',
+        'gift_delta.handover_significance' => 'How much a handed-over item counts toward what she needs from the player (0 to 1): a gift fulfills gifts, food and potions fulfill being looked after.',
+        'gift_delta.eval_pair_game_hours' => 'Game hours within which an item handover and the evaluation\'s gift or help tag for the same exchange count as one handover, not two.',
 
         // ---- plain top-level settings ----------------------------------------
         'dimension_max_context_lines' => 'Most lines of dimension feeling that may be put into the prompt at once.',
@@ -183,6 +185,8 @@ final class RelDynSettingsText
         'jealousy_trust_damping' => 'How strongly trust calms possessive jealousy (0 = not at all).',
         'jealousy_grievance_kinds' => 'Grievance kinds from the evaluation that are really jealousy (a rival); one per line.',
         'jealousy_bystander_tags' => 'Event tags that make nearby NPCs jealous when the player is intimate with someone; one per line.',
+        'jealousy_romantic_intent_min' => 'How openly the player must court someone (0 to 3 from the evaluation; 2 is clear flirting) before the committed NPCs who saw it are jealous, welcomed or not.',
+        'jealousy_scene_cooldown_game_minutes' => 'Game minutes in which one scene reported by the plugin (Sharmat, OStim) makes its witnesses jealous only once, however many stages it has.',
         'jealousy_walkaway_at' => 'Jealousy level (0 to 100) at or above which she walks away.',
         'power_gap_in_party' => 'How little she can leave (0 to 1) while she is in the player\'s party.',
         'power_gap_factions' => 'Faction rules that set how little a member can leave. Advanced: edit as JSON.',
