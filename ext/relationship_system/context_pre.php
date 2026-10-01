@@ -151,7 +151,9 @@ $npcName = $GLOBALS["HERIKA_NAME"] ?? null;
 
 Logger::info("[REL-CONTEXT] npcName=" . ($npcName ?? 'NULL') . ", CACHE_PEOPLE=" . substr($GLOBALS["CACHE_PEOPLE"] ?? 'NULL', 0, 100));
 
-if ($npcName) {
+// The Narrator has no relationships: postrequest.php never evaluates it, so do not inject a
+// relationship block (or #REL: instructions) into its prompt either.
+if ($npcName && $npcName !== "The Narrator") {
     // Parse nearby NPCs from CACHE_PEOPLE
     $nearbyNpcs = [];
     if (!empty($GLOBALS["CACHE_PEOPLE"])) {

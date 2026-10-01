@@ -1,5 +1,7 @@
 <?php declare(strict_types=1);
 
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 
 $GLOBALS['ENGINE_PATH'] = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR;
@@ -94,7 +96,12 @@ final class RelationshipSystemCoreFixesTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['db', 'PLAYER_NAME', 'RELLLM_CONNECTOR', 'CACHE_PEOPLE'] as $key) {
+        foreach (
+            [
+                'db', 'PLAYER_NAME', 'RELLLM_CONNECTOR', 'CACHE_PEOPLE', 'RELATIONSHIP_SYSTEM_ENABLED',
+                'HERIKA_NAME', 'HERIKA_PERS', 'HERIKA_CONTEXT', 'COMMAND_PROMPT', 'startTime',
+            ] as $key
+        ) {
             $this->savedGlobals[$key] = array_key_exists($key, $GLOBALS) ? [$GLOBALS[$key]] : null;
         }
         $GLOBALS['db'] = new RelationshipSystemFakeDb();
@@ -295,5 +302,54 @@ final class RelationshipSystemCoreFixesTest extends TestCase
         [$system] = $this->captureEvalPrompts('Hello.', ['listener_name' => 'Player']);
 
         $this->assertSame($custom, $system);
+    }
+
+    // --- relationship context injection: not for the Narrator ---------------------------------
+
+    /**
+     * Run ext/relationship_system/context_pre.php for the given speaker; returns [persona, commandPrompt].
+     * The script declares functions, so each caller runs in its own process (it cannot be included twice).
+     */
+    private function runContextPre(string $speaker): array
+    {
+        $GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'] = true;
+        $GLOBALS['startTime'] = microtime(true);
+        $GLOBALS['HERIKA_NAME'] = $speaker;
+        $GLOBALS['HERIKA_PERS'] = 'Base persona.';
+        $GLOBALS['HERIKA_CONTEXT'] = '';
+        $GLOBALS['COMMAND_PROMPT'] = 'Base commands.';
+        $GLOBALS['CACHE_PEOPLE'] = '|Lydia|Aela the Huntress|';
+        $GLOBALS['db']->npcs['Lydia'] = ['Aela the Huntress' => ['aff' => 40, 'type' => 'platonic']];
+
+        $previousErrorLog = ini_set('error_log', sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'chim-relationship-test.log');
+        try {
+            include $GLOBALS['ENGINE_PATH'] . 'ext' . DIRECTORY_SEPARATOR . 'relationship_system'
+                . DIRECTORY_SEPARATOR . 'context_pre.php';
+        } finally {
+            ini_set('error_log', (string)$previousErrorLog);
+        }
+
+        return [$GLOBALS['HERIKA_PERS'], $GLOBALS['COMMAND_PROMPT']];
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testNpcPromptReceivesRelationshipContext(): void
+    {
+        [$persona, $commands] = $this->runContextPre('Lydia');
+
+        $this->assertStringContainsString("[Lydia's RELATIONSHIPS]", $persona);
+        $this->assertStringContainsString('Aela the Huntress: +40', $persona);
+        $this->assertStringContainsString('#REL:Name=', $commands);
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testNarratorPromptDoesNotReceiveRelationshipContext(): void
+    {
+        [$persona, $commands] = $this->runContextPre('The Narrator');
+
+        $this->assertSame('Base persona.', $persona);
+        $this->assertSame('Base commands.', $commands);
     }
 }
