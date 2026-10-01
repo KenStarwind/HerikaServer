@@ -3,61 +3,44 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## Unreleased (batch V) — tuning: a middle NPC at face value, grey days that cool harder, toxic that idealises then devalues
-An NPC in the middle of the road now feels passion and jealousy at face value: nobody leans them a little cool on
-passion and a little hot on jealousy before they have said a word, though who they actually are still moves both. The
-charm curve was retuned alongside so a silver tongue alone still never wins anyone over; it takes weeks of courting and
-a real fit, as before.
-The weather pulls harder: a grey day cools passion and warmth (down 10 and down 5), a sunny one lifts them a little (up 5
-each), and a storm is never milder than a grey day. Toxic attachment is no longer one multiplier either way: it
-idealises on a gain (a little over a fifth more) and devalues on a loss (a little over half again as hard), by how toxic
-the NPC actually is. There is one set of passion words everywhere now (none, faint, stirring, warm, intense, burning);
-the older "cold to redline" set is gone. CHIM's own NPC-to-NPC romance, already damped once by the fork hook for someone
-committed to the player, is no longer damped a second time when RelDyn's suitor ledger reads the same gain.
-Settings saved by an older install read the new defaults for these (config schema 5); anything someone changed stays.
-## unreleased (batch V, people) — the fear of losing someone shows as who they are, the morning after, and fighting side by side
-The fear of losing the player is answered by who the NPC is, never by a verdict on the player. An NPC who is a
-people-pleaser appeases and complies, even with a player who treats them badly; an immature NPC whose way is control may
-start a conflict once the fear has held at its worst; one who leans avoidant goes quiet and distant instead of asking;
-the others cling or say it plainly as before. None of it refuses anything the player asks, and the NPC's own fight is not
-counted as the player's sign of leaving.
-After intimacy, an NPC who fears closeness (anxious and avoidant at once; part-way counts for part) pulls back for a
-while, by how fearful they are: it holds through the night and fades like any pull-back, a kind word eases it, and it is said
-as a need for room, never as shame. Anyone can feel a trace of it; few cross the line.
-Fighting side by side is now contact: the neglect and the absence count from the fight, not from the last word. It is still
-time together by how much the NPC enjoys a fight, and for one who does not it also takes a little off the things they do
-enjoy ("I wish it was something I enjoy"). An NPC's own standing is a field in the editor, shown with the value derived for it.
-## Unreleased — the bio read keeps up
-An NPC's personality is read from their bio once, but CHIM's dynamic profile keeps rewriting bios as the story goes on. Now
-every ~90 game days, or soon after a milestone (a romance, a bond break, a betrayal, a marriage), RelDyn checks whether the
-NPC's bio actually changed. Only a changed bio is read again, in the same background queue as the first read; an unchanged
-one costs nothing. The new read moves the personality instead of replacing it, by who the NPC is: someone set in their ways
-moves less, someone volatile or still finding themselves moves more, and nobody is immune. A trait the first read knew
-nothing about simply fills in. Hand-set vectors and presets chosen in the editor are never re-read. The editor shows when the
-profile was last read, what moved, and has a "Read again" button. One switch and the cadence live in the trait reader config.
-## unreleased (consent) — whether it gets that far is RelDyn's call
-RelDyn now decides whether intimacy happens at all, and the adult-content mod (Sharmat) defers to it for the "whether",
+## Unreleased — batch V
+An NPC in the middle of the road now feels passion and jealousy at face value: nobody leans them a little cool on passion
+and a little hot on jealousy before they have said a word, though who they actually are still moves both. The charm curve
+was retuned alongside, so a silver tongue alone still never wins anyone over. The weather pulls harder: a grey day cools
+passion and warmth, a sunny one lifts them a little, and a storm is never milder than a grey day. Toxic attachment is no
+longer one multiplier either way: it idealises on a gain and devalues, harder, on a loss, by how toxic the NPC actually is.
+There is one set of passion words everywhere now (none, faint, stirring, warm, intense, burning). CHIM's own NPC-to-NPC
+romance, already damped once for someone committed to the player, is no longer damped a second time in the suitor ledger.
+Settings saved by an older install read the new defaults for these; anything someone changed stays.
+The fear of losing the player is answered by who the NPC is, never by a verdict on the player. A people-pleaser appeases
+and complies; an immature NPC whose way is control may start a conflict once the fear has held at its worst; one who leans
+avoidant goes quiet and distant instead of asking; the others cling or say it plainly as before. None of it refuses
+anything the player asks. After intimacy, an NPC who fears closeness pulls back for a while, by how fearful they are: it
+holds through the night, fades like any pull-back, a kind word eases it, and it is felt as a need for room, never as
+shame. Fighting side by side is now contact for the neglect and absence rules, still counts as time together by how much
+the NPC enjoys a fight, and for one who does not it also takes a little off the things they do enjoy. An NPC's own
+standing is a field in the editor, shown with the value derived for it.
+The bio read keeps up. CHIM's dynamic profile keeps rewriting bios as the story goes on, so every so often (or soon after a
+romance, a bond break, a betrayal or a marriage) RelDyn checks whether the NPC's bio actually changed. Only a changed bio is
+read again, in the same background queue as the first read. The new read moves the personality instead of replacing it, by
+who the NPC is: someone set in their ways moves less, someone volatile or still finding themselves moves more, and nobody is
+immune. Hand-set vectors and presets chosen in the editor are never re-read. The editor shows when the profile was last
+read and what moved, and has a "Read again" button.
+Whether intimacy happens at all is now RelDyn's call, and the adult-content mod (Sharmat) defers to it for the "whether",
 keeping the "during" to itself. The answer is no for an NPC who is asexual or aromantic, for a friendzone and for a
-walkaway, and those are states that can end, never a permanent verdict. Otherwise it is how much the NPC wants it (the
-bond, the passion, how far they have let the player in, the romance, being drawn) less what weighs on it: an open
-quarrel, the ick, being withdrawn, pulling back, not being let in far enough, and fear. Each weighs by who the NPC is,
-none is a switch and no one is immune: a proud, reactive NPC is hurt most by a quarrel, an immature one is driven by a
-mood, a guarded one needs to be let in further, a bold one has a lower bar than a guarded, bond-first one. An NPC
-with little confidence or maturity, an anxious attachment and a deep fear of losing the player may say yes when they
-should not, up to a limit; RelDyn models the person and never judges the player. The answer is published for the mod
-to read and is the same words for every gender: the NPC's name, never a pronoun. A switch restores the mod's own rules.
-## Unreleased — the world around them: hunger and fires, vampire days
-What the party's body is going through now reaches the NPCs, when the game can say it. A small reporter on the AIAgent
-fork (a local branch, not sent upstream) reads Last Seed, Frostfall, Campfire, Dirt and Blood and the Survival Mode
-creation, whichever are installed, and tells the server; none installed or no recent report and nothing is assumed. A
-hungry or thirsty party takes a little of its composure and comfort, a worn-out one more, a rested one a lift, and the
-cold and the wet weigh on those who travel with the player. A fire the player built warms the bond (the warmth and a
-little closeness go to whoever made it warm); a fire somebody else kept only warms the room. The player's grime and blood
-are seen by anyone in the conversation, or an NPC's own (the proud mind the dirt more, the fighters respect the blood).
-Vampires keep an inverted sleep schedule: cranky from about dawn to dusk wherever they are, ascendant from dusk to dawn.
-Not feeding makes it worse, and direct sunlight (outdoors, by day, under a clear sky) worse still. Thirst grows with every
-game day without feeding and a feeding sates it; with no game signal for feeding yet, a night in which the vampire fought
-and killed stands in for it, and a feeding mod can be wired in by adding its signal to a list in the settings.
+walkaway, and those are states that can end, never a permanent verdict. Otherwise it is how much the NPC wants it less what
+weighs on it (an open quarrel, the ick, being withdrawn, pulling back, not being let in far enough, fear), each weighing by
+who the NPC is, none a switch. An NPC with little confidence or maturity, an anxious attachment and a deep fear of losing
+the player may say yes when they should not, up to a limit; RelDyn models the person and never judges the player. The
+answer is published for the mod to read, in the NPC's name and never a pronoun, and one switch restores the mod's own rules.
+What the party's body is going through now reaches the NPCs, when the game can say it. A small reporter on the AIAgent fork
+(a local branch, not sent upstream) reads the survival mods that are installed and tells the server; with none installed or
+no recent report, nothing is assumed. Hunger, tiredness, cold and wet weigh on those who travel with the player; a fire the
+player built warms the bond, a fire somebody else kept only warms the room; the player's grime and blood are seen by anyone
+in the conversation. Vampires keep an inverted sleep schedule: cranky from about dawn to dusk wherever they are, ascendant
+from dusk to dawn. Not feeding makes it worse and direct sunlight worse still. Thirst grows with every game day without
+feeding and a feeding sates it; until the game can signal a feeding, a night in which the vampire fought and killed stands in
+for it, and a feeding mod can be wired in through the settings.
 
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or
