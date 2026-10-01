@@ -707,6 +707,8 @@ final class RelDynTimeline
         foreach (['gamets', 'since_gamets', 'ended_gamets', 'ease_until_gamets'] as $stamp) {
             self::clampIn($d, [RelDynPullback::KEY, $stamp], $T);
         }
+        // Keeping (reldyn_keeping.php): its clock on the loaded time at the latest
+        self::clampIn($d, [RelDynKeeping::KEY, 'gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'at_gamets'], $T);
         // Combat's rescue response (reldyn_combat.php): a fall the load discarded never happened (no

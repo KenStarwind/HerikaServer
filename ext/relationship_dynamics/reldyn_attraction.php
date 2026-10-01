@@ -382,6 +382,54 @@ class RelDynAttraction
             'respect_mult_enabled' => true,
             'respect_mult_neutral' => 0.5,
             'respect_mult_range' => [0.5, 2.0],
+            // Decisions §20.1 (Ken, 2026-10-01): a passion SPIKE ("something flirty lands") skips the
+            // §13 uphill only when she already finds the player very attractive (he is her type), or
+            // when there is a significant status gap with attraction AND aspiration in it (a thane and
+            // a barmaid; admiration, not a strict power dynamic). Otherwise a spike climbs the uphill
+            // like every other gain. Not a gate: the skip is a degree 0..1 (spikeFactor blends the
+            // uphill and the full moment by it), and who she is sets it.
+            //   type: her type, the visceral passion units' hill before charm and bond relief (an NPC
+            //     with no visceral unit reads them all): 1.0 = her floor met, so the skip rises from
+            //     type_from (none) to type_full (all); a unit below its floor keeps it down.
+            //   gap: the player's status in her eyes (the status pillar's lens score) minus her own
+            //     standing, the player ABOVE her (the one who admires is her): none at gap_from, all at
+            //     gap_full; times her aspiration (the status pillar's rigidity: how much she values
+            //     standing) and times attracted (the label: every passion unit at its bar, a balanced
+            //     NPC at the bonded tier, or won over).
+            //   own_standing: her own social standing 0..1 (no source in core 3.4.1 names it, so it is
+            //     read from who she is): the archetype's table, plus faction_bonus when she belongs to
+            //     a faction with a status marker (a Companion, a Circle member, a jarl's household); the
+            //     named preset / attraction_overrides 'standing' wins.
+            'spike_prereq' => [
+                'enabled' => true,
+                'type_from' => 1.0, 'type_full' => 1.1,
+                'gap_from' => 0.2, 'gap_full' => 0.45,
+                'aspiration' => ['rigid' => 1.0, 'flexible' => 0.85, 'soft' => 0.6, 'irrelevant' => 0.0],
+                'own_standing' => [
+                    'default' => 0.35, 'faction_bonus' => 0.15, 'max' => 0.95,
+                    'archetype' => ['Noble' => 0.8, 'Merchant' => 0.5, 'Mage' => 0.55, 'Warrior' => 0.5, 'Guard' => 0.4,
+                                    'Barbarian' => 0.45, 'Ranger' => 0.45, 'Bard' => 0.35, 'Healer' => 0.4,
+                                    'Thief' => 0.25, 'Assassin' => 0.25],
+                ],
+            ],
+            // Decisions §20.3 (Ken, 2026-10-01): hidden interest counts, voicing is per character.
+            //   interest: whether and how much she is drawn to the player, shown or not: 0 unless she is
+            //     attracted (the label) or won over, then her effective passion over full_passion
+            //     (passion points), never under min_interest. Mutual-interest checks (the Ick, a romance's
+            //     momentum) read this, not whether she lets it show.
+            //   voicing: how much of it her felt text lets her say. Shyness (0..1) comes from her
+            //     self-confidence (dimension points): 0 at confidence_center and above, 1 at
+            //     confidence_span under it. A shy NPC needs a deeper bond to voice it: the core affinity
+            //     her flirt_min_tier asks for + shyness x (the bonded floor - that), and more passion:
+            //     the felt flirt_passion_min + shyness x passion_extra (passion points). From shy_text_from
+            //     the unvoiced pull reads as shyness, not as a plain look. A romance title is already said.
+            'interest' => [
+                'enabled' => true,
+                'full_passion' => 50.0, 'min_interest' => 0.3,
+                'confidence_center' => 50.0, 'confidence_span' => 35.0,
+                'passion_extra' => 40.0,
+                'shy_text_from' => 0.3,
+            ],
             // Felt text (decisions §3, feelings not numbers): how strong the pull reads, by the
             // passion curve (unitless multiplier): passing glances below faint_below_curve,
             // lingering looks and eager answers from strong_from_curve (her floor met)
@@ -515,6 +563,90 @@ class RelDynAttraction
     {
         $cfg = $cfg ?? self::config();
         return array_replace(self::defaults()['curve'], (array) ($cfg['curve'] ?? []));
+    }
+
+    /** The 'interest' table (decisions §20.3), a key stored before it existed falling back to its default. */
+    public static function interestConfig(?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        return array_replace(self::defaults()['interest'], is_array($cfg['interest'] ?? null) ? $cfg['interest'] : []);
+    }
+
+    /**
+     * Decisions §20.3: how interested she is in the player, whether or not she shows it (Lynly drawn
+     * but shy is still interested). From the stored attraction summary and her effective passion:
+     * 0 unless she is attracted (or won over) with no hard zero; then the passion over full_passion,
+     * at least min_interest. ['interest' => 0..1, 'drawn' => bool]. Pure.
+     */
+    public static function interest(array $dynamics, ?array $cfg = null): array
+    {
+        $ic = self::interestConfig($cfg);
+        $a = $dynamics['_attraction'] ?? null;
+        $none = ['interest' => 0.0, 'drawn' => false];
+        if (empty($ic['enabled']) || !is_array($a) || empty($a['enabled']) || !empty($a['hard_zero'])) return $none;
+        if (empty($a['attracted']) && empty($a['won_over'])) return $none;
+        $passion = class_exists('RelDynPassion') ? RelDynPassion::effective($dynamics) : RelationshipDynamics::getPassion($dynamics);
+        $full = max(1.0, floatval($ic['full_passion']));
+        $min = max(0.0, min(1.0, floatval($ic['min_interest'])));
+        return ['interest' => round(max($min, min(1.0, $passion / $full)), 4), 'drawn' => true];
+    }
+
+    /**
+     * Decisions §20.3: how shy she is about showing it (0..1): her self-confidence (dimension points)
+     * under interest.confidence_center, over confidence_span. 0 when unknown. Pure.
+     */
+    public static function shyness(array $dynamics, ?array $cfg = null): float
+    {
+        $ic = self::interestConfig($cfg);
+        if (empty($ic['enabled'])) return 0.0;
+        $x = $dynamics['dimensions']['self_confidence']['x'] ?? null;
+        if (!is_numeric($x)) return 0.0;
+        return round(max(0.0, min(1.0, (floatval($ic['confidence_center']) - floatval($x)) / max(1.0, floatval($ic['confidence_span'])))), 4);
+    }
+
+    /**
+     * Decisions §20.3: does her felt text let her voice the pull (answer flirtation) in this bond?
+     * $in: tier (context tier 0..3), passion (points), core_aff, romantic (a title or an earned crush,
+     * $romanceEff), shyness (0..1), flirt_min_tier, flirt_passion_min (felt_steering.attraction). An
+     * unshy NPC: the tier route (flirt_min_tier), the passion route (flirt_passion_min), or an
+     * earned romance, as before. A shy one needs a deeper bond (core affinity) and more passion, in
+     * proportion to how shy; a title is already said. Pure.
+     */
+    public static function voiced(array $in, ?array $cfg = null): bool
+    {
+        $ic = self::interestConfig($cfg);
+        $shy = max(0.0, min(1.0, floatval($in['shyness'] ?? 0.0)));
+        $minTier = intval($in['flirt_min_tier'] ?? 2);
+        $minPassion = floatval($in['flirt_passion_min'] ?? 40.0);
+        $tierRoute = intval($in['tier'] ?? 2) >= $minTier;
+        $passionRoute = floatval($in['passion'] ?? 0.0) >= $minPassion;
+        $earned = intval($in['romance_effective'] ?? 0) >= self::ROMANCE_CRUSH;
+        if ($shy > 0.0 && !empty($ic['enabled'])) {
+            if (is_numeric($in['core_aff'] ?? null)) {
+                $tiers = RelationshipDynamics::RELATIONSHIP_TIERS;
+                $floor = floatval(['acquaintance' => $tiers['acquaintance']['min'], 'friend' => $tiers['friend']['min'], 'bonded' => $tiers['bonded']['min']][
+                    $minTier <= 1 ? 'acquaintance' : ($minTier == 2 ? 'friend' : 'bonded')]);
+                $need = $floor + $shy * max(0.0, floatval($tiers['bonded']['min']) - $floor);
+                $tierRoute = $tierRoute && floatval($in['core_aff']) >= $need;
+            }
+            $passionRoute = floatval($in['passion'] ?? 0.0) >= $minPassion + $shy * floatval($ic['passion_extra']);
+            $earned = false;   // an earned romance level in the matrix is not a title she has said yet
+        }
+        return $tierRoute || $passionRoute || !empty($in['romantic']) || $earned;
+    }
+
+    /** The 'spike_prereq' table (decisions §20.1), its nested tables merged per entry; a key stored before it existed falls back. */
+    public static function spikePrereqConfig(?array $cfg = null): array
+    {
+        $cfg = $cfg ?? self::config();
+        $d = self::defaults()['spike_prereq'];
+        $s = is_array($cfg['spike_prereq'] ?? null) ? $cfg['spike_prereq'] : [];
+        $out = array_replace($d, $s);
+        $out['aspiration'] = array_replace($d['aspiration'], is_array($s['aspiration'] ?? null) ? $s['aspiration'] : []);
+        $own = is_array($s['own_standing'] ?? null) ? $s['own_standing'] : [];
+        $out['own_standing'] = array_replace($d['own_standing'], $own);
+        $out['own_standing']['archetype'] = array_replace($d['own_standing']['archetype'], is_array($own['archetype'] ?? null) ? $own['archetype'] : []);
+        return $out;
     }
 
     // =====================================================================
@@ -734,6 +866,17 @@ class RelDynAttraction
         }
         $beautyKeywords = array_values(array_filter(array_map(fn($k) => strtolower(trim((string) $k)), $beautyKeywords), fn($k) => $k !== ''));
 
+        // Her own social standing (decisions §20.1, spike_prereq.own_standing): who she is, since core 3.4.1
+        // names no standing for an NPC. The preset's / the override's 'standing' (0..1) wins.
+        $sp = self::spikePrereqConfig($cfg);
+        $os = (array) $sp['own_standing'];
+        $standing = floatval(((array) $os['archetype'])[$arch ?? ''] ?? $os['default']) + ($markers !== [] ? floatval($os['faction_bonus']) : 0.0);
+        $sources['standing'] = 'archetype';
+        foreach ([['preset', $preset['standing'] ?? null], ['override', $over['standing'] ?? null]] as [$src, $v]) {
+            if (is_numeric($v)) { $standing = floatval($v); $sources['standing'] = $src; }
+        }
+        $standing = max(0.0, min(floatval($os['max']) > 0 ? floatval($os['max']) : 1.0, $standing));
+
         $pref = self::preferenceOf($dynamics);
         return [
             'archetype'  => $arch,
@@ -756,6 +899,8 @@ class RelDynAttraction
             'preference' => $pref,
             'status_markers' => $markers,
             'status_share'   => $statusShare,
+            // her own social standing 0..1 (decisions §20.1)
+            'own_standing'   => round($standing, 4),
             'beauty_keywords'=> $beautyKeywords,
             'sources'    => $sources,
         ];
@@ -1014,6 +1159,8 @@ class RelDynAttraction
             'passion' => null, 'respect_mult' => 1.0, 'respect_rate' => null,
             'allowed_tier' => null, 'romance' => ['allowed' => self::ROMANCE_FULL, 'earned' => self::ROMANCE_FULL, 'effective' => self::ROMANCE_FULL],
             'blocked_types' => [], 'pending' => null, 'intimacy_allowed' => true, 'valued' => null,
+            // nothing to climb without a player to read (decisions §20.1): a moment lands in full
+            'spike_open' => 1.0,
         ];
     }
 
@@ -1245,6 +1392,10 @@ class RelDynAttraction
             if ($cut > 0.0) $ceiling = round($passionMax * (1.0 - $cut), 4);
         }
 
+        // ---- The spike's prerequisite (decisions §20.1): does a passion moment skip the uphill?
+        $spikePre = self::spikePrerequisite($curve['units'], $pillars['status']['known'] ? ($pillars['status']['base_score'] ?? $pillars['status']['score']) : null,
+            floatval($def['own_standing'] ?? 0.0), (string) $def['rigidity']['status'], $attracted && $hardZero === null, $cfg);
+
         // ---- Romance axis: open only to someone the NPC can feel passion for (now, or after
         // the bond); crush with the visceral pass (or won over / a balanced NPC's bond),
         // full romance (commitment) with the sociological pass too (MDD 2.6), then the
@@ -1339,6 +1490,9 @@ class RelDynAttraction
                                     'attachment' => round($attachmentMult, 6), 'bond' => $bondFactor,
                                     'relief' => round($relief, 4), 'charm' => round($charm, 4),
                                     'pillars' => $unitDef['passion_pillars'] ?? self::PILLARS],
+            // decisions §20.1: how far a passion SPIKE skips the uphill (0 none .. 1 all; spikeFactor) and why
+            'spike_open'        => $spikePre['weight'],
+            'spike_prereq'      => $spikePre,
             'respect_rate'      => self::respectRate($pillars),
             'respect_mult'      => self::respectMult(self::respectRate($pillars), $cfg),
             'allowed_tier'      => $depthAllowed,
@@ -1541,21 +1695,83 @@ class RelDynAttraction
 
     /**
      * The factor (0..1, unitless) of a passion SPIKE of $raw points at effective passion $passion
-     * (feedback_passion_spikes: the moment "bypasses session / gate multipliers"): the decisions §13
-     * uphill and the spark split are multipliers and do not scale it; what stays absolute is a hard
-     * zero (§13: 100 x 0 = 0; spark_mult 0), a closed channel (§15) and the MDD 1.4 passion ceiling
-     * (a cap: floor + moment never past it). The tier's governor is applied by the caller.
+     * (feedback_passion_spikes: "something flirty lands"). Decisions §20.1 (supersedes the April
+     * bypass of every spike): a spike skips the §13 uphill and the spark split only to the degree
+     * her prerequisite is met (spikeOpen: she already finds the player very attractive, or a
+     * significant status gap with attraction and aspiration in it); the rest of it climbs the
+     * uphill like any other gain (gainFactor, at most the full moment):
+     *   factor = through + open x (bypass - through)
+     * What stays absolute either way is a hard zero (§13: 100 x 0 = 0; spark_mult 0), a closed
+     * channel (§15) and the MDD 1.4 passion ceiling (a cap: floor + moment never past it). The
+     * tier's governor is applied by the caller.
      */
     public static function spikeFactor(array $summary, float $passion, float $raw, ?array $tags = null): float
     {
         if (!self::channelOpen($summary, $tags) || !empty($summary['hard_zero'])) return 0.0;
         if (is_numeric($summary['spark_mult'] ?? null) && floatval($summary['spark_mult']) <= 0.0) return 0.0;
         $ceiling = $summary['passion_ceiling'] ?? null;
+        $bypass = 1.0;
         if ($raw > 0.0 && is_numeric($ceiling)) {
             $room = floatval($ceiling) - $passion;
-            return $room <= 0.0 ? 0.0 : min(1.0, $room / $raw);
+            $bypass = $room <= 0.0 ? 0.0 : min(1.0, $room / $raw);
         }
-        return 1.0;
+        $open = self::spikeOpen($summary);
+        if ($open >= 1.0 - 1e-9 || $raw <= 0.0 || $bypass <= 0.0) return $bypass;
+        $through = max(0.0, min($bypass, self::gainFactor($summary, $passion, $raw, $tags)));
+        return $through + $open * ($bypass - $through);
+    }
+
+    /**
+     * How far a spike skips the uphill for this attraction summary (0 none .. 1 all; decisions §20.1):
+     * the stored degree (spike_open), else read from the summary's own passion units (a summary from
+     * before §20.1; the status path needs her own standing and reads as closed).
+     */
+    public static function spikeOpen(array $summary): float
+    {
+        if (is_numeric($summary['spike_open'] ?? null)) return max(0.0, min(1.0, floatval($summary['spike_open'])));
+        return self::spikePrerequisite((array) ($summary['passion']['units'] ?? []), null, null, 'irrelevant', false)['weight'];
+    }
+
+    /**
+     * Decisions §20.1: the spike's prerequisite as a degree. Two ways in, the larger counts (see config
+     * spike_prereq): her TYPE (the visceral passion units' weakest hill, before charm and bond relief,
+     * reaching her floor and past it; an NPC with no visceral unit reads every unit), or a significant
+     * STATUS GAP above her own standing with her aspiration (the status pillar's rigidity) and attraction
+     * in it. Pure.
+     *
+     * @param array $units the summary's passion units (passion.units: each with 'axis', 'm_hill')
+     * @param ?float $playerStatus the player's status in her eyes (0..1), null = unknown
+     * @param ?float $ownStanding her own standing (0..1), null = unknown
+     * @return array ['weight' => 0..1, 'via' => 'type'|'status_gap'|null, 'type' => 0..1, 'type_m' => ?float,
+     *                'gap' => ?float, 'gap_weight' => 0..1, 'aspiration' => 0..1]
+     */
+    public static function spikePrerequisite(array $units, ?float $playerStatus, ?float $ownStanding, string $statusRigidity, bool $attracted, ?array $cfg = null): array
+    {
+        $sp = self::spikePrereqConfig($cfg);
+        $out = ['weight' => 1.0, 'via' => null, 'type' => 0.0, 'type_m' => null, 'gap' => null, 'gap_weight' => 0.0, 'aspiration' => 0.0];
+        if (empty($sp['enabled'])) return $out;
+        $ramp = fn(float $v, float $from, float $full) => $full > $from ? max(0.0, min(1.0, ($v - $from) / ($full - $from))) : ($v >= $full ? 1.0 : 0.0);
+        $visceral = [];
+        $all = [];
+        foreach ($units as $u) {
+            if (!is_array($u) || !is_numeric($u['m_hill'] ?? null)) continue;
+            $all[] = floatval($u['m_hill']);
+            if (($u['axis'] ?? null) === 'visceral') $visceral[] = floatval($u['m_hill']);
+        }
+        $pool = $visceral !== [] ? $visceral : $all;
+        if ($pool !== []) {
+            $out['type_m'] = round(min($pool), 4);
+            $out['type'] = round($ramp(min($pool), floatval($sp['type_from']), floatval($sp['type_full'])), 4);
+        }
+        $asp = max(0.0, min(1.0, floatval(((array) $sp['aspiration'])[$statusRigidity] ?? 0.0)));
+        $out['aspiration'] = $asp;
+        if ($playerStatus !== null && $ownStanding !== null) {
+            $out['gap'] = round($playerStatus - $ownStanding, 4);
+            $out['gap_weight'] = round($ramp($playerStatus - $ownStanding, floatval($sp['gap_from']), floatval($sp['gap_full'])) * $asp * ($attracted ? 1.0 : 0.0), 4);
+        }
+        $out['weight'] = round(max($out['type'], $out['gap_weight']), 4);
+        $out['via'] = $out['weight'] <= 0.0 ? null : ($out['type'] >= $out['gap_weight'] ? 'type' : 'status_gap');
+        return $out;
     }
 
     /**
@@ -2010,6 +2226,9 @@ class RelDynAttraction
      *   flirt_min_tier int, flirt_passion_min float: below both (and not romantic / an earned
      *                    crush) the pull shows only as looks, never as answered flirtation
      *                    (MDD 8.1: at Unknown / Acquaintance romantic gestures meet the Ick)
+     *   shyness  float   0..1 (shyness(): low self-confidence) and core_aff float (the bond's depth):
+     *                    decisions §20.3, a shy NPC needs a deeper bond and more passion before her
+     *                    felt text lets her answer it (voiced()); the interest itself is still hers
      * Null when there is nothing to say (switched off, or strained).
      */
     public static function feltText(string $npcName, array $summary, array $ctx = []): ?string
@@ -2020,9 +2239,11 @@ class RelDynAttraction
         $possessive = $P === 'them' ? 'their' : "{$P}'s";
         $tier = intval($ctx['tier'] ?? 2);
         $romanceEff = intval($summary['romance']['effective'] ?? 0);
-        $flirtOk = $tier >= intval($ctx['flirt_min_tier'] ?? 2)
-            || floatval($ctx['passion'] ?? 0.0) >= floatval($ctx['flirt_passion_min'] ?? 40.0)
-            || !empty($ctx['romantic']) || $romanceEff >= self::ROMANCE_CRUSH;
+        $shy = max(0.0, min(1.0, floatval($ctx['shyness'] ?? 0.0)));
+        $flirtOk = self::voiced(['tier' => $tier, 'passion' => floatval($ctx['passion'] ?? 0.0), 'core_aff' => $ctx['core_aff'] ?? null,
+            'romantic' => !empty($ctx['romantic']), 'romance_effective' => $romanceEff, 'shyness' => $shy,
+            'flirt_min_tier' => intval($ctx['flirt_min_tier'] ?? 2), 'flirt_passion_min' => floatval($ctx['flirt_passion_min'] ?? 40.0)]);
+        $shyText = $shy >= floatval(self::interestConfig()['shy_text_from']);
         $lines = [];
         $valuedWords = [
             'warrior' => "the way {$P} fights", 'hunter' => "{$possessive} hunter's instincts",
@@ -2048,6 +2269,9 @@ class RelDynAttraction
                 if ($flirtOk) {
                     $answer = ['faint' => 'a warm but light answer', 'plain' => 'a warm answer', 'strong' => 'an eager answer'][$strength];
                     $lines[] = "{$lead}, and flirtation gets {$answer}.";
+                } elseif ($shyText) {
+                    // Interested all the same (decisions §20.3); too unsure of herself to say it yet
+                    $lines[] = "{$lead}; {$npcName} is too unsure to say so, and it surfaces only as stolen glances and flustered half-sentences, until {$npcName} feels safe enough with {$P} to let it out.";
                 } else {
                     $lines[] = "{$lead}; {$npcName} lets it show no further than a look.";
                 }

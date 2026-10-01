@@ -629,6 +629,9 @@ final class RelDynFelt
             'stepped_back' => $steppedBack,
             'flirt_min_tier' => intval($ac['flirt_min_tier'] ?? 2),
             'flirt_passion_min' => floatval($ac['flirt_passion_min'] ?? 40.0),
+            // decisions §20.3: low self-confidence needs a deeper bond before she voices the pull
+            'shyness' => RelDynAttraction::shyness($dynamics),
+            'core_aff' => RelationshipDynamics::getCoreAffinity($dynamics),
         ]);
         if (!empty($attraction)) {
             $lines[] = self::line('attraction', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['attraction']),
@@ -683,6 +686,13 @@ final class RelDynFelt
         foreach ($pull['lines'] as $l) {
             $lines[] = self::line('pullback_' . $l['key'], self::SCOPE_BOND, self::LANE_TURN, floatval($l['salience']), (string) $l['text'],
                 ['must' => !empty($l['must']), 'intense' => !empty($l['intense'])]);
+        }
+        // --- Keeping (reldyn_keeping.php, decisions §20.3): the fear of losing the player and what she does about it,
+        // from the first tier she has anything to lose ---
+        $keeping = RelDynKeeping::feltLine($dynamics, $npc, $player, $tier);
+        if ($keeping !== null) {
+            $lines[] = self::line($keeping['key'], self::SCOPE_BOND, self::LANE_CORE, floatval($keeping['salience']), (string) $keeping['text'],
+                ['intense' => $keeping['band'] === 'controlling']);
         }
         // One voice: the standing pull-back that names what is missing makes the generic unmet line beside it a repeat
         if ($tier >= 1 && RelDynPullback::active($dynamics) && !RelDynPullback::notLetInYet($dynamics) && RelDynPullback::namesNeeds($dynamics)) {

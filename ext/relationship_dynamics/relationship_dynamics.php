@@ -1354,6 +1354,10 @@ class RelationshipDynamics
             // How far she has let the player in (comfort x trust), and the temporary state of pulling back
             // when the weather is inclement and she feels unfulfilled (reldyn_pullback.php, RelDynPullback::configDefaults()).
             'pullback' => RelDynPullback::configDefaults(),
+            // ===== Keeping (Ken 2026-10-01 §20.3): the fear of losing the relationship, and acting to keep it =====
+            // Every NPC has it, scaled by her attachment corners, insecurity and possessiveness, and it costs the bond
+            // above a point (reldyn_keeping.php, RelDynKeeping::configDefaults()).
+            'keeping' => RelDynKeeping::configDefaults(),
             // ===== Resentment threshold events (MDD 15.5, dimension design resentment_self) =====
             // Confrontation at the NPC's threshold, resentment_self's thresholds and recovery,
             // cross-bond guilt bleed, felt text (reldyn_resentment.php, RelDynResentment::configDefaults()).
@@ -14916,10 +14920,11 @@ class RelationshipDynamics
     }
 
     /**
-     * The factor (unitless) of a passion SPIKE of $raw points from $source (feedback_passion_spikes:
-     * the moment bypasses the gate multipliers): RelDynAttraction::spikeFactor at the effective
-     * passion (a hard zero, a closed channel, the MDD 1.4 ceiling; not the decisions §13 uphill),
-     * then the tier's governor (MDD 8: floor + moment never past the tier's ceiling), logged.
+     * The factor (unitless) of a passion SPIKE of $raw points from $source (feedback_passion_spikes):
+     * RelDynAttraction::spikeFactor at the effective passion (a hard zero, a closed channel, the MDD
+     * 1.4 ceiling; the decisions §13 uphill is skipped only to the degree her prerequisite is met,
+     * decisions §20.1: very attractive, or a status gap with attraction and aspiration), then the
+     * tier's governor (MDD 8: floor + moment never past the tier's ceiling), logged.
      */
     private static function spikePassionFactor(string $npcName, array &$dynamics, float $raw, string $source, ?array $tags = null): float
     {
@@ -14935,7 +14940,9 @@ class RelationshipDynamics
             $governed = $gov < 1.0;
             $factor *= $gov;
         }
-        self::log(sprintf('[ATTRACTION] %s: %s passion +%.4f at %.2f x%.4f (a moment: no uphill)%s', $npcName, $source, $raw, $passion, $factor,
+        $open = $a === [] ? 1.0 : RelDynAttraction::spikeOpen($a);
+        $uphill = $open >= 1.0 - 1e-9 ? 'no uphill' : ($open <= 1e-9 ? 'through the uphill' : sprintf('uphill skipped %d%%', round(100 * $open)));
+        self::log(sprintf('[ATTRACTION] %s: %s passion +%.4f at %.2f x%.4f (a moment: %s)%s', $npcName, $source, $raw, $passion, $factor, $uphill,
             ($factor <= 0.0 && $raw > 0.0) ? ' (' . self::passionClosedReason($a, $tags, $dynamics) . ')'
                 : ($governed ? ' (bounded by ' . self::governorReason($dynamics) . ')' : '')));
         return $factor;
@@ -14990,8 +14997,9 @@ class RelationshipDynamics
      * §13: raw x attractionPassionFactor; a hard zero adds exactly 0), then addPassion (stage
      * ceiling). $tags: the gain's eval tags (its channel, decisions §15; null = no channel).
      * $spike: a passion spike (RelDynPassion, roadmap passion-floor-spike): spikePassionFactor at
-     * the effective passion (floor + spike, what the moment stacks on: no uphill, but a hard zero,
-     * a closed channel, the MDD 1.4 ceiling and the tier's governor), the gain goes to the spike
+     * the effective passion (floor + spike, what the moment stacks on: the uphill only skipped to the
+     * degree of decisions §20.1's prerequisite; a hard zero, a closed channel, the MDD 1.4 ceiling and
+     * the tier's governor always), the gain goes to the spike
      * instead of the floor, and while the Ick lasts there is no spike at all (the floor path turns
      * the exchange's gains into losses). Returns the gain asked of addPassion
      * (points), or the spike points added.
@@ -15974,6 +15982,8 @@ class RelationshipDynamics
         }
         $out[] = $num($dynamics['_env_applied_effects'] ?? null);
         $out[] = ['comfort' => floatval($dynamics[RelDynResentment::STATE_KEY]['guilt']['applied'] ?? 0.0)];
+        // The grip of her fear of losing the player: paranoia holds trust and comfort down (RelDynKeeping::advance)
+        $out[] = $num($dynamics[RelDynKeeping::KEY]['applied'] ?? null);
         // What she heard of the player before meeting them (reputation-layer), fading
         $out[] = $num($dynamics[RelDynReputation::KEY]['effective'] ?? null);
         // A consumable's spike until it wears off (item-modifiers)
@@ -17112,13 +17122,22 @@ class RelationshipDynamics
      * @param string|null $interactionLL  Love language classification (LL_TOUCH, LL_WORDS, etc.)
      * @param string|null $mood           The NPC's own last mood (its reply)
      * @param array       $evalResult     Eval result (may contain romantic_intent)
+     * @param array|null  $dynamics       The NPC's state: hidden interest counts (decisions §20.3), a drawn NPC
+     *                                    whose reply is shy (ick.hidden_interest_moods) is returning interest
      * @return bool
      */
-    public static function isRomanticAttempt($interactionLL, $mood, $evalResult = [])
+    public static function isRomanticAttempt($interactionLL, $mood, $evalResult = [], ?array $dynamics = null)
     {
         // She flirted back: reciprocated, not the Ick's business
-        $reciprocal = array_map('strtolower', (array) RelDynProtocols::config()['ick']['reciprocal_moods']);
+        $ick = RelDynProtocols::config()['ick'];
+        $reciprocal = array_map('strtolower', (array) $ick['reciprocal_moods']);
         if (!empty($mood) && in_array(strtolower(trim((string) $mood)), $reciprocal, true)) {
+            return false;
+        }
+        // Drawn but too shy to show it: still interested, so a shy reply is interest returned (decisions §20.3)
+        if ($dynamics !== null && !empty($mood)
+            && in_array(strtolower(trim((string) $mood)), array_map('strtolower', (array) ($ick['hidden_interest_moods'] ?? [])), true)
+            && RelDynAttraction::interest($dynamics)['interest'] >= floatval($ick['hidden_interest_min'] ?? 0.3)) {
             return false;
         }
 
@@ -17207,7 +17226,7 @@ class RelationshipDynamics
      */
     public static function recordIckEvalAttempt(string $npcName, array $n, array &$dynamics): bool
     {
-        if (!self::isRomanticAttempt(null, $n['reply_mood'] ?? null, $n)) {
+        if (!self::isRomanticAttempt(null, $n['reply_mood'] ?? null, $n, $dynamics)) {
             return false;
         }
         $g = (int) round(floatval($n['gamets'] ?? 0));
@@ -17327,6 +17346,13 @@ class RelationshipDynamics
         // avoidance axis lowers it, continuously (RelDynProtocols::ickAvoidanceMult)
         $threshold *= RelDynProtocols::ickAvoidanceMult(is_array($dynamics) ? $dynamics : []);
         $ick = RelDynProtocols::config()['ick'];
+        // Hidden interest counts (decisions §20.3): someone she is drawn to is pushed too far later than a
+        // stranger, shown or not, by how interested she is; never to the point of no Ick at all
+        $interest = RelDynAttraction::interest(is_array($dynamics) ? $dynamics : [])['interest'];
+        if ($interest > 0.0) {
+            $lifted = $threshold * (1.0 + floatval($ick['hidden_interest_threshold_gain'] ?? 0.0) * $interest);
+            $threshold = max($threshold, min($lifted, floatval($ick['hidden_interest_threshold_cap'] ?? 0.95)));
+        }
 
         if ($ratio < $threshold) {
             return false; // Not enough romantic pressure
@@ -19337,6 +19363,8 @@ require_once __DIR__ . '/reldyn_jev.php';
 require_once __DIR__ . '/reldyn_concern.php';
 // Let in (comfort x trust) and the temporary state of pulling back; defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_pullback.php';
+// Keeping: the fear of losing the relationship and acting to keep it (decisions §20.3); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_keeping.php';
 // Resentment threshold events: the MDD 15.5 confrontation, resentment_self, guilt bleed; defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_resentment.php';
 // Creature moodifications (vampires, werewolves; Skyrim's moon cycle)

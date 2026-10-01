@@ -329,6 +329,7 @@ final class RelDynCombat
             $isWitness = in_array(strtolower($npc), $witnessSet, true);
             $fall = null;
             $fought = false;
+            $together = [];
             $threat = null;
 
             if ($type === 'bleedout') {
@@ -370,6 +371,15 @@ final class RelDynCombat
                 }
                 $fought = !$isWitness && (in_array($npc, $direct, true) && ($type !== 'combatend' && $type !== 'combatendmighty')
                     || self::fought($npc, $at));
+                // Fighting side by side is time together (decisions §20.4), by how much she likes fighting:
+                // Aela's combat / adventure / danger tastes make it nearly a full evening, a scholar's a sliver
+                if ($fought) {
+                    $together = RelDynFulfillment::recordSharedFight($dynamics, $prefs, $at > 0 ? $at : RelationshipDynamics::currentGamets());
+                    if ($together !== []) {
+                        RelationshipDynamics::log(sprintf('Shared fight is time together: %s weight %.2f (%s)', $npc,
+                            RelDynFulfillment::sharedFightWeight($prefs), json_encode($together)));
+                    }
+                }
                 if ($fought && $gain > 0) {
                     // Shared danger: her live HP (an event of now only) under the MDD 3.3 threshold
                     $now = RelationshipDynamics::currentGamets();
@@ -403,6 +413,9 @@ final class RelDynCombat
                 RelationshipDynamics::saveDynamics($npc, $dynamics);
                 RelationshipDynamics::log("COMBAT EVENT: {$npc} type={$type} gain=" . round($gain, 2) . ' passion='
                     . round(RelationshipDynamics::getPassion($dynamics), 2) . ($fought ? ' [FOUGHT]' : '') . ($isWitness ? ' [WITNESS]' : ''));
+            } elseif ($together !== []) {
+                // A fight that moved no passion still gave her time with the player (decisions §20.4)
+                RelationshipDynamics::saveDynamics($npc, $dynamics);
             } elseif ($fall !== null) {
                 // Inside the dead band the fall moves no passion; its arousal spike and valence stay
                 RelationshipDynamics::saveDynamics($npc, $dynamics);

@@ -205,6 +205,17 @@ final class RelDynProtocols
                 // Moods in which she answers courting in kind (never pressure): core 3.4.1's own
                 // (lib/emote_moods.php), then older and custom mood names
                 'reciprocal_moods' => RelationshipDynamics::ROMANTIC_MOODS,
+                // Decisions §20.3 (Ken, 2026-10-01): hidden interest counts. Drawn but too shy to show it
+                // (Lynly) is still interested, so courting she answers in one of these moods (core's 'shy')
+                // is returned interest, not unreciprocated pressure, once her felt interest in the player
+                // (RelDynAttraction::interest, 0..1) is at least hidden_interest_min. Short of that, and for
+                // every other reply, the interest still lifts the ratio the Ick needs: the threshold x
+                // (1 + hidden_interest_threshold_gain x interest), never past hidden_interest_threshold_cap
+                // (a ratio of 1 is every exchange): no one is immune to being pushed too far.
+                'hidden_interest_moods' => ['shy'],
+                'hidden_interest_min' => 0.3,
+                'hidden_interest_threshold_gain' => 0.5,
+                'hidden_interest_threshold_cap' => 0.95,
                 // Inside a romance (RelDynIntimacy::inPlay) the floors alone are not her coldness:
                 // her comfort (points, without held states such as grief) must also be at least
                 // this far below her resting baseline (Serene's number)
@@ -659,7 +670,7 @@ final class RelDynProtocols
      */
     public static function ickAttemptOfRequest(array $dynamics, ?string $interactionLL, ?string $mood, array $gameRequest, string $playerName): bool
     {
-        if (!RelationshipDynamics::isRomanticAttempt($interactionLL, $mood, [])) return false;
+        if (!RelationshipDynamics::isRomanticAttempt($interactionLL, $mood, [], $dynamics)) return false;
         return !self::ickReportedIntimacy($dynamics, RelDynIntimacy::requestKind($gameRequest, $playerName));
     }
 
