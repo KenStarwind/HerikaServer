@@ -221,6 +221,9 @@ final class RelDynPostIntimacy
         $cfg = array_replace($defaults, $stored);
         // a row saved before the uncertainty section (or with part of it) takes the current defaults for the rest
         $cfg['uncertainty'] = array_replace($defaults['uncertainty'], is_array($stored['uncertainty'] ?? null) ? $stored['uncertainty'] : []);
+        // the same for the outcome rows: a stored table that lacks one (install.php wrote the table of its day, with
+        // the drunk row under its old name) takes the current row, never an empty one
+        $cfg['outcomes'] = array_replace($defaults['outcomes'], is_array($stored['outcomes'] ?? null) ? $stored['outcomes'] : []);
         return $cfg;
     }
 
@@ -465,6 +468,10 @@ final class RelDynPostIntimacy
             // earlier encounters whose sober verdict is still to come
             'deferred' => $deferred,
         ];
+        // the night's own sober diary is uncertainty too, never shame (§20 #27: RelDynSubstances::soberReflection)
+        if ($outcome === self::DRUNK) {
+            RelDynSubstances::markUncertainNight($dynamics, RelDynSubstances::sessionKey($dynamics));
+        }
         RelationshipDynamics::log(sprintf('[POST-INTIMACY] %s: %s (core %s, trust %.1f, maturity %.1f, %s, avoidance %.2f%s) held %s lasting %s mood %s',
             $npcName, $outcome, $ctx['core_type'] !== '' ? $ctx['core_type'] : 'none', $ctx['trust'], $ctx['maturity'],
             $ctx['intoxicated'] ? 'intoxicated' : 'sober', $ctx['avoidance'],

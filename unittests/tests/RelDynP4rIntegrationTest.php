@@ -25,10 +25,11 @@ final class RelDynP4rIntegrationDb
  *   drunk-state x post-intimacy  drink still in her is intoxication for an encounter (not only an
  *                                active consumable), and the sober verdict waits while it is
  *   one night, one verdict     the sober morning of a drunken scene is uncertainty (decisions §20 #27), a
- *                                small comfort wobble and no shame of its own; the sober diary's ledger keeps
- *                                its resentment_self (the diary's, not the scene's). The night's comfort is
- *                                shared: whichever judges second adds only what exceeds the first (either
- *                                order); each keeps the rest of its verdict (the flirting's gains)
+ *                                small comfort wobble and no shame of its own, and the sober diary of that night
+ *                                asks no resentment_self and no trust cut either (batch U review: it was the one
+ *                                place shame still came from). The night's comfort is shared: whichever judges
+ *                                second adds only what exceeds the first (either order); each keeps the rest of
+ *                                its verdict (the flirting's gains)
  *   save-load                    a verdict the loaded game never lived is not counted
  *   memory x mf-coordinates      the memory note's envelope clause reads the coordinates as she
  *                                carries herself now (derived, Fix 6), like the felt line and Jev
@@ -166,7 +167,7 @@ final class RelDynP4rIntegrationTest extends TestCase
 
     // ------------------------------------------------------------------ one night, one verdict
 
-    /** The sober diary judges the night first; the morning's wobble is no shame and adds no second comfort dip. */
+    /** The sober diary judges the night first (no shame: the night had a scene); the morning's wobble adds no second comfort dip. */
     public function testTheDiaryFirstThenTheMorningAddsNoShameAndNoSecondDip(): void
     {
         $d = $this->npc();
@@ -178,11 +179,10 @@ final class RelDynP4rIntegrationTest extends TestCase
         $this->assertLessThan(floatval($d[RelDynPostIntimacy::KEY]['correction_due']), $t, 'the scene\'s verdict is not due yet');
         $rs0 = self::x($d, 'resentment_self');
         $r = array_values(RelDynSubstances::soberReflection(self::NPC, $d, 'examination'))[0];
-        $S = floatval($r['asked']['resentment_self']);
-        $this->assertGreaterThan(0.0, $S);
-        $this->assertGreaterThan(0.0, floatval($r['applied']['resentment_self']), 'the diary\'s verdict is whole: nothing else judges shame');
-        $this->assertEqualsWithDelta($rs0 + floatval($r['applied']['resentment_self']), self::x($d, 'resentment_self'), 1e-6);
-        $this->assertSame([$S], $this->verdictsOf($d));
+        $this->assertArrayNotHasKey('resentment_self', $r['asked'], 'the night had a scene: her page is unsure of it, not ashamed (decisions §20 #27)');
+        $this->assertArrayNotHasKey('resentment_self', $r['applied']);
+        $this->assertEqualsWithDelta($rs0, self::x($d, 'resentment_self'), 1e-9);
+        $this->assertSame([], $this->verdictsOf($d), 'no shame verdict on the night');
         $pageComfort = floatval($r['asked']['comfort']);
 
         // The morning: the doubt is smaller than what the page already asked of the night's comfort
@@ -196,12 +196,13 @@ final class RelDynP4rIntegrationTest extends TestCase
         $this->assertArrayNotHasKey('resentment_self', $out['corrected'], 'no shame of its own (decisions §20 #27)');
         $this->assertArrayNotHasKey('comfort', $out['corrected'], 'the night\'s comfort was judged once, by the page');
         $this->assertEqualsWithDelta($rs1, self::x($d, 'resentment_self'), 1e-9);
-        $this->assertSame([$S], $this->verdictsOf($d), 'no second shame verdict on the night');
+        $this->assertEqualsWithDelta($rs0, $rs1, 1e-9, 'no shame from the page either');
+        $this->assertSame([], $this->verdictsOf($d), 'no shame verdict on the night');
         $this->assertSame('after', RelDynPostIntimacy::feltText($d, $t)['phase'] ?? null, 'she is still unsure, and says so');
         $this->assertArrayHasKey(RelDynPostIntimacy::WOBBLE_KEY, $d);
     }
 
-    /** The scene's wobble lands first; the diary then keeps its whole shame and adds only the comfort it asks past the wobble. */
+    /** The scene's wobble lands first; the diary then asks no shame and adds only the comfort it asks past the wobble. */
     public function testTheMorningFirstThenTheDiaryKeepsItsOwnShameAndAddsOnlyTheComfortExcess(): void
     {
         $d = $this->npc();
@@ -219,15 +220,15 @@ final class RelDynP4rIntegrationTest extends TestCase
         $aff = RelationshipDynamics::getCoreAffinity($d);
         $r = array_values(RelDynSubstances::soberReflection(self::NPC, $d, 'examination'))[0];
         $this->assertEqualsWithDelta(0.25, $r['endorsed'], 1e-9, 'her sober curve');
-        $this->assertGreaterThan(0.0, floatval($r['applied']['resentment_self'] ?? 0.0), 'the diary\'s shame is its own, whole');
-        $this->assertGreaterThan($rs, self::x($d, 'resentment_self'));
+        $this->assertArrayNotHasKey('resentment_self', $r['applied'], 'the night had a scene: no shame from the page either');
+        $this->assertEqualsWithDelta($rs, self::x($d, 'resentment_self'), 1e-9);
         // one verdict per dimension on the night: the page adds only what it asks past the wobble already given
         $this->assertLessThan(0.0, floatval($r['applied']['comfort'] ?? 0.0), 'the page asks more of the comfort: the excess lands');
         foreach (['affinity', 'passion'] as $sig) {
             $this->assertLessThan(0.0, $r['applied'][$sig] ?? 0.0, "the flirting's {$sig} is still taken back");
         }
         $this->assertLessThan($aff, RelationshipDynamics::getCoreAffinity($d));
-        $this->assertSame([floatval($r['asked']['resentment_self'])], $this->verdictsOf($d));
+        $this->assertSame([], $this->verdictsOf($d), 'no shame verdict on the night');
     }
 
     /** Outside a drinking night nothing is shared: the verdict is whole and unrecorded. */
@@ -258,20 +259,20 @@ final class RelDynP4rIntegrationTest extends TestCase
         $start = $this->night($d);
         $tDiary = $this->clock(self::T0 + 6.2 * self::HOUR);
         RelDynSubstances::update(self::NPC, $d, $tDiary);
-        $S = floatval(array_values(RelDynSubstances::soberReflection(self::NPC, $d, 'examination'))[0]['asked']['resentment_self']);
+        $S = floatval(array_values(RelDynSubstances::soberReflection(self::NPC, $d, 'examination'))[0]['asked']['comfort']);   // the page's comfort ask
+        $this->assertLessThan(0.0, $S);
         $tScene = $this->clock($start + 6.1 * self::HOUR);
         RelDynSubstances::update(self::NPC, $d, $tScene);
         RelDynPostIntimacy::tick(self::NPC, $d, $tScene);
-        $this->assertCount(1, $this->verdictsOf($d), 'the diary\'s shame verdict (the scene gives none)');
+        $this->assertSame([], $this->verdictsOf($d), 'no shame verdict on the night (the page and the scene give none)');
         $this->assertCount(2, $this->comfortAsksOf($d), 'the page\'s and the scene\'s comfort asks');
 
-        // Loaded between them: the diary's verdict stays, the scene's is gone (and asks the excess again)
+        // Loaded between them: the page's comfort verdict stays, the scene's is gone (and asks the excess again)
         $mid = RelDynSubstances::rebaseline($d['_substances'], ($tDiary + $tScene) / 2);
-        $this->assertSame([$S], array_map(fn($v) => floatval($v[1]), array_values($mid['shame'])[0]['verdicts']));
-        $this->assertCount(1, array_values($mid['shame'])[0]['dims']['comfort'], 'the scene\'s comfort ask is gone with the verdict it never lived');
+        $this->assertSame([$S], array_map(fn($v) => floatval($v[1]), array_values($mid['shame'])[0]['dims']['comfort']), 'the scene\'s comfort ask is gone with the verdict it never lived');
         $again = $d;
         $again['_substances'] = $mid;
-        $this->assertEqualsWithDelta(12.0 - $S, RelDynSubstances::nightShame($again, $start, 12.0, $tScene), 1e-9);
+        $this->assertEqualsWithDelta(-(12.0 - abs($S)), RelDynSubstances::nightVerdict($again, $start, 'comfort', -12.0, $tScene), 1e-9);
         // Loaded before both: no verdict was given
         $this->assertArrayNotHasKey('shame', RelDynSubstances::rebaseline($d['_substances'], $tDiary - 1));
     }

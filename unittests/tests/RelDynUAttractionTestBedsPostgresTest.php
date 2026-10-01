@@ -789,6 +789,44 @@ final class RelDynUAttractionTestBedsPostgresTest extends TestCase
         $this->assertClean();
     }
 
+    /**
+     * attraction x romance (decisions §20.3: hidden interest counts, "like moving the romance forward"). Three evenings
+     * of "I missed you" with each of the four, friends at a close bond, the eval seeing a warm, significant moment and no
+     * passion in anything she showed. Lynly (hand-set to her lowest confidence, as the committed read does not give her
+     * one) is drawn and too shy to show it: her evenings move the romance in proportion to the pull she hides; Aela, who
+     * shows what she feels, has nothing hidden and moves it by the passion the eval saw alone, so none here.
+     */
+    public function testEveningsWithAShyOneWhoIsDrawnMoveTheRomanceAndWithAnOpenOneTheyDoNot(): void
+    {
+        $this->seed(60);
+        $this->friends(60);
+        $this->warrior();
+        $t = $this->meet();
+        $this->setBeds(function (array &$d): void {
+            $d['dimensions']['self_confidence']['x'] = 20.0;
+            $d['dimensions']['self_confidence']['baseline'] = 20.0;
+        }, [self::LYNLY]);
+        for ($i = 0; $i < 3; $i++) $t = $this->round('I missed you. Stay a while.', $t + 600, 'eve' . $i);
+        $rows = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $d = $this->dynamics($npc);
+            $rows[$npc] = ['momentum' => floatval($d['_romance']['momentum'] ?? 0.0), 'interest' => RelDynAttraction::interest($d),
+                'shyness' => RelDynAttraction::shyness($d), 'hidden' => RelDynRomance::hiddenShare($d),
+                'moments' => preg_match_all('/\[ROMANCE\] ' . preg_quote($npc, '/') . ': moment \+([0-9.]+)[^\n]*unvoiced/', $this->log(), $m) ? $m[1] : []];
+        }
+        $this->probe('romance', $rows);
+        $this->assertTrue($rows[self::LYNLY]['interest']['drawn'], 'Lynly is drawn');
+        $this->assertGreaterThan(0.8, $rows[self::LYNLY]['shyness']);
+        $this->assertGreaterThan(0.0, $rows[self::LYNLY]['hidden']);
+        $this->assertCount(3, $rows[self::LYNLY]['moments'], 'each evening moved her romance, by the pull she hides');
+        foreach ($rows[self::LYNLY]['moments'] as $w) $this->assertEqualsWithDelta(0.6 * $rows[self::LYNLY]['hidden'], floatval($w), 0.05);
+        $this->assertGreaterThan(0.0, $rows[self::LYNLY]['momentum']);
+        $this->assertSame(0.0, $rows[self::AELA]['shyness'], 'Aela shows what she feels');
+        $this->assertSame([], $rows[self::AELA]['moments'], 'nothing hidden, nothing credited: only the passion the eval saw counts');
+        $this->assertSame(0.0, $rows[self::AELA]['momentum']);
+        $this->assertClean();
+    }
+
     // ------------------------------------------------------------------ §20.3 keeping
 
     /**

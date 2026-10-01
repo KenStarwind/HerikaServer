@@ -72,7 +72,7 @@ final class RelDynBatchPReviewFixesTest extends TestCase
 
     public function testARowWrittenBeforeTheRulingsLearnsTheirTags(): void
     {
-        $this->assertSame(3, RelationshipDynamics::CONFIG_SCHEMA, 'the rulings bumped the row stamp');
+        $this->assertSame(4, RelationshipDynamics::CONFIG_SCHEMA, 'batch U bumped the row stamp (the rulings had bumped it to 3, and rows older than 3 still migrate)');
         $row = self::rowBeforeTheRulings();
         $row['fulfillment']['tag_delivery']['praise'] = [RelationshipDynamics::LL_WORDS => 2.0];   // someone's own tuning
         $this->store($row);

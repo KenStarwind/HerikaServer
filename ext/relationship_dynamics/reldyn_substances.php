@@ -40,6 +40,9 @@
  *     (the Attraction Matrix's summary, or a romance core already holds); otherwise her sober
  *     passion curve (0..1, the uphill's multiplier below her floors). A shallow diary (her own
  *     maturity at or below diary shallow_at) corrects nothing: no meaningful self-reflection.
+ *     A night that held a drunken intimate scene is the exception to the shame (decisions §20 #27, batch U
+ *     review): its morning is uncertainty (RelDynPostIntimacy), so the page asks no resentment_self and no trust
+ *     cut of it (markUncertainNight); what the sober self regrets of the flirting's other gains stands.
  *   - One night, one verdict (the worked example has one sober verdict: "comfort toward Mikael:
  *     -20", "resentment_self: +12"): a drunken scene the post-intimacy states also judge
  *     (RelDynPostIntimacy's drunk_uncertainty comfort wobble / cheating correction, two scenes of one night) and this
@@ -717,8 +720,13 @@ final class RelDynSubstances
         $sober = (array) $cfg['sober'];
         $temperament = $dynamics['inferred_temperament'] ?? $dynamics['temperament'] ?? null;
         $own = RelationshipDynamics::driftSampleValue($dynamics, 'maturity') ?? 50.0;
+        $uncertain = is_array($state['uncertain'] ?? null) ? $state['uncertain'] : [];
         foreach ($closed as $key => $night) {
             unset($nights[$key]);
+            // a night that held a drunken intimate scene (markUncertainNight): the morning is uncertainty, not shame
+            // (decisions §20 #27), so this page asks no resentment_self and no trust cut of it
+            $unsure = !empty($uncertain[(string) $key]);
+            unset($uncertain[(string) $key]);
             if ($depth === 'shallow') {
                 RelationshipDynamics::log("[RelDyn-SUBSTANCE] {$npcName}: the night of {$key} is not looked at (a shallow diary)");
                 $out[$key] = ['endorsed' => null, 'asked' => [], 'applied' => []];
@@ -730,6 +738,7 @@ final class RelDynSubstances
             if ($E < 1.0) {
                 $share = 1.0 - $E;
                 foreach ((array) ($night['gains'] ?? []) as $signal => $gain) {
+                    if ($unsure && $signal === 'trust') continue;   // no trust cut for the scene's night (§20 #27)
                     $v = -floatval($sober['regret_mult']) * $share * floatval($gain);
                     if (abs($v) < 1e-6) continue;
                     $asked[(string) $signal] = round($v, 4);
@@ -741,7 +750,7 @@ final class RelDynSubstances
                 }
                 $lo = floatval($sober['resentment_self_min']);
                 $hi = floatval($sober['resentment_self_max']);
-                $rs = $share * ($lo + ($hi - $lo) * max(0.0, min(1.0, $own / 100.0)));
+                $rs = $unsure ? 0.0 : $share * ($lo + ($hi - $lo) * max(0.0, min(1.0, $own / 100.0)));
                 if ($rs > 1e-6) {
                     $asked['resentment_self'] = round($rs, 4);
                     // one night, one shame: only what exceeds a post-intimacy verdict on this night
@@ -751,12 +760,14 @@ final class RelDynSubstances
                     }
                 }
             }
-            $out[$key] = ['endorsed' => round($E, 4), 'asked' => $asked, 'applied' => $applied];
-            RelationshipDynamics::log(sprintf('[RelDyn-SUBSTANCE] %s: sober, the night of %s (endorsed %.2f): %s', $npcName, $key, $E, json_encode($applied)));
+            $out[$key] = ['endorsed' => round($E, 4), 'asked' => $asked, 'applied' => $applied] + ($unsure ? ['uncertain' => true] : []);
+            RelationshipDynamics::log(sprintf('[RelDyn-SUBSTANCE] %s: sober, the night of %s (endorsed %.2f%s): %s', $npcName, $key, $E,
+                $unsure ? ', unsure of the scene, not ashamed' : '', json_encode($applied)));
         }
         $state = self::state($dynamics);   // (applyDelta above never touches it; re-read for clarity)
         $state['nights'] = $nights;
         if ($nights === []) unset($state['nights']);
+        if ($uncertain === []) unset($state['uncertain']); else $state['uncertain'] = $uncertain;
         $lastKey = array_key_last($out);
         $state['last_sober'] = ['night' => (string) $lastKey, 'endorsed' => $out[$lastKey]['endorsed'],
             'depth' => $depth, 'gamets' => RelationshipDynamics::currentGamets()];
@@ -778,6 +789,22 @@ final class RelDynSubstances
         if (!empty($att['hard_zero'])) return 0.0;
         $curve = $att['passion']['curve'] ?? $att['passion_mult'] ?? 1.0;
         return max(0.0, min(1.0, floatval($curve)));
+    }
+
+    /**
+     * The drinking night $nightKey held a drunken intimate scene whose morning is uncertainty, not shame (decisions
+     * §20 #27: RelDynPostIntimacy's drunk outcome): her sober diary then asks no resentment_self and no trust cut
+     * of that night (soberReflection). A night without a key (no drinking session) has nothing to mark. Marks
+     * are kept for as many nights as the ledger (sober.nights_kept) and spent with the night's reflection.
+     */
+    public static function markUncertainNight(array &$dynamics, ?string $nightKey): void
+    {
+        if ($nightKey === null || $nightKey === '') return;
+        $state = self::state($dynamics);
+        $marks = is_array($state['uncertain'] ?? null) ? $state['uncertain'] : [];
+        $marks[$nightKey] = true;
+        $state['uncertain'] = array_slice($marks, -max(1, intval(self::config()['sober']['nights_kept'])), null, true);
+        $dynamics[self::KEY] = $state;
     }
 
     /** The key of the drinking session she is in now (its start, as the night's key), or null sober. */

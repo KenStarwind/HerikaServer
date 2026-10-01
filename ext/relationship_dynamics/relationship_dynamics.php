@@ -697,8 +697,23 @@ class RelationshipDynamics
      * Schema 3 (rulings 2026-09-25 §18 #10): rows older than it were written before the eval's
      * 'confessing' / 'forgiveness' tags existed, so the tag lists they store lack them;
      * loadStoredConfig() adds them (CONFIG_TAGS_ADDED_V3). A row stamped 3 or later is a choice.
+     * Schema 4 (rulings 2026-10-01 §20, batch U): install.php stores the whole defaultConfig(), so a row stamped
+     * 3 holds three defaults batch U retired as if they were choices (cascade_decay 0.3, the old cascade felt-text
+     * lines, the post-intimacy drunk_regret row); loadStoredConfig() drops them (CONFIG_RETIRED_V4) so the current
+     * defaults apply. A row stamped 4 or later is a choice.
      */
-    const CONFIG_SCHEMA = 3;
+    const CONFIG_SCHEMA = 4;
+
+    /** cascade_decay as install.php stored it up to schema 3 (the hearsay damping of every ripple then; today's default is 0.9). */
+    const RETIRED_CASCADE_DECAY = 0.3;
+
+    /** cascade.felt_text as install.php stored it up to schema 3 (no {HEARD}: a witness read 'has heard'). */
+    const RETIRED_CASCADE_FELT_TEXT = [
+        'ally_hurt'    => "{NAME} has heard what {PLAYER} did to {SOURCE}{REASON}; it sits badly, and {NAME} is cooler toward {PLAYER} for it.",
+        'ally_helped'  => "{NAME} has heard what {PLAYER} did for {SOURCE}{REASON}; {NAME} thinks better of {PLAYER} for it.",
+        'rival_hurt'   => "{NAME} has heard what {PLAYER} did to {SOURCE}{REASON}; {NAME} is not sorry for {SOURCE}, and warms to {PLAYER} for it.",
+        'rival_helped' => "{NAME} has heard what {PLAYER} did for {SOURCE}{REASON}; {NAME} resents it, and is cooler toward {PLAYER} for it.",
+    ];
 
     /**
      * Tag lists rulings 2026-09-25 §18 #10 extended ('confessing' split from 'confiding', the
@@ -738,8 +753,35 @@ class RelationshipDynamics
         if ($schema < 3) {
             $stored = self::addRulingTags($stored);
         }
+        if ($schema < 4) {
+            $stored = self::dropRetiredV4Defaults($stored);
+        }
         // Migrated in memory: a settings-page save stores it with the current stamp
         if ($schema < self::CONFIG_SCHEMA) $stored['config_schema'] = self::CONFIG_SCHEMA;
+        return $stored;
+    }
+
+    /**
+     * A row written before batch U (config_schema < 4) stores, beside every other default, three that rulings
+     * 2026-10-01 §20 retired: none was ever a choice, so the current default applies. cascade_decay equal to the
+     * retired 0.3 (#13: it now damps only news told or late, 0.9), a cascade.felt_text line equal to the shipped
+     * one (the new lines say 'seen' to a witness: a line someone rewrote is theirs and stays), and the post-intimacy
+     * drunk_regret row (#27: its shame table is gone; the drunk row is drunk_uncertainty, which the module reads
+     * from its defaults when a stored table lacks it). Nothing else is touched.
+     */
+    private static function dropRetiredV4Defaults(array $stored): array
+    {
+        if (is_numeric($stored['cascade_decay'] ?? null) && abs(floatval($stored['cascade_decay']) - self::RETIRED_CASCADE_DECAY) < 1e-9) {
+            unset($stored['cascade_decay']);
+        }
+        if (is_array($stored['cascade']['felt_text'] ?? null)) {
+            foreach (self::RETIRED_CASCADE_FELT_TEXT as $key => $line) {
+                if (($stored['cascade']['felt_text'][$key] ?? null) === $line) unset($stored['cascade']['felt_text'][$key]);
+            }
+        }
+        if (is_array($stored['post_intimacy']['outcomes'] ?? null)) {
+            unset($stored['post_intimacy']['outcomes']['drunk_regret']);
+        }
         return $stored;
     }
 

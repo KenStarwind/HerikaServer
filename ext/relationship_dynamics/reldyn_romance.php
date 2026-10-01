@@ -16,7 +16,9 @@
  *   1. A MOMENT is an eval contract item (processEvalContractItem -> noteMoment) that is a
  *      positive interaction and either
  *        - tagged with a moment tag (intimacy, quality_time) at significance >= the
- *          moment threshold with a positive passion signal, or
+ *          moment threshold with a positive passion signal, or the same without one when she is
+ *          drawn to the player and too shy to show it (rulings 2026-10-01 §20 #3: hidden interest
+ *          counts): it weighs its significance x her interest x her shyness (hiddenShare), or
  *        - tagged 'confession' (the player openly declared feelings) at significance >=
  *          the confession threshold; it weighs at least confession_weight.
  *      A SETBACK (a grievance, or a significant non-positive exchange) resets momentum.
@@ -111,6 +113,12 @@ final class RelDynRomance
             'moment_tags' => ['intimacy', 'quality_time'],
             'moment_min_significance' => 0.5,
             'moment_min_passion_signal' => 1.0,
+            // Rulings 2026-10-01 §20 #3: hidden interest counts. A moment (tagged, significant) in which the eval saw
+            // no passion in what she showed still moves the romance when she is drawn to the player and too shy to
+            // show it: it weighs its significance x her interest x how shy she is (the unvoiced share of her pull,
+            // RelDynAttraction::interest / shyness). One who shows what she feels has nothing hidden: her passion
+            // signal is the whole of it. false = only a shown moment counts, as before.
+            'hidden_interest_moments' => true,
             'confession_tag' => 'confession',
             'confession_min_significance' => 0.3,
             'confession_weight' => 1.0,
@@ -185,14 +193,17 @@ final class RelDynRomance
                 && $sig >= floatval($cfg['confession_min_significance']);
             // decisions §15: an asexual NPC's moments come through the emotional channels
             // (a physical moment is none; RelDynAttraction::channelOpen)
-            $tagged = array_intersect((array) $cfg['moment_tags'], $tags) !== []
+            $momentual = array_intersect((array) $cfg['moment_tags'], $tags) !== []
                 && RelDynAttraction::channelOpen((array) ($dynamics['_attraction'] ?? []), $tags)
-                && $sig >= floatval($cfg['moment_min_significance'])
-                && floatval($item['signals']['passion'] ?? 0) >= floatval($cfg['moment_min_passion_signal']);
+                && $sig >= floatval($cfg['moment_min_significance']);
+            $shown = floatval($item['signals']['passion'] ?? 0) >= floatval($cfg['moment_min_passion_signal']);
+            $hidden = $momentual && !$shown && !empty($cfg['hidden_interest_moments']) ? self::hiddenShare($dynamics) : 0.0;
             if ($confession) {
                 $record = ['kind' => 'moment', 'weight' => max($sig, floatval($cfg['confession_weight'])), 'confession' => true];
-            } elseif ($tagged) {
+            } elseif ($momentual && $shown) {
                 $record = ['kind' => 'moment', 'weight' => $sig, 'confession' => false];
+            } elseif ($hidden > 1e-9) {
+                $record = ['kind' => 'moment', 'weight' => round($sig * $hidden, 6), 'confession' => false, 'hidden' => true];
             }
         }
         if ($record === null) {
@@ -203,6 +214,17 @@ final class RelDynRomance
         $pending = is_array($dynamics['_romance']['pending'] ?? null) ? array_values($dynamics['_romance']['pending']) : [];
         $pending[] = $record;
         $dynamics['_romance']['pending'] = array_slice($pending, -self::PENDING_MAX);
+    }
+
+    /**
+     * The share of her pull she does not show (decisions §20 #3): her interest in the player (0..1, 0 unless she is
+     * drawn) x how shy she is about showing it (0..1). Pure.
+     */
+    public static function hiddenShare(array $dynamics): float
+    {
+        $interest = RelDynAttraction::interest($dynamics);
+        if (empty($interest['drawn'])) return 0.0;
+        return max(0.0, min(1.0, floatval($interest['interest']) * RelDynAttraction::shyness($dynamics)));
     }
 
     // =========================================================================
@@ -295,6 +317,7 @@ final class RelDynRomance
                 $momentum += floatval($rec['weight'] ?? 0);
                 RelationshipDynamics::log("[ROMANCE] {$npcName}: moment +" . round(floatval($rec['weight'] ?? 0), 3)
                     . (!empty($rec['confession']) ? ' (confession)' : '')
+                    . (!empty($rec['hidden']) ? ' (her interest, unvoiced)' : '')
                     . " momentum " . round($momentum, 3) . "/" . round($gate['required'], 3) . " toward {$gate['to']}");
             }
             if ($gate !== null && !$gate['open']) {

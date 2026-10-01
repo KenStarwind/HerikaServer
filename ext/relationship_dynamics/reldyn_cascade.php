@@ -25,7 +25,10 @@
  * Aela"): the target's OWN affinity toward the source decides, its magnitude above
  * cascade.min_bond (core points; the bond filter) and at most cascade.max_targets of them (the
  * strongest bonds first, CASCADE_MAX_TARGETS by default). The ripple, in core points before the target's own
- * curve (rulings 2026-10-01 §20 #13: leaning to the MDD, where Farkas at 80 loses about 8 of a 10 drop):
+ * curve (rulings 2026-10-01 §20 #13: leaning to the MDD, where Farkas at 80 loses about 8 of a 10 drop; that figure is
+ * THIS ripple, queued for a witness. Through the target's own curve, below, he ends up with 5 to 7 of the 10, the
+ * social-sensitivity curve taking a further fifth to a third off: the per-target differences the curve exists for.
+ * Whether a witness should be spared the curve is Ken's to rule):
  *     ripple = change x (|bond| / 100) x hearsay x (bond < 0 ? -cascade.enemy_mult : 1)
  * hearsay = 1 for what she saw herself and cascade_decay (0.9) for what she was told or heard of
  * later: little is lost in the telling, but a retelling is still softer than the thing. An ally takes the

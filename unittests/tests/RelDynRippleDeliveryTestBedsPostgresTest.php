@@ -210,6 +210,12 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
         $moved = $this->moved(self::FARKAS, $before);
         $this->assertLessThan(0, $moved, 'Farkas thinks less of the player');
         $this->assertGreaterThan($raw, $moved, 'through his own curve: it lands, but never louder than the news (keeps the per-target curve)');
+        // What he ends up losing is NOT the MDD figure: that (about 0.6 of the drop at bond 60, 0.8 at 80) is the queued
+        // ripple, and his own social-sensitivity curve at his bond with the player takes a further fifth to a third
+        // off it (batch U review). Pinned so a change to either is seen: a share between a third and the ripple's own.
+        $share = abs($moved) / (30 - $this->kit->coreAff(self::AELA));
+        $this->assertLessThan(0.60, $share, 'the curve shaves the queued ripple');
+        $this->assertGreaterThan(0.33, $share, 'but he still feels most of what he saw');
         $this->assertSame([], $this->inbox(self::FARKAS));
         $this->assertCount(1, $this->kit->dynamics(self::FARKAS)[RelDynCascade::APPLIED_KEY], 'remembered by id');
         $line = $this->kit->felt[self::FARKAS]['hear']['cascade_ally_hurt'] ?? '';
