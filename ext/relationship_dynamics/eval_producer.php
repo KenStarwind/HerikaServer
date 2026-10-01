@@ -100,6 +100,21 @@ final class RelDynEval
         'maturity' => 10,
     ];
 
+    /**
+     * Per-signal anchors the eval is shown with each signal question (MDD 15.1, design draft
+     * Dimensions 4 / 7 / 8 / 9 "Eval interaction"): what moves the signal up or down, in words, so a
+     * kept promise and a caught lie score as the different things they are. Words only: the scale
+     * line owns the numbers. One entry per SIGNAL_LIMITS signal, in its order.
+     */
+    const SIGNAL_ANCHORS = [
+        'affinity' => 'Up: real kindness, thanks, a shared laugh, being looked after. Down: mockery, coldness, being brushed off; a betrayal is a large drop.',
+        'trust'    => 'Up: kept a promise, protected them in danger, shared a secret, steady behaviour over time. Down: broke a promise, left them alone in danger; caught lying or betrayed a confidence is a large loss.',
+        'comfort'  => 'Up: relaxed talk with no pressure, a shared laugh, respected a boundary, confided in them and was met with care. Down: pushed for a reaction when they wanted space, an awkward moment; overstepping a boundary after being told to back off is a large loss.',
+        'respect'  => 'Up: showed competence where they care about it, made a hard but right call, acknowledged their expertise. Down: cowardice when courage was needed, failed at something basic, dismissed or talked over them.',
+        'passion'  => 'Up: charged closeness they welcomed (a returned flirt, a kiss, a held gaze). None or down: advances they did not want; plain friendliness is none.',
+        'maturity' => 'Up: said what they felt plainly, set a healthy boundary, steadied themselves. Down: deflected, sulked, got passive-aggressive, lashed out or manipulated.',
+    ];
+
     /** Signals whose sum decides positive_interaction (maturity is the NPC's own handling, not about the player). */
     const POSITIVE_SIGNALS = ['affinity', 'trust', 'comfort', 'respect', 'passion'];
 
@@ -1155,6 +1170,21 @@ final class RelDynEval
         foreach (self::SIGNAL_LIMITS as $sig => $lim) {
             $signalSpec[] = "\"{$sig}\": int -{$lim}..{$lim}";
         }
+        // The SIGNALS text: each signal's question and its anchors (SIGNAL_ANCHORS)
+        $questions = [
+            'affinity' => "do they like {$player} more or less",
+            'trust'    => "can they rely on {$player}",
+            'comfort'  => "can they be themselves around {$player}",
+            'respect'  => "do they value {$player}",
+            'passion'  => 'romantic or intense attraction',
+            'maturity' => "how maturely {$npc} handled their own feelings here (not about {$player})",
+        ];
+        $signalGuide = [];
+        foreach (self::SIGNAL_LIMITS as $sig => $_lim) {
+            $anchor = self::SIGNAL_ANCHORS[$sig] ?? '';
+            $signalGuide[] = "- {$sig}: " . ($questions[$sig] ?? $sig) . ($anchor !== '' ? ". {$anchor}" : '');
+        }
+        $signalGuideText = implode("\n", $signalGuide);
         $earlier = empty($window['earlier']) ? '(none)' : $fmt($window['earlier']);
         $current = $fmt($window['current']);
         $events = empty($eventTags) ? '' : "\nObserved events in this exchange (already certain): " . implode(', ', $eventTags) . "\n";
@@ -1205,12 +1235,7 @@ THIS EXCHANGE (score only this):
 TASK: How did THIS EXCHANGE change {$npc}'s feelings toward {$player}? Consider {$npc}'s state and personality: the same words land differently on different people.
 
 SIGNALS (raw change, 0 = no change):
-- affinity: do they like {$player} more or less
-- trust: can they rely on {$player}
-- comfort: can they be themselves around {$player}
-- respect: do they value {$player}
-- passion: romantic or intense attraction
-- maturity: how maturely {$npc} handled their own feelings here (not about {$player})
+{$signalGuideText}
 Scale: most exchanges 0 to 3; a meaningful moment 5 to 10; a major one (rescue, betrayal, confession) up to 30. Maturity at most 10.
 
 TAGS (what {$player} did; use only these, empty list if none apply):

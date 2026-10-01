@@ -633,14 +633,17 @@ class RelDynFulfillment
      * positive_interaction_delivery for a positive exchange, x (floor + (1 - floor) x
      * significance). A positive tag counts only when the exchange was not a negative one (a
      * grievance, or an affinity loss not judged positive): a gift thrown at someone is not a gift.
+     * $omitTags: tags whose delivery something else made already (a handover row delivered the
+     * 'gift' this exchange's tag stands for, RelDynGifts::noteHandover).
      */
-    public static function evalItemAmounts(array $item, ?array $cfg = null): array
+    public static function evalItemAmounts(array $item, ?array $cfg = null, array $omitTags = []): array
     {
         $cfg = $cfg ?? self::config();
         $positiveOk = !empty($item['positive_interaction'])
             || (floatval($item['signals']['affinity'] ?? 0) >= 0 && empty($item['grievance']['flag']));
         $rows = [];
         foreach ((array) ($item['tags'] ?? []) as $tag) {
+            if (in_array(strtolower((string) $tag), $omitTags, true)) continue;
             $row = ((array) $cfg['tag_delivery'])[strtolower((string) $tag)] ?? null;
             if (is_array($row)) $rows[] = $row;
         }
