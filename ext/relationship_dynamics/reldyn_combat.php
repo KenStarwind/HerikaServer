@@ -390,7 +390,7 @@ final class RelDynCombat
                     RelationshipDynamics::setPassion($dynamics, max(0, RelationshipDynamics::getPassion($dynamics) + $gain));
                     $dynamics['passion_updated_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 }
-                $dynamics['interaction_count'] = intval($dynamics['interaction_count'] ?? 0) + 1;
+                RelationshipDynamics::countCombatInteraction($dynamics);
                 $dynamics['last_interaction_at'] = RelationshipDynamics::getPlayGamets($dynamics);
                 $dynamics['passion_sources']['combat'] = floatval($dynamics['passion_sources']['combat'] ?? 0) + $gain;
                 RelationshipDynamics::saveDynamics($npc, $dynamics);

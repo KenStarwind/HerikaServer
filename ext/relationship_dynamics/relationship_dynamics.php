@@ -4046,6 +4046,7 @@ class RelationshipDynamics
         $now = self::getPlayGamets($dynamics);
         $lastInteraction = floatval($dynamics['last_interaction_at'] ?? 0);
         $rawCount = intval($dynamics['interaction_count'] ?? 0);
+        $storedCount = $rawCount;
 
         // Migration: a checkpoint ahead of the play clock is a legacy wall-clock stamp
         // (or comes from an earlier save): re-arm it. Not "> 1e9": the play clock
@@ -4065,9 +4066,46 @@ class RelationshipDynamics
         }
 
         $dynamics['interaction_count'] = intval(ceil($rawCount)) + 1;
+        self::tickInteractionClock($dynamics, $storedCount);
         $dynamics['last_interaction_at'] = $now;
         $dynamics['last_seen_at'] = $now;
         $dynamics['reunion_spike_given'] = false;
+    }
+
+    /**
+     * The lifetime interaction counter: how many times the player has talked to this NPC (or fought
+     * beside her), only ever growing. interaction_count is NOT this: it is the diminishing-returns
+     * factor, which recordInteraction decays over play time before adding one (about 116 at ten talks
+     * per play hour, and it melts during a played break). Anything that asks "N interactions since X"
+     * (the diary's gap, the ick window, the parasite ledger's stamps) reads this clock. A save from
+     * before it existed has none: it reads interaction_count until the next interaction seeds the
+     * counter from it.
+     */
+    public static function interactionClock(array $dynamics): int
+    {
+        return isset($dynamics['lifetime_interactions']) && is_numeric($dynamics['lifetime_interactions'])
+            ? intval($dynamics['lifetime_interactions'])
+            : intval($dynamics['interaction_count'] ?? 0);
+    }
+
+    /** Count one interaction on the lifetime clock; $storedCount is interaction_count before this interaction touched it (the seed of a legacy save). */
+    private static function tickInteractionClock(array &$dynamics, int $storedCount): void
+    {
+        $base = isset($dynamics['lifetime_interactions']) && is_numeric($dynamics['lifetime_interactions'])
+            ? intval($dynamics['lifetime_interactions']) : $storedCount;
+        $dynamics['lifetime_interactions'] = $base + 1;
+        // A diary bookmark above the clock is a value of the decayed count from an older save: marked now
+        if (intval($dynamics['_diary_last_interaction'] ?? 0) > $dynamics['lifetime_interactions']) {
+            $dynamics['_diary_last_interaction'] = $dynamics['lifetime_interactions'];
+        }
+    }
+
+    /** A combat beat (RelDynCombat::route) is an interaction on both counters: the diminishing count and the lifetime clock. */
+    public static function countCombatInteraction(array &$dynamics): void
+    {
+        $stored = intval($dynamics['interaction_count'] ?? 0);
+        $dynamics['interaction_count'] = $stored + 1;
+        self::tickInteractionClock($dynamics, $stored);
     }
 
     // =========================================================================
@@ -15343,7 +15381,7 @@ class RelationshipDynamics
         $dynamics['_attraction_tier_ceiling'] = $maxTier;
         $dynamics['_attraction_friendzoned'] = $friendzoned;
         $dynamics['_attraction_passion_mult'] = $passionMult;
-        $dynamics['_attraction_matrix_last_eval'] = intval($dynamics['interaction_count'] ?? 0);
+        $dynamics['_attraction_matrix_last_eval'] = self::interactionClock($dynamics);
 
         self::log("[MATRIX] {$npcName}: beauty=" . round($pillarScores['beauty'], 2) . " str=" . round($pillarScores['strength'], 2) . " status=" . round($pillarScores['status'], 2) . " comp=" . round($pillarScores['competence'], 2) . " tier={$maxTier} fz=" . ($friendzoned ? '1' : '0') . " passion_mult=" . round($passionMult, 2));
 
@@ -15527,7 +15565,7 @@ class RelationshipDynamics
                     'from' => self::getRelationshipType($npcName, $dynamics),
                     'from_override' => $currentOverride,   // restored on recovery (null = follow core)
                     'to' => 'parasite',
-                    'at' => intval($dynamics['interaction_count'] ?? 0),
+                    'at' => self::interactionClock($dynamics),
                     'reason' => 'gift_ratio=' . round($giftRatio, 2) . ' threshold=' . round($threshold, 2),
                 ];
                 $dynamics['_relationship_type_override'] = 'parasite';
@@ -15565,7 +15603,7 @@ class RelationshipDynamics
             $dynamics['_relationship_type_history'][] = [
                 'from' => 'parasite',
                 'to' => $previousType ?? 'friend',
-                'at' => intval($dynamics['interaction_count'] ?? 0),
+                'at' => self::interactionClock($dynamics),
                 'reason' => 'genuine_recovery',
             ];
             self::log("[TYPE] Parasite recovery for {$npcName}: returning to " . ($previousType ?? 'default'));
@@ -16117,8 +16155,14 @@ class RelationshipDynamics
 
         // Gate 5 (interaction source only): Interaction gap check
         if ($triggerSource === 'interaction') {
-            $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+            // The lifetime clock, not interaction_count: that one decays (diminishing returns) and at a
+            // steady pace settles, so a gap measured on it never reopened. A bookmark ahead of the clock
+            // (a decayed-count value from an older save) is marked now.
+            $interactionCount = self::interactionClock($dynamics);
             $lastDiaryInteraction = intval($dynamics['_diary_last_interaction'] ?? 0);
+            if ($lastDiaryInteraction > $interactionCount) {
+                $lastDiaryInteraction = $dynamics['_diary_last_interaction'] = $interactionCount;
+            }
             $gap = intval($config['diary_interaction_gap'] ?? self::DIARY_INTERACTION_GAP);
             if (($interactionCount - $lastDiaryInteraction) < $gap) {
                 return false;
@@ -16309,8 +16353,8 @@ class RelationshipDynamics
         // Accumulated time bookmark
         $dynamics['_diary_last_accumulated'] = intval($dynamics['_accumulated_time'] ?? 0);
 
-        // Interaction count bookmark
-        $dynamics['_diary_last_interaction'] = intval($dynamics['interaction_count'] ?? 0);
+        // Interaction bookmark (the lifetime clock: checkDiaryTrigger gate 5)
+        $dynamics['_diary_last_interaction'] = self::interactionClock($dynamics);
 
         // Divine intervention count bookmark
         $dynamics['_diary_last_di_count'] = intval($dynamics['_divine_intervention_count'] ?? 0);
@@ -16655,17 +16699,19 @@ class RelationshipDynamics
             $dynamics['_ick_tracker'] = [
                 'romantic_count'     => 0,
                 'total_count'        => 0,
-                'window_start'       => intval($dynamics['interaction_count'] ?? 0),
+                'window_start'       => self::interactionClock($dynamics),
                 'ick_active'         => false,
                 'ick_cooldown_until_play_gamets' => 0,
             ];
         }
 
         $tracker = &$dynamics['_ick_tracker'];
-        $interactionCount = intval($dynamics['interaction_count'] ?? 0);
+        // The lifetime clock (a window measured on the decaying interaction_count never rolled at a steady pace)
+        $interactionCount = self::interactionClock($dynamics);
 
-        // Reset window if exceeded
-        if (($interactionCount - intval($tracker['window_start'])) >= self::ICK_WINDOW_SIZE) {
+        // Reset window if exceeded (or if its start is ahead of the clock: a value of the decayed count from an older save)
+        if (($interactionCount - intval($tracker['window_start'])) >= self::ICK_WINDOW_SIZE
+            || intval($tracker['window_start']) > $interactionCount) {
             $tracker['romantic_count'] = 0;
             $tracker['total_count'] = 0;
             $tracker['window_start'] = $interactionCount;
