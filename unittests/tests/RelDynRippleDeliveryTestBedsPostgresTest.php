@@ -80,12 +80,18 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
         return RelDynNetworkBedsKit::at(RelDynNetworkBedsKit::N0, 18.0 + $hours);
     }
 
-    /** $npc was in $place at game time $at (an eventlog row of the kind core writes: who was present, where). */
-    private function seenAt(string $npc, string $place, int $at): void
+    /**
+     * $npc was in $place at game time $at (an eventlog row of the kind core writes: who was present, and where, as the
+     * whole location context string core logs). $hold null: only the bare place name is logged (the locations table
+     * says which hold it is in).
+     */
+    private function seenAt(string $npc, string $place, int $at, ?string $hold = null): void
     {
+        $where = $hold === null ? $place
+            : "(Context location: {$place} ,Hold: {$hold}, Buildings to go:, Current Date in Skyrim World: Sundas, 6:00 PM, 17th of Last Seed, 4E 201, current weather: outdoors it is Pleasant)";
         pg_query_params($this->kit->db->link, "INSERT INTO eventlog (type, data, sess, gamets, localts, ts, people, location)
             VALUES ('infonpc_close', 'idle', 'pending', \$1, \$2, \$1, \$3, \$4)",
-            [$at, $this->kit->realTs, "|{$npc}|" . RelDynNetworkBedsKit::PLAYER . '|', $place]);
+            [$at, $this->kit->realTs, "|{$npc}|" . RelDynNetworkBedsKit::PLAYER . '|', $where]);
     }
 
     private function scoreInsult(array $loss = ['affinity' => -30, 'trust' => -4]): void
@@ -104,7 +110,7 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
     {
         $this->kit->people = '|' . self::AELA . '|' . implode('|', $present) . '|' . RelDynNetworkBedsKit::PLAYER . '|';
         $this->kit->turn(self::AELA, self::INSULT, $this->t(0), 'insult');
-        pg_query($this->kit->db->link, "UPDATE eventlog SET location = 'Breezehome' WHERE location = ''");   // where it happened
+        pg_query($this->kit->db->link, "UPDATE eventlog SET location = '" . RelDynNetworkBedsKit::HOME . "' WHERE location = ''");   // where it happened, as core logs it
         $this->kit->worker();
         $this->kit->people = null;
     }
@@ -150,7 +156,7 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
         $this->world();
         $this->scoreInsult();
         // before the news: Lynly was in Whiterun, Ashe at the College in Winterhold; Muiri was seen nowhere in particular
-        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-5));
+        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-5), 'Whiterun');
         $this->seenAt(self::ASHE, 'Winterhold College', $this->t(-5));
         $this->insultAela();
         $lost = 30 - $this->kit->coreAff(self::AELA);
@@ -216,7 +222,7 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
     {
         $this->world();
         $this->scoreInsult();
-        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-5));
+        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-5), 'Whiterun');
         $this->seenAt(self::ASHE, 'Winterhold College', $this->t(-5));
         $this->insultAela();
         $lynly = $this->ripple(self::LYNLY);
@@ -263,7 +269,7 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
         $this->world();
         $this->scoreInsult();
         $this->seenAt(self::ASHE, 'Winterhold College', $this->t(-5));
-        $this->seenAt(self::YSOLDA, 'Dragonsreach', $this->t(-5));
+        $this->seenAt(self::YSOLDA, 'Dragonsreach', $this->t(-5), 'Whiterun');
         $this->insultAela();
         $ashe = $this->ripple(self::ASHE);
         $readyAfter = ($ashe['ready_at'] - $this->t(0)) / self::HOUR;
@@ -305,8 +311,8 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
         // two holds off hears after Lynly at the same bond: the closer place does.
         $this->world([self::FARKAS => 80, self::ASHE => 45]);
         $this->scoreInsult();
-        $this->seenAt(self::FARKAS, 'Dragonsreach', $this->t(-3));
-        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-3));
+        $this->seenAt(self::FARKAS, 'Dragonsreach', $this->t(-3), 'Whiterun');
+        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-3), 'Whiterun');
         $this->seenAt(self::ASHE, 'Winterhold College', $this->t(-3));
         $this->insultAela([]);
         $at = fn(string $npc) => $this->ripple($npc)['ready_at'];
@@ -323,7 +329,7 @@ final class RelDynRippleDeliveryTestBedsPostgresTest extends TestCase
     {
         $this->world();
         $this->scoreInsult();
-        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-5));
+        $this->seenAt(self::LYNLY, 'Dragonsreach', $this->t(-5), 'Whiterun');
         $this->insultAela();
         $item = $this->ripple(self::LYNLY);
         // a crash between queueing and the source's save: the same pending ripple is appended again

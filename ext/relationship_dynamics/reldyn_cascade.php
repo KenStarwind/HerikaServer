@@ -297,9 +297,10 @@ final class RelDynCascade
     }
 
     /**
-     * The hold $npcName was last seen in: the newest eventlog row that had her present (people column), its
-     * location name through core's locations table, as hold. '' when never seen lately, no database, or the place
-     * is not on the map. At most delivery.last_seen_lookback_game_days before $before (default: now).
+     * The hold $npcName was last seen in: the newest eventlog row that had her present (people column), its location
+     * (core logs the whole context string, "(Context location: X ,Hold: Y, ...)": the hold is read from it; a bare
+     * place name is looked up in core's locations table). '' when never seen lately, no database, or the place is not
+     * on the map. At most delivery.last_seen_lookback_game_days before $before (default: now).
      */
     public static function lastSeenHold(string $npcName, ?float $before = null, ?array $cfg = null): string
     {
@@ -312,16 +313,22 @@ final class RelDynCascade
         $stated = $db->escapeLiteral('|' . mb_strtolower(trim($npcName)) . ' (');
         try {
             $row = $db->fetchOne(
-                "SELECT l.hold FROM eventlog e
-                 LEFT JOIN LATERAL (SELECT hold FROM locations WHERE lower(name) = lower(e.location) LIMIT 1) l ON true
+                "SELECT e.location FROM eventlog e
                  WHERE e.location IS NOT NULL AND e.location <> '' AND e.gamets >= {$since}
                    AND (position({$bare} in lower(e.people)) > 0 OR position({$stated} in lower(e.people)) > 0)
                  ORDER BY e.gamets DESC, e.rowid DESC LIMIT 1");
+            $location = is_array($row) ? trim((string) ($row['location'] ?? '')) : '';
+            if ($location === '') return '';
+            $parsed = RelDynFacets::parseLocationContext($location);
+            if ($parsed['hold'] !== '') return $parsed['hold'];
+            // not core's context string: a bare place name
+            $place = $parsed['name'] !== '' ? $parsed['name'] : $location;
+            $loc = $db->fetchOne('SELECT hold FROM locations WHERE lower(name) = lower(' . $db->escapeLiteral($place) . ') LIMIT 1');
+            return is_array($loc) ? trim((string) ($loc['hold'] ?? '')) : '';
         } catch (\Throwable $ex) {
             RelationshipDynamics::logError("cascade: where {$npcName} was last seen", $ex);
             return '';
         }
-        return is_array($row) ? trim((string) ($row['hold'] ?? '')) : '';
     }
 
     /**
