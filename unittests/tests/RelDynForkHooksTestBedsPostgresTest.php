@@ -871,7 +871,7 @@ $GLOBALS['ENGINE_PATH'] = $enginePath;
 require_once $enginePath . 'lib/logger.php';
 require_once $enginePath . 'ext/relationship_system/async_queue.php';        // worker.php
 require_once $enginePath . 'ext/relationship_system/relationship_llm.php';   // _relProcessQueue()
-final class ChildDb {
+final class ForkHooksChildDb {
     public $link;
     public function __construct($dsn, $schema) { $this->link = pg_connect($dsn); pg_query($this->link, "SET search_path TO {$schema}"); }
     public function fetchOne($q, array $params = []) { $r = $params ? pg_query_params($this->link, $q, $params) : pg_query($this->link, $q); if (!$r) throw new RuntimeException(pg_last_error($this->link)); return pg_fetch_assoc($r) ?: []; }
@@ -879,7 +879,7 @@ final class ChildDb {
     public function escape($s) { return pg_escape_string($this->link, (string) $s); }
     public function execQuery($q) { return pg_query($this->link, $q); }
 }
-$GLOBALS['db'] = new ChildDb($dsn, $schema);
+$GLOBALS['db'] = new ForkHooksChildDb($dsn, $schema);
 $GLOBALS['PLAYER_NAME'] = 'Kaida';
 $GLOBALS['RELLLM_CONNECTOR'] = 5;
 echo json_encode(['reldyn_loaded_before' => class_exists('RelDynExclusivity', false),

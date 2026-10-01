@@ -283,7 +283,7 @@ final class RelDynSettings
             'impulse.resolution', 'impulse.dignity', 'impulse.motivation', 'impulse.preset_style', 'impulse.strength',
             'impulse.salience', 'impulse.urge', 'impulse.style_text', 'impulse.strength_text', 'impulse.motive_text',
             'impulse.resolution_text', 'impulse.default_traits',
-            'diary_reflection.strength_scale', 'diary_reflection.max_strength', 'diary_reflection.depth_text', 'diary_reflection.moment_text',
+            'diary_reflection.strength_scale', 'diary_reflection.max_strength', 'diary_reflection.depth_text', 'diary_reflection.moment_text', 'diary_reflection.prompt',
             'protocols.*',
             'substances.drunk', 'substances.sober', 'substances.addiction',
             'facet_classifier.embedding', 'facet_classifier.build',
