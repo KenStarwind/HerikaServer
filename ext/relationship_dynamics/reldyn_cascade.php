@@ -56,9 +56,10 @@
  * reldyn_felt.php), by who the ripple made her to the player: an ally hurt or helped, a rival
  * hurt or helped. The reason anchor (the item's summary, cleaned of scores) rides along.
  *
- * NOT BUILT (judged, review queue): applying a ripple to NPCs merely present (CACHE_PEOPLE) or
- * named in someone else's request. Their own next prerequest is their load; writing other NPCs'
- * core rows from inside a request that is not theirs is the eager design the audit retired.
+ * NOT BUILT (judged, review queue): writing another NPC's core rows from inside a request that is not hers. "At once"
+ * for a witness means deliverable at once: it lands at HER own next prerequest, her load, which is the lazy design
+ * (the eager version the audit retired wrote other NPCs' rows from the source's request). The one thing a request
+ * writes for someone else is a line in her talk ledger (noteTalk), appended atomically.
  *
  * Units: core affinity points (-100..100); gamets raw game calendar.
  */
