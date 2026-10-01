@@ -119,7 +119,9 @@ echo RelDynUiPage::css();
 
 $trendClass = fn(?string $t) => $t === 'up' ? 'rd-up' : ($t === 'down' ? 'rd-down' : '');
 $cardSvg = RelDynUiCharts::card($view['card']);
-$snippet = '<figure style="margin:0;max-width:640px">' . preg_replace('/ width="640" height="(\d+)"/', ' width="100%" style="height:auto;display:block"', $cardSvg, 1) . '</figure>';
+// the card is drawn 640 wide; on the page and in the snippet it scales to its box (a phone shows it whole, no sideways scroll)
+$cardFluid = preg_replace('/ width="640" height="(\d+)"/', ' width="100%" style="height:auto;display:block"', $cardSvg, 1);
+$snippet = '<figure style="margin:0;max-width:640px">' . $cardFluid . '</figure>';
 ?>
 <main>
 <div class="rd-wrap" id="reldyn-player">
@@ -194,7 +196,7 @@ $snippet = '<figure style="margin:0;max-width:640px">' . preg_replace('/ width="
 
     <section class="rd-section" id="rd-card" aria-labelledby="rd-card-h">
         <h2 id="rd-card-h">Spider graph and shareable card</h2>
-        <div class="rd-chart"><?php echo $cardSvg; ?></div>
+        <div class="rd-chart rd-card-chart"><?php echo $cardFluid; ?></div>
         <div class="rd-form-row">
             <a class="rd-btn" href="player.php?export=svg" download>Download .svg</a>
             <a class="rd-btn rd-secondary" href="player.php?export=html" download>Download .html</a>

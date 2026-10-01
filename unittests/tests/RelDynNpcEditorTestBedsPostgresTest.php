@@ -387,7 +387,7 @@ final class RelDynNpcEditorTestBedsPostgresTest extends TestCase
             foreach (RelDynTraits::TRAITS as $trait) $this->assertStringContainsString('name="f[trait:' . $trait . ']"', $html);
             foreach (array_keys(RelDynTraits::PRESET_TRAITS) as $preset) $this->assertStringContainsString('<option value="' . $preset . '"', $html);
             // the fulfillment spider of the player pair
-            $this->assertMatchesRegularExpression('/<div class="rd-spider" data-target="Player"><svg viewBox/', $html, $name);
+            $this->assertMatchesRegularExpression('/<div class="rd-spider" data-target="Player"><svg xmlns="http:\/\/www.w3.org\/2000\/svg" viewBox/', $html, $name);
             $this->assertStringContainsString('Reset the whole NPC', $html);
         }
         $this->assertSame(0, $this->llmCalls);
@@ -795,7 +795,7 @@ final class RelDynNpcEditorTestBedsPostgresTest extends TestCase
         $this->assertSame('probation', $spider['graph']['boundary']['state']);
         $html = $this->get(['npc' => self::AELA])['body'];
         $this->assertSame(1, preg_match('/<div class="rd-spider" data-target="Player">(<svg.*?<\/svg>)/s', $html, $svg));
-        $this->assertSame(2 + 4, substr_count($svg[1], '<polygon'), '4 rings, the need and the coverage polygons');
+        $this->assertSame(2 + 5, substr_count($svg[1], '<polygon'), '5 rings, the need and the coverage polygons');
         $this->assertTrue($this->field($m, 'fulfillment', 'ful:boundary:Player')['resettable']);
 
         $this->post(['npc' => self::AELA, 'op' => 'reset_field|ful:boundary:Player']);
@@ -925,6 +925,185 @@ PHP);
         $this->assertStringNotContainsString('<html', $out);
         $this->assertStringContainsString('__STATUS__ 303', $out);
         $this->assertEqualsWithDelta(50.0, $this->stored(self::AELA)['jealousy_anger'], 1e-9);
+    }
+
+    // ------------------------------------------------------------------ the page as a browser really submits it
+
+    /**
+     * The section's form as a browser would send it with nothing touched: every named control (the
+     * checkbox only when checked, a select at its selected option), range inputs snapped to their
+     * step the way the value-sanitization algorithm does. 'invalid' lists the controls constraint
+     * validation would refuse (a number off its step, outside min/max) unless the form says novalidate.
+     *
+     * @return array{post: array, invalid: array, novalidate: bool}
+     */
+    private function browserForm(string $html, string $section): array
+    {
+        $doc = new DOMDocument();
+        libxml_use_internal_errors(true);
+        $doc->loadHTML('<?xml encoding="UTF-8">' . $html);
+        libxml_clear_errors();
+        $x = new DOMXPath($doc);
+        $form = $x->query('//section[@id="sec-' . $section . '"]//form')->item(0);
+        $this->assertNotNull($form, "form of {$section}");
+        $novalidate = $form->hasAttribute('novalidate');
+        $post = [];
+        $invalid = [];
+        foreach ($x->query('.//input|.//select|.//textarea', $form) as $el) {
+            $name = $el->getAttribute('name');
+            if ($name === '') continue;
+            $type = strtolower($el->getAttribute('type') ?: 'text');
+            if ($el->nodeName === 'select') {
+                $value = null;
+                foreach ($x->query('.//option', $el) as $o) {
+                    if ($value === null) $value = $o->getAttribute('value');
+                    if ($o->hasAttribute('selected')) { $value = $o->getAttribute('value'); break; }
+                }
+                $value = (string) $value;
+            } elseif ($type === 'checkbox') {
+                if (!$el->hasAttribute('checked')) continue;
+                $value = $el->getAttribute('value') ?: 'on';
+            } else {
+                $value = $el->getAttribute('value');
+            }
+            $step = $el->getAttribute('step');
+            $min = $el->hasAttribute('min') ? floatval($el->getAttribute('min')) : null;
+            $max = $el->hasAttribute('max') ? floatval($el->getAttribute('max')) : null;
+            if ($type === 'range' && is_numeric($value)) {
+                $v = floatval($value);
+                $lo = $min ?? 0.0;
+                $hi = $max ?? 100.0;
+                $v = max($lo, min($hi, $v));
+                $st = ($step === '' ? 1.0 : ($step === 'any' ? 0.0 : floatval($step)));
+                if ($st > 0) $v = $lo + floor(($v - $lo) / $st + 0.5) * $st;
+                $value = rtrim(rtrim(number_format($v, 6, '.', ''), '0'), '.');
+                if ($value === '' || $value === '-0') $value = '0';
+            }
+            if ($type === 'number' && $value !== '' && is_numeric($value)) {
+                $v = floatval($value);
+                if ($min !== null && $v < $min - 1e-9) $invalid[] = "{$name}={$value} below min";
+                if ($max !== null && $v > $max + 1e-9) $invalid[] = "{$name}={$value} above max";
+                if ($step !== 'any') {
+                    $st = $step === '' ? 1.0 : floatval($step);
+                    $base = $min ?? 0.0;
+                    $q = ($v - $base) / $st;
+                    if ($st > 0 && abs($q - round($q)) > 1e-6) $invalid[] = "{$name}={$value} off step {$step}";
+                }
+            }
+            if (preg_match('/^f\[(.*)\]$/', $name, $m)) $post['f'][$m[1]] = $value; else $post[$name] = $value;
+        }
+        return ['post' => $post, 'invalid' => $novalidate ? [] : $invalid, 'novalidate' => $novalidate];
+    }
+
+    private function submitSection(string $npc, string $section, array $form, array $edits = []): array
+    {
+        $post = $form['post'];
+        foreach ($edits as $id => $v) $post['f'][$id] = $v;
+        $post['npc'] = $npc;
+        $post['section'] = $section;
+        $post['op'] = 'save';
+        $this->post($post);
+        return $this->session[RelDynEditor::FLASH_SESSION_KEY] ?? [];
+    }
+
+    public function testEverySectionFormOfEveryBedSubmitsInABrowserAndSavingItUntouchedChangesNothing(): void
+    {
+        foreach (array_keys(self::BEDS) as $name) {
+            $this->track($name);
+            $before = $this->rawBlob($name);
+            $html = $this->get(['npc' => $name])['body'];
+            foreach (array_keys(RelDynEditor::SECTIONS) as $sec) {
+                $form = $this->browserForm($html, $sec);
+                $this->assertSame([], $form['invalid'], "{$name} / {$sec}: the browser would refuse this form (Save does nothing)");
+                if (!isset($form['post']['f'])) continue;
+                $flash = $this->submitSection($name, $sec, $form);
+                $this->assertSame('No changes.', $flash['message'] ?? null, "{$name} / {$sec}: an untouched form is no edit");
+            }
+            $this->assertSame($before, $this->rawBlob($name), "{$name}: nothing was written by saving untouched forms");
+        }
+    }
+
+    public function testMovingOneFacetSliderPinsThatFacetOnlyNotEveryFacetTheBrowserSnapped(): void
+    {
+        $this->track(self::AELA);
+        $html = $this->get(['npc' => self::AELA])['body'];
+        $form = $this->browserForm($html, 'facets');
+        $flash = $this->submitSection(self::AELA, 'facets', $form, ['facet:combat' => '1']);
+        $this->assertSame('Saved 1 change.', $flash['message'] ?? null);
+        $over = (array) ($this->stored(self::AELA)['facet_pref_overrides'] ?? []);
+        $this->assertSame(['combat'], array_keys($over), 'only the slider she moved is pinned; the rest keep following class, skills and traits');
+        $this->assertEqualsWithDelta(1.0, $over['combat'], 1e-9);
+    }
+
+    public function testAStaleFormDoesNotRevertWhatTheGameDidSinceThePageLoaded(): void
+    {
+        $this->track(self::AELA);
+        $html = $this->get(['npc' => self::AELA])['body'];
+        $form = $this->browserForm($html, 'dimensions');
+        $affShown = floatval($form['post']['f']['dim:affinity:x']);
+        // while the page sat open the game moved core affinity and trust (a hook's compare-and-set save)
+        $this->mutate(self::AELA, function (array &$d) use ($affShown) {
+            if (!is_numeric($d['_aff_mirror_x'] ?? null)) RelationshipDynamics::refreshAffinityMirror($d, RelDynEditor::coreAffinity(self::AELA, $d));
+            RelationshipDynamics::setCoreAffinityValue($d, $affShown + 6.0);
+            $d['dimensions']['trust']['x'] = floatval($d['dimensions']['trust']['x']) + 5.0;
+        });
+        $game = $this->stored(self::AELA);
+        $gameTrust = floatval($game['dimensions']['trust']['x']);
+        $gameAff = RelationshipDynamics::getCoreAffinity($game);
+        $this->assertEqualsWithDelta($affShown + 6.0, $gameAff, 0.01);
+
+        $flash = $this->submitSection(self::AELA, 'dimensions', $form, ['dim:comfort:x' => '61']);
+        $this->assertSame('Saved 1 change.', $flash['message'] ?? null, 'only the comfort she edited');
+        $d = $this->stored(self::AELA);
+        $this->assertEqualsWithDelta(61.0, $d['dimensions']['comfort']['x'], 1e-9);
+        $this->assertEqualsWithDelta($gameTrust, $d['dimensions']['trust']['x'], 1e-9, 'the game trust gain survives the stale save');
+        $this->assertEqualsWithDelta($gameAff, RelationshipDynamics::getCoreAffinity($d), 1e-6, 'so does the game affinity gain');
+
+        // a field she DID edit takes her value, whatever the game did meanwhile
+        $flash = $this->submitSection(self::AELA, 'dimensions', $form, ['dim:trust:x' => '20']);
+        $this->assertSame('Saved 1 change.', $flash['message'] ?? null);
+        $this->assertEqualsWithDelta(20.0, $this->stored(self::AELA)['dimensions']['trust']['x'], 1e-9);
+        $this->assertEqualsWithDelta($gameAff, RelationshipDynamics::getCoreAffinity($this->stored(self::AELA)), 1e-6);
+    }
+
+    public function testGrievancesShowTheirKindAndTheirWordsWhateverRecordedThem(): void
+    {
+        $this->track('Muiri');
+        $this->mutate('Muiri', function (array &$d) {
+            $now = RelationshipDynamics::currentGamets();
+            $d['dimensions']['resentment']['grievance_log'] = [
+                ['text' => 'The player called her useless in front of everyone.', 'kind' => 'disrespect', 'severity' => 2, 'amount' => 9.08, 'raw' => 7.5, 'target' => 'resentment', 'gamets' => $now],
+                ['text' => 'neglect: no contact for 3.0 game days', 'tag' => 'neglect', 'game_days' => 3.0, 'raw' => 4.0, 'gamets' => $now],
+                ['text' => 'An <b>old</b> entry from before kinds were recorded', 'timestamp' => 1727000000, 'amount' => 2.5],
+            ];
+            $d['dimensions']['resentment']['pending_grievances'] = ['Broke a promise about the potions'];
+        });
+        $html = $this->get(['npc' => 'Muiri'])['body'];
+        $this->assertSame(1, preg_match('/<div class="rd-scroll"><table class="rd-table"><thead><tr><th>Grievance<\/th>.*?<\/table>/s', $html, $m), 'the grievances table');
+        $table = $m[0];
+        $this->assertStringContainsString('disrespect', $table);
+        $this->assertStringContainsString('The player called her useless in front of everyone.', $table);
+        $this->assertStringContainsString('neglect: no contact for 3.0 game days', $table);
+        $this->assertStringContainsString('9.08', $table);
+        $this->assertStringContainsString('An &lt;b&gt;old&lt;/b&gt; entry from before kinds were recorded', $table, 'escaped');
+        $this->assertStringContainsString('Broke a promise about the potions', $table, 'a pending grievance (a bare string) shows too');
+        $this->assertStringNotContainsString('<td>?</td>', $table, 'no unlabelled row');
+    }
+
+    public function testTheEditorsSpiderIsTheSharedChartSoTheSamePairLooksTheSameOnBothPages(): void
+    {
+        $this->assertFalse(method_exists(RelDynEditor::class, 'spiderSvg'), 'one fulfillment spider, RelDynUiCharts::fulfillmentSpider');
+        foreach (['Muiri', self::AELA] as $name) {
+            $this->track($name);
+            $model = RelDynEditor::model($name);
+            $graph = $model['sections']['fulfillment']['blocks'][0]['graph'];
+            $html = $this->get(['npc' => $name])['body'];
+            $this->assertSame(1, preg_match('/<div class="rd-spider" data-target="Player">(<svg.*?<\/svg>)/s', $html, $svg), $name);
+            $this->assertSame(RelDynUiCharts::fulfillmentSpider($graph), $svg[1], "{$name}: byte for byte what player.php draws");
+            $this->assertStringContainsString('>even</text>', $svg[1]);
+            $this->assertStringContainsString('>met</text>', $svg[1]);
+            $this->assertStringContainsString('need ' . RelDynUiCharts::num(floatval($graph['axes'][0]['need']), 2), $svg[1], 'per-axis values');
+        }
     }
 
     public function testUnknownOpsSectionsAndFieldsAreRefused(): void

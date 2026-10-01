@@ -506,6 +506,9 @@ PHP;
         // the card: inline SVG, no NPC name on it; the opt-in form carries the CSRF token
         $card = $x->query('//section[@id="rd-card"]//*[local-name()="svg"]')->item(0);
         $this->assertNotNull($card);
+        $this->assertSame('100%', $card->getAttribute('width'), 'the card scales to its box: a phone shows it whole instead of scrolling sideways');
+        $this->assertMatchesRegularExpression('/^0 0 640 \d+$/', $card->getAttribute('viewBox'));
+        $this->assertStringNotContainsString(' width="640"', $html, 'no fixed 640px drawing left on the page');
         $cardText = $card->textContent;
         $this->assertStringContainsString(self::PLAYER, $cardText);
         foreach (array_keys(self::BEDS) as $npc) $this->assertStringNotContainsString($npc, $cardText, "{$npc} stays off the card");
@@ -531,6 +534,8 @@ PHP;
             $svg = $x->query('//div[@id="rd-fulfillment"]/*[local-name()="svg"]')->item(0);
             $this->assertNotNull($svg, $npc);
             $this->assertSame("{$npc}: needs and how well they are met", $svg->getAttribute('aria-label'));
+            $vb = array_map('floatval', explode(' ', $svg->getAttribute('viewBox')));
+            $this->assertLessThanOrEqual(440.0, $vb[2], "{$npc}: the spider is drawn small enough for its type to stay legible on a phone");
             $graph = RelationshipDynamics::fulfillmentGraph($npc, floatval(self::$lastGamets + self::HOUR));
             $this->assertNotEmpty($graph['axes'], "{$npc}: her needs");
             $this->assertSame(count($graph['axes']), $x->query('//div[@id="rd-fulfillment"]//*[local-name()="text" and @font-weight="600"]')->length);

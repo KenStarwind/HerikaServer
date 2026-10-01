@@ -72,7 +72,10 @@ final class RelDynUiCharts
      * @param array $series list of ['name' => string, 'values' => list of 0..1 (one per axis),
      *                      'stroke' => colour, 'fill' => colour, 'fill_opacity' => 0..1, 'dash' => bool]
      * @param array $opts   'title' (accessible name), 'radius' (px, 120), 'rings' (fractions),
-     *                      'ring_labels' (list of [fraction, text]), 'legend' (bool), 'standalone' (xmlns + size)
+     *                      'ring_labels' (list of [fraction, text]), 'legend' (bool), 'standalone' (xmlns + size),
+     *                      'font' / 'sub_font' / 'ring_font' / 'legend_font' (px in the drawing, 12 / 10 / 9 / 11),
+     *                      'label_wrap' (characters per line, 0 = one line) with 'label_lines' (3), 'auto_pad'
+     *                      (the room around the rim follows the labels, so none is cut off)
      * Fewer than three axes cannot make a polygon: the same data as horizontal bars.
      */
     public static function radar(array $axes, array $series, array $opts = []): string
@@ -83,13 +86,23 @@ final class RelDynUiCharts
         if ($n < 3) return self::bars($axes, $series, $opts);
 
         $r = max(40.0, floatval($opts['radius'] ?? 120));
-        $padX = floatval($opts['pad_x'] ?? 118);
-        $padY = floatval($opts['pad_y'] ?? 44);
+        $font = max(6.0, floatval($opts['font'] ?? 12));
+        $subFont = max(6.0, floatval($opts['sub_font'] ?? 10));
+        $ringFont = max(6.0, floatval($opts['ring_font'] ?? 9));
         $legend = !empty($opts['legend']) && count($series) > 1;
+        $blocks = self::axisLabels($axes, $r, $font, $subFont, intval($opts['label_wrap'] ?? 0), intval($opts['label_lines'] ?? 3));
+        if (!empty($opts['auto_pad'])) {
+            $padX = $blocks['pad_x'];
+            $padTop = $blocks['pad_top'];
+            $padBottom = $blocks['pad_bottom'];
+        } else {
+            $padX = floatval($opts['pad_x'] ?? 118);
+            $padTop = $padBottom = floatval($opts['pad_y'] ?? 44);
+        }
         $w = 2 * ($r + $padX);
-        $h = 2 * ($r + $padY) + ($legend ? 26 : 0);
+        $h = 2 * $r + $padTop + $padBottom + ($legend ? 26 : 0);
         $cx = $w / 2;
-        $cy = $r + $padY;
+        $cy = $r + $padTop;
         $at = function (int $i, float $f) use ($n, $r, $cx, $cy): array {
             $a = -M_PI / 2 + 2 * M_PI * $i / $n;
             return [$cx + cos($a) * $r * $f, $cy + sin($a) * $r * $f];
@@ -116,7 +129,7 @@ final class RelDynUiCharts
             if (!is_array($rl) || count($rl) < 2) continue;
             [$x, $y] = $at(0, self::frac($rl[0]));
             $label = $rl[1];
-            $out .= '<text x="' . self::num($x + 4) . '" y="' . self::num($y + 10) . '" font-size="9" fill="' . self::INK['muted']
+            $out .= '<text x="' . self::num($x + 4) . '" y="' . self::num($y + 10) . '" font-size="' . self::num($ringFont) . '" fill="' . self::INK['muted']
                 . '" font-family="monospace">' . self::esc($label) . '</text>';
         }
         // series
@@ -137,29 +150,72 @@ final class RelDynUiCharts
                 }
             }
         }
-        // axis labels
-        for ($i = 0; $i < $n; $i++) {
-            [$x, $y] = $at($i, 1.0 + 16.0 / $r);
-            $cos = cos(-M_PI / 2 + 2 * M_PI * $i / $n);
-            $anchor = abs($cos) < 0.15 ? 'middle' : ($cos > 0 ? 'start' : 'end');
-            $sin = sin(-M_PI / 2 + 2 * M_PI * $i / $n);
-            $dy = $sin < -0.5 ? -10 : ($sin > 0.5 ? 6 : -2);
-            $out .= '<text x="' . self::num($x) . '" y="' . self::num($y + $dy) . '" text-anchor="' . $anchor
-                . '" font-family="sans-serif" font-size="12" font-weight="600" fill="' . self::INK['text'] . '">' . self::esc($axes[$i]['label'] ?? '') . '</text>';
+        // axis labels (a long one wraps onto up to 'label_lines' lines, inside one text element)
+        $lh = $font + 3.0;
+        foreach ($blocks['blocks'] as $i => $b) {
+            $x = $cx + $b['x'];
+            $y0 = $cy + $b['y'];
+            $out .= '<text x="' . self::num($x) . '" y="' . self::num($y0) . '" text-anchor="' . $b['anchor']
+                . '" font-family="sans-serif" font-size="' . self::num($font) . '" font-weight="600" fill="' . self::INK['text'] . '">';
+            if (count($b['lines']) === 1) {
+                $out .= self::esc($b['lines'][0]);
+            } else {
+                foreach ($b['lines'] as $k => $line) {
+                    $out .= '<tspan x="' . self::num($x) . '"' . ($k > 0 ? ' dy="' . self::num($lh) . '"' : '') . '>' . self::esc($line) . '</tspan>';
+                }
+            }
+            $out .= '</text>';
             $sub = (string) ($axes[$i]['sub'] ?? '');
             if ($sub !== '') {
-                $out .= '<text x="' . self::num($x) . '" y="' . self::num($y + $dy + 14) . '" text-anchor="' . $anchor
-                    . '" font-family="monospace" font-size="10" fill="' . self::colour($axes[$i]['sub_colour'] ?? null, self::INK['muted']) . '">' . self::esc($sub) . '</text>';
+                $out .= '<text x="' . self::num($x) . '" y="' . self::num($cy + $b['sub_y']) . '" text-anchor="' . $b['anchor']
+                    . '" font-family="monospace" font-size="' . self::num($subFont) . '" fill="' . self::colour($axes[$i]['sub_colour'] ?? null, self::INK['muted']) . '">' . self::esc($sub) . '</text>';
             }
         }
-        if ($legend) $out .= self::legend($series, 12.0, $h - 10.0);
+        if ($legend) $out .= self::legend($series, 12.0, $h - 10.0, floatval($opts['legend_font'] ?? 11));
         return $out . '</svg>';
     }
 
-    /** Legend row: a swatch and the series name per series. */
-    private static function legend(array $series, float $x, float $y): string
+    /**
+     * Where each axis label goes, relative to the centre, and how much room the drawing needs around
+     * the rim so no label is cut off: ['blocks' => [i => lines, anchor, x, y (first baseline), sub_y],
+     * 'pad_x', 'pad_top', 'pad_bottom']. Text width is estimated (about 0.6 em a character).
+     */
+    private static function axisLabels(array $axes, float $r, float $font, float $subFont, int $wrap, int $maxLines): array
     {
-        $out = '<g font-family="sans-serif" font-size="11" fill="' . self::INK['text'] . '">';
+        $n = count($axes);
+        $lh = $font + 3.0;
+        $blocks = [];
+        $padX = $padTop = $padBottom = 0.0;
+        for ($i = 0; $i < $n; $i++) {
+            $a = -M_PI / 2 + 2 * M_PI * $i / $n;
+            $cos = cos($a);
+            $sin = sin($a);
+            $rx = $cos * ($r + 16.0);
+            $ry = $sin * ($r + 16.0);
+            $anchor = abs($cos) < 0.15 ? 'middle' : ($cos > 0 ? 'start' : 'end');
+            $dy = $sin < -0.5 ? -10.0 : ($sin > 0.5 ? 6.0 : -2.0);
+            $label = (string) ($axes[$i]['label'] ?? '');
+            $lines = $wrap > 0 ? self::wrap($label, $wrap, max(1, $maxLines)) : [$label];
+            if ($lines === []) $lines = [''];
+            $count = count($lines);
+            $y0 = $sin < -0.5 ? $ry + $dy - ($count - 1) * $lh : ($sin > 0.5 ? $ry + $dy : $ry + $dy - ($count - 1) * $lh / 2);
+            $last = $y0 + ($count - 1) * $lh;
+            $subY = $last + $subFont + 4.0;
+            $sub = (string) ($axes[$i]['sub'] ?? '');
+            $width = max(0.6 * $font * max(array_map('mb_strlen', $lines)), $sub !== '' ? 0.6 * $subFont * mb_strlen($sub) : 0.0);
+            $reach = $anchor === 'middle' ? $width / 2 : ($anchor === 'start' ? $rx + $width : -$rx + $width);
+            $padX = max($padX, $reach - $r + 6.0);
+            $padTop = max($padTop, -($y0 - 0.9 * $font) - $r + 6.0);
+            $padBottom = max($padBottom, ($sub !== '' ? $subY : $last) + 0.35 * $font - $r + 6.0);
+            $blocks[$i] = ['lines' => $lines, 'anchor' => $anchor, 'x' => $rx, 'y' => $y0, 'sub_y' => $subY];
+        }
+        return ['blocks' => $blocks, 'pad_x' => max(24.0, $padX), 'pad_top' => max(12.0, $padTop), 'pad_bottom' => max(12.0, $padBottom)];
+    }
+
+    /** Legend row: a swatch and the series name per series. */
+    private static function legend(array $series, float $x, float $y, float $font = 11.0): string
+    {
+        $out = '<g font-family="sans-serif" font-size="' . self::num($font) . '" fill="' . self::INK['text'] . '">';
         foreach (array_values($series) as $k => $s) {
             if (!is_array($s)) continue;
             $stroke = self::colour($s['stroke'] ?? null, $k === 0 ? self::INK['accent'] : self::INK['accent2']);
@@ -167,7 +223,7 @@ final class RelDynUiCharts
                 . (!empty($s['dash']) ? ' stroke-dasharray="3 2"' : '') . '/>';
             $name = (string) ($s['name'] ?? '');
             $out .= '<text x="' . self::num($x + 20) . '" y="' . self::num($y) . '">' . self::esc($name) . '</text>';
-            $x += 34 + 6.5 * mb_strlen($name);
+            $x += 34 + 6.5 * ($font / 11.0) * mb_strlen($name);
         }
         return $out . '</g>';
     }
@@ -262,7 +318,10 @@ final class RelDynUiCharts
             ['name' => 'needs', 'values' => $need, 'stroke' => self::INK['accent2'], 'fill_opacity' => 0.08, 'dash' => true],
             ['name' => 'what the bond covers', 'values' => $cover, 'stroke' => self::INK['accent'], 'fill_opacity' => 0.25],
         ], $opts + ['title' => ($npc !== '' ? "{$npc}: " : '') . 'needs and how well they are met', 'legend' => true,
-            'ring_labels' => [[0.5, 'even'], [1.0, 'met']], 'pad_x' => 128, 'empty' => 'No needs known yet.']);
+            'ring_labels' => [[0.5, 'even'], [1.0, 'met']], 'empty' => 'No needs known yet.',
+            // sized for a phone: a smaller drawing with larger type, labels wrapped, the room around the rim fitted to them
+            'radius' => 80, 'auto_pad' => true, 'label_wrap' => 12, 'label_lines' => 3, 'font' => 13, 'sub_font' => 12,
+            'ring_font' => 12, 'legend_font' => 12]);
     }
 
     /** A small trend line of 0..100 values (oldest first). */

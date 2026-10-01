@@ -27,6 +27,14 @@
  * RelDyn request scope and looks the read up with enqueue off first, so the profile resolution
  * inside getDynamics() finds it memoized.
  *
+ * A form is a snapshot, the game keeps moving: every section form carries the values it showed
+ * (one hidden 'snap' field), and a field posted back as shown is no edit even when the game has moved
+ * that value since the page loaded (only what the user changed is written, so a save never reverts an
+ * eval that landed meanwhile). Number inputs take any step (the browser would otherwise refuse
+ * a value like 32.77 against step 0.1) and range inputs sit on the 0.01 grid their values are
+ * shown at (a browser snaps a range value to its step, which would pin untouched sliders); the forms
+ * are novalidate, the server is the validator (it names the field and the range).
+ *
  * Security: writes are POST only with a per-session CSRF token (core's pattern,
  * ui/playthrough_manager.php: random_bytes token in the session, hash_equals), all output is
  * HTML-escaped (h()), the one list query escapes its search literal.
@@ -35,6 +43,7 @@
  */
 
 require_once __DIR__ . '/relationship_dynamics.php';
+require_once __DIR__ . '/reldyn_ui_charts.php';
 
 final class RelDynEditor
 {
@@ -943,6 +952,12 @@ final class RelDynEditor
     {
         $res = (array) ($d['dimensions']['resentment'] ?? []);
         $log = array_merge((array) ($res['pending_grievances'] ?? []), (array) ($res['grievance_log'] ?? []));
+        // what the page lists: the eval's pending ones are bare strings (not yet taken into the accumulator)
+        $rows = [];
+        foreach ((array) ($res['pending_grievances'] ?? []) as $g) {
+            $rows[] = ['pending' => true, 'text' => is_scalar($g) ? (string) $g : json_encode($g, JSON_UNESCAPED_UNICODE)];
+        }
+        foreach ((array) ($res['grievance_log'] ?? []) as $g) $rows[] = is_array($g) ? $g : ['text' => (string) $g];
         $arc = $jev['resentment_arc'];
         $fields = [
             self::field('res:values', 'Resentment / toward self', 'readonly',
@@ -968,7 +983,7 @@ final class RelDynEditor
         ];
         return self::section('resentment', $fields, [
             'intro' => 'The grievance accumulator of the relationship (MDD 15.5). Sustained jealousy converts into it.',
-            'blocks' => [['type' => 'grievances', 'rows' => array_slice($log, -20)]],
+            'blocks' => [['type' => 'grievances', 'rows' => array_slice($rows, -20)]],
             'reset' => function (array &$dd) {
                 self::releaseHeld($dd, 'guilt');
                 unset($dd[RelDynResentment::STATE_KEY]);
@@ -1271,9 +1286,39 @@ final class RelDynEditor
         return (string) $cur === (string) $posted;
     }
 
+    /** The value a field showed, as its form posts it back (a checkbox: '1' or ''). */
+    private static function shownText(array $f): string
+    {
+        $v = $f['value'];
+        if ($f['type'] === 'bool') return $v ? '1' : '';
+        return $v === null ? '' : (is_bool($v) ? ($v ? '1' : '') : (string) $v);
+    }
+
+    /** The form's 'snap' field: field id => the text it showed (a malformed or oversized one is no snapshot at all). */
+    private static function decodeSnapshot($raw): array
+    {
+        if (!is_string($raw) || $raw === '' || strlen($raw) > 262144) return [];
+        $j = json_decode($raw, true);
+        if (!is_array($j)) return [];
+        $out = [];
+        foreach ($j as $id => $v) if (is_string($v)) $out[(string) $id] = $v;
+        return $out;
+    }
+
+    /** Was $posted sent back exactly as the form showed $shown (the browser may have re-formatted it: 32.7700 for 32.77)? */
+    private static function postedAsShown(array $f, string $shown, $posted): bool
+    {
+        if (is_array($posted)) $posted = end($posted);
+        if (is_scalar($posted) && (string) $posted === $shown) return true;
+        $n = self::normalize($f, $posted);
+        return $n !== null && self::sameValue(['value' => $shown] + $f, $n);
+    }
+
     /**
      * Apply one POST to the NPC (CSRF already checked):
-     *   op = save               section = id, f[field id] = value (only fields that differ from the value in effect)
+     *   op = save               section = id, f[field id] = value, snap = JSON of the values the form showed
+     *                           (only fields the user changed are applied: those posted differently from what the form
+     *                           showed, and from the value in effect; without a snapshot, those differing from the value in effect)
      *   op = reset_field|<id>   clear one field's override
      *   op = reset_section      section = id
      *   op = reset_npc          confirm = 'yes': a fresh start (the affinity mirror is kept, core is not touched)
@@ -1310,8 +1355,11 @@ final class RelDynEditor
                     $sec = $cat['sections'][$section] ?? null;
                     if ($sec === null) return ['ok' => false, 'changed' => [], 'errors' => ['section' => 'unknown section'], 'message' => 'Unknown section.', 'section' => $section];
                     $posted = is_array($post['f'] ?? null) ? $post['f'] : [];
+                    $shown = self::decodeSnapshot($post['snap'] ?? null);
                     foreach ($sec['fields'] as $id => $f) {
                         if ($f['set'] === null || !array_key_exists($id, $posted)) continue;
+                        // posted back as the form showed it: not an edit, whatever the game did to the value since the page loaded
+                        if (array_key_exists($id, $shown) && self::postedAsShown($f, $shown[$id], $posted[$id])) continue;
                         $v = self::normalize($f, $posted[$id]);
                         if ($v === null) { $errors[$id] = 'not a valid value'; continue; }
                         if (self::sameValue($f, $v)) continue;   // unchanged: no edit, the field stays derived
@@ -1456,8 +1504,8 @@ table.rd-table td.num { font-family: Consolas, monospace; white-space: nowrap; }
 table.rd-table input[type=number] { width: 84px; }
 .rd-quote { font-style: italic; color: #d8d8d8; }
 .rd-spider { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; margin: 8px 0 14px; }
-.rd-spider svg { width: 360px; max-width: 100%; height: auto; flex: 0 0 auto; }
-.rd-spider .rd-scroll { flex: 1 1 280px; }
+.rd-spider > svg { flex: 1 1 300px; min-width: 0; width: auto; height: auto; }
+.rd-spider .rd-scroll { flex: 1 1 260px; }
 .rd-search { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .rd-search input { flex: 1 1 200px; background: #1a1a1a; border: 1px solid #4a4a4a; color: #f0f0f0; padding: 7px 10px; border-radius: 6px; }
 .rd-list a { color: #f0f0f0; }
@@ -1536,12 +1584,14 @@ CSS;
         }
         switch ($f['type']) {
             case 'number':
+                // step=any: the value shown (32.77) is never off a step the browser would refuse; the server rounds and ranges it
                 return '<input type="number" id="' . self::h($domId) . '" name="' . self::h($name) . '" value="' . self::h($f['value'] ?? '') . '"'
-                    . $attr('min') . $attr('max') . $attr('step') . '>';
+                    . $attr('min') . $attr('max') . ' step="any">';
             case 'range':
+                // a browser snaps a range value to its step: the 0.01 grid the value is shown on, so an untouched slider posts what it showed
                 $v = $f['value'] ?? 0;
                 return '<input type="range" id="' . self::h($domId) . '" name="' . self::h($name) . '" value="' . self::h($v) . '"'
-                    . $attr('min') . $attr('max') . $attr('step') . ' oninput="this.nextElementSibling.value=this.value">'
+                    . $attr('min') . $attr('max') . ' step="0.01" oninput="this.nextElementSibling.value=this.value">'
                     . '<output for="' . self::h($domId) . '">' . self::h($v) . '</output>';
             case 'select':
                 $html = '<select id="' . self::h($domId) . '" name="' . self::h($name) . '">';
@@ -1619,8 +1669,11 @@ CSS;
         foreach ($s['fields'] as $f) if (!empty($f['editable'])) { $editable = true; break; }
         $out = '<section class="rd-section" id="sec-' . self::h($id) . '"><h2>' . self::h($s['title']) . '</h2>';
         if ($s['intro'] !== '') $out .= '<p class="rd-intro">' . self::h($s['intro']) . '</p>';
-        $out .= '<form method="post" action="' . self::h(self::PAGE) . '#sec-' . self::h($id) . '">' . $hidden
-            . '<input type="hidden" name="section" value="' . self::h($id) . '">';
+        $snap = [];
+        foreach ($s['fields'] as $fid => $f) if (!empty($f['editable'])) $snap[$fid] = self::shownText($f);
+        $out .= '<form method="post" action="' . self::h(self::PAGE) . '#sec-' . self::h($id) . '" novalidate>' . $hidden
+            . '<input type="hidden" name="section" value="' . self::h($id) . '">'
+            . ($snap !== [] ? '<input type="hidden" name="snap" value="' . self::h(json_encode($snap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '">' : '');
         if ($id === 'dimensions') {
             $out .= self::renderDimensionTable($s['fields']);
         } elseif ($id === 'attraction') {
@@ -1688,13 +1741,19 @@ CSS;
                 return $out . '</tbody></table></div>';
             case 'grievances':
                 if ($b['rows'] === []) return '';
-                $out = '<div class="rd-scroll"><table class="rd-table"><thead><tr><th>Grievance</th><th>Points</th><th>When</th></tr></thead><tbody>';
+                $out = '<div class="rd-scroll"><table class="rd-table"><thead><tr><th>Grievance</th><th>Kind</th><th>Points</th><th>When</th></tr></thead><tbody>';
                 foreach ($b['rows'] as $g) {
                     $g = (array) $g;
-                    $what = $g['type'] ?? $g['reason'] ?? $g['tag'] ?? $g['source'] ?? '?';
-                    $pts = $g['amount'] ?? $g['points'] ?? $g['delta'] ?? $g['severity'] ?? null;
-                    $when = $g['gamets'] ?? $g['at'] ?? $g['ts'] ?? null;
-                    $out .= '<tr><td>' . self::h($what) . '</td><td class="num">' . self::h(self::num($pts, 2)) . '</td><td class="num">' . self::h(self::gameDays($when)) . '</td></tr>';
+                    // recordGrievance writes kind + text + amount + gamets, neglect tag + text + raw, the first accumulator
+                    // text + timestamp + amount, the eval's pending ones a bare string
+                    $what = $g['text'] ?? $g['reason'] ?? $g['kind'] ?? $g['tag'] ?? $g['type'] ?? $g['source'] ?? '(no description)';
+                    $kind = !empty($g['pending']) ? 'pending' : ($g['kind'] ?? $g['tag'] ?? $g['type'] ?? '—');
+                    $pts = $g['amount'] ?? $g['points'] ?? $g['delta'] ?? $g['raw'] ?? null;
+                    if (isset($g['gamets']) || isset($g['at'])) $when = self::gameDays($g['gamets'] ?? $g['at']);
+                    elseif (isset($g['timestamp']) && is_numeric($g['timestamp'])) $when = gmdate('Y-m-d H:i', intval($g['timestamp'])) . ' UTC';
+                    else $when = '—';
+                    $out .= '<tr><td>' . self::h($what) . '</td><td>' . self::h($kind) . '</td><td class="num">' . self::h(self::num($pts, 2))
+                        . '</td><td class="num">' . self::h($when) . '</td></tr>';
                 }
                 return $out . '</tbody></table></div>';
             case 'held':
@@ -1745,41 +1804,6 @@ CSS;
         return $out . '</tbody></table></div>';
     }
 
-    /** The fulfillment spider (inline SVG, no external assets): need weight and coverage per axis. */
-    public static function spiderSvg(array $axes, int $size = 280): string
-    {
-        $n = count($axes);
-        if ($n < 3) return '';
-        $c = $size / 2;
-        $r = $size / 2 - 42;
-        $pt = function (int $i, float $f) use ($n, $c, $r): array {
-            $a = -M_PI / 2 + 2 * M_PI * $i / $n;
-            return [round($c + cos($a) * $r * $f, 1), round($c + sin($a) * $r * $f, 1)];
-        };
-        $pad = 70;   // room for the axis labels left and right of the rim
-        $svg = '<svg viewBox="' . (-$pad) . ' 0 ' . ($size + 2 * $pad) . ' ' . $size . '" role="img" aria-label="Fulfillment spider graph">';
-        foreach ([0.25, 0.5, 0.75, 1.0] as $ring) {
-            $pts = [];
-            for ($i = 0; $i < $n; $i++) $pts[] = implode(',', $pt($i, $ring));
-            $svg .= '<polygon points="' . implode(' ', $pts) . '" fill="none" stroke="#3a3a3a" stroke-width="1"/>';
-        }
-        $need = [];
-        $cov = [];
-        foreach (array_values($axes) as $i => $a) {
-            [$x, $y] = $pt($i, 1.0);
-            $svg .= '<line x1="' . $c . '" y1="' . $c . '" x2="' . $x . '" y2="' . $y . '" stroke="#333" stroke-width="1"/>';
-            [$lx, $ly] = $pt($i, 1.12);
-            $anchor = abs($lx - $c) < 4 ? 'middle' : ($lx < $c ? 'end' : 'start');
-            $svg .= '<text x="' . $lx . '" y="' . $ly . '" fill="#aaa" font-size="9" text-anchor="' . $anchor . '" dominant-baseline="middle">'
-                . self::h(mb_strimwidth((string) ($a['label'] ?? $a['axis']), 0, 26, '…')) . '</text>';
-            $need[] = implode(',', $pt($i, max(0.0, min(1.0, floatval($a['need'] ?? 0)))));
-            $cov[] = implode(',', $pt($i, (max(-1.0, min(1.0, floatval($a['coverage'] ?? 0))) + 1) / 2));
-        }
-        $svg .= '<polygon points="' . implode(' ', $need) . '" fill="rgba(106,159,216,0.15)" stroke="#6a9fd8" stroke-width="1.5"/>';
-        $svg .= '<polygon points="' . implode(' ', $cov) . '" fill="rgba(242,124,17,0.2)" stroke="rgb(242,124,17)" stroke-width="1.5"/>';
-        return $svg . '</svg>';
-    }
-
     private static function renderSpider(array $b): string
     {
         $g = $b['graph'];
@@ -1787,12 +1811,13 @@ CSS;
         $out = '<h3 class="rd-intro">Pair with ' . self::h($label) . ': band ' . self::h(self::num($g['band'], 2)) . ($g['known'] ? '' : ' (nothing delivered yet)')
             . '; boundary ' . self::h($g['boundary']['state'] ?? 'none') . '</h3>';
         if ($g['axes'] === []) return $out . '<p class="rd-intro">No needs derived.</p>';
-        $out .= '<div class="rd-spider" data-target="' . self::h($b['target']) . '">' . self::spiderSvg($g['axes'])
+        // the same drawing player.php shows (RelDynUiCharts::fulfillmentSpider): needs relative to her largest, coverage -1..+1, values per axis
+        $out .= '<div class="rd-spider" data-target="' . self::h($b['target']) . '">' . RelDynUiCharts::fulfillmentSpider($g)
             . '<div class="rd-scroll"><table class="rd-table"><thead><tr><th>Need</th><th>Kind</th><th>Weight</th><th>Coverage</th></tr></thead><tbody>';
         foreach ($g['axes'] as $a) {
             $out .= '<tr><td>' . self::h($a['label']) . '</td><td>' . self::h($a['kind']) . '</td><td class="num">' . self::h(self::num($a['need'], 2))
                 . '</td><td class="num">' . self::h(self::num($a['coverage'], 2)) . '</td></tr>';
         }
-        return $out . '</tbody></table></div></div><p class="rd-meta">Blue: how much she needs it; orange: how well it has been covered (centre -1, rim +1).</p>';
+        return $out . '</tbody></table></div></div><p class="rd-meta">Dashed: how much she needs it (drawn relative to her largest need); solid: how well the bond covers it (centre -1, middle ring even, rim +1).</p>';
     }
 }

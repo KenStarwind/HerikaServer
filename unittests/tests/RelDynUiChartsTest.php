@@ -156,6 +156,50 @@ final class RelDynUiChartsTest extends TestCase
         self::assertContains('needs', $texts, 'legend');
     }
 
+    public function testTheFulfillmentSpiderFitsAPhoneWithEveryLabelInsideTheDrawingAndLegibleWhenScaledToIt(): void
+    {
+        $labels = ['hearing that they matter', 'real time together', 'closeness and touch', 'being looked after', 'small signs of thought',
+            'being admired and respected', 'reassurance that they are wanted', 'being wanted, body and all', 'real closeness, being truly known',
+            'a real fight side by side', 'time out in the wilds', 'books and learning shared'];
+        foreach ([3, 4, 5, 6, 7, 8, 12] as $n) {
+            $axes = [];
+            foreach (array_slice($labels, 0, $n) as $i => $label) $axes[] = ['axis' => "a{$i}", 'label' => $label, 'need' => 0.9 - 0.05 * $i, 'coverage' => 0.0];
+            $x = self::xml(RelDynUiCharts::fulfillmentSpider(['npc' => 'Muiri', 'axes' => $axes]));
+            [, , $w, $h] = array_map('floatval', explode(' ', (string) $x['viewBox']));
+            self::assertLessThanOrEqual(440.0, $w, "{$n} axes: a drawing a phone can show without shrinking it to nothing");
+            $scale = min(1.0, 317.0 / $w);   // the chart box of a 375px phone
+            foreach ($x->xpath('//s:text') as $t) {
+                $font = floatval((string) $t['font-size'] !== '' ? $t['font-size'] : $x->xpath('//s:g[@font-family="sans-serif"]')[0]['font-size']);   // the legend's text takes its group's size
+                self::assertGreaterThanOrEqual(8.5, $font * $scale, "{$n} axes: '" . (string) $t . "' stays readable at phone width");
+                $lines = [];
+                foreach ($t->children('http://www.w3.org/2000/svg') as $ts) $lines[] = (string) $ts;
+                if ($lines === []) $lines = [(string) $t];
+                $width = 0.6 * $font * max(array_map('mb_strlen', $lines));
+                $tx = floatval($t['x']);
+                $anchor = (string) $t['text-anchor'];
+                $left = $anchor === 'end' ? $tx - $width : ($anchor === 'middle' ? $tx - $width / 2 : $tx);
+                $right = $anchor === 'end' ? $tx : ($anchor === 'middle' ? $tx + $width / 2 : $tx + $width);
+                $name = '"' . implode(' / ', $lines) . '"';
+                if ((string) $t['text-anchor'] !== '') {   // axis labels and values (ring labels and the legend sit inside)
+                    self::assertGreaterThanOrEqual(0.0, $left, "{$n} axes: {$name} is not cut off on the left");
+                    self::assertLessThanOrEqual($w, $right, "{$n} axes: {$name} is not cut off on the right");
+                }
+                $top = floatval($t['y']) - 0.9 * $font;
+                $bottom = floatval($t['y']) + (count($lines) - 1) * ($font + 3.0) + 0.3 * $font;
+                self::assertGreaterThanOrEqual(0.0, $top, "{$n} axes: {$name} is not cut off at the top");
+                self::assertLessThanOrEqual($h, $bottom, "{$n} axes: {$name} is not cut off at the bottom");
+            }
+        }
+        // a long label wraps inside its one text element; the words stay whole and escaped
+        $x = self::xml(RelDynUiCharts::fulfillmentSpider(['npc' => '', 'axes' => [
+            ['axis' => 'a', 'label' => 'reassurance that they are <wanted>', 'need' => 1, 'coverage' => 0],
+            ['axis' => 'b', 'label' => 'closeness', 'need' => 1, 'coverage' => 0], ['axis' => 'c', 'label' => 'books', 'need' => 1, 'coverage' => 0]]]));
+        $label = $x->xpath('//s:text[@font-weight="600"]')[0];
+        $lines = array_map('strval', iterator_to_array($label->children('http://www.w3.org/2000/svg'), false));
+        self::assertSame(['reassurance', 'that they', 'are <wanted>'], $lines, 'wrapped onto lines, words whole');
+        self::assertSame(3, count($x->xpath('//s:text[@font-weight="600"]')), 'still one text element per axis');
+    }
+
     public function testTheCardIsAStandaloneSvgDocumentWithItsTextEscapedAndNoExternalReference(): void
     {
         $card = [

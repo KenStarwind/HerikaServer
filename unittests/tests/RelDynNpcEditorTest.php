@@ -105,28 +105,21 @@ final class RelDynNpcEditorTest extends TestCase
         $this->assertSame('', RelDynEditor::h(null));
     }
 
-    public function testTheSpiderGraphIsInlineSvgWithEscapedLabels(): void
+    public function testTheSpiderGraphIsTheSharedInlineSvgChartNotACopyOfIt(): void
     {
-        $this->assertSame('', RelDynEditor::spiderSvg([['axis' => 'a', 'need' => 1, 'coverage' => 0]]), 'fewer than 3 axes: the table alone');
+        // one drawing for one pair on both pages (npc.php and player.php): RelDynUiCharts::fulfillmentSpider, whose
+        // escaping, bounds and phone sizing RelDynUiChartsTest covers
+        $editor = (string) file_get_contents(__DIR__ . '/../../ext/relationship_dynamics/reldyn_editor.php');
+        $this->assertStringContainsString('RelDynUiCharts::fulfillmentSpider(', $editor);
+        $this->assertStringNotContainsString('function spiderSvg', $editor, 'the editor draws no spider of its own');
         $axes = [
             ['axis' => 'nature', 'label' => 'the <wild>', 'need' => 0.9, 'coverage' => 0.5],
             ['axis' => 'combat', 'label' => 'a good fight', 'need' => 0.5, 'coverage' => -1.0],
             ['axis' => 'words', 'label' => 'kind words', 'need' => 2.0, 'coverage' => 3.0],
         ];
-        $svg = RelDynEditor::spiderSvg($axes, 200);
-        $this->assertStringStartsWith('<svg viewBox="-70 0 340 200" role="img"', $svg);
-        $this->assertStringEndsWith('</svg>', $svg);
-        $this->assertSame(4 + 2, substr_count($svg, '<polygon'), 'rings + need + coverage');
-        $this->assertSame(3, substr_count($svg, '<text'));
+        $svg = RelDynUiCharts::fulfillmentSpider(['npc' => 'Muiri', 'axes' => $axes]);
         $this->assertStringContainsString('the &lt;wild&gt;', $svg);
         $this->assertStringNotContainsString('<wild>', $svg);
-        $this->assertStringNotContainsString('http', str_replace('http://www.w3.org', '', $svg), 'no external reference');
-        // coverage -1 sits at the centre, need and coverage beyond the range are clamped to the rim
-        preg_match_all('/<polygon points="([^"]+)"/', $svg, $m);
-        $cov = explode(' ', end($m[1]));
-        $this->assertSame('100,100', $cov[1], 'coverage -1: centre');
-        $need = explode(' ', $m[1][4]);
-        $this->assertSame('100,47.8', $need[0], 'axis 0 at 0.9 of the radius 58: 100 - 52.2');
     }
 
     public function testThePageIsTheOnlyEntryAndWritesGoThroughTheEngine(): void
