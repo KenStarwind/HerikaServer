@@ -843,6 +843,8 @@ final class RelDynUAttractionTestBedsPostgresTest extends TestCase
         $this->assertSame('clinging', $jev['keeping']['band']);
         $this->assertEqualsWithDelta($fear['Muiri'], $jev['keeping']['fear'], 1e-3);
         $this->assertLessThan(0.0, $jev['keeping']['held']['trust']);
+        $this->assertStringContainsString('keeping=', $jev['text'], 'and the compact line carries it while she fears');
+        $this->assertMatchesRegularExpression('/keeping=0\.\d\d\(clinging \w+\/\w+\) held trust -[0-9.]+/', $jev['text']);
         $this->assertArrayHasKey('interest', $jev['attraction']);
         $this->assertArrayHasKey('shyness', $jev['attraction']);
         $this->assertArrayHasKey('spike_open', $jev['attraction']);

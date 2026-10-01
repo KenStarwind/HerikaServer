@@ -351,7 +351,9 @@ class RelDynKeeping
 
     /**
      * Move the standing offsets (trust, comfort toward the player) to $want (dimension => points <= 0): x changes by
-     * the difference, clamped to 0..100, and exactly what moved is recorded. Returns dimension => points moved.
+     * the difference in hundredths of a point (the dimensions are read at two places, the display and Jev round to
+     * them), clamped to 0..100, and exactly what moved is recorded, so lifting leaves no residue. Returns
+     * dimension => points moved.
      */
     private static function moveOffsets(array &$dynamics, array $want): array
     {
@@ -361,8 +363,8 @@ class RelDynKeeping
             $x = $dynamics['dimensions'][$dim]['x'] ?? null;
             if (!is_numeric($x)) continue;
             $applied = floatval($state['applied'][$dim] ?? 0.0);
-            $delta = floatval($want[$dim] ?? 0.0) - $applied;
-            if (abs($delta) < 1e-6) continue;
+            $delta = round(floatval($want[$dim] ?? 0.0) - $applied, 2);
+            if (abs($delta) < 1e-9) continue;
             $new = max(0.0, min(100.0, floatval($x) + $delta));
             $moved[$dim] = $new - floatval($x);
             $dynamics['dimensions'][$dim]['x'] = round($new, 4);

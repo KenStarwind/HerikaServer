@@ -419,7 +419,10 @@ class RelDynAttraction
             //     momentum) read this, not whether she lets it show.
             //   voicing: how much of it her felt text lets her say. Shyness (0..1) comes from her
             //     self-confidence (dimension points): 0 at confidence_center and above, 1 at
-            //     confidence_span under it. A shy NPC needs a deeper bond to voice it: the core affinity
+            //     confidence_span under it, and from low self-esteem (resentment toward herself, the
+            //     resentment_self dimension: nothing under esteem_from, whole at esteem_from + esteem_span),
+            //     which adds esteem_weight of itself on top (a soft-or: neither alone is a wall).
+            //     A shy NPC needs a deeper bond to voice it: the core affinity
             //     her flirt_min_tier asks for + shyness x (the bonded floor - that), and more passion:
             //     the felt flirt_passion_min + shyness x passion_extra (passion points). From shy_text_from
             //     the unvoiced pull reads as shyness, not as a plain look. A romance title is already said.
@@ -427,6 +430,7 @@ class RelDynAttraction
                 'enabled' => true,
                 'full_passion' => 50.0, 'min_interest' => 0.3,
                 'confidence_center' => 50.0, 'confidence_span' => 35.0,
+                'esteem_from' => 30.0, 'esteem_span' => 70.0, 'esteem_weight' => 0.6,
                 'passion_extra' => 40.0,
                 'shy_text_from' => 0.3,
             ],
@@ -592,16 +596,26 @@ class RelDynAttraction
     }
 
     /**
-     * Decisions §20.3: how shy she is about showing it (0..1): her self-confidence (dimension points)
-     * under interest.confidence_center, over confidence_span. 0 when unknown. Pure.
+     * Decisions §20.3: how shy she is about showing it (0..1): low self-confidence (the dimension's points
+     * under interest.confidence_center, over confidence_span) and low self-esteem (resentment toward herself
+     * past esteem_from, over esteem_span, counting esteem_weight of itself), as a soft-or: 1 - (1 - confidence)
+     * x (1 - weight x esteem). 0 when unknown. Pure.
      */
     public static function shyness(array $dynamics, ?array $cfg = null): float
     {
         $ic = self::interestConfig($cfg);
         if (empty($ic['enabled'])) return 0.0;
-        $x = $dynamics['dimensions']['self_confidence']['x'] ?? null;
-        if (!is_numeric($x)) return 0.0;
-        return round(max(0.0, min(1.0, (floatval($ic['confidence_center']) - floatval($x)) / max(1.0, floatval($ic['confidence_span'])))), 4);
+        $dims = is_array($dynamics['dimensions'] ?? null) ? $dynamics['dimensions'] : [];
+        $conf = 0.0;
+        if (is_numeric($dims['self_confidence']['x'] ?? null)) {
+            $conf = max(0.0, min(1.0, (floatval($ic['confidence_center']) - floatval($dims['self_confidence']['x'])) / max(1.0, floatval($ic['confidence_span']))));
+        }
+        $esteem = 0.0;
+        if (is_numeric($dims['resentment_self']['x'] ?? null)) {
+            $esteem = max(0.0, min(1.0, (floatval($dims['resentment_self']['x']) - floatval($ic['esteem_from'])) / max(1.0, floatval($ic['esteem_span']))));
+        }
+        $w = max(0.0, min(1.0, floatval($ic['esteem_weight'])));
+        return round(1.0 - (1.0 - $conf) * (1.0 - $w * $esteem), 4);
     }
 
     /**

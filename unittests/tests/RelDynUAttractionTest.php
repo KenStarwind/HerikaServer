@@ -245,6 +245,18 @@ final class RelDynUAttractionTest extends TestCase
         $this->assertSame(1.0, RelDynAttraction::shyness($conf(15.0)));
         $this->assertSame(1.0, RelDynAttraction::shyness($conf(0.0)));
         $this->assertSame(0.0, RelDynAttraction::shyness($conf(null)), 'unknown is not shy');
+        // low self-esteem (resentment toward herself) adds to it: nothing up to 30, then whole at 100 x 0.6
+        $est = function (?float $c, float $rs) use ($conf): float {
+            $d = $conf($c);
+            $d['dimensions']['resentment_self']['x'] = $rs;
+            return RelDynAttraction::shyness($d);
+        };
+        $this->assertSame(0.0, $est(50.0, 30.0));
+        $this->assertSame(0.3, $est(50.0, 65.0));
+        $this->assertSame(0.6, $est(50.0, 100.0));
+        $this->assertEqualsWithDelta(0.8, $est(32.5, 100.0), 1e-9, 'a soft-or: both together, still short of a wall');
+        $this->assertLessThan(1.0, $est(40.0, 90.0));
+        $this->assertGreaterThan($est(40.0, 0.0), $est(40.0, 90.0));
     }
 
     public function testVoicingNeedsADeeperBondTheShyerSheIs(): void
@@ -423,6 +435,7 @@ final class RelDynUAttractionTest extends TestCase
         $this->assertLessThan(60.0, $d['dimensions']['trust']['x'], 'paranoia holds her trust down');
         $this->assertLessThan(60.0, $d['dimensions']['comfort']['x']);
         $this->assertLessThan(0.0, RelationshipDynamics::heldTemporaryOffset($d, 'trust'), 'a held offset, the physics reads her without it');
+        $this->assertEqualsWithDelta(round($d['dimensions']['trust']['x'], 2), $d['dimensions']['trust']['x'], 1e-9, 'a hundredth of a point at a time (Jev and the display round to them)');
         $held = RelationshipDynamics::heldTemporaryOffset($d, 'trust');
         $this->assertEqualsWithDelta(60.0 + $held, 60.0 + $d[RelDynKeeping::KEY]['applied']['trust'], 1e-9);
         // the grip is bounded

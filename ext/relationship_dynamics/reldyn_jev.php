@@ -93,8 +93,8 @@
  *                     'friendzoned' => bool (a label; no passion cap),
  *                     decisions §20.1 / §20.3: 'spike_open' => 0..1 (how far a passion moment skips the uphill),
  *                     'spike_via' => ?type|status_gap (what opened it), 'interest' => 0..1 (how interested she is,
- *                     shown or not; 0 when she is not drawn), 'shyness' => 0..1 (low self-confidence: how much deeper
- *                     a bond she needs before her felt text voices it)]
+ *                     shown or not; 0 when she is not drawn), 'shyness' => 0..1 (low self-confidence and self-esteem: how much
+ *                     deeper a bond she needs before her felt text voices it)]
  *   keeping          ['enabled' => bool, 'fear' => 0..1 (of losing the player), 'band' => ?uneasy|clinging|controlling,
  *                     'target' => ?0..1, 'stakes' => ?0..1 (what there is to lose), 'disposition' => 0..1 (who she is:
  *                     her attachment corners x insecurity x possessiveness), 'threat' => ['absence', 'jealousy', 'deficit',
@@ -385,6 +385,13 @@ final class RelDynJev
                 . ' let_in=' . $f((float) $pb['let_in']) . ' ' . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
                 . ($pb['since_game_hours'] !== null ? ' ' . $f((float) $pb['since_game_hours']) . 'h' : '') . (!empty($pb['voiced']) ? ' voiced' : '');
         }
+        // compact: only while she fears losing the player and says so ("keeping=<fear>(<band> <expression>/<style>) held trust <points>");
+        // an uneasy worry is in the structured fields, not spent on every prompt
+        $kp = $s['keeping'] ?? null;
+        if (is_array($kp) && !empty($kp['enabled']) && in_array($kp['band'], ['clinging', 'controlling'], true)) {
+            $parts[] = 'keeping=' . number_format((float) $kp['fear'], 2, '.', '') . "({$kp['band']} {$kp['expression']}/{$kp['style']})"
+                . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '');
+        }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];
         $offsets = [];
@@ -429,6 +436,7 @@ final class RelDynJev
                 . ($a['won_over'] ? ' won_over' : '')
                 . ($a['channel'] !== null ? " channel={$a['channel']}" : '')
                 . ($a['passion_ceiling'] !== null ? ' passion_ceiling=' . $f($a['passion_ceiling']) : '');
+            // (spike_open, interest and shyness, decisions §20.1 / §20.3, are in the structured fields: the compact line has a budget)
         }
         if ($s['place'] !== null) {
             $parts[] = 'place=' . number_format($s['place']['valence'], 2, '.', '') . ($s['place']['dominant'] !== null ? "({$s['place']['dominant']})" : '');
