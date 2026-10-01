@@ -178,6 +178,7 @@ final class RelDynSettingsText
         'impulse.enabled' => 'Short-term urges (romantic, protective, social, survival, curiosity) that she may act on, in her own style.',
         'combat.rescue.enabled' => 'Rescue moments in combat (who pulled whom out of trouble) move the bond.',
         'governors.enabled' => 'Passion stays inside a floor and a ceiling set by the bond\'s tier. Off: no tier limits.',
+        'diary_reflection.prompt.enabled' => 'Her depth (by maturity) and the moments marked since she last wrote reach core\'s diary prompt, so the entry itself carries them. Off: core writes the entry from its own prompt alone.',
         'exclusivity.enabled' => 'A natural pull toward the player that grows as the bond deepens, with its own reactions around suitors.',
         'romance_promotion.enabled' => 'A romance can climb its ladder (moments, confession, momentum) and hand over to Sharmat.',
         'cascade.felt.enabled' => 'When she hears what the player did to someone she cares about, she says so once at her next turn with the player (a felt line, no numbers). Off: the affinity still ripples, silently.',

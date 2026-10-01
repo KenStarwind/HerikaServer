@@ -43,6 +43,38 @@ if (!function_exists('chimPlayerKnowledgeFor')) {
     }
 }
 
+// CHIM fork hook (RelDyn): may an extension scale a core NPC-to-NPC affinity gain? Each ext/*/relationship_delta_damper.php may set
+// $GLOBALS['CHIM_RELATIONSHIP_DELTA_DAMPERS'][name] = fn(int $npcId, string $target, int $delta, ?string $newType): int (the delta to apply).
+// Both core writers of 'aff' ask it: RelationshipLLM::applyChanges and RelationshipManager::parseChanges. No damper: the delta, unchanged.
+if (!function_exists('chimRelationshipDeltaFor')) {
+    function chimRelationshipDeltaFor($npcId, $target, $delta, $newType = null) {
+        foreach (glob(($GLOBALS['ENGINE_PATH'] ?? dirname(__DIR__) . '/') . 'ext/*/relationship_delta_damper.php') ?: [] as $damperFile) {
+            require_once $damperFile;
+        }
+        foreach ($GLOBALS['CHIM_RELATIONSHIP_DELTA_DAMPERS'] ?? [] as $damper) {
+            $delta = (int)$damper((int)$npcId, (string)$target, (int)$delta, $newType);
+        }
+        return (int)$delta;
+    }
+}
+
+// CHIM fork hook (RelDyn): what does an extension add to $npcName's diary prompt? Each ext/*/diary_context.php may set
+// $GLOBALS['CHIM_DIARY_CONTEXT_PROVIDERS'][name] = fn(string $npcName): ?string. The non-empty answers are appended to core's diary
+// instruction (generateFollowerDiary, generateNearbyDiary, processor/request.php 'diary'). No provider: '' (the prompt as it was).
+if (!function_exists('chimDiaryContextFor')) {
+    function chimDiaryContextFor($npcName) {
+        foreach (glob(($GLOBALS['ENGINE_PATH'] ?? dirname(__DIR__) . '/') . 'ext/*/diary_context.php') ?: [] as $contextFile) {
+            require_once $contextFile;
+        }
+        $added = '';
+        foreach ($GLOBALS['CHIM_DIARY_CONTEXT_PROVIDERS'] ?? [] as $provider) {
+            $text = $provider((string)$npcName);
+            if (is_string($text) && trim($text) !== '') $added .= "\n\n" . trim($text);
+        }
+        return $added;
+    }
+}
+
 class RelationshipManager {
 
     // Valid relationship types (the "flavor" of the relationship)
@@ -986,6 +1018,7 @@ class RelationshipManager {
                     $rels[$target] = ['aff' => 0, 'type' => 'neutral'];
                 }
 
+                $delta = chimRelationshipDeltaFor($npcId, $target, $delta); // RelDyn fork hook: an extension may damp this gain
                 // Apply delta with bounds
                 $oldAff = $rels[$target]['aff'];
                 $rels[$target]['aff'] = max(-100, min(100, $oldAff + $delta));

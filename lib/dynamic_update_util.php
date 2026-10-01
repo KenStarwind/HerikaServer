@@ -121,6 +121,8 @@ function generateNearbyDiary($npcName, $gameRequest, $eventType) {
         }
 
         $diaryPrompt = strtr($GLOBALS["DIARY_PROMPT"], ['#HERIKA_NAME#'=>$npcName,'#PLAYER_NAME#'=>$NPC_CONF["PLAYER_NAME"]]);
+        require_once __DIR__ . DIRECTORY_SEPARATOR . 'relationship_manager.php'; // RelDyn fork hook: what an extension adds to the diary prompt
+        $diaryPrompt .= chimDiaryContextFor($npcName);
         $prompt[] = ["role" => "user", "content" => $diaryPrompt];
 
         $contextData = array_merge($head, $prompt);
@@ -1023,6 +1025,8 @@ function generateFollowerDiary($followerName, $gameRequest, $eventType) {
     }
 
     $diaryPrompt=strtr($GLOBALS["DIARY_PROMPT"],['{$GLOBALS["HERIKA_NAME"]}'=>$promptCharacterName,'{$GLOBALS["PLAYER_NAME"]}'=>$GLOBALS["PLAYER_NAME"],"#PLAYER_NAME#"=>$GLOBALS["PLAYER_NAME"],"#HERIKA_NAME#"=>$promptCharacterName,"#NARRATOR_NAME#"=>function_exists('chimGetNarratorRoleplayName') ? chimGetNarratorRoleplayName() : 'The Narrator']);
+    require_once __DIR__ . DIRECTORY_SEPARATOR . 'relationship_manager.php'; // RelDyn fork hook: what an extension adds to the diary prompt
+    $diaryPrompt .= chimDiaryContextFor($followerName);
 
     $prompt[] = 
         ["role" => "user", "content" => $diaryPrompt

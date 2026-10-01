@@ -34,12 +34,14 @@
  *      positive self-eval from diary"); self-confidence, never eval-scored, follows its own
  *      evidence (RelationshipDynamics::deriveConfidenceInput) since the previous entry.
  *
- * Not reachable on CHIM 3.4.1 without a core hook (open question, batch O review): the marked
- * moments and the maturity-gated depth in the diary TEXT itself. generateFollowerDiary rebuilds
- * the NPC from the database (setOldGlobalsFromCurrentNpcData) and calls the connector with no
- * ext hook, so what context_pre adds never reaches it; RelationshipDynamics::
- * generateDiaryPromptContext / shouldGenerateDiaryReflection wait for such a hook. Core's presets
- * also ship AUTO_DIARY off: without the player's diary requests or the follower preset no
+ * The marked moments and the maturity-gated depth reach the diary TEXT itself through the fork hook
+ * chimDiaryContextFor (lib/relationship_manager.php; ext/relationship_dynamics/diary_context.php
+ * registers promptContext(), decisions §20 #19): core's three diary writers (generateFollowerDiary,
+ * generateNearbyDiary, the player's 'diary' request in processor/request.php) append it to the diary
+ * instruction. generateFollowerDiary rebuilds the NPC from the database
+ * (setOldGlobalsFromCurrentNpcData), so what context_pre adds never reaches it; the hook does.
+ * RelationshipDynamics::generateDiaryPromptContext / shouldGenerateDiaryReflection stay April code.
+ * Core's presets ship AUTO_DIARY off: without the player's diary requests or the follower preset no
  * diarylog row arrives and no reflection runs (the moments stay kept, at most max_moments).
  *
  * In front of the LLM: feelings, never numbers (the moments as she would feel them, her state in
@@ -139,6 +141,17 @@ final class RelDynDiary
                 'bond_changed'        => 'what they are to {PLAYER} has changed',
                 'drunk_night'         => 'a night of drinking with {PLAYER} that looks different sober',
             ],
+            // What reaches core's own diary prompt (the fork hook lib/relationship_manager.php chimDiaryContextFor,
+            // decisions §20 #19): her depth by maturity, and the moments waiting since her last entry, as she would
+            // feel them. {NAME} = the NPC, {MOMENTS} = the moment phrases joined. Feelings, never numbers.
+            'prompt' => [
+                'enabled' => true,
+                'lead' => 'Guidance for this entry (never mention or quote it):',
+                'shallow'     => '{NAME} only records what happened and how it went; {NAME} cannot yet say why anything feels the way it does, and the entry shows no insight.',
+                'pattern'     => '{NAME} is only beginning to notice their own patterns; the entry may wonder why the same things keep happening, without ever quite answering.',
+                'examination' => "{NAME} is capable of honest self-examination; the entry can connect feelings to causes, own {NAME}'s part in things, and say what needs to change.",
+                'moments'     => 'What has stayed with {NAME} since they last wrote: {MOMENTS}. Let it color the entry as {NAME} would feel it, in their own voice; do not list it.',
+            ],
         ];
     }
 
@@ -149,7 +162,7 @@ final class RelDynDiary
         $stored = RelationshipDynamics::configValue('diary_reflection');
         if (!is_array($stored)) return $defaults;
         $cfg = array_replace($defaults, $stored);
-        foreach (['strength_scale', 'max_strength', 'depth_text', 'moment_text'] as $section) {
+        foreach (['strength_scale', 'max_strength', 'depth_text', 'moment_text', 'prompt'] as $section) {
             $cfg[$section] = array_replace($defaults[$section], is_array($stored[$section] ?? null) ? $stored[$section] : []);
         }
         return $cfg;
@@ -230,6 +243,39 @@ final class RelDynDiary
             if (is_string($text) && $text !== '') $out[] = strtr($text, ['{PLAYER}' => $player]);
         }
         return $out;
+    }
+
+    /**
+     * What RelDyn adds to core's diary prompt for $npcName (the fork hook chimDiaryContextFor, decisions §20
+     * #19): her depth by her own maturity (shallow: a flat recounting; pattern: noticing without answering;
+     * examination: honest self-examination) and the moments marked since her last entry, as she would feel
+     * them. Read only: the moments stay kept until her next prerequest reads the entry (onPrerequest).
+     * Null, so core's prompt is as it was, for the Narrator, an NPC RelDyn has never held (no stored state),
+     * and with RelDyn, the diary reflection or this prompt context off.
+     */
+    public static function promptContext(string $npcName): ?string
+    {
+        $npcName = trim($npcName);
+        if ($npcName === '' || strcasecmp($npcName, 'The Narrator') === 0
+            || !RelationshipDynamics::isEnabled() || !self::enabled()) {
+            return null;
+        }
+        $cfg = self::config();
+        $p = (array) $cfg['prompt'];
+        if (empty($p['enabled'])) return null;
+        $npcId = RelDynStorage::resolveNpcId($npcName);
+        if ($npcId === null || RelDynStorage::loadDynamics($npcId) === null) return null;
+        $dynamics = RelationshipDynamics::getDynamics($npcName);
+        $lines = [];
+        $depth = $p[self::depth(self::ownMaturity($dynamics), $cfg)] ?? null;
+        if (is_string($depth) && $depth !== '') $lines[] = $depth;
+        $moments = is_array($dynamics['_diary_moments'] ?? null) ? array_values($dynamics['_diary_moments']) : [];
+        $phrases = self::momentPhrases($moments, trim((string) ($GLOBALS['PLAYER_NAME'] ?? 'Player')), $cfg);
+        if ($phrases !== [] && is_string($p['moments'] ?? null) && $p['moments'] !== '') {
+            $lines[] = strtr($p['moments'], ['{MOMENTS}' => implode('; ', $phrases)]);
+        }
+        if ($lines === []) return null;
+        return strtr(trim((string) ($p['lead'] ?? '')) . "\n" . implode("\n", $lines), ['{NAME}' => $npcName]);
     }
 
     /** The trajectory dimensions now (drift sample units) and the self-confidence evidence. */

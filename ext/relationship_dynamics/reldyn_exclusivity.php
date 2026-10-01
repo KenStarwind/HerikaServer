@@ -41,8 +41,10 @@
  * each rise of her core affinity toward the suitor while a move is recent or core's NPC-NPC eval
  * holds a romantic type between them (the suitor's relationships entry for her, or hers for
  * him; that type alone never steers her reply) adds interest
- * x (1 - damping x pull). Core's own NPC-NPC 'aff' number is core's (the fork's owner hook can
- * only take a target whole, not scale a delta): see the lane's open question.
+ * x (1 - damping x pull). Core's own NPC-NPC 'aff' gains are damped by the same factor through the
+ * fork hook chimRelationshipDeltaFor (lib/relationship_manager.php, ext/relationship_dynamics/
+ * relationship_delta_damper.php, decisions §20 #19): dampCoreDelta(). Never a wall: a gain keeps
+ * core_gain_floor points, and only romantic gains while she is held by the pull are touched.
  *
  * Units: pull and its parts 0..1; passion points 0..100; core affinity -100..+100; interest
  * points 0..100; time on the game calendar (raw gamets, RelationshipDynamics::GAMETS_PER_DAY).
@@ -151,6 +153,11 @@ final class RelDynExclusivity
             'interest_per_move' => 6.0,        // interest points a move adds before damping
             'core_gain_factor' => 1.0,         // interest points per core affinity point she gained toward him (romantic)
             'damping' => 0.9,                  // gains x (1 - damping x pull)
+            // The fork hook (lib/relationship_manager.php chimRelationshipDeltaFor): core's own NPC-NPC
+            // romantic gains x (1 - damping x pull), the same factor as the ledger's. Never a wall: a gain
+            // keeps at least core_gain_floor points (no one is immune, decisions §19/§20)
+            'core_damping' => true,
+            'core_gain_floor' => 1,
             'interest_half_life_game_days' => 10.0,
             'max_suitors' => 8,
 
@@ -659,14 +666,7 @@ final class RelDynExclusivity
         // interest), but only a move in this exchange (§17: "when another NPC makes romantic moves")
         // steers her reply
 
-        // Her bond with the player as core holds it now (title, affinity): an NPC-to-NPC exchange
-        // runs no prerequest of hers, so the stored snapshot may lag core's eval. Read, not stored.
-        $view = $dynamics;
-        $toPlayer = self::coreBond($npcName, RelationshipDynamics::PLAYER_RELATIONSHIP_KEY);
-        if (is_array($toPlayer)) {
-            RelationshipDynamics::setCoreRelationshipType($view, $toPlayer['type'] ?? 'neutral');
-            RelationshipDynamics::refreshAffinityMirror($view, floatval($toPlayer['aff'] ?? 0));
-        }
+        $view = self::playerBondView($dynamics, $npcName);
         $p = self::pull($view, $now, $cfg);
         $added = self::recordExchange($dynamics, $suitor, $lines, is_numeric($hers['aff'] ?? null) ? floatval($hers['aff']) : null,
             true, $p['pull'], $now, $cfg);
@@ -677,6 +677,80 @@ final class RelDynExclusivity
         if (!$recentMove) return null;
         $line = self::feltLine($view, $p, $npcName, $suitor, $playerName, $interest, $cfg);
         return $line === null ? null : self::render($npcName, $suitor, $line['text'], $cfg);
+    }
+
+    /**
+     * Her dynamics with her bond to the player as core holds it now (title, affinity): an NPC-to-NPC
+     * exchange runs no prerequest of hers, so the stored snapshot may lag core's eval. Read, not stored.
+     */
+    private static function playerBondView(array $dynamics, string $npcName): array
+    {
+        $view = $dynamics;
+        $toPlayer = self::coreBond($npcName, RelationshipDynamics::PLAYER_RELATIONSHIP_KEY);
+        if (is_array($toPlayer)) {
+            RelationshipDynamics::setCoreRelationshipType($view, $toPlayer['type'] ?? 'neutral');
+            RelationshipDynamics::refreshAffinityMirror($view, floatval($toPlayer['aff'] ?? 0));
+        }
+        return $view;
+    }
+
+    // =====================================================================
+    // THE FORK HOOK: core's own NPC-to-NPC romance (decisions §20 #19)
+    // =====================================================================
+
+    /**
+     * Core's NPC-to-NPC relationship eval (REL LLM deltas, #REL tags) knows nothing of her heart. When
+     * RelDyn holds her in a committed or naturally exclusive bond with the player (the pull, §17: a
+     * title strengthens it, who she is shapes it, neglect weakens it), core's own affinity GAINS toward
+     * another NPC while the bond between them is romantic (her core type toward him, his toward her, the
+     * type this eval sets, or a romantic move of his she has lately met) are damped, by the same factor
+     * as the suitor ledger: delta x (1 - damping x pull). Dynamic, never a gate: a weak pull barely
+     * touches it, and a gain never drops below core_gain_floor points (no one is immune). Losses, gains
+     * toward the player (RelDyn's own), and gains in any bond that is not romantic are core's, untouched.
+     * Lazy and read-only: an NPC RelDyn has never held (no stored state) is core's.
+     *
+     * Asked by core's fork hook chimRelationshipDeltaFor (lib/relationship_manager.php) for every
+     * affinity delta it is about to apply; $delta is returned as is whenever this does not apply.
+     */
+    public static function dampCoreDelta(int $npcId, string $target, int $delta, ?string $newType = null): int
+    {
+        if ($delta <= 0 || $npcId <= 0 || !RelationshipDynamics::isEnabled() || !self::enabled()) return $delta;
+        $cfg = self::config();
+        if (empty($cfg['core_damping'])) return $delta;
+        $target = trim($target);
+        $player = trim((string) ($GLOBALS['PLAYER_NAME'] ?? ''));
+        if ($target === '' || strcasecmp($target, RelDynFulfillment::PLAYER) === 0 || ($player !== '' && self::sameName($target, $player))
+            || in_array(mb_strtolower($target), ['everyone', 'all', 'the narrator', 'narrator'], true)) {
+            return $delta;
+        }
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || RelDynStorage::loadDynamics($npcId) === null) return $delta;   // never held by RelDyn: core's
+        $row = $db->fetchOne('SELECT npc_name FROM core_npc_master WHERE id = $1', [$npcId]);
+        $npcName = trim((string) ($row['npc_name'] ?? ''));
+        if ($npcName === '' || self::sameName($npcName, $target)) return $delta;
+
+        $types = array_map('strtolower', (array) $cfg['romantic_types']);
+        $romantic = in_array(strtolower(trim((string) $newType)), $types, true)
+            || in_array(strtolower((string) (self::coreBond($npcName, $target)['type'] ?? '')), $types, true)
+            || in_array(strtolower((string) (self::coreBond($target, $npcName)['type'] ?? '')), $types, true);
+        $dynamics = RelationshipDynamics::getDynamics($npcName);
+        $now = RelationshipDynamics::currentGamets();
+        if ($now <= 0) {   // core's relationship worker has no game request: the newest game time CHIM logged
+            $now = floatval($db->fetchOne('SELECT MAX(gamets) AS m FROM eventlog WHERE gamets > 0')['m'] ?? 0);
+        }
+        if (!$romantic) {
+            $last = self::suitor($dynamics, $target)['last_move_gamets'] ?? null;
+            $window = floatval($cfg['move_window_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0;
+            $romantic = is_numeric($last) && $now - floatval($last) <= $window;   // a move of his she has lately met
+        }
+        if (!$romantic) return $delta;
+
+        $pull = self::pull(self::playerBondView($dynamics, $npcName), $now, $cfg)['pull'];
+        if ($pull <= 0.0) return $delta;
+        $damped = (int) round($delta * self::clamp01(1.0 - floatval($cfg['damping']) * self::clamp01($pull)));
+        $damped = min($delta, max($damped, max(1, intval($cfg['core_gain_floor']))));
+        RelationshipDynamics::log("[EXCL] core gain {$npcName} -> {$target}: +{$delta} damped to +{$damped} (pull {$pull})");
+        return $damped;
     }
 
     // =====================================================================
