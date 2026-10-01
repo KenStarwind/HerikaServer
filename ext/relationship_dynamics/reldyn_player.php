@@ -821,12 +821,20 @@ class RelDynPlayer
         $none = array_fill_keys(array_keys($wanted), null);
         if (!$db) return $none;
         try {
-            $any = $db->fetchAll('SELECT id_quest FROM quests WHERE id_quest IS NOT NULL LIMIT 1')
-                ?: $db->fetchAll("SELECT id_quest FROM questlog WHERE id_quest IS NOT NULL AND id_quest <> '' LIMIT 1");
+            // only the tables this schema has (core keeps both; a failed SELECT on one that is missing would be noise)
+            $tables = [];
+            foreach (['quests', 'questlog'] as $table) {
+                $present = $db->fetchOne('SELECT to_regclass($1) IS NOT NULL AS present', [$table]);
+                if (in_array($present['present'] ?? null, ['t', true], true)) $tables[] = $table;
+            }
+            $any = false;
+            foreach ($tables as $table) {
+                if ($db->fetchAll("SELECT id_quest FROM {$table} WHERE id_quest IS NOT NULL AND id_quest <> '' LIMIT 1")) { $any = true; break; }
+            }
             if (!$any) return $none;
             $list = implode(', ', array_map(fn($w) => $db->escapeLiteral($w[0]), array_values($wanted)));
             $best = [];
-            foreach (['quests', 'questlog'] as $table) {
+            foreach ($tables as $table) {
                 foreach ($db->fetchAll("SELECT id_quest, MAX(stage) AS stage FROM {$table} WHERE id_quest IN ({$list}) AND stage IS NOT NULL GROUP BY id_quest") as $r) {
                     $id = strtoupper((string) $r['id_quest']);
                     $best[$id] = max($best[$id] ?? -1, intval($r['stage']));

@@ -485,7 +485,7 @@ final class RelDynReplay
         $c = new LLMConnector();
         if ($connectorId !== null) {
             $row = $c->getById($connectorId);
-            if (!is_array($row)) throw new RuntimeException("no core_llm_connector row {$connectorId}");
+            if (!is_array($row) || !isset($row['id'])) throw new RuntimeException("no core_llm_connector row {$connectorId}");
         } else {
             $rows = array_values(array_filter((array) $c->readAll(), 'is_array'));
             $same = array_values(array_filter($rows, fn($r) => strcasecmp((string) ($r['model'] ?? ''), $captureModel) === 0));
