@@ -19,10 +19,17 @@
  *                      not the player, and the player is not her partner: the draft's
  *                      "cheating on bonded partner" (comfort +8 -> -25, resentment_self +15; the
  *                      trust -15 is toward the one she cheated on, a pair RelDyn does not keep)
- *   drunk_regret       intoxicated (an intoxicant among her active consumables, or drink still
- *                      in her: RelDynSubstances::intoxicated) and not a deep bond: "Bonded, drunk, regret next day" (+10 -> -15, trust -5,
- *                      resentment_self +10) for a romance, "Stranger, drunk, one-night"
- *                      (+10 -> -20, trust 0, resentment_self +12) otherwise
+ *   drunk_uncertainty  intoxicated (an intoxicant among her active consumables, or drink still
+ *                      in her: RelDynSubstances::intoxicated) and not a deep bond. Decisions 2026-09-23
+ *                      §20 #27: not shame. Drink raised her openness (RelDynSubstances::shifts) and let
+ *                      attraction and passion override the trust she would normally need; the sober her
+ *                      reflects with uncertainty ("was that too soon?"), sized by the trust gap and her
+ *                      own openness (uncertainty()). The draft's regret rows ("Bonded, drunk, regret next
+ *                      day", "Stranger, drunk, one-night": resentment_self, a trust cut, a crash) are
+ *                      retired: no resentment_self, no trust cut, and at most a small comfort wobble
+ *                      (uncertainty.wobble_comfort_max x the size) that a reassuring exchange resolves
+ *                      (onEvalItem), or the bond's own trust reaching what she needed (tick); time alone
+ *                      does not heal it (§2)
  *   vulnerable_fear    OPT-IN (fearful_vulnerable, off by default: the draft keys this row on
  *                      maturity and manipulation, not attachment): fearful attachment (both axes
  *                      at fearful_at): she wants the closeness and fears it; the draft's "Low
@@ -59,7 +66,8 @@
  *
  * Felt text (feelings, never numbers; RelDynFelt 'post_intimacy', bond scope): the row's glow
  * while the afterglow holds ('moment' for a row with a correction still to come), its 'after'
- * text from the correction for regret_felt_game_hours.
+ * text from the correction for regret_felt_game_hours (the uncertain morning: the words of its size,
+ * uncertainty.felt, and a lingering line for as long as the wobble does, WOBBLE_KEY).
  *
  * Time is the game calendar (raw gamets); a calendar behind the encounter (a load from before
  * it) drops it and takes back what is still held. State: $dynamics['_post_intimacy'].
@@ -76,7 +84,11 @@ final class RelDynPostIntimacy
     const KEY = '_post_intimacy';
 
     const CHEATING = 'cheating_guilt';
-    const DRUNK = 'drunk_regret';
+    const DRUNK = 'drunk_uncertainty';
+    /** The outcome name stored on encounters before decisions 2026-09-23 §20 #27 (read as DRUNK). */
+    const LEGACY_DRUNK = 'drunk_regret';
+    /** dynamics key: the comfort wobble the sober morning left, until a reassuring exchange (or earned trust) resolves it. */
+    const WOBBLE_KEY = '_post_intimacy_wobble';
     const BONDED = 'bonded_deepening';
     const AVOIDANT = 'avoidant_retreat';
     const COMMITTED = 'committed_warmth';
@@ -137,6 +149,28 @@ final class RelDynPostIntimacy
             'resentment_self_maturity_ref' => 65.0,
             'resentment_self_maturity_scale' => [0.5, 1.25],
             'resentment_self_range' => [5.0, 15.0],
+            // The sober morning after a drunken night (decisions §20 #27). The trust she would normally need
+            // before a scene settles with her is trust_needed (trust points as they read toward the player),
+            // scaled by her own sober openness (need_scale, read between the band levels of the attraction
+            // matrix): a closed woman needs more, an open one less. Her uncertainty = the gap to it (0..1),
+            // never under floor x (1 - openness): no one is fully immune. The wobble = wobble_comfort_max x
+            // the uncertainty comfort points, held until a tag in resolved_by arrives in an exchange (or her
+            // trust reaches what she needed). The felt words by size (tier_edges split faint / unsure / deep);
+            // 'lingering' is the line while the wobble outlives the morning. No digits in any of them.
+            'uncertainty' => [
+                'trust_needed' => 50.0,
+                'need_scale' => ['low' => 1.3, 'medium' => 1.0, 'high' => 0.75],
+                'floor' => 0.25,
+                'wobble_comfort_max' => 6.0,
+                'resolved_by' => ['reassurance'],
+                'tier_edges' => [0.2, 0.55],
+                'felt' => [
+                    'faint' => 'a flicker of wondering whether last night was too soon, easily set aside, though a kind word would settle it',
+                    'unsure' => 'keeps turning last night over: was that too soon? Looks for a sign, in a look or a word, that it meant something',
+                    'deep' => 'unsettled about last night, wondering whether it was too soon, whether it was only the drink, wants to be told gently that it was not a mistake',
+                ],
+                'lingering' => 'still wondering, quietly, whether that night was too soon, and listens for a word that it was right',
+            ],
             'outcomes' => [
                 self::BONDED => [
                     'held' => ['comfort' => 15.0, 'warmth' => 10.0], 'lasting' => ['trust' => 3.0], 'valence' => 20.0,
@@ -162,14 +196,12 @@ final class RelDynPostIntimacy
                     'glow' => 'quiet and watchful afterwards, arms drawn in, unsure it was safe to let them that close',
                     'after' => 'flinches at a casual touch, keeps them at arm\'s length, wary of being used',
                 ],
+                // Decisions §20 #27: not shame. No 'correction' table: the sober morning is the reflection of
+                // uncertainty (the 'uncertainty' section below); this row only has the moment and a fallback line
                 self::DRUNK => [
                     'held' => ['comfort' => 10.0], 'lasting' => [], 'valence' => 10.0,
-                    // romance / otherwise (draft rows "Bonded, drunk" / "Stranger, drunk, one-night")
-                    'correction' => ['comfort' => -15.0, 'trust' => -5.0, 'resentment_self' => 10.0],
-                    'correction_casual' => ['comfort' => -20.0, 'resentment_self' => 12.0],
-                    'correction_valence' => -20.0,
                     'glow' => 'relaxed, laughing easily, guards down in a way the sober self would not allow',
-                    'after' => 'avoids their eyes, flinches at a casual touch, hides behind distance and brisk professionalism',
+                    'after' => 'turns last night over and wonders whether it was too soon, unsure what it meant',
                 ],
                 self::CHEATING => [
                     'held' => ['comfort' => 8.0], 'lasting' => [], 'valence' => 5.0,
@@ -185,7 +217,11 @@ final class RelDynPostIntimacy
     {
         $defaults = self::configDefaults();
         $stored = RelationshipDynamics::configValue('post_intimacy');
-        return is_array($stored) ? array_replace($defaults, $stored) : $defaults;
+        if (!is_array($stored)) return $defaults;
+        $cfg = array_replace($defaults, $stored);
+        // a row saved before the uncertainty section (or with part of it) takes the current defaults for the rest
+        $cfg['uncertainty'] = array_replace($defaults['uncertainty'], is_array($stored['uncertainty'] ?? null) ? $stored['uncertainty'] : []);
+        return $cfg;
     }
 
     public static function enabled(): bool
@@ -248,6 +284,10 @@ final class RelDynPostIntimacy
             'trust' => $trust === null ? 50.0 : round($trust, 2),
             'maturity' => round(RelDynDiary::ownMaturity($dynamics), 2),
             'intoxicated' => self::intoxicated($dynamics, $cfg),
+            // her own openness (0..1, without the drink) and how far the drink raised it for this scene
+            // (RelDynSubstances::shifts: from the fourth drink): what she went further than she would sober
+            'openness' => round(self::soberOpenness($dynamics), 4),
+            'openness_drink' => round(floatval((RelDynSubstances::shifts($dynamics)['openness_bonus'] ?? 0.0)), 4),
             'anxiety' => round(floatval($axes['anxiety'] ?? 0.0), 3),
             'avoidance' => round(floatval($axes['avoidance'] ?? 0.0), 3),
             'other_partners' => array_values($otherPartners),
@@ -283,6 +323,67 @@ final class RelDynPostIntimacy
         [$min, $max] = array_map('floatval', array_values((array) $cfg['resentment_self_range']) + [5.0, 15.0]);
         $ref = max(1.0, floatval($cfg['resentment_self_maturity_ref']));
         return max($min, min($max, $row * max($lo, min($hi, $maturity / $ref))));
+    }
+
+    /**
+     * Her own openness (MDD 1.4, 0..1) without the drink: the openness of her trait vector (the
+     * attraction matrix's reading, RelDynTraits::opennessAt), else her temperament's band, and an
+     * editor or override value over it (RelDynAttraction::definition reads the same). Pure.
+     */
+    public static function soberOpenness(array $dynamics): float
+    {
+        $acfg = RelDynAttraction::config();
+        $levels = (array) $acfg['openness_levels'];
+        $temperament = RelationshipDynamics::validTemperament($dynamics['inferred_temperament'] ?? null);
+        $vector = RelDynTraits::vectorFor($temperament, $dynamics);
+        $o = null;
+        $band = ((array) $acfg['temperament_openness'])[$temperament ?? ''] ?? 'medium';
+        if ($vector !== null) {
+            $oa = RelDynTraits::opennessAt($vector, (array) $acfg['temperament_openness'], $levels);
+            [$band, $o] = [$oa['band'], $oa['o']];
+        }
+        $over = is_array($dynamics['attraction_overrides'] ?? null) ? $dynamics['attraction_overrides'] : [];
+        foreach ([$dynamics['openness'] ?? null, $over['openness'] ?? null] as $chosen) {
+            $b = RelDynAttraction::opennessBand($chosen, $acfg);
+            if ($b !== null) {
+                $band = $b;
+                $o = is_numeric($chosen) ? floatval($chosen) : null;
+            }
+        }
+        if (!is_numeric($o)) $o = floatval($levels[$band] ?? 0.6);
+        return max(0.0, min(1.0, floatval($o)));
+    }
+
+    /**
+     * The sober her's uncertainty about a night the drink let her have (decisions §20 #27): ['need' =>
+     * the trust she would normally need (trust_needed scaled by her openness: a closed woman needs
+     * more), 'gap' => how far short of it the trust was (0..1 of the need), 'size' => her uncertainty
+     * (0..1): the gap, never under floor x (1 - openness)]. $trust in trust points as it reads toward
+     * the player, $openness 0..1. Pure.
+     */
+    public static function uncertainty(float $trust, float $openness, ?array $cfg = null): array
+    {
+        $u = array_replace(self::configDefaults()['uncertainty'], (array) (($cfg ?? self::config())['uncertainty'] ?? []));
+        $levels = (array) RelDynAttraction::config()['openness_levels'];
+        $o = max(0.0, min(1.0, $openness));
+        $need = max(1.0, floatval($u['trust_needed']) * RelDynTraits::opennessBandValue($o, (array) $u['need_scale'], $levels));
+        $gap = max(0.0, min(1.0, ($need - $trust) / $need));
+        $floor = max(0.0, floatval($u['floor'])) * (1.0 - $o);
+        return ['need' => round($need, 4), 'gap' => round($gap, 4), 'size' => round(max(0.0, min(1.0, max($gap, $floor))), 4)];
+    }
+
+    /** The felt tier of an uncertainty size: faint / unsure / deep (uncertainty.tier_edges). Pure. */
+    public static function tierOf(float $size, ?array $cfg = null): string
+    {
+        $u = array_replace(self::configDefaults()['uncertainty'], (array) (($cfg ?? self::config())['uncertainty'] ?? []));
+        [$a, $b] = array_map('floatval', array_values((array) $u['tier_edges']) + [0.2, 0.55]);
+        return $size < $a ? 'faint' : ($size < $b ? 'unsure' : 'deep');
+    }
+
+    /** An outcome name as stored by an earlier version, read as today's. */
+    private static function outcomeName(string $outcome): string
+    {
+        return $outcome === self::LEGACY_DRUNK ? self::DRUNK : $outcome;
     }
 
     // =====================================================================
@@ -348,7 +449,8 @@ final class RelDynPostIntimacy
             if (abs($a) > 1e-6) $mood[$dim] = round($a, 4);
         }
         $heldUntil = $now + self::hours(floatval($cfg['held_game_hours']));
-        $correction = is_array($row['correction'] ?? null) && $row['correction'] !== [];
+        // the drunken night's sober reflection is the uncertainty (no table of its own), the others' tables
+        $correction = $outcome === self::DRUNK || (is_array($row['correction'] ?? null) && $row['correction'] !== []);
         $dynamics[self::KEY] = [
             'outcome' => $outcome,
             'start' => $now, 'last' => $now,
@@ -381,7 +483,8 @@ final class RelDynPostIntimacy
      */
     public static function tick(string $npcName, array &$dynamics, float $now): array
     {
-        $out = ['released' => [], 'corrected' => [], 'dropped' => false, 'ended' => false];
+        $out = ['released' => [], 'corrected' => [], 'dropped' => false, 'ended' => false, 'resolved' => []];
+        if ($now > 0) $out['resolved'] = self::tickWobble($npcName, $dynamics, $now);
         $state = is_array($dynamics[self::KEY] ?? null) ? $dynamics[self::KEY] : null;
         if ($state === null || $now <= 0) return $out;
         $cfg = self::config();
@@ -417,7 +520,9 @@ final class RelDynPostIntimacy
             if (!is_array($p)) continue;
             if ($sober && $now >= floatval($p['due'] ?? PHP_FLOAT_MAX)) {
                 $add(self::correct($npcName, $dynamics, $p, $now, $cfg));
-                if (!empty($p['correction'])) $state['after'] = ['outcome' => (string) $p['outcome'], 'until' => floatval($p['felt_until'] ?? $now)];
+                if (!empty($p['correction']) || isset($p['tier'])) {
+                    $state['after'] = ['outcome' => (string) $p['outcome'], 'until' => floatval($p['felt_until'] ?? $now), 'tier' => $p['tier'] ?? null];
+                }
             } else {
                 $waiting[] = $p;
             }
@@ -470,7 +575,7 @@ final class RelDynPostIntimacy
     private static function correct(string $npcName, array &$dynamics, array &$state, float $now, array $cfg): array
     {
         $state['corrected'] = true;
-        $row = (array) (((array) $cfg['outcomes'])[(string) ($state['outcome'] ?? '')] ?? []);
+        $row = (array) (((array) $cfg['outcomes'])[self::outcomeName((string) ($state['outcome'] ?? ''))] ?? []);
         $maturity = RelDynDiary::ownMaturity($dynamics);
         if (RelDynDiary::depth($maturity) === 'shallow') {
             $state['felt_until'] = floatval($state['held_until'] ?? $now);
@@ -478,10 +583,10 @@ final class RelDynPostIntimacy
             RelationshipDynamics::log(sprintf('[POST-INTIMACY] %s: a shallow mind (maturity %.1f) does not look back on it', $npcName, $maturity));
             return [];
         }
-        $table = (array) ($row['correction'] ?? []);
-        if (($state['outcome'] ?? '') === self::DRUNK && empty($state['context']['romance']) && is_array($row['correction_casual'] ?? null)) {
-            $table = $row['correction_casual'];
+        if (self::outcomeName((string) ($state['outcome'] ?? '')) === self::DRUNK) {
+            return self::reflect($npcName, $dynamics, $state, $now, $cfg);
         }
+        $table = (array) ($row['correction'] ?? []);
         $temperament = $dynamics['inferred_temperament'] ?? null;
         $night = isset($state['night']) && $state['night'] !== null ? (string) $state['night'] : null;
         $applied = [];
@@ -505,6 +610,96 @@ final class RelDynPostIntimacy
         return $applied;
     }
 
+    /**
+     * The sober morning after a drunken night (decisions §20 #27): not shame but uncertainty, sized by the
+     * trust gap and her own openness now that she is sober (uncertainty()). The comfort wobble (config
+     * uncertainty.wobble_comfort_max x the size, through the night's one verdict per dimension) is held in
+     * WOBBLE_KEY until a reassuring exchange or earned trust resolves it. Never resentment_self, never a
+     * trust cut, whatever a stored row's old drunk table says. Marks $state corrected, with its tier and
+     * how long the feeling shows.
+     */
+    private static function reflect(string $npcName, array &$dynamics, array &$state, float $now, array $cfg): array
+    {
+        $u = (array) $cfg['uncertainty'];
+        $trust = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'trust');
+        $un = self::uncertainty($trust === null ? 50.0 : floatval($trust), self::soberOpenness($dynamics), $cfg);
+        $tier = self::tierOf($un['size'], $cfg);
+        $night = isset($state['night']) && $state['night'] !== null ? (string) $state['night'] : null;
+        $ask = -max(0.0, floatval($u['wobble_comfort_max'])) * $un['size'];
+        // one drinking night, one verdict: only what exceeds the sober diary's or another scene's on it
+        $ask = RelDynSubstances::nightVerdict($dynamics, floatval($state['start'] ?? $now), 'comfort', $ask, $now, $night);
+        $applied = [];
+        if (abs($ask) > 1e-9) {
+            $a = RelationshipDynamics::applyDelta('comfort', $dynamics, $ask, $dynamics['inferred_temperament'] ?? null);
+            if (abs($a) > 1e-6) $applied['comfort'] = round($a, 4);
+        }
+        $prior = is_array($dynamics[self::WOBBLE_KEY] ?? null) ? $dynamics[self::WOBBLE_KEY] : null;
+        $dynamics[self::WOBBLE_KEY] = [
+            'comfort' => round(floatval($applied['comfort'] ?? 0.0) + floatval($prior['comfort'] ?? 0.0), 4),
+            'uncertainty' => max($un['size'], floatval($prior['uncertainty'] ?? 0.0)),
+            'tier' => $tier, 'need' => $un['need'], 'gap' => $un['gap'],
+            'since' => $now, 'start' => floatval($state['start'] ?? $now),
+        ];
+        $state['correction'] = $applied;
+        $state['tier'] = $tier;
+        $state['uncertainty'] = $un['size'];
+        $state['felt_until'] = $now + self::hours(floatval($cfg['regret_felt_game_hours']));
+        RelationshipDynamics::log(sprintf('[POST-INTIMACY] %s: the sober self wonders about the %s encounter (uncertainty %.2f, %s; trust %.1f of the %.1f she would normally need) %s',
+            $npcName, $state['outcome'] ?? '', $un['size'], $tier, $trust === null ? 50.0 : floatval($trust), $un['need'], json_encode($applied)));
+        return $applied;
+    }
+
+    /**
+     * What resolves the wobble each turn (prerequest): her trust reaching the trust she would normally
+     * need (it was not too soon after all: the bond grew into it), or a calendar behind the morning (a load
+     * undid it). Time alone resolves nothing (decisions §2). Returns ['wobble' => comfort points taken
+     * back] when it did, else [].
+     */
+    private static function tickWobble(string $npcName, array &$dynamics, float $now): array
+    {
+        $w = is_array($dynamics[self::WOBBLE_KEY] ?? null) ? $dynamics[self::WOBBLE_KEY] : null;
+        if ($w === null) return [];
+        if ($now < floatval($w['since'] ?? 0)) return self::resolveWobble($npcName, $dynamics, 'the morning a load undid', $now);
+        if ($now <= floatval($w['since'] ?? 0)) return [];
+        $trust = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'trust');
+        if ($trust !== null && floatval($trust) >= self::uncertainty(floatval($trust), self::soberOpenness($dynamics))['need']) {
+            return self::resolveWobble($npcName, $dynamics, 'her trust has caught up with the night', $now);
+        }
+        return [];
+    }
+
+    /**
+     * Take the wobble's comfort back exactly and end it, and with it the morning's uncertain feeling (a
+     * settled doubt shows no more). Returns ['wobble' => points taken back].
+     */
+    private static function resolveWobble(string $npcName, array &$dynamics, string $why, float $now): array
+    {
+        $w = is_array($dynamics[self::WOBBLE_KEY] ?? null) ? $dynamics[self::WOBBLE_KEY] : null;
+        if ($w === null) return [];
+        $comfort = floatval($w['comfort'] ?? 0.0);
+        if (abs($comfort) > 1e-6) RelationshipDynamics::reverseAppliedDeltas($dynamics, ['comfort' => $comfort], 'RelDyn-POST-INTIMACY', "the wobble ({$why})");
+        unset($dynamics[self::WOBBLE_KEY]);
+        if (is_array($dynamics[self::KEY] ?? null)) {
+            $dynamics[self::KEY]['felt_until'] = min(floatval($dynamics[self::KEY]['felt_until'] ?? $now), $now);
+            if (is_array($dynamics[self::KEY]['after'] ?? null)) $dynamics[self::KEY]['after']['until'] = min(floatval($dynamics[self::KEY]['after']['until'] ?? $now), $now);
+        }
+        RelationshipDynamics::log("[POST-INTIMACY] {$npcName}: the wobble is resolved ({$why}) " . json_encode(['comfort' => -$comfort]));
+        return ['wobble' => round(-$comfort, 4)];
+    }
+
+    /**
+     * A reassuring exchange (an eval item carrying a tag of config uncertainty.resolved_by) settles her
+     * wobble: its comfort is taken back exactly. Call once per accepted eval item (processEvalContractItem).
+     * True when it resolved one.
+     */
+    public static function onEvalItem(string $npcName, array $n, array &$dynamics, float $now): bool
+    {
+        if (!is_array($dynamics[self::WOBBLE_KEY] ?? null)) return false;
+        $by = array_map('strval', (array) (self::config()['uncertainty']['resolved_by'] ?? []));
+        if (array_intersect($by, array_map('strval', (array) ($n['tags'] ?? []))) === []) return false;
+        return self::resolveWobble($npcName, $dynamics, 'reassured', $now) !== [];
+    }
+
     // =====================================================================
     // FELT TEXT, JEV
     // =====================================================================
@@ -518,31 +713,56 @@ final class RelDynPostIntimacy
     public static function feltText(array $dynamics, float $now): ?array
     {
         $state = is_array($dynamics[self::KEY] ?? null) ? $dynamics[self::KEY] : null;
-        if ($state === null || $now <= 0 || $now < floatval($state['start'] ?? 0)) return null;
-        $outcomes = (array) self::config()['outcomes'];
-        $outcome = (string) ($state['outcome'] ?? '');
+        $wobble = is_array($dynamics[self::WOBBLE_KEY] ?? null) ? $dynamics[self::WOBBLE_KEY] : null;
+        $cfg = self::config();
+        $felt = (array) $cfg['uncertainty']['felt'];
+        $uText = fn(?string $tier): string => trim((string) ($felt[$tier ?? ''] ?? $felt['unsure'] ?? ''));
+        // the wobble outlives the morning (and the state): a quiet line for as long as she is unsure
+        $lingering = fn(): ?array => ($wobble !== null && $now > floatval($wobble['since'] ?? 0)
+            && trim((string) $cfg['uncertainty']['lingering']) !== '')
+            ? ['phase' => 'wobble', 'text' => trim((string) $cfg['uncertainty']['lingering']), 'outcome' => self::DRUNK] : null;
+        if ($now <= 0) return null;
+        if ($state === null) return $lingering();
+        if ($now < floatval($state['start'] ?? 0)) return null;
+        $outcomes = (array) $cfg['outcomes'];
+        $outcome = self::outcomeName((string) ($state['outcome'] ?? ''));
+        $tier = $state['tier'] ?? null;
         $phase = null;
-        if (!empty($state['correction']) && $now < floatval($state['felt_until'] ?? 0)) {
+        if ((!empty($state['correction']) || isset($state['tier'])) && $now < floatval($state['felt_until'] ?? 0)) {
             $phase = 'after';
         } elseif (is_array($state['after'] ?? null) && $now < floatval($state['after']['until'] ?? 0)) {
             $phase = 'after';
-            $outcome = (string) ($state['after']['outcome'] ?? '');
+            $outcome = self::outcomeName((string) ($state['after']['outcome'] ?? ''));
+            $tier = $state['after']['tier'] ?? ($wobble['tier'] ?? null);
         } elseif ($now < floatval($state['held_until'] ?? 0)) {
             $phase = 'glow';
         }
+        // the uncertain morning: the words of how unsure she is, not a shame line
+        if ($phase === 'after' && $outcome === self::DRUNK) {
+            $text = $uText($tier ?? ($wobble['tier'] ?? null));
+            return $text === '' ? null : ['phase' => $phase, 'text' => $text, 'outcome' => $outcome];
+        }
         $row = (array) ($outcomes[$outcome] ?? []);
         $text = $phase !== null ? trim((string) ($row[$phase] ?? '')) : '';
-        return $text === '' ? null : ['phase' => $phase, 'text' => $text, 'outcome' => $outcome];
+        if ($text === '') return $lingering();
+        return ['phase' => $phase, 'text' => $text, 'outcome' => $outcome];
     }
 
     /** Jev's numbers (decisions §3): outcome, phase times in game hours from now, what was applied. */
     public static function jev(array $dynamics, float $now): ?array
     {
         $state = is_array($dynamics[self::KEY] ?? null) ? $dynamics[self::KEY] : null;
-        if ($state === null) return null;
+        $w = is_array($dynamics[self::WOBBLE_KEY] ?? null) ? $dynamics[self::WOBBLE_KEY] : null;
+        $wobble = $w === null ? null : ['comfort' => round(floatval($w['comfort'] ?? 0.0), 4), 'uncertainty' => round(floatval($w['uncertainty'] ?? 0.0), 4),
+            'tier' => (string) ($w['tier'] ?? ''), 'need' => round(floatval($w['need'] ?? 0.0), 2), 'gap' => round(floatval($w['gap'] ?? 0.0), 4)];
+        if ($state === null) {
+            // the encounter is over, the wobble is not
+            return $wobble === null ? null : ['outcome' => self::DRUNK, 'held' => [], 'held_ends_in_game_hours' => null,
+                'correction_in_game_hours' => null, 'correction' => [], 'lasting' => [], 'deferred_corrections' => 0, 'wobble' => $wobble];
+        }
         $h = fn($t) => $t === null ? null : round((floatval($t) - $now) / RelationshipDynamics::GAMETS_PER_HOUR, 2);
         return [
-            'outcome' => (string) ($state['outcome'] ?? ''),
+            'outcome' => self::outcomeName((string) ($state['outcome'] ?? '')),
             'held' => (array) ($state['held'] ?? []),
             'held_ends_in_game_hours' => !empty($state['held']) ? $h($state['held_until'] ?? null) : null,
             'correction_in_game_hours' => empty($state['corrected']) ? $h($state['correction_due'] ?? null) : null,
@@ -550,6 +770,7 @@ final class RelDynPostIntimacy
             'lasting' => (array) ($state['lasting'] ?? []),
             // earlier encounters whose sober verdict is still to come
             'deferred_corrections' => count((array) ($state['deferred'] ?? [])),
+            'wobble' => $wobble,
         ];
     }
 }

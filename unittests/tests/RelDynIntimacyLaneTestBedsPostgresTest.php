@@ -644,9 +644,10 @@ final class RelDynIntimacyLaneTestBedsPostgresTest extends TestCase
      * post-intimacy x item modifiers x resentment_self x diary depth. Four women the player is not
      * with (core friend, affinity 30) each drink a mead with him, then a scene. It is the drunken
      * night of the draft for all four, the same in the moment ("relaxed, guards down"). The sober
-     * morning (nine game hours later, the mead long worn off) judges it by who she is: comfort
-     * crashes below where it started, the shame is scaled by how much she holds herself to (her
-     * own maturity), a stranger's trust is not the question; a shallow mind never looks back.
+     * morning (nine game hours later, the mead long worn off) is not shame (decisions §20 #27) but
+     * uncertainty, "was that too soon?", sized by the trust gap and her own openness: a small comfort
+     * wobble below where it started, no resentment_self, no trust cut, and the four are unsure by
+     * different amounts; a shallow mind never looks back.
      */
     public function testTheDrunkenNightIsJudgedBySoberMorningByWhoSheIs(): void
     {
@@ -688,6 +689,7 @@ final class RelDynIntimacyLaneTestBedsPostgresTest extends TestCase
         $this->probe('drunken night', $info);
         $why = json_encode($info);
         $corrected = [];
+        $sizes = [];
         foreach ($beds as $npc) {
             $this->assertSame('glow', $info[$npc]['moment'], "{$npc}: in the moment it is the glow {$why}");
             $s = $info[$npc]['state'];
@@ -698,21 +700,36 @@ final class RelDynIntimacyLaneTestBedsPostgresTest extends TestCase
             }
             $corrected[] = $npc;
             $this->assertIsArray($s, $npc);
-            $this->assertLessThan($pre[$npc]['comfort'], $info[$npc]['comfort'], "{$npc}: crashed past where she started {$why}");
-            $this->assertGreaterThan($pre[$npc]['rs'] + 3.0, $info[$npc]['rs'], "{$npc}: shame {$why}");
-            $this->assertArrayNotHasKey('trust', $s['correction'], "{$npc}: a man she is not with: trust unchanged {$why}");
+            $max = RelDynPostIntimacy::config()['uncertainty']['wobble_comfort_max'];
+            $this->assertLessThan($pre[$npc]['comfort'], $info[$npc]['comfort'], "{$npc}: a wobble below where she started {$why}");
+            $this->assertGreaterThan($pre[$npc]['comfort'] - $max - 1.0, $info[$npc]['comfort'], "{$npc}: a small one, not a crash {$why}");
+            $this->assertEqualsWithDelta($pre[$npc]['rs'], $info[$npc]['rs'], 0.01, "{$npc}: no shame {$why}");
+            $this->assertEqualsWithDelta($pre[$npc]['trust'], $info[$npc]['trust'], 1e-6, "{$npc}: a man she is not with: trust unchanged {$why}");
+            $this->assertArrayNotHasKey('trust', $s['correction'], "{$npc}: no trust cut {$why}");
+            $this->assertArrayNotHasKey('resentment_self', $s['correction'], "{$npc}: no resentment_self from the morning {$why}");
             $this->assertArrayHasKey('post_intimacy', $this->felt[$npc]['morning'], "{$npc}: the sober self shows {$why}");
-            $this->assertTrue(self::reads($this->felt[$npc]['morning']['post_intimacy'], RelDynPostIntimacy::config()['outcomes'][RelDynPostIntimacy::DRUNK]['after']),
+            $tierText = RelDynPostIntimacy::config()['uncertainty']['felt'][$s['tier']];
+            $this->assertTrue(self::reads($this->felt[$npc]['morning']['post_intimacy'], $tierText),
                 "{$npc}: " . $this->felt[$npc]['morning']['post_intimacy']);
+            $sizes[$npc] = $s['uncertainty'];
         }
         $this->assertGreaterThanOrEqual(3, count($corrected), $why);
-        // the more she holds herself to, the harder the shame
-        $byMaturity = $corrected;
-        usort($byMaturity, fn($a, $b) => $info[$a]['maturity'] <=> $info[$b]['maturity']);
-        $low = $byMaturity[0];
-        $high = end($byMaturity);
-        if ($info[$high]['maturity'] - $info[$low]['maturity'] > 10.0) {
-            $this->assertGreaterThan($info[$low]['rs'] - $pre[$low]['rs'], $info[$high]['rs'] - $pre[$high]['rs'], "{$high} over {$low} {$why}");
+        // who she is: the trust gap and her own openness make the four unsure by different amounts
+        $this->assertGreaterThanOrEqual(3, count(array_unique(array_map(fn($v) => round($v, 2), $sizes))), "each her own doubt {$why}");
+        $this->assertGreaterThan(0.0, min($sizes), 'no one is immune');
+
+        // A reassuring word resolves it (the eval at its stub boundary reads "take my hand" as care and reassurance):
+        // the wobble is taken back, and what she was unsure about stops showing. Time alone did not.
+        $held = [];
+        foreach ($corrected as $npc) {
+            $held[$npc] = $this->dynamics($npc)[RelDynPostIntimacy::WOBBLE_KEY] ?? null;
+            $this->assertIsArray($held[$npc], "{$npc}: still wondering after the morning");
+        }
+        $this->alone('Come here, take my hand. Last night was not a mistake.', $t + 7200, 'reassure');
+        foreach ($corrected as $npc) {
+            $d = $this->dynamics($npc);
+            $this->assertArrayNotHasKey(RelDynPostIntimacy::WOBBLE_KEY, $d, "{$npc}: a reassuring word settles it {$why}");
+            $this->assertNull(RelDynPostIntimacy::feltText($d, (float) ($t + 9000)), "{$npc}: she no longer shows the doubt");
         }
         $this->assertClean();
     }

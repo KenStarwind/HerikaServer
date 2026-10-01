@@ -42,7 +42,7 @@
  *     maturity at or below diary shallow_at) corrects nothing: no meaningful self-reflection.
  *   - One night, one verdict (the worked example has one sober verdict: "comfort toward Mikael:
  *     -20", "resentment_self: +12"): a drunken scene the post-intimacy states also judge
- *     (RelDynPostIntimacy's drunk_regret / cheating correction, two scenes of one night) and this
+ *     (RelDynPostIntimacy's drunk_uncertainty comfort wobble / cheating correction, two scenes of one night) and this
  *     diary verdict share the night per dimension (resentment_self, comfort, trust, ...);
  *     whichever comes second adds only what exceeds the first in the same direction
  *     (nightVerdict, asked points before the physics).

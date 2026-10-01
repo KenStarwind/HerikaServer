@@ -160,16 +160,7 @@ if ($reldynIntimate) {
 // feeds the intimacy axes, rulings §10, unless the request fed them itself above), unless the
 // eval scores it (its tags deliver then, in processEvalContractItem).
 if (!$evalOwnsExchange) {
-    // A give / trade request is a handover: one the eventlog row of the same handover delivered
-    // already (processGift) is not delivered twice (RelDynGifts::noteHandover). Dormant on CHIM 3.4.1:
-    // no request carries these action names to this hook (see classifyInteraction); a handover
-    // reaches RelDyn as its eventlog row and the eval's tag.
-    $handoverPaired = RelationshipDynamics::isHandoverAction($GLOBALS['gameRequest'][3] ?? '') && $interactionLL !== null
-        && RelDynGifts::noteHandover($dynamics, 'request',
-            $interactionLL === RelationshipDynamics::LL_GIFTS ? 'gift' : 'help', RelationshipDynamics::currentGamets());
-    if (!$handoverPaired) {
-        RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets(), !$reldynIntimate);
-    }
+    RelationshipDynamics::recordLoveLanguageFulfillment($dynamics, $interactionLL, RelationshipDynamics::currentGamets(), !$reldynIntimate);
 }
 RelationshipDynamics::log("POST classify: npc={$npcName} type={$reqType} mood={$lastMood} LL=" . ($interactionLL ?? 'NULL'));
 
@@ -545,7 +536,7 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
 
     // ========== ITEM DIMENSION MODIFIERS (PR 8) ==========
     // Detect and process consumable, gift, and equip events from this interaction.
-    // Uses eventlog patterns and ExtCmdGiveItem (core data).
+    // Uses eventlog patterns (core data): the itemfound row of a handover.
     $playerName = $GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player';
     $temperament = $dynamics['inferred_temperament'] ?? null;
     $itemResults = RelationshipDynamics::processItemEvents(
@@ -569,7 +560,7 @@ if (!empty($rdConfig['dimension_engine_enabled'])) {
 
 // ========== INTERACTION PATTERN TRACKING (PR 12; MDD 6.2 Parasite, reldyn_protocols.php) ==========
 // This exchange in the transactional ledger, keyed by its game time: a gift seen this request
-// (core's eventlog "gave X to" row or the request's give action), else a positive exchange the
+// (core's eventlog "gave X to" row), else a positive exchange the
 // local classifier scored, else nothing yet (its eval item, same game time, may say what it was).
 if (!empty($reldynCfg['parasite_detection_enabled'])) {
     $giftSeen = !empty($itemResults['gift'] ?? null);

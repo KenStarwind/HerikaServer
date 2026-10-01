@@ -48,36 +48,25 @@ final class RelDynBatchTClassifyTest extends TestCase
     // interaction-classification: the handover split
     // =====================================================================
 
-    /** The item a give / trade action names (ExtCmdGiveItem@Name), else null. */
-    public function testAHandoverActionNamesItsItem(): void
+    /**
+     * Decisions §20 #17: the give / trade request path (ExtCmdGiveItem / ExtCmdTradeItem) is gone: CHIM
+     * 3.4.1 core never sends it (its actions are GiveItemTo / TradeItems, handled by the eventlog row and
+     * the eval's handover tag). Those action names are nothing to the classifier now: with no mood it
+     * reads nothing, with a mood it is the mood's guess, never a gift or service from the action.
+     */
+    public function testTheDeadGiveAndTradeRequestPathIsRetired(): void
     {
-        $this->assertSame('Ruby Ring', RelationshipDynamics::handoverItemOfAction('ExtCmdGiveItem@Ruby Ring'));
-        $this->assertSame('Potion of Healing', RelationshipDynamics::handoverItemOfAction('ExtCmdTradeItem@Potion of Healing'));
-        $this->assertSame('Ruby Ring', RelationshipDynamics::handoverItemOfAction("ExtCmdGiveItem@Ruby Ring\r\n"));
-        $this->assertNull(RelationshipDynamics::handoverItemOfAction('ExtCmdGiveItem'), 'a handover that names nothing');
-        $this->assertNull(RelationshipDynamics::handoverItemOfAction('ExtCmdHug'));
-        $this->assertTrue(RelationshipDynamics::isHandoverAction('ExtCmdGiveItem'));
-        $this->assertTrue(RelationshipDynamics::isHandoverAction('ExtCmdTradeItem@Bread'));
-        $this->assertFalse(RelationshipDynamics::isHandoverAction('ExtCmdHug'));
-    }
-
-    /** Food, drink and potions are looking after her (service); a jewel is a gift. */
-    public function testAPotionHandoverIsServiceAndAJewelIsAGift(): void
-    {
-        $ll = fn(string $action, ?string $mood = null) => RelationshipDynamics::classifyInteraction(self::request('infoaction', $action), $mood);
-        $gift = RelationshipDynamics::LL_GIFTS;
-        $service = RelationshipDynamics::LL_SERVICE;
-
-        foreach (['Ruby Ring', 'Amulet of Talos', 'Gold Ring', 'Elven Dagger', 'Soul Gem', 'Dragonscale Armor', 'Scale Mail', '100 Septims'] as $item) {
-            $this->assertSame($gift, $ll("ExtCmdGiveItem@{$item}"), "{$item}: a gift");
+        $this->assertFalse(method_exists(RelationshipDynamics::class, 'isHandoverAction'));
+        $this->assertFalse(method_exists(RelationshipDynamics::class, 'handoverItemOfAction'));
+        foreach (['ExtCmdGiveItem@Ruby Ring', 'ExtCmdTradeItem@Potion of Healing', 'ExtCmdGiveItem'] as $action) {
+            $req = self::request('infoaction', $action);
+            $this->assertNull(RelationshipDynamics::classifyInteraction($req, null), $action);
+            $this->assertSame([], RelDynEval::eventTagsForRequest($req), "{$action}: the eval is told nothing of it");
+            $this->assertSame(RelationshipDynamics::LL_WORDS, RelationshipDynamics::classifyInteraction($req, 'flirty'), "{$action}: only the mood guess");
         }
-        foreach (['Potion of Healing', 'Healing Potions', 'Honningbrew Mead', 'Ale', 'Bread', 'Venison Stew', 'Elixir of Vigor', 'Sweet Roll', 'Skooma'] as $item) {
-            $this->assertSame($service, $ll("ExtCmdGiveItem@{$item}"), "{$item}: service");
-        }
-        $this->assertSame($gift, $ll('ExtCmdTradeItem@Ruby Ring'));
-        $this->assertSame($service, $ll('ExtCmdTradeItem@Potion of Healing'));
-        // a handover that names nothing is read as it always was
-        $this->assertSame($service, $ll('ExtCmdGiveItem'));
+        // the live handover helpers stay: the eventlog row and the eval's tag use them
+        $this->assertSame(RelationshipDynamics::LL_GIFTS, RelDynGifts::handoverLoveLanguage('Ruby Ring'));
+        $this->assertSame('help', RelDynGifts::handoverTag('Potion of Healing'));
     }
 
     /** The word 'ale' inside 'Dragonscale' or 'Scale' is not a drink: whole words only. */
@@ -95,22 +84,10 @@ final class RelDynBatchTClassifyTest extends TestCase
         $this->assertSame(RelationshipDynamics::LL_SERVICE, RelDynGifts::handoverLoveLanguage(null));
     }
 
-    /** What the action proves comes first: a flirty reply mood no longer turns a handover into words. */
-    public function testAnObservedHandoverBeatsTheMoodGuess(): void
+    /** Plain talk in a flirty mood is words. */
+    public function testPlainTalkInAFlirtyMoodIsWords(): void
     {
-        $req = self::request('infoaction', 'ExtCmdGiveItem@Ruby Ring');
-        $this->assertSame(RelationshipDynamics::LL_GIFTS, RelationshipDynamics::classifyInteraction($req, 'flirty'));
-        $this->assertSame(RelationshipDynamics::LL_GIFTS, RelationshipDynamics::classifyInteraction($req, null));
-        // plain talk in a flirty mood is still words
         $this->assertSame(RelationshipDynamics::LL_WORDS, RelationshipDynamics::classifyInteraction(self::request('inputtext', 'Kaida: hi'), 'flirty'));
-    }
-
-    /** The eval is told the same split as certain events: gift for a jewel, help for a potion. */
-    public function testTheEvalIsToldTheSplitAsAnObservedEvent(): void
-    {
-        $this->assertSame(['gift'], RelDynEval::eventTagsForRequest(self::request('infoaction', 'ExtCmdGiveItem@Ruby Ring')));
-        $this->assertSame(['help'], RelDynEval::eventTagsForRequest(self::request('infoaction', 'ExtCmdGiveItem@Potion of Healing')));
-        $this->assertSame(['help'], RelDynEval::eventTagsForRequest(self::request('infoaction', 'ExtCmdTradeItem@Honningbrew Mead')));
     }
 
     /**

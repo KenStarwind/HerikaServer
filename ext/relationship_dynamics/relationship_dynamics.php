@@ -1096,8 +1096,13 @@ class RelationshipDynamics
             // else (no temperament) the core race (raceToLoveLanguage; race is a minor prior, rulings #7).
             // The secondary is the temperament's too (the next table). A secondary equal to the primary rotates.
             // Attachment first (after MARAS / Sharmat): anxious + toxic corner weights summing to min_weight
-            // or more seek reassurance, so their primary is words of affirmation.
-            'love_language_attachment' => ['corners' => ['anxious', 'toxic'], 'min_weight' => 0.5, 'language' => self::LL_WORDS],
+            // or more seek reassurance (decisions §20 #11), and ask for it in words of affirmation OR in acts
+            // of service ("do x to prove you care"), chosen by trait: 'choices' = language => trait weights
+            // (trait code => weight); her score for a language is the weighted mean of those traits in her
+            // vector, the highest wins, a tie (and a vector-less NPC) takes 'language'. Reactive and
+            // expressive leans words; possessive or proud leans service.
+            'love_language_attachment' => ['corners' => ['anxious', 'toxic'], 'min_weight' => 0.5, 'language' => self::LL_WORDS,
+                'choices' => [self::LL_WORDS => ['E' => 1.0, 'L' => 1.0], self::LL_SERVICE => ['Po' => 1.0, 'Pd' => 1.0]]],
             'love_language_primary' => [
                 'Romantic' => self::LL_WORDS, 'Anxious' => self::LL_TIME, 'Bold' => self::LL_TOUCH, 'Playful' => self::LL_TOUCH,
                 'Humble' => self::LL_GIFTS, 'Nurturing' => self::LL_SERVICE, 'Gentle' => self::LL_TIME, 'Jealous' => self::LL_WORDS,
@@ -3673,19 +3678,53 @@ class RelationshipDynamics
 
     /**
      * The primary love language attachment implies (config love_language_attachment {corners, min_weight,
-     * language}): the language when the NPC's corner weights (attachmentWeights) of the listed corners sum
-     * to at least min_weight, else null.
+     * language, choices}): when the NPC's corner weights (attachmentWeights) of the listed corners sum to at
+     * least min_weight she seeks reassurance, and which language she asks for it in is her trait vector's
+     * choice among the table (reassuranceLanguage); else null.
      */
     private static function attachmentToLoveLanguage(array $dynamics)
     {
         $cfg = self::getConfig()['love_language_attachment'] ?? null;
-        $cfg = is_array($cfg) ? $cfg : (array) self::defaultConfig()['love_language_attachment'];
+        $defaults = (array) self::defaultConfig()['love_language_attachment'];
+        $cfg = is_array($cfg) ? $cfg + $defaults : $defaults;   // a row saved before 'choices' took the default table
         $language = $cfg['language'] ?? null;
         if (!is_string($language) || $language === '') return null;
         $weights = self::attachmentWeights($dynamics);
         $sum = 0.0;
         foreach ((array) ($cfg['corners'] ?? []) as $corner) $sum += floatval($weights[$corner] ?? 0.0);
-        return $sum >= floatval($cfg['min_weight'] ?? 0.5) ? $language : null;
+        if ($sum < floatval($cfg['min_weight'] ?? 0.5)) return null;
+        return self::reassuranceLanguage($dynamics, $language, (array) ($cfg['choices'] ?? []));
+    }
+
+    /**
+     * Which language a reassurance-seeking NPC asks in (decisions §20 #11): the choice with the highest
+     * weighted mean of its traits in her vector; a tie, a choice without usable weights, or an NPC with no
+     * vector takes $default. Never a gate: it is read from the vector as it stands, so it moves with her.
+     */
+    private static function reassuranceLanguage(array $dynamics, string $default, array $choices): string
+    {
+        $x = RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $dynamics);
+        if ($x === null) return $default;
+        $best = $default;
+        $bestScore = null;
+        $scores = [];
+        foreach ($choices as $language => $weights) {
+            if (!is_string($language) || $language === '' || !is_array($weights)) continue;
+            $num = 0.0;
+            $den = 0.0;
+            foreach ($weights as $code => $w) {
+                if (!is_numeric($w) || floatval($w) <= 0.0 || !isset(RelDynTraits::TRAITS[$code])) continue;
+                $num += floatval($w) * floatval($x[$code] ?? 0.5);
+                $den += floatval($w);
+            }
+            if ($den > 0.0) $scores[$language] = $num / $den;
+        }
+        foreach ($scores as $language => $score) {
+            if ($bestScore === null || $score > $bestScore + 1e-9) { $best = $language; $bestScore = $score; }
+        }
+        // a tie for the top is the default's (when the default is among the tied) so the table's order never decides
+        if ($bestScore !== null && isset($scores[$default]) && abs($scores[$default] - $bestScore) <= 1e-9) return $default;
+        return $best;
     }
 
     /** The primary love language of a temperament through the trait engine: the nearest preset's (config love_language_primary), null without one. */
@@ -5499,17 +5538,10 @@ class RelationshipDynamics
             return self::LL_TOUCH;
         }
 
-        // An item handed over (give / trade) is what the action proves, so it comes before any
-        // guess from her mood: food, drink and potions are looking after her (acts of service),
-        // anything else a gift (handoverLoveLanguage). DORMANT on CHIM 3.4.1: core emits no
-        // ExtCmdGiveItem / ExtCmdTradeItem (its actions are GiveItemTo / TradeItems) and ends an
-        // 'infoaction' request before any ext hook runs (main.php), like the ExtCmdHug / ExtCmdKiss
-        // names above. It is kept for a fork or plugin that emits the names. The live deliveries of a
-        // handover are the eventlog row's (processGift, once per row) and the eval's gift / help tag
-        // for an exchange that held the row (RelDynGifts::noteHandover, handover_tags).
-        if (self::isHandoverAction($action)) {
-            return RelDynGifts::handoverLoveLanguage(self::handoverItemOfAction($action));
-        }
+        // An item handed over does not come through here: CHIM 3.4.1 core sends no give / trade request this
+        // hook could read (decisions §20 #17). A handover reaches RelDyn as its eventlog 'itemfound' row
+        // (processGift, once per row) and as the eval's gift / help tag for an exchange that held the row
+        // (RelDynGifts::noteHandover, handover_tags).
 
         // Words of affirmation (flirty/loving mood)
         $romanticMoods = ['flirty', 'loving', 'lovely', 'playful', 'seductive', 'aroused', 'charming', 'affectionate'];
@@ -5541,21 +5573,6 @@ class RelationshipDynamics
             return self::LL_TIME;
         }
 
-        return null;
-    }
-
-    /** Is this request action an item handover (ExtCmdGiveItem / ExtCmdTradeItem)? */
-    public static function isHandoverAction($action): bool
-    {
-        return is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item/i', $action) === 1;
-    }
-
-    /** The item a handover action names (ExtCmdGiveItem@Name, ExtCmdTradeItem@Name), or null when it names none. */
-    public static function handoverItemOfAction($action): ?string
-    {
-        if (is_string($action) && preg_match('/ExtCmd(?:Give|Trade)Item@([^:\r\n]+)/i', $action, $m) && trim($m[1]) !== '') {
-            return trim($m[1]);
-        }
         return null;
     }
 
@@ -5591,7 +5608,7 @@ class RelationshipDynamics
 
     /**
      * The item of a gift/item interaction: the LLM response's item field (connectors set
-     * LAST_LLM_RESPONSE), else the gameRequest action ExtCmdGiveItem@Name / ExtCmdTradeItem@Name.
+     * LAST_LLM_RESPONSE), else null.
      */
     public static function detectGiftItemName(): ?string
     {
@@ -5599,7 +5616,7 @@ class RelationshipDynamics
         if (is_array($llmResponse) && is_string($llmResponse['item'] ?? null) && trim($llmResponse['item']) !== '') {
             return trim($llmResponse['item']);
         }
-        return self::handoverItemOfAction($GLOBALS['gameRequest'][3] ?? '');
+        return null;
     }
 
     /**
@@ -9512,6 +9529,10 @@ class RelationshipDynamics
         // mature and has voiced it (RelDynPullback::onEvalItem)
         $met = RelDynPullback::onEvalItem((string) $npcName, $n, $dynamics, floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets());
         if ($met > 0) $feelings['pullback_met'] = round($met, 4);
+        // A reassuring exchange settles the doubt a drunken night left (RelDynPostIntimacy::onEvalItem, decisions §20 #27)
+        if (RelDynPostIntimacy::onEvalItem((string) $npcName, $n, $dynamics, floatval($n['gamets'] ?? 0) > 0 ? floatval($n['gamets']) : self::currentGamets())) {
+            $feelings['post_intimacy_resolved'] = true;
+        }
         // What the exchange gave against the NPC's needs (rulings §9 fulfillment; its physical /
         // emotional intimacy axes, rulings §10), at its game time.
         // A 'gift' or 'help' the player's handover row already delivered (processGift) is that
@@ -13892,8 +13913,7 @@ class RelationshipDynamics
 
         $giftCfg = RelDynGifts::config();
         // The handover as a delivery to fulfillment (interaction-classification): once per row. A gift
-        // (a food or potion is service) already delivered from the request's side (the eval's tag, or
-        // the local classifier's reading of a give / trade action) is that delivery. An inverted gift
+        // (a food or potion is service) already delivered from the request's side (the eval's tag) is that delivery. An inverted gift
         // (stolen, a re-gift) is no gift: it delivers nothing, and a 'gift' tag the eval gave the same
         // exchange is not one either.
         $handoverAt = isset($event['gamets']) && is_numeric($event['gamets']) && floatval($event['gamets']) > 0

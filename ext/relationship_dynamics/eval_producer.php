@@ -434,7 +434,7 @@ final class RelDynEval
     }
 
     /**
-     * Tags the request itself proves (touch actions, combat, item handover), from the same
+     * Tags the request itself proves (touch actions, combat), from the same
      * classifier the passion path uses (classifyInteraction without a mood). The dialogue
      * fallback (quality_time for any talk) is not an event and is left to the eval.
      */

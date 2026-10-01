@@ -189,16 +189,21 @@ final class RelDynIntimacyLaneTest extends TestCase
         // sober: the correction lands, below where she started
         $d['_active_consumables'] = [];
         $r = RelDynPostIntimacy::tick('Aela', $d, self::T0 + 11 * self::HOUR);
+        // decisions §20 #27: not shame. The sober her is unsure ("was that too soon?"): a small comfort wobble, no
+        // resentment_self, no trust cut, no valence crash
+        $this->assertSame(['comfort'], array_keys($r['corrected']));
         $this->assertLessThan(0.0, $r['corrected']['comfort']);
-        $this->assertLessThan($comfort, $d['dimensions']['comfort']['x'], 'crashed past where she started');
-        $this->assertGreaterThan($rs, floatval($d['dimensions']['resentment_self']['x']), 'the stranger row: shame');
-        $this->assertArrayNotHasKey('trust', $r['corrected'], 'a stranger she regrets: trust unchanged');
-        $this->assertLessThan(0.0, $r['corrected']['valence'], 'the same night now reads negative');
+        $this->assertLessThan($comfort, $d['dimensions']['comfort']['x'], 'a wobble below where she started');
+        $this->assertGreaterThan($comfort - RelDynPostIntimacy::config()['uncertainty']['wobble_comfort_max'] - 1e-6, $d['dimensions']['comfort']['x'], 'a small one');
+        $this->assertEqualsWithDelta($rs, floatval($d['dimensions']['resentment_self']['x']), 1e-9, 'no shame');
         $felt = RelDynPostIntimacy::feltText($d, self::T0 + 12 * self::HOUR);
         $this->assertSame('after', $felt['phase']);
+        $this->assertMatchesRegularExpression('/too soon|unsure|wonder/i', $felt['text']);
         $this->assertDoesNotMatchRegularExpression('/\d/', $felt['text']);
         // the feeling lasts its window, then the state ends
+        // the feeling lasts its window; the wobble itself waits for a reassuring word (time does not heal it), the state ends
         $this->assertTrue(RelDynPostIntimacy::tick('Aela', $d, self::T0 + 36 * self::HOUR)['ended']);
+        $this->assertArrayHasKey(RelDynPostIntimacy::WOBBLE_KEY, $d);
     }
 
     public function testAShallowMindNeverLooksBack(): void
