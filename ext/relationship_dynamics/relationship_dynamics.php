@@ -5477,9 +5477,11 @@ class RelationshipDynamics
      */
     public static function getReunionText($npcName, $temperament, $hoursApart, $player, ?array $dynamics = null)
     {
-        if ($hoursApart < 8) return null;
+        // The same minimum checkReunion fires on (reunion_min_hours, game-calendar hours): one number,
+        // so the spike and its prose cannot diverge
+        if ($hoursApart < floatval(self::configValue('reunion_min_hours'))) return null;
 
-        // Time tier: long (48h+), medium (24h+), short (8h+)
+        // Time tier: long (48h+), medium (24h+), short (the minimum and up)
         if ($hoursApart >= 48) {
             $tier = 'long';
         } elseif ($hoursApart >= 24) {
@@ -5488,71 +5490,73 @@ class RelationshipDynamics
             $tier = 'short';
         }
 
+        // Named, never a pronoun: the felt text speaks of {NAME} the way every other felt line does
+        // (the NPC's gender is not this table's to know)
         $texts = [
             'Romantic' => [
                 'long'   => "{$npcName} hasn't seen {$player} in far too long — there's a rush of emotion, relief and warmth flooding back at seeing them again. The urge to close the distance is overwhelming.",
                 'medium' => "{$npcName} missed {$player} — seeing them again brings a wave of warmth and the urge to close the distance between them.",
-                'short'  => "{$npcName} is genuinely glad to see {$player} again — a warmth that shows in her eyes before she can hide it.",
+                'short'  => "{$npcName} is genuinely glad to see {$player} again — a warmth that shows in {$npcName}'s eyes before it can be hidden.",
             ],
             'Independent' => [
-                'long'   => "{$npcName} notes {$player}'s return with a measured look. Something eases in her posture — barely perceptible — though her expression gives nothing away. She noticed the absence more than she expected to.",
-                'medium' => "{$npcName} registers {$player}'s presence. A pause — almost imperceptible — before she continues what she was doing. The silence between them is slightly warmer than it was before.",
-                'short'  => "{$npcName} acknowledges {$player}'s return with a slight nod. If she is pleased to see them, it shows only in the fact that she looked up at all.",
+                'long'   => "{$npcName} notes {$player}'s return with a measured look. Something eases in {$npcName}'s posture — barely perceptible — though the expression gives nothing away. The absence was noticed more than {$npcName} expected.",
+                'medium' => "{$npcName} registers {$player}'s presence. A pause — almost imperceptible — before {$npcName} continues what was being done. The silence between them is slightly warmer than it was before.",
+                'short'  => "{$npcName} acknowledges {$player}'s return with a slight nod. If {$npcName} is pleased to see them, it shows only in the fact that {$npcName} looked up at all.",
             ],
             'Proud' => [
-                'long'   => "{$npcName} composes herself at seeing {$player} again after so long. Something flickers behind her eyes — quickly mastered. She would never admit how much the absence weighed on her.",
-                'medium' => "{$npcName} carries herself with deliberate poise as {$player} returns. She has things to say about the absence, but they will keep. For now, she allows a measured warmth.",
-                'short'  => "{$npcName} greets {$player}'s return with composure and the faintest warming of her tone.",
+                'long'   => "{$npcName} holds a composed bearing at seeing {$player} again after so long. Something flickers behind the eyes — quickly mastered. {$npcName} would never admit how much the absence weighed.",
+                'medium' => "{$npcName} carries the moment with deliberate poise as {$player} returns. There are things to say about the absence, but they will keep. For now, a measured warmth is allowed.",
+                'short'  => "{$npcName} greets {$player}'s return with composure and the faintest warming of tone.",
             ],
             'Jealous' => [
-                'long'   => "{$npcName} stares at {$player} with an intensity that holds both relief and accusation. Where have they been? Who were they with? The questions burn behind her eyes even as warmth floods back.",
+                'long'   => "{$npcName} stares at {$player} with an intensity that holds both relief and accusation. Where have they been? Who were they with? The questions burn behind {$npcName}'s eyes even as warmth floods back.",
                 'medium' => "{$npcName} is clearly relieved to see {$player}, but an edge of anxiety lingers — a need to know where they were and why they stayed away.",
                 'short'  => "{$npcName} watches {$player} return with sharp eyes. Glad, yes — but watchful. Already cataloguing whether anything has changed.",
             ],
             'Humble' => [
-                'long'   => "{$npcName} quietly brightens at {$player}'s return, like a hearth rekindled after a long cold. She doesn't demand explanations — she's simply, genuinely glad they came back.",
-                'medium' => "{$npcName} greets {$player} with a warm, unguarded smile. The relief is honest and unhidden. She doesn't try to make it more or less than it is.",
+                'long'   => "{$npcName} quietly brightens at {$player}'s return, like a hearth rekindled after a long cold. No explanations are demanded — {$npcName} is simply, genuinely glad they came back.",
+                'medium' => "{$npcName} greets {$player} with a warm, unguarded smile. The relief is honest and unhidden, and {$npcName} does not try to make it more or less than it is.",
                 'short'  => "{$npcName} looks up at {$player}'s return with quiet pleasure. A small, genuine warmth.",
             ],
             'Anxious' => [
                 'long'   => "{$npcName} freezes at the sight of {$player}. Relief crashes into hurt crashes into desperate gladness. The words come too fast — 'Where were you? I thought — never mind. You're here.'",
-                'medium' => "{$npcName} visibly exhales seeing {$player}. The tension she's been carrying dissolves into nervous warmth. She moves closer almost involuntarily.",
-                'short'  => "{$npcName} brightens immediately at {$player}'s return, then catches herself — tries to play it cool. Fails.",
+                'medium' => "{$npcName} visibly exhales seeing {$player}. The tension carried all this while dissolves into nervous warmth, and {$npcName} moves closer almost involuntarily.",
+                'short'  => "{$npcName} brightens immediately at {$player}'s return, then catches the reaction — tries to play it cool. Fails.",
             ],
             'Bold' => [
-                'long'   => "{$npcName} strides toward {$player} without hesitation. 'About time.' The directness masks the depth of what she felt during the absence.",
-                'medium' => "{$npcName} greets {$player} with confident warmth. No games, no pretense. She's glad they're here and she shows it plainly.",
+                'long'   => "{$npcName} strides toward {$player} without hesitation. 'About time.' The directness masks the depth of what {$npcName} felt during the absence.",
+                'medium' => "{$npcName} greets {$player} with confident warmth. No games, no pretense. {$npcName} is glad they're here and shows it plainly.",
                 'short'  => "{$npcName} acknowledges {$player}'s return with a firm nod and the ghost of a smile. 'Missed the action.'",
             ],
             'Playful' => [
-                'long'   => "{$npcName} greets {$player} with an exaggerated pout. 'Oh, you're alive. I was about to give away your things.' The lightness barely hides how much she missed them.",
+                'long'   => "{$npcName} greets {$player} with an exaggerated pout. 'Oh, you're alive. I was about to give away your things.' The lightness barely hides how much they were missed.",
                 'medium' => "{$npcName} flashes a grin at {$player}. 'Couldn't stay away, could you?' There's genuine warmth under the teasing.",
                 'short'  => "{$npcName} gives {$player} a playful look. 'Back already? I was just getting comfortable.'",
             ],
             'Nurturing' => [
-                'long'   => "{$npcName} searches {$player}'s face with quiet concern — are they hurt? Tired? Hungry? The questions are gentle but thorough. She's been worrying.",
+                'long'   => "{$npcName} searches {$player}'s face with quiet concern — are they hurt? Tired? Hungry? The questions are gentle but thorough. The worry has been there all along.",
                 'medium' => "{$npcName} greets {$player} with a warm, steady presence. 'You look tired. Come sit.' Caretaking first, everything else after.",
                 'short'  => "{$npcName} smiles warmly at {$player}'s return. A quiet check — eyes scanning for injury — before relaxing.",
             ],
             'Gentle' => [
                 'long'   => "{$npcName} looks at {$player} for a long moment without speaking. When the words come, they're soft. 'I'm glad.' That's all. It's enough.",
-                'medium' => "{$npcName} greets {$player} with a soft warmth that radiates without effort. Her presence says what her words don't.",
+                'medium' => "{$npcName} greets {$player} with a soft warmth that radiates without effort. The presence says what the words don't.",
                 'short'  => "{$npcName} offers {$player} a gentle smile. Understated, sincere.",
             ],
             'Guarded' => [
-                'long'   => "{$npcName} studies {$player} from across the room. Something shifts behind her eyes — a wall lowering a fraction. She doesn't approach. But she doesn't look away either.",
-                'medium' => "{$npcName} notes {$player}'s return with careful neutrality. Only the slight easing of her shoulders betrays that she noticed the absence.",
-                'short'  => "{$npcName} glances at {$player}. A beat longer than necessary. Then back to what she was doing.",
+                'long'   => "{$npcName} studies {$player} from across the room. Something shifts behind the eyes — a wall lowering a fraction. {$npcName} doesn't approach. But doesn't look away either.",
+                'medium' => "{$npcName} notes {$player}'s return with careful neutrality. Only the slight easing of the shoulders betrays that the absence was noticed.",
+                'short'  => "{$npcName} glances at {$player}. A beat longer than necessary. Then back to what was being done.",
             ],
             'Stoic' => [
-                'long'   => "{$npcName} stands still as {$player} approaches. Her expression is unreadable. But she turns to face them fully — and that, from her, is a declaration.",
-                'medium' => "{$npcName} acknowledges {$player} with the barest inclination of her head. The silence that follows is not cold. It's loaded.",
-                'short'  => "{$npcName} meets {$player}'s eyes briefly. Says nothing. The corner of her mouth moves — not quite a smile.",
+                'long'   => "{$npcName} stands still as {$player} approaches. The expression is unreadable. But {$npcName} turns to face them fully — and that, from {$npcName}, is a declaration.",
+                'medium' => "{$npcName} acknowledges {$player} with the barest inclination of the head. The silence that follows is not cold. It's loaded.",
+                'short'  => "{$npcName} meets {$player}'s eyes briefly. Says nothing. The corner of the mouth moves — not quite a smile.",
             ],
             'Defiant' => [
                 'long'   => "{$npcName} looks {$player} up and down. 'You look like hell. Good — means you were doing something.' The defiance is the affection.",
-                'medium' => "{$npcName} gives {$player} a sharp grin. 'Didn't think you'd come crawling back this fast.' She's pleased. She'd never say so.",
-                'short'  => "{$npcName} smirks at {$player}. 'Back for more?' Challenge as greeting — her native tongue.",
+                'medium' => "{$npcName} gives {$player} a sharp grin. 'Didn't think you'd come crawling back this fast.' Pleased, and {$npcName} would never say so.",
+                'short'  => "{$npcName} smirks at {$player}. 'Back for more?' Challenge as greeting — {$npcName}'s native tongue.",
             ],
         ];
 
@@ -9278,6 +9282,9 @@ class RelationshipDynamics
             $dynamics['_last_passion_delta'] = max(floatval($dynamics['_last_passion_delta'] ?? 0), round(array_sum($spikes), 2));
             self::log("[SPIKE] {$npcName} eval item gamets={$n['gamets']}: " . json_encode($spikes));
         }
+        // How the gesture landed (the love-language hint) and how much of it was the language she
+        // likes (the blush's multiplier): kept for her next word (RelDynFelt::noteEvalGesture)
+        RelDynFelt::noteEvalGesture($dynamics, $n, $spikes !== [], $itemGamets);
         // Interaction significance for the diary's defining_moment trigger, on the legacy 1..3
         // level scale: contract significance 0..1 x 3, rounded (0.33, "normal +-10 of 30" -> 1;
         // 1.0 -> 3). The strongest item of this request counts.
@@ -16030,23 +16037,70 @@ class RelationshipDynamics
 
     // ========== EMERGENT EMOTION LABELING (PR 13) ==========
 
+    /**
+     * Emergent emotions (dimension draft, "Other Emergent Emotions"; roadmap emergent-emotions):
+     * named combinations of the dimensions, never stored, read at the moment the context is built.
+     * The first ten are the draft's, with the draft's inputs; the last six are code-only extras
+     * the draft does not name (kept). Per emotion:
+     *   rules    dimension => [min, max] on the dimension's own 0..100 points (affinity: the 0..100
+     *            mirror; 'warmth': derived warmth, raw). 'comfort.baseline' / 'affinity.baseline'
+     *            read where the NPC rests (her baseline, not the moment). A dimension she has not
+     *            got (never set) is no match, not a zero.
+     *   extra    named conditions a range cannot say (EMERGENT_EXTRA, emergentExtra()).
+     *   context  behavior, not a label: what she does. {NAME}; "the player" is the one she feels it toward.
+     * The bands the ranges lean on: low = the band table's lower bands (maturity <= 40 Immature,
+     * comfort <= 40 Uneasy, respect <= 35 Unimpressed, trust <= 40 Wary / Uncertain, self-confidence
+     * <= 30 Dependent), high = its upper ones (trust / comfort 66+, maturity 56+ Grounded and up,
+     * self-confidence 60+ Assured, resentment 50+ Frustrated).
+     */
     const EMERGENT_EMOTIONS = [
-        'infatuation' => [
-            'rules' => ['affinity' => [70, 100], 'passion' => [60, 100], 'trust' => [0, 40]],
-            'context' => "{NAME} idealizes the player: hangs on every word, yet shares nothing real and believes nothing they promise.",
+        // --- the draft's ten ---
+        'insecurity' => [
+            'rules' => ['affinity' => [60, 100], 'comfort' => [0, 40], 'respect' => [0, 35]],
+            'context' => "{NAME} wants the player close and is sure it will not last: hangs back before asking for anything, deflects kindness, braces for the day they see what is lacking.",
         ],
         'codependency' => [
-            'rules' => ['affinity' => [80, 100], 'comfort' => [0, 30], 'self_confidence' => [0, 30]],
+            'rules' => ['affinity' => [80, 100], 'maturity' => [0, 40], 'comfort.baseline' => [0, 30]],
             'context' => "{NAME} clings to the player: needs to know where they are, can't settle when apart, agrees too fast.",
         ],
         'suffocation' => [
-            'rules' => ['affinity' => [60, 100], 'comfort' => [80, 100], 'resentment' => [30, 100]],
+            'rules' => ['affinity' => [60, 100], 'comfort' => [0, 40], 'resentment' => [30, 100]],
+            'extra' => ['resentment_rising'],
             'context' => "{NAME} wants the closeness and needs air: pulls back after tender moments, snappish when crowded.",
         ],
-        'contempt' => [
-            'rules' => ['resentment' => [50, 100], 'affinity' => [40, 100], 'respect' => [0, 25]],
-            'context' => "{NAME} is still attached and can't stand the player: eye-rolls, cutting remarks, sneers at their ideas.",
+        'loneliness' => [
+            'rules' => ['warmth' => [0, 40], 'affinity.baseline' => [30, 100]],
+            'extra' => ['absence'],
+            'context' => "{NAME} has gone too long without company and it shows: seizes any chance to talk, lingers when the talk could end, quiet in a way that waits for someone to ask.",
         ],
+        'contempt' => [
+            'rules' => ['resentment' => [50, 100], 'respect' => [0, 25], 'maturity' => [56, 100]],
+            'context' => "{NAME} has seen exactly who the player is and stopped arguing: level voice, short final answers, nothing left to defend and nothing left to hope for.",
+        ],
+        'infatuation' => [
+            'rules' => ['passion' => [60, 100], 'trust' => [0, 40], 'maturity' => [0, 40]],
+            'context' => "{NAME} idealizes the player: hangs on every word, yet shares nothing real and believes nothing they promise.",
+        ],
+        'earned_security' => [
+            'rules' => ['trust' => [66, 100], 'comfort' => [66, 100], 'maturity' => [60, 100], 'self_confidence' => [60, 100]],
+            'extra' => ['bonded_type'],
+            'context' => "{NAME} is settled with the player: unguarded without being careless, easy in silence, nothing to prove and no tests to set.",
+        ],
+        'imposter_syndrome' => [
+            'rules' => ['respect' => [66, 100], 'maturity' => [56, 100], 'self_confidence' => [0, 45]],
+            'context' => "{NAME} hears the praise and cannot take it in: waves off compliments, credits luck or other people, waits for the moment someone finds out.",
+        ],
+        'narcissistic_collapse' => [
+            'rules' => ['self_confidence' => [61, 100], 'maturity' => [0, 40]],
+            'extra' => ['respect_drop'],
+            'context' => "{NAME} has just lost the footing a lot of confidence stood on: brittle, over-explains, lashes at small doubts, then goes hollow and quiet.",
+        ],
+        'validation_addiction' => [
+            'rules' => ['self_confidence' => [0, 30], 'affinity' => [70, 100]],
+            'extra' => ['inner_circle'],
+            'context' => "{NAME} keeps checking whether the player approves: fishes for reassurance, asks again after being told, brightens at praise and sags without it.",
+        ],
+        // --- code-only extras the draft does not name ---
         'longing' => [
             'rules' => ['affinity' => [60, 100], 'warmth' => [50, 100], 'passion' => [0, 15]],
             'context' => "{NAME} is tender and wistful with the player, remembers the spark, sighs over what used to be.",
@@ -16073,6 +16127,32 @@ class RelationshipDynamics
         ],
     ];
 
+    /**
+     * The conditions a range cannot say (EMERGENT_EMOTIONS 'extra'), their numbers, and the short
+     * window of dimension samples they read (noteEmotionWindow):
+     *   rise_min               resentment points above the window's lowest sample that count as rising
+     *   respect_drop_min       respect points below the window's highest sample that count as sudden
+     *   respect_drop_hours     game hours the respect drop must fall inside
+     *   fade_min               warmth points of absence fade held that count as the absence being on her (or
+     *                          the contact that ends an absence longer than her neglect grace)
+     *   inner_circle_max       the sensitivity factor (0..1, her curve at the reference bond) at or
+     *                          under which only the close ones' opinion lands: the Inner Circle curve
+     *   inner_circle_bond      the bond level that factor is read at (core affinity points)
+     *   bonded_types           RelDyn bond types that are the committed ones
+     *   window_hours / window_samples   how much of the recent past the window keeps
+     *   sample_min_delta       dimension points of movement that earn a new sample
+     */
+    const EMERGENT_EXTRA = [
+        'rise_min' => 1.0,
+        'respect_drop_min' => 10.0, 'respect_drop_hours' => 24.0,
+        'fade_min' => 0.5,
+        'inner_circle_max' => 0.40, 'inner_circle_bond' => 50.0,
+        'bonded_types' => ['bonded', 'sworn'],
+        'window_hours' => 72.0, 'window_samples' => 10, 'sample_min_delta' => 0.25,
+    ];
+    /** dynamics key: the recent respect / resentment samples [['t' => raw gamets, 'respect' => x, 'resentment' => x], ...]. */
+    const EMERGENT_WINDOW_KEY = '_emotion_window';
+
     // ========== AUTONOMOUS DIARY + SOCIAL MASKING CONSTANTS (PR 14) ==========
     const DIARY_INTERACTION_GAP = 15;
     const DIARY_CONSUMABLE_BLOCK = true;
@@ -16089,40 +16169,161 @@ class RelationshipDynamics
     const MASK_MATURITY_COST_DEFAULT = 0.15;
 
     /**
+     * One reading a rule asks for (a dimension's x; 'warmth' derived and raw, tension checks read
+     * it so; 'dim.baseline' where she rests), or null when she has none: a dimension that was
+     * never set is not a zero.
+     */
+    private static function emergentValue(array $dynamics, string $key, array &$cache = []): ?float
+    {
+        $dims = is_array($dynamics['dimensions'] ?? null) ? $dynamics['dimensions'] : [];
+        if ($key === 'warmth') {
+            // derived warmth costs a few passes: once per read of the NPC ($cache is that read's)
+            if (!array_key_exists('warmth', $cache)) {
+                $w = RelDynPassion::warmth($dynamics, false);
+                $cache['warmth'] = is_numeric($w) ? floatval($w) : null;
+            }
+            return $cache['warmth'];
+        }
+        if (str_ends_with($key, '.baseline')) {
+            $dim = substr($key, 0, -9);
+            $b = $dims[$dim]['baseline'] ?? null;
+            if (is_numeric($b)) return floatval($b);
+            $temperament = $dynamics['inferred_temperament'] ?? null;
+            $b = in_array($dim, ['affinity', 'comfort'], true) ? self::getTemperamentBaseline($temperament, $dim, $dynamics) : null;
+            return is_numeric($b) ? floatval($b) : null;
+        }
+        $x = $dims[$key]['x'] ?? null;
+        return is_numeric($x) ? floatval($x) : null;
+    }
+
+    /** The window's samples, oldest first (a malformed entry is dropped). */
+    private static function emergentWindow(array $dynamics): array
+    {
+        $out = [];
+        foreach ((array) ($dynamics[self::EMERGENT_WINDOW_KEY] ?? []) as $s) {
+            if (is_array($s) && is_numeric($s['t'] ?? null) && is_numeric($s['respect'] ?? null) && is_numeric($s['resentment'] ?? null)) $out[] = $s;
+        }
+        return $out;
+    }
+
+    /**
+     * Keep the short window the delta-based emotions read (a respect drop, resentment rising): a
+     * sample of respect and resentment at raw game time $now, when either moved by
+     * sample_min_delta since the last one (or there is none), older ones past window_hours
+     * dropped, at most window_samples kept. Returns true when the stored window changed (the
+     * caller saves). Off with emergent_emotions_enabled off.
+     */
+    public static function noteEmotionWindow(array &$dynamics, float $now): bool
+    {
+        if (empty(self::getConfig()['emergent_emotions_enabled']) || $now <= 0) return false;
+        $respect = self::emergentValue($dynamics, 'respect');
+        $resentment = self::emergentValue($dynamics, 'resentment');
+        $before = self::emergentWindow($dynamics);
+        $x = self::EMERGENT_EXTRA;
+        $keep = floatval($x['window_hours']) * self::GAMETS_PER_DAY / 24.0;
+        $window = array_values(array_filter($before, fn($s) => floatval($s['t']) <= $now && $now - floatval($s['t']) <= $keep));
+        if ($respect !== null && $resentment !== null) {
+            $last = $window ? $window[count($window) - 1] : null;
+            $moved = $last === null || abs(floatval($last['respect']) - $respect) >= floatval($x['sample_min_delta'])
+                || abs(floatval($last['resentment']) - $resentment) >= floatval($x['sample_min_delta']);
+            if ($moved) $window[] = ['t' => $now, 'respect' => round($respect, 3), 'resentment' => round($resentment, 3)];
+        }
+        $window = array_slice($window, -max(1, intval($x['window_samples'])));
+        if ($window === $before) return false;
+        if ($window === []) unset($dynamics[self::EMERGENT_WINDOW_KEY]); else $dynamics[self::EMERGENT_WINDOW_KEY] = $window;
+        return true;
+    }
+
+    /** One named extra condition of EMERGENT_EMOTIONS; a missing reading it needs is no match. */
+    private static function emergentExtra(string $name, array $dynamics): bool
+    {
+        $x = self::EMERGENT_EXTRA;
+        switch ($name) {
+            case 'resentment_rising':
+                $now = self::emergentValue($dynamics, 'resentment');
+                $window = self::emergentWindow($dynamics);
+                if ($now === null || $window === []) return false;
+                return $now - min(array_map(fn($s) => floatval($s['resentment']), $window)) >= floatval($x['rise_min']);
+            case 'respect_drop':
+                $now = self::emergentValue($dynamics, 'respect');
+                $window = self::emergentWindow($dynamics);
+                if ($now === null || $window === []) return false;
+                $newest = max(array_map(fn($s) => floatval($s['t']), $window));
+                $from = $newest - floatval($x['respect_drop_hours']) * self::GAMETS_PER_DAY / 24.0;
+                $recent = array_filter($window, fn($s) => floatval($s['t']) >= $from);
+                return $recent !== [] && max(array_map(fn($s) => floatval($s['respect']), $recent)) - $now >= floatval($x['respect_drop_min']);
+            case 'absence':
+                // the time apart is on her: the warmth the absence faded has not come back (contact heals it),
+                // or this very contact ends an absence longer than her neglect grace (the return turn itself)
+                if (floatval($dynamics[RelDynPassion::WARMTH_FADE_KEY] ?? 0.0) <= -floatval($x['fade_min'])) return true;
+                $prev = floatval($dynamics['_previous_contact_gamets'] ?? 0);   // raw gamets
+                $last = floatval($dynamics['_last_contact_gamets'] ?? 0);
+                $grace = self::neglectGraceGameDays($dynamics, true);
+                return $prev > 0 && $last > $prev && $grace !== null && ($last - $prev) / self::GAMETS_PER_DAY > $grace;
+            case 'bonded_type':
+                return in_array(self::getRelationshipType('', $dynamics), (array) $x['bonded_types'], true);
+            case 'inner_circle':
+                // only the close ones' opinion lands: her sensitivity curve at a middling bond is low
+                return self::socialSensitivityFactor($dynamics, 'affinity', false, null, floatval($x['inner_circle_bond'])) <= floatval($x['inner_circle_max']);
+        }
+        return false;
+    }
+
+    /**
+     * How deep into its ranges a matched emotion sits, 0..1 (the mean of how far each bounded
+     * side is crossed; the extras count half): which two speak when more than two match.
+     */
+    private static function emergentDepth(array $dynamics, array $spec, array &$cache = []): float
+    {
+        $depth = [];
+        foreach ((array) ($spec['rules'] ?? []) as $key => [$lo, $hi]) {
+            $v = self::emergentValue($dynamics, (string) $key, $cache);
+            if ($v === null) continue;
+            if ($hi >= 100 && $lo > 0) $depth[] = ($v - $lo) / max(1.0, 100.0 - $lo);
+            elseif ($lo <= 0 && $hi < 100) $depth[] = ($hi - $v) / max(1.0, floatval($hi));
+            else $depth[] = 0.5;
+        }
+        foreach ((array) ($spec['extra'] ?? []) as $_) $depth[] = 0.5;
+        return $depth === [] ? 0.0 : max(0.0, min(1.0, array_sum($depth) / count($depth)));
+    }
+
+    /**
      * Detect emergent emotions from dimension combinations.
-     * Returns array of matched emotion IDs.
+     * Returns the matched emotion IDs, the deepest first (ties keep the table's order).
      */
     public static function detectEmergentEmotions(array $dynamics): array
     {
         $config = self::getConfig();
         if (empty($config['emergent_emotions_enabled'])) return [];
 
-        $dims = $dynamics['dimensions'] ?? [];
         $detected = [];
-
+        $cache = [];
         foreach (self::EMERGENT_EMOTIONS as $emotionId => $spec) {
-            $rules = $spec['rules'] ?? [];
             $match = true;
-
-            foreach ($rules as $dimId => $range) {
-                // warmth is derived (roadmap derived-warmth), raw like every tension check
-                $value = $dimId === 'warmth' ? floatval(RelDynPassion::warmth($dynamics, false) ?? 0.0) : floatval($dims[$dimId]['x'] ?? 0);
-                if ($value < $range[0] || $value > $range[1]) {
+            foreach ((array) ($spec['rules'] ?? []) as $key => [$lo, $hi]) {
+                $value = self::emergentValue($dynamics, (string) $key, $cache);
+                if ($value === null || $value < $lo || $value > $hi) {
                     $match = false;
                     break;
                 }
             }
-
-            if ($match) {
-                $detected[] = $emotionId;
+            foreach ($match ? (array) ($spec['extra'] ?? []) : [] as $name) {
+                if (!self::emergentExtra((string) $name, $dynamics)) {
+                    $match = false;
+                    break;
+                }
             }
+            if ($match) $detected[$emotionId] = self::emergentDepth($dynamics, $spec, $cache);
         }
-
-        return $detected;
+        // deepest first; a stable sort keeps the table's order between equals
+        $ids = array_keys($detected);
+        usort($ids, fn($a, $b) => $detected[$b] <=> $detected[$a] ?: array_search($a, array_keys($detected)) <=> array_search($b, array_keys($detected)));
+        return $ids;
     }
 
     /**
-     * Generate context text for detected emergent emotions (cap at 2).
+     * Generate context text for detected emergent emotions (cap at 2: the two deepest, as
+     * detectEmergentEmotions orders them).
      */
     public static function generateEmergentEmotionContext(string $npcName, array $detected): string
     {

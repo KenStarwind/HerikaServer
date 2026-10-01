@@ -263,6 +263,13 @@ if ($evalOwnsExchange) {
 
         // Store passion delta for blush self-awareness in next context.php cycle
         $dynamics['_last_passion_delta'] = round($passionGain, 2);
+
+        // How it landed, kept for her next word: core runs the context hook before this one, so
+        // the global set above is never there when the context composes (RelDynFelt::noteGesture)
+        $reldynGesture = RelDynFelt::legacyGestureLL($interactionLL, $GLOBALS['gameRequest']);
+        if ($reldynGesture !== null) {
+            RelDynFelt::noteGesture($dynamics, $reldynGesture, RelationshipDynamics::currentGamets());
+        }
     }
 }
 
