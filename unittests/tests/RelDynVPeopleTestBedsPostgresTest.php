@@ -388,6 +388,7 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
      *   "take my hand" after her fall: care (the player protects her: rescue, reassurance);
      *   "hold you": an embrace (touch, a little passion);
      *   "missed you": a meaningful evening together (quality time);
+     *   "Come closer" (the line that opens a scene): a warm exchange (quality time), the way a real eval scores the scene's own exchange;
      *   anything else: small talk.
      */
     private function evalLlm(): callable
@@ -399,7 +400,10 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
             $exchange = substr($content, $from, max(0, (int) strpos($content, "\nTASK:", $from) - $from));
             $care = str_contains($exchange, 'take my hand');
             $hug = str_contains($exchange, 'hold you');
-            $warm = str_contains($exchange, 'missed you');
+            // the scene's own exchange (the player's line that opens it, Sharmat's OStim stage the request) is scored like
+            // the pipeline scores it: a warm, positive exchange, which carries reported_intimacy from the request
+            $scene = str_contains($exchange, 'Come closer');
+            $warm = str_contains($exchange, 'missed you') || $scene;
             return json_encode([
                 'signals' => ['affinity' => ($care || $warm) ? 2 : 0, 'trust' => ($care || $warm) ? 2 : 0, 'comfort' => ($care || $warm) ? 2 : 0,
                               'respect' => 0, 'passion' => $hug ? 2 : 0, 'maturity' => 0],
@@ -409,7 +413,8 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
                 'exposure' => ['flag' => false, 'kinds' => [], 'intensity' => 0, 'when' => null],
                 'significance' => ($care || $warm) ? 0.6 : ($hug ? 0.3 : 0.1),
                 'summary' => $care ? 'She went down in the fight; the player knelt by her and helped her up.'
-                    : ($hug ? 'The player held her.' : ($warm ? 'The player said they missed her and stayed a while.' : 'Small talk.')),
+                    : ($hug ? 'The player held her.' : ($scene ? 'The player and the NPC were together, and it was tender.'
+                        : ($warm ? 'The player said they missed her and stayed a while.' : 'Small talk.'))),
                 'romantic_intent' => $hug ? 3 : 0,   // a hug is clear courting: whether it is pressure is the Ick's call (her reply mood, her interest)
                 'charisma' => 'none',
             ]);
@@ -699,6 +704,7 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
     {
         $data = 'OStimScene/vaginal,romantic/Stage1_A1/' . self::PLAYER . "^dom,vaginal/{$npc}^sub,vaginal";
         $this->people = "|{$npc}|" . self::PLAYER . '|';
+        $this->event('inputtext', self::PLAYER . ": Come closer. (Talking to {$npc})", $gamets - 30);
         $this->event('ext_nsfw_sexcene', $data, $gamets);
         $this->request($npc, ['ext_nsfw_sexcene', (string) $this->realTs, (string) $gamets, $data], self::PLAYER, $label);
         $this->people = null;
