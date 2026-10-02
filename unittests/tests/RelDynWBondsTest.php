@@ -439,6 +439,35 @@ final class RelDynWBondsTest extends TestCase
         $this->assertTrue($friend['_reject_recruitment']);
     }
 
+    public function testAnEndingThatEndedHardClosesIntimacyUntilItThawsOrStartsAgainAndTheSoftOnesDoNot(): void
+    {
+        [$r, $ex] = $this->ends($this->npc(self::AVOIDANT, 75.0, 45.0), 'pursued');
+        $this->assertSame('ex', $r['fork']);
+        $this->assertTrue(RelDynBonds::endedHard($ex));
+        $this->assertContains('ended', RelDynConsent::closedReasons($ex), 'a state, not a verdict');
+        $this->assertSame([], RelDynConsent::closedReasons($this->npc()), 'a couple is not closed');
+        [$r, $soft] = $this->ends($this->npc(self::ANXIOUS, 75.0, 45.0), 'standards');
+        $this->assertSame('conflicted', $r['fork']);
+        $this->assertFalse(RelDynBonds::endedHard($soft));
+        $this->assertNotContains('ended', RelDynConsent::closedReasons($soft), 'the soft state is weighed, not closed');
+        [$r, $friends] = $this->ends($this->npc(self::SECURE, 80.0, 55.0, ['passion' => 5.0, 'aff' => 25.0, 'dims' => ['resentment' => 2.0]]), 'standards');
+        $this->assertSame('friends', $r['fork']);
+        $this->assertNotContains('ended', RelDynConsent::closedReasons($friends));
+        // thawed into friends: open again to being weighed
+        $ex[RelDynBonds::KEY]['breakup']['thaw'] = 1.0;
+        $ex['dimensions']['resentment']['x'] = 5.0;
+        $ex['dimensions']['trust']['x'] = 60.0;
+        $ex['dimensions']['maturity']['x'] = 80.0;
+        $this->at(self::T0);
+        RelDynBonds::advance('Rowan', $ex, self::T0);
+        RelDynBonds::advance('Rowan', $ex, self::T0 + self::HOUR);
+        $this->assertSame('platonic', $ex['_core_rel_type']);
+        $this->assertNotContains('ended', RelDynConsent::closedReasons($ex));
+        $text = (string) RelDynConsent::config()['felt_text']['closed']['ended'];
+        $this->assertStringContainsString('{NAME}', $text);
+        $this->assertDoesNotMatchRegularExpression('/\b(he|she|his|her|him)\b/i', $text);
+    }
+
     public function testTheExclusivityPullIsReleasedByAnEnding(): void
     {
         $now = self::T0;

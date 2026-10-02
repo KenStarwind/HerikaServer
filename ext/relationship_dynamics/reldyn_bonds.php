@@ -152,7 +152,7 @@ final class RelDynBonds
                 ],
                 'committed_mult' => 1.25,
                 // the NPC's circle hears of a hard ending the player's conduct caused (RelationshipDynamics::propagateAffinityChange)
-                'cascade' => true, 'cascade_causes' => ['resentment', 'ick_comfort', 'pursued', 'neglect', 'jealousy'],
+                'cascade' => true, 'cascade_causes' => ['standards', 'resentment', 'ick_comfort', 'pursued', 'neglect', 'jealousy'],
             ],
 
             // --- rekindle (conflicted) and thaw (ex) ---
@@ -446,6 +446,18 @@ final class RelDynBonds
         return 1.0;
     }
 
+    /**
+     * Did the romance end hard and stay ended (the fork's ex, core's type still not a romance)? An ending is a state, not a verdict: a
+     * thaw into friends or a rekindle ends it. RelDynConsent reads it as a closed state ('ended').
+     */
+    public static function endedHard(array $dynamics): bool
+    {
+        if (!self::enabled()) return false;
+        $b = self::stored($dynamics)['breakup'] ?? null;
+        return is_array($b) && ($b['status'] ?? '') === 'applied' && ($b['fork'] ?? '') === self::FORK_EX && self::rung($dynamics) < 1
+            && !self::has($dynamics, self::CONFLICTED);
+    }
+
     /** How heavily an infidelity weighs against this romance (1 formal, committed.informal_weight otherwise), x the preference's expectation. */
     public static function fidelityWeight(array $dynamics, ?array $cfg = null): float
     {
@@ -595,7 +607,7 @@ final class RelDynBonds
         unset($state);
         $out['status'] = 'applied';
         $out['written'] = $by === 'core' ? null : $to;
-        $out['aftermath'] = self::applyAftermath($npcName, $dynamics, $fork, $scores['hardness'], $wasCommitted, $cause, $cfg);
+        $out['aftermath'] = self::applyAftermath($npcName, $dynamics, $fork, $scores['hardness'], $wasCommitted, $cause, $cfg, $now);
         self::queue($dynamics, ['key' => 'breakup', 'fork' => $fork, 'cause' => $cause, 'maturity' => $scores['maturity']]);
         RelationshipDynamics::log(sprintf('[BONDS] %s: the romance ends (%s by %s) -> %s (ex %.2f, conflicted %.2f, friends %.2f; ill will %.2f, goodwill %.2f, longing %.2f, maturity %.2f)',
             $npcName, $cause, $by, $fork, $scores[self::FORK_EX], $scores[self::FORK_CONFLICTED], $scores[self::FORK_FRIENDS], $scores['hardness'],
@@ -604,7 +616,7 @@ final class RelDynBonds
     }
 
     /** What the ending leaves behind (module config 'breakup.aftermath'), returned as dimension => change. */
-    private static function applyAftermath(string $npc, array &$dynamics, string $fork, float $hardness, bool $committed, string $cause, array $cfg): array
+    private static function applyAftermath(string $npc, array &$dynamics, string $fork, float $hardness, bool $committed, string $cause, array $cfg, float $now = 0.0): array
     {
         $b = (array) $cfg['breakup'];
         $row = (array) ($b['aftermath'][$fork] ?? []);
@@ -627,10 +639,13 @@ final class RelDynBonds
             $before = RelationshipDynamics::getCoreAffinity($dynamics);
             RelationshipDynamics::setCoreAffinityValue($dynamics, $before + $aff);
             $done['affinity'] = round(RelationshipDynamics::getCoreAffinity($dynamics) - $before, 4);
-            if (!empty($b['cascade']) && in_array($cause, (array) $b['cascade_causes'], true) && abs($done['affinity']) > 0.0) {
-                $player = (string) ($GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'Player');
+            // The NPC's circle hears of an ending the player's conduct caused, as of any defining moment (RelDynCascade::queue: through the
+            // delivery rules, a witness at once, word of mouth later; each hearer applies it at their own next turn)
+            if (!empty($b['cascade']) && in_array($cause, (array) $b['cascade_causes'], true) && RelDynCascade::enabled()
+                && abs($done['affinity']) >= floatval(RelDynCascade::config()['defining']['min_delta'])) {
                 try {
-                    RelationshipDynamics::propagateAffinityChange($npc, $done['affinity'], $player);
+                    RelDynCascade::queue($npc, ['fp' => sha1("breakup|{$npc}|{$cause}|" . round($now, 0)), 'delta' => $done['affinity'], 'gamets' => $now,
+                        'anchor' => 'the romance ended', 'defining' => true, 'witnesses' => null, 'hold' => RelDynCascade::lastSeenHold($npc, $now)]);
                 } catch (\Throwable $e) {
                     RelationshipDynamics::logError("breakup ripple of {$npc}", $e);
                 }

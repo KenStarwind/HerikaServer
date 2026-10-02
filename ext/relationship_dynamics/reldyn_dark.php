@@ -394,7 +394,7 @@ final class RelDynDark
     // =====================================================================
 
     /**
-     * $dynamics['_dark']: v, deserve (pressure 0..1), adrift (pressure 0..1), trust_peak (the highest trust reached), trust_low (trust
+     * $dynamics['_dark']: v, growth {day, pts (asked today), pending (earned, not yet given)}, deserve (pressure 0..1), adrift (pressure 0..1), trust_peak (the highest trust reached), trust_low (trust
      * fell below the NPC's line from that peak), parasite (the overlay is held by this path),
      * gamets (the last advance, raw), walks (walkaways started on it), growth {day, pts}, last (the numbers of the last
      * advance, for Jev).
@@ -451,6 +451,7 @@ final class RelDynDark
             return $out;
         }
         if ($now <= 0) return $out;
+        self::settleGrowth($npcName, $dynamics);
         $state = &self::state($dynamics);
         // the highest trust reached, kept until trust is back at the NPC's line after a fall (a clean slate then)
         $trust = self::ownTrust($dynamics);
@@ -604,8 +605,10 @@ final class RelDynDark
     // =====================================================================
 
     /**
-     * A positive exchange lifts maturity a little, where floors are not yet on: per_item x significance x (1 - floor strength)
-     * points through applyDelta (plasticity applies), at most daily_cap points per game day. Returns the points applied.
+     * A positive exchange earns maturity a little, where floors are not yet on: per_item x significance x (1 - floor strength)
+     * points, at most daily_cap points asked per game day. The points wait in the state ('growth.pending') and are given at the NPC's
+     * next turn (advance), through applyDelta (plasticity applies): the evaluation does not move maturity by itself, so nothing that
+     * samples it between the turn and the exchange's evaluation sees it change. Returns the points earned (asked).
      */
     public static function onEvalItem(string $npcName, array $n, array &$dynamics, float $gamets): float
     {
@@ -628,14 +631,24 @@ final class RelDynDark
             unset($state);
             return 0.0;
         }
-        unset($state);
-        $applied = RelationshipDynamics::applyDelta('maturity', $dynamics, $raw, $dynamics['inferred_temperament'] ?? null);
-        $state = &self::state($dynamics);
         $grown['pts'] = round(floatval($grown['pts']) + $raw, 4);
+        $grown['pending'] = round(floatval($grown['pending'] ?? 0.0) + $raw, 4);
         $state['growth'] = $grown;
         unset($state);
+        return $raw;
+    }
+
+    /** Give the maturity earned since the last turn (advance): returns the change applied. */
+    private static function settleGrowth(string $npcName, array &$dynamics): float
+    {
+        $pending = floatval($dynamics[self::KEY]['growth']['pending'] ?? 0.0);
+        if ($pending < 0.005) return 0.0;
+        $state = &self::state($dynamics);
+        $state['growth']['pending'] = 0.0;
+        unset($state);
+        $applied = RelationshipDynamics::applyDelta('maturity', $dynamics, $pending, $dynamics['inferred_temperament'] ?? null);
         if (abs($applied) > 0.0) {
-            RelationshipDynamics::log(sprintf('[DARK] %s: being treated well lifts maturity by %+.3f (asked %.3f, floor strength %.2f)', $npcName, $applied, $raw, 1.0 - $weight));
+            RelationshipDynamics::log(sprintf('[DARK] %s: being treated well lifts maturity by %+.3f (asked %.3f)', $npcName, $applied, $pending));
         }
         return $applied;
     }

@@ -417,13 +417,15 @@ final class RelDynJev
                 . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '')
                 . (($kp['response'] ?? 'express') !== 'express' ? ' response=' . $kp['response'] : '') . (!empty($kp['conflict']['open']) ? ' conflict' : '');
         }
-        // compact: only while the dark path says something ("dark=<dominant> deserve=<pressure>/<walk_at> codependent=<degree> adrift=<pressure>[ parasite]");
-        // the corners are in the structured fields
+        // compact: only while the dark path says something loudly ("dark=deserve=<pressure>/<walk_at>,codep=<degree>,parasite");
+        // the corners and the quieter states are in the structured fields
         $dk = $s['dark'] ?? null;
-        if (is_array($dk) && !empty($dk['enabled']) && ($dk['deserve'] >= 0.4 || $dk['codependent'] >= 0.5 || $dk['adrift'] >= 0.4 || !empty($dk['parasite_held']))) {
-            $parts[] = 'dark=' . $dk['dominant'] . ($dk['deserve'] >= 0.4 ? ' deserve=' . number_format((float) $dk['deserve'], 2, '.', '') . '/' . number_format((float) $dk['walk_at'], 2, '.', '') : '')
-                . ($dk['codependent'] >= 0.5 ? ' codependent=' . number_format((float) $dk['codependent'], 2, '.', '') : '')
-                . ($dk['adrift'] >= 0.4 ? ' adrift=' . number_format((float) $dk['adrift'], 2, '.', '') : '') . (!empty($dk['parasite_held']) ? ' parasite' : '');
+        if (is_array($dk) && !empty($dk['enabled']) && ($dk['deserve'] >= 0.7 || $dk['codependent'] >= 0.5 || !empty($dk['parasite_held']))) {
+            $bits = [];
+            if ($dk['deserve'] >= 0.7) $bits[] = 'deserve=' . number_format((float) $dk['deserve'], 2, '.', '') . '/' . number_format((float) $dk['walk_at'], 2, '.', '');
+            if ($dk['codependent'] >= 0.5) $bits[] = 'codep=' . number_format((float) $dk['codependent'], 2, '.', '');
+            if (!empty($dk['parasite_held'])) $bits[] = 'parasite';
+            $parts[] = 'dark=' . implode(',', $bits);
         }
         // compact: only while a bond kind holds, a romance has ended or the pull toward someone else is on
         // ("bonds=<kinds> oath=<strain> ended=<fork>(<cause>) rekindle=<progress> straying=<stage>[ with X]")

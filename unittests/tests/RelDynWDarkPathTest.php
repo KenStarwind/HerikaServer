@@ -90,6 +90,13 @@ final class RelDynWDarkPathTest extends TestCase
         RelationshipDynamics::clearConfigCache();
     }
 
+    /** The NPC's next turn at $t: what the exchanges earned is given. */
+    private function settle(array &$d, float $t): void
+    {
+        $this->at($t);
+        RelDynDark::advance('Rowan', $d, $t);
+    }
+
     /** Run the dark path's calendar for $hours game hours in $step-hour steps from $from; returns the time reached. */
     private function drive(array &$d, float $from, float $hours, float $step = 6.0): float
     {
@@ -514,11 +521,13 @@ final class RelDynWDarkPathTest extends TestCase
         $m0 = $d['dimensions']['maturity']['x'];
         $kind = fn(float $sig) => ['npc' => 'Rowan', 'gamets' => (int) $t, 'positive_interaction' => true, 'significance' => $sig, 'tags' => ['quality_time'], 'signals' => []];
         $gained = RelDynDark::onEvalItem('Rowan', $kind(0.8), $d, $t);
-        $this->assertGreaterThan(0.0, $gained, 'treated well, the NPC grows');
-        $this->assertGreaterThan($m0, $d['dimensions']['maturity']['x']);
+        $this->assertGreaterThan(0.0, $gained, 'treated well, the NPC earns growth');
+        $this->assertEqualsWithDelta($m0, $d['dimensions']['maturity']['x'], 1e-9, 'the evaluation does not move maturity by itself');
+        $this->settle($d, $t + self::HOUR);
+        $this->assertGreaterThan($m0, $d['dimensions']['maturity']['x'], 'and the NPC\'s next turn gives it');
         // a daily cap: farming does not buy a character
-        $total = $gained;
-        for ($i = 0; $i < 20; $i++) $total += RelDynDark::onEvalItem('Rowan', $kind(1.0), $d, $t);
+        for ($i = 0; $i < 20; $i++) RelDynDark::onEvalItem('Rowan', $kind(1.0), $d, $t);
+        $this->settle($d, $t + 2 * self::HOUR);
         $this->assertLessThanOrEqual(1.2 + 1e-6, $d[RelDynDark::KEY]['growth']['pts'], 'at most 1.2 points asked a game day');
         $this->assertLessThan(5.0, $d['dimensions']['maturity']['x'] - $m0, 'a day of it is a few points, not a character');
         // an insignificant or unkind exchange grows nothing
@@ -527,6 +536,7 @@ final class RelDynWDarkPathTest extends TestCase
         // days of it: maturity reaches a floor, trust rebuilds, and the overlay lifts by its own pressure
         for ($day = 1; $day <= 30; $day++) {
             for ($i = 0; $i < 4; $i++) RelDynDark::onEvalItem('Rowan', $kind(1.0), $d, $t + $day * self::DAY);
+            $this->settle($d, $t + $day * self::DAY + self::HOUR);
         }
         $this->assertGreaterThan(40.0, $d['dimensions']['maturity']['x'], 'the floors switch on');
         $d['dimensions']['trust']['x'] = 70.0;
@@ -545,6 +555,7 @@ final class RelDynWDarkPathTest extends TestCase
         $kind = ['npc' => 'Rowan', 'gamets' => (int) $t, 'positive_interaction' => true, 'significance' => 1.0, 'tags' => [], 'signals' => []];
         for ($day = 1; $day <= 40; $day++) {
             for ($i = 0; $i < 4; $i++) RelDynDark::onEvalItem('Rowan', $kind, $d, $t + $day * self::DAY);
+            $this->settle($d, $t + $day * self::DAY + self::HOUR);
         }
         $this->assertLessThan(40.0, $d['dimensions']['maturity']['x'], 'the floor of 30 holds: no amount of daily warmth takes them across');
         $this->assertGreaterThanOrEqual(29.0, $d['dimensions']['maturity']['x']);
