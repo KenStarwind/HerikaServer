@@ -665,16 +665,36 @@ final class RelDynCascadeExt
             $s['applied'] = round($applied, 4);
         }
         $state['assoc'] = $s;
-        // whole points reach core now: the state (what is applied) is saved first, the commit after, so a crash between never gives the same points twice
-        if (abs($delta) >= 0.001 && abs(floatval($dynamics['_pending_aff_delta'] ?? 0)) >= 1.0) {
+        if (abs($delta) >= 0.001) {
+            // The step is claimed first: what is applied and what is queued are saved together, and only then do whole points reach
+            // core, so a crash between never gives the same points twice. Two requests of the NPC that overlap (both read the state
+            // before either saved) each claim the same step; the save adds both to the ledger and the queue (they are sums), so the
+            // one that finds more than it claimed takes its own step back, and the points are taken once.
             $dynamics[self::KEY] = $state;
+            $claimed = round($new, 4);
             if (RelationshipDynamics::saveDynamics($npcName, $dynamics)) {
-                $r = RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
-                if ($r !== null) {
-                    $GLOBALS['RELDYN_PRE_AFF'] = intval($r['new']);
-                    RelationshipDynamics::log("[CIRCLE] {$npcName}: core affinity {$r['old']} -> {$r['new']} from the NPC's friends and foes");
+                $state = self::state($dynamics);
+                $held = floatval($state['assoc']['applied'] ?? 0.0);
+                if (abs($held - $claimed) > 0.0005) {
+                    RelationshipDynamics::queueAffinityDelta($dynamics, -$delta);
+                    $state['assoc']['applied'] = round($held - $delta, 4);
+                    $dynamics[self::KEY] = $state;
+                    if (RelationshipDynamics::saveDynamics($npcName, $dynamics)) {
+                        $state = self::state($dynamics);
+                    } else {
+                        error_log("[RelDyn] ERROR cascade extensions: {$npcName}'s overlapping friend-of-a-friend step was not taken back; the settling corrects it");
+                    }
+                    RelationshipDynamics::log("[CIRCLE] {$npcName}: another request of the NPC took the same friend-of-a-friend step first; this one stands down");
+                    $new = $applied;
+                    $delta = 0.0;
+                } elseif (abs(floatval($dynamics['_pending_aff_delta'] ?? 0)) >= 1.0) {
+                    $r = RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
+                    if ($r !== null) {
+                        $GLOBALS['RELDYN_PRE_AFF'] = intval($r['new']);
+                        RelationshipDynamics::log("[CIRCLE] {$npcName}: core affinity {$r['old']} -> {$r['new']} from the NPC's friends and foes");
+                    }
                 }
-            } else {
+            } elseif (abs(floatval($dynamics['_pending_aff_delta'] ?? 0)) >= 1.0) {
                 error_log("[RelDyn] ERROR cascade extensions: {$npcName}'s state was not saved; the friend-of-a-friend delta waits for the next request");
             }
         }
@@ -690,6 +710,44 @@ final class RelDynCascadeExt
         $byType = array_change_key_case((array) $cfg['triangle']['type_interest'], CASE_LOWER);
         if ($type !== '' && isset($byType[$type]) && (!is_array($dynamics) || $dynamics === [])) $i = max($i, floatval($byType[$type]));
         return self::clamp($i, 0.0, 1.0);
+    }
+
+    /**
+     * Claim $whole core points of a rivalry's cooling (or give-back) in the NPC's ledger before they are written, as the friend-of-a-friend
+     * step does: the ledger is saved first, the write follows, so a crash between never takes the same points twice. Two requests of
+     * the NPC that overlap (both read the ledger before either saved) each claim the same points; the save merges the ledger as a sum,
+     * so the one that finds more than it claimed knows the other has them, takes its own claim back and writes nothing. A request whose
+     * state is not kept (a stale copy after a save load, a save that kept losing the race) writes nothing at all.
+     * On true, $rivals/$state hold the merged state with the claim in the ledger (written = old + $whole); otherwise $rivals[$name]
+     * holds the ledger as it stands without this request's claim.
+     */
+    private static function claimRivalPoints(string $npcName, array &$dynamics, array &$state, array &$rivals, string $name, float $written, int $whole): bool
+    {
+        $claim = round($written + $whole, 4);
+        $rivals[$name]['written'] = $claim;
+        $state['rivals'] = $rivals;
+        $dynamics[self::KEY] = $state;
+        if (!RelationshipDynamics::saveDynamics($npcName, $dynamics)) {
+            $rivals[$name]['written'] = round($written, 4);
+            error_log("[RelDyn] ERROR cascade extensions: {$npcName}'s state was not saved; the cooling toward {$name} waits for the next request");
+            return false;
+        }
+        $state = self::state($dynamics);
+        $rivals = $state['rivals'];
+        $held = floatval($rivals[$name]['written'] ?? 0.0);
+        if (abs($held - $claim) <= 0.0005) return true;
+        // another request of the NPC has the same points: take this claim back (the sum minus what this request added)
+        $rivals[$name]['written'] = round($held - $whole, 4);
+        $state['rivals'] = $rivals;
+        $dynamics[self::KEY] = $state;
+        if (RelationshipDynamics::saveDynamics($npcName, $dynamics)) {
+            $state = self::state($dynamics);
+            $rivals = $state['rivals'];
+        } else {
+            error_log("[RelDyn] ERROR cascade extensions: {$npcName}'s overlapping cooling toward {$name} was not taken back; the settling corrects it");
+        }
+        RelationshipDynamics::log("[CIRCLE] {$npcName}: another request of the NPC took the same points toward {$name} first; this one stands down");
+        return false;
     }
 
     private static function stepTriangle(string $npcName, array &$dynamics, array &$state, array $bonds, float $now, array $cfg): ?array
@@ -736,7 +794,8 @@ final class RelDynCascadeExt
         // settle every rival toward its target on the game calendar
         $out = [];
         $rates = (array) $t['rates'];
-        foreach ($rivals as $name => $r) {
+        foreach (array_keys($rivals) as $name) {
+            $r = $rivals[$name] ?? null;
             if (!is_array($r)) { unset($rivals[$name]); continue; }
             // applied: the settled value, continuous; written: the whole core points actually taken off (or given back to) the
             // NPC's regard for the rival. The difference waits until it is a whole point.
@@ -751,16 +810,24 @@ final class RelDynCascadeExt
             $r['applied'] = round($new, 4);
             $whole = (int) ($new - $written);   // toward zero
             if ($whole !== 0) {
-                $w = self::applyBondDelta($npcName, (string) $name, $whole);
-                if ($w !== null && !empty($w['locked'])) {
-                    $r['applied'] = round($written, 4);   // the editor pinned the relationships: nothing is taken, and the ledger does not pile up
-                } elseif ($w !== null) {
-                    $r['written'] = round($written + intval($w['delta']), 4);
+                $rivals[$name] = $r;
+                if (self::claimRivalPoints($npcName, $dynamics, $state, $rivals, (string) $name, $written, $whole)) {
+                    $r = $rivals[$name];   // (the merged record: the ledger holds the claim)
+                    $w = self::applyBondDelta($npcName, (string) $name, $whole);
+                    if ($w !== null && !empty($w['locked'])) {
+                        $r['applied'] = round($written, 4);   // the editor pinned the relationships: nothing is taken, and the ledger does not pile up
+                        $r['written'] = round($written, 4);
+                    } elseif ($w !== null) {
+                        $r['written'] = round($written + intval($w['delta']), 4);
+                    } else {
+                        $r['written'] = round($written, 4);   // no entry or a failed write: the difference waits for the next request
+                    }
+                } else {
+                    $r = $rivals[$name] ?? $r;   // nothing written by this request (its state was not kept, or another request has the step)
                 }
-                // (no entry or a failed write: the difference waits for the next request)
             }
-            // a settled rivalry leaves the ledger (a residue under a point is not worth carrying)
-            if (abs($target) < 0.001 && abs($r['applied']) < 0.5) {
+            // a settled rivalry leaves the ledger (a residue under a point is not worth carrying), once nothing it took is still owed back
+            if (abs($target) < 0.001 && abs($r['applied']) < 0.5 && abs(floatval($r['written'] ?? 0.0)) < 0.5) {
                 unset($rivals[$name]);
                 continue;
             }

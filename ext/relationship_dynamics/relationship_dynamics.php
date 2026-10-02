@@ -2088,8 +2088,9 @@ class RelationshipDynamics
             $childPath = ($path === '') ? (string) $k : $path . '.' . $k;
             if (self::isMergeMap($m) && self::isMergeMap($t)) {
                 $out[$k] = self::mergeDynamicsLevel(self::isMergeMap($b) ? $b : [], $m, $t, $childPath);
-            } elseif ($inB && self::isMergeNumber($b) && self::isMergeNumber($m) && self::isMergeNumber($t)) {
-                $out[$k] = self::mergeDynamicsNumber($childPath, (string) $k, $b, $m, $t);
+            } elseif (($inB ? self::isMergeNumber($b) : self::isCircleLedgerPath($childPath)) && self::isMergeNumber($m) && self::isMergeNumber($t)) {
+                // (a circle ledger that did not exist yet in the base starts from nothing: two first claims are two claims)
+                $out[$k] = self::mergeDynamicsNumber($childPath, (string) $k, $inB ? $b : 0, $m, $t);
             } else {
                 $out[$k] = $m;
             }
@@ -2107,6 +2108,11 @@ class RelationshipDynamics
             return max($m, $t);
         }
         // (Attachment drift state is merged as a whole in mergeAttachmentDrift().)
+        // The circle's ledger of what it has written into core (cascade extensions): signed whole points, both claims count.
+        // A request that finds the sum is not what it claimed knows another request has the same step, and takes its own back.
+        if (self::isCircleLedgerPath($path)) {
+            return round($t + ($m - $b), 6);
+        }
         $additive = in_array($key, ['x', 'passion', 'jealousy_anger', '_pending_aff_delta'], true)
             || preg_match('/(_count|_interactions|_given|_score|_window)$/', $key)
             || preg_match('/^(passion_sources|_interest_satisfaction|_interaction_pattern)\./', $path);
@@ -2126,6 +2132,12 @@ class RelationshipDynamics
             $v = max(0, $v);
         }
         return (is_int($b) && is_int($m) && is_int($t)) ? (int) $v : round($v, 6);
+    }
+
+    /** The two signed ledgers of RelDynCascadeExt: what the friend-of-a-friend reading applied, and the points each rivalry wrote into core. */
+    private static function isCircleLedgerPath(string $path): bool
+    {
+        return preg_match('/^' . preg_quote(RelDynCascadeExt::KEY, '/') . '\.(assoc\.applied|rivals\..+\.written)$/', $path) === 1;
     }
 
     private static function isMergeNumber($v): bool

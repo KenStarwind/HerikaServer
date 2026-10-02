@@ -25,7 +25,8 @@
  *
  *   I DESERVE BETTER. degree = maturity x low trust x the fall (trust must have FALLEN from where it was: a bond that never had trust,
  *     or a state that simply begins fresh over a deep core affinity, is nothing to leave over) x how deep the bond is x what that kind of
- *     bond expects of the other. A pressure (0..1) follows it on the game calendar (up at a day or two of low trust, down slowly; a bond that
+ *     bond expects of the other (a share of it, never so little that a mature friend betrayed deeply enough could not reach their line:
+ *     nobody is immune, only later and from deeper than a partner). A pressure (0..1) follows it on the game calendar (up at a day or two of low trust, down slowly; a bond that
  *     has not been invested in cannot reach it). Leaving is the walkaway system: at the NPC's own line (walk_at, lowered
  *     by pride and avoidance, raised by the fear of losing the player: RelDynKeeping) autonomy asks for a walkaway with the
  *     reason 'deserve' (RelationshipDynamics::walkawayReason, initiateWalkaway, the boundary test and its return grace),
@@ -99,6 +100,11 @@ final class RelDynDark
                 'types' => ['bonded' => 1.0, 'crush' => 0.8, 'friend' => 0.7, 'friendzone' => 0.6, 'mentor' => 0.5,
                             'student' => 0.5, 'sworn' => 0.0, 'mercenary' => 0.0, 'parasite' => 0.0, 'rival' => 0.0,
                             'hostile' => 0.0, 'grieving' => 0.0, 'other' => 0.6],
+                // What a kind of bond expects of the other scales the degree, never to a point the NPC cannot reach their own line from: a
+                // kind with any standards at all (weight above 0) keeps at least this share of it, so a mature friend, mentor or student
+                // who has been betrayed deeply enough leaves too, only later and from deeper than a partner (nobody is immune). A kind
+                // with weight 0 (an oath, a deal, a feud, a loss) has no standards of this sort: sworn has its own strain and break.
+                'type_share_min' => 0.8,
                 // the pressure follows its degree on the game calendar: this share of the gap per game hour
                 'rates' => ['rise_per_game_hour' => 0.04, 'fall_per_game_hour' => 0.01, 'max_step_game_hours' => 72.0],
                 // the line at which the NPC leaves: walk_at - pride_shift x egocentric(Pd) - avoidant_shift x avoidance
@@ -298,6 +304,19 @@ final class RelDynDark
         return ['m' => round($m, 6), 't' => round($t, 6)] + array_map(fn($v) => round($v, 6), $c) + ['dominant' => $dominant];
     }
 
+    /**
+     * How much of the degree this kind of bond keeps (0..1): its weight lifted to type_share_min for a kind with any standards at
+     * all (weight above 0), so no kind with standards is shut out of leaving; 0 stays 0 (an oath, a deal, a feud, a loss).
+     */
+    public static function typeShare(array $dynamics, ?array $cfg = null): float
+    {
+        $cfg = $cfg ?? self::config();
+        $w = self::typeWeight($dynamics, $cfg);
+        if ($w <= 0.0) return 0.0;
+        $min = self::clamp01(floatval(((array) $cfg['deserve'])['type_share_min'] ?? 0.8));
+        return self::clamp01($min + (1.0 - $min) * $w);
+    }
+
     /** What this kind of bond expects of the other (getRelationshipType), 0..1; 'other' for a kind not listed. */
     public static function typeWeight(array $dynamics, ?array $cfg = null): float
     {
@@ -330,7 +349,7 @@ final class RelDynDark
         $d = (array) $cfg['deserve'];
         $f = (array) $d['fall'];
         $fall = RelDynTraits::smoothstep(self::trustFall($dynamics), floatval($f['from']), floatval($f['full']));
-        return round(self::clamp01($c[self::DESERVE] * $fall * self::bondDepth($dynamics, (array) $d['bond']) * self::typeWeight($dynamics, $cfg)), 4);
+        return round(self::clamp01($c[self::DESERVE] * $fall * self::bondDepth($dynamics, (array) $d['bond']) * self::typeShare($dynamics, $cfg)), 4);
     }
 
     /** The codependent degree (0..1): (1 - maturity) x high trust x bond depth. */
