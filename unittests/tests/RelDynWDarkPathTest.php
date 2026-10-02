@@ -77,6 +77,10 @@ final class RelDynWDarkPathTest extends TestCase
         RelationshipDynamics::setPassion($d, floatval($o['passion'] ?? 40.0));
         $d['_core_rel_type'] = (string) ($o['core'] ?? 'romantic');
         $d['context_tier_hwm'] = intval($o['hwm'] ?? 3);
+        // the trust it fell from: a betrayed bond by default (a state with no peak has fallen from nothing; see the fresh-start test)
+        if (!array_key_exists('peak', $o) || $o['peak'] !== null) {
+            $d[RelDynDark::KEY] = ['v' => 1, 'deserve' => 0.0, 'adrift' => 0.0, 'walks' => 0, 'trust_peak' => floatval($o['peak'] ?? 90.0)];
+        }
         return $d;
     }
 
@@ -229,6 +233,38 @@ final class RelDynWDarkPathTest extends TestCase
         $this->assertSame(0.0, $deg($this->npc(self::SECURE, 80.0, 10.0, ['core' => 'servant'])), 'sworn: duty, not standards');
         $this->assertLessThan($full, $deg($this->npc(self::SECURE, 80.0, 10.0, ['core' => 'platonic'])), 'a friendship expects less than a romance');
         $this->assertGreaterThan(0.0, $deg($this->npc(self::SECURE, 80.0, 10.0, ['core' => 'platonic'])));
+    }
+
+    public function testATrustThatNeverWasOrAStateThatBeginsFreshOverADeepBondIsNothingToLeaveOverButAFallIs(): void
+    {
+        // the start of a save: core's affinity is high, RelDyn's own state begins fresh (trust at the NPC's baseline). Nobody has been betrayed.
+        $fresh = $this->npc(self::SECURE, 80.0, 25.0, ['peak' => null]);
+        $this->assertSame(0.0, RelDynDark::trustFall($fresh), 'no peak yet');
+        $this->assertSame(0.0, RelDynDark::deserveDegree($fresh));
+        $t = $this->drive($fresh, self::T0, 24 * 6.0, 12.0);
+        $this->assertSame(0.0, RelDynDark::deserveDegree($fresh), 'six days of it: still nothing to leave over');
+        $this->assertEqualsWithDelta(25.0, $fresh[RelDynDark::KEY]['trust_peak'], 1e-9);
+        $this->assertFalse(RelDynDark::walkawayDue($fresh));
+        // trust built up (the peak follows), then fell: that is a fall
+        $fresh['dimensions']['trust']['x'] = 75.0;
+        $t = $this->drive($fresh, $t, 12.0, 12.0);
+        $this->assertEqualsWithDelta(75.0, $fresh[RelDynDark::KEY]['trust_peak'], 1e-9);
+        $fresh['dimensions']['trust']['x'] = 30.0;
+        $this->assertEqualsWithDelta(45.0, RelDynDark::trustFall($fresh), 1e-9);
+        $this->assertGreaterThan(0.8, RelDynDark::deserveDegree($fresh));
+        $t = $this->drive($fresh, $t, 24 * 4.0, 12.0);
+        $this->assertTrue(RelDynDark::walkawayDue($fresh), 'a mature NPC whose trust fell and stayed fallen');
+        // a small dip is nothing; a fall begins to count from a few points
+        $small = $this->npc(self::SECURE, 80.0, 40.0, ['peak' => 44.0]);
+        $this->assertSame(0.0, RelDynDark::deserveDegree($small));
+        $some = $this->npc(self::SECURE, 80.0, 30.0, ['peak' => 45.0]);
+        $this->assertGreaterThan(0.1, RelDynDark::deserveDegree($some));
+        $this->assertLessThan(RelDynDark::deserveDegree($this->npc(self::SECURE, 80.0, 30.0, ['peak' => 70.0])), RelDynDark::deserveDegree($some));
+        // trust back at the NPC's line after the fall: a clean slate, and the next dip is measured from there
+        $fresh['dimensions']['trust']['x'] = 60.0;
+        $this->drive($fresh, $t, 12.0, 12.0);
+        $this->assertEqualsWithDelta(60.0, $fresh[RelDynDark::KEY]['trust_peak'], 1e-9, 'forgiven: the old high is forgotten');
+        $this->assertSame(0.0, RelDynDark::deserveDegree($fresh));
     }
 
     public function testThePressureBuildsOverAGameDayOrTwoAndDoesNotFlicker(): void

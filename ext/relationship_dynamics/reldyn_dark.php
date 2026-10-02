@@ -23,8 +23,9 @@
  *     below `gate.off_below` the floor is gone altogether (the old "immature: no floors"). The reported floor_active stays
  *     "maturity above 40".
  *
- *   I DESERVE BETTER. degree = maturity x low trust x how deep the bond is x what that kind of bond expects of the
- *     other. A pressure (0..1) follows it on the game calendar (up at a day or two of low trust, down slowly; a bond that
+ *   I DESERVE BETTER. degree = maturity x low trust x the fall (trust must have FALLEN from where it was: a bond that never had trust,
+ *     or a state that simply begins fresh over a deep core affinity, is nothing to leave over) x how deep the bond is x what that kind of
+ *     bond expects of the other. A pressure (0..1) follows it on the game calendar (up at a day or two of low trust, down slowly; a bond that
  *     has not been invested in cannot reach it). Leaving is the walkaway system: at the NPC's own line (walk_at, lowered
  *     by pride and avoidance, raised by the fear of losing the player: RelDynKeeping) autonomy asks for a walkaway with the
  *     reason 'deserve' (RelationshipDynamics::walkawayReason, initiateWalkaway, the boundary test and its return grace),
@@ -41,8 +42,9 @@
  *
  *   ADRIFT (no floors). degree = (1 - maturity) x low trust, fed by intensity (passion). Sustained, it sets RelDyn's own
  *     parasite overlay (the existing _relationship_type_override 'parasite' and its history; RelDynProtocols' passion
- *     half-life), held until the pressure falls, not by the gift ledger's recovery (holdsParasite). Positive treatment
- *     is how it ends: a positive exchange lifts maturity a little (growth), toward a floor that switches on.
+ *     half-life), held while the corner itself lasts (no floors, no trust: not the intensity that started it, which the overlay
+ *     burns off) and never lifted by the gift ledger's recovery (holdsParasite). Positive treatment is how it ends: a positive
+ *     exchange lifts maturity a little (growth), toward a floor that switches on, and trust comes back.
  *
  * Units: maturity / trust / passion dimension points 0..100; core affinity -100..100; degrees, pressure, strength 0..1
  * (unitless); game hours / days on the game calendar (raw gamets, RelationshipDynamics::GAMETS_PER_DAY). No wall clock.
@@ -87,9 +89,12 @@ final class RelDynDark
             // --- I deserve better ---
             'deserve' => [
                 // how deep the bond must be (core affinity from -> full) before there is anything to deserve more of
-                'bond' => ['from' => 20.0, 'full' => 60.0],
+                'bond' => ['from' => 10.0, 'full' => 40.0],
                 // a bond must once have been a friend's at least (context_tier_hwm; the affinity walkaway's rule)
                 'min_tier' => 2,
+                // trust must have fallen this many points from the highest it reached (smoothstep from -> full); a state that begins fresh over a
+                // deep core affinity has not fallen from anything. The peak is forgotten once trust is back at the NPC's line.
+                'fall' => ['from' => 6.0, 'full' => 20.0],
                 // what each kind of bond expects of the other (getRelationshipType); 'other' for any not listed
                 'types' => ['bonded' => 1.0, 'crush' => 0.8, 'friend' => 0.7, 'friendzone' => 0.6, 'mentor' => 0.5,
                             'student' => 0.5, 'sworn' => 0.0, 'mercenary' => 0.0, 'parasite' => 0.0, 'rival' => 0.0,
@@ -124,7 +129,8 @@ final class RelDynDark
                 // intensity = passion / passion_full (0..1); target = degree x (base + (1 - base) x intensity)
                 'passion_full' => 60.0, 'base' => 0.25,
                 'rates' => ['rise_per_game_hour' => 0.02, 'fall_per_game_hour' => 0.03, 'max_step_game_hours' => 72.0],
-                // the parasite overlay switches on at `on` and off below `off` (hysteresis); off: the pressure is said, nothing is set
+                // the parasite overlay switches on when the pressure reaches `on` and off when the corner (no floors, no trust: the degree
+                // without the intensity) falls below `off` (hysteresis); parasite false: the pressure is said, nothing is set
                 'parasite' => true, 'on' => 0.7, 'off' => 0.4,
             ],
 
@@ -160,7 +166,7 @@ final class RelDynDark
         foreach (self::MERGED_TABLES as $t) {
             $cfg[$t] = array_replace($defaults[$t], is_array($stored[$t] ?? null) ? $stored[$t] : []);
         }
-        foreach (['deserve' => ['bond', 'types', 'rates'], 'codependent' => ['bond', 'lean'], 'adrift' => ['rates']] as $t => $subs) {
+        foreach (['deserve' => ['bond', 'types', 'rates', 'fall'], 'codependent' => ['bond', 'lean'], 'adrift' => ['rates']] as $t => $subs) {
             $cfg[$t] = array_replace($defaults[$t], is_array($stored[$t] ?? null) ? $stored[$t] : []);
             foreach ($subs as $s) {
                 $cfg[$t][$s] = array_replace((array) $defaults[$t][$s], is_array($stored[$t][$s] ?? null) ? $stored[$t][$s] : []);
@@ -305,14 +311,26 @@ final class RelDynDark
         return self::between(RelationshipDynamics::getCoreAffinity($dynamics), floatval($range['from']), floatval($range['full']));
     }
 
-    /** The "I deserve better" degree the pressure follows (0..1): maturity x low trust x bond depth x what the bond expects. */
+    /** How far the NPC's trust has fallen from the highest it reached (trust points; 0 for a state with no peak yet). */
+    public static function trustFall(array $dynamics): float
+    {
+        $peak = $dynamics[self::KEY]['trust_peak'] ?? null;
+        return is_numeric($peak) ? max(0.0, floatval($peak) - self::ownTrust($dynamics)) : 0.0;
+    }
+
+    /**
+     * The "I deserve better" degree the pressure follows (0..1): maturity x low trust x the fall (trust must have fallen from where it
+     * was) x bond depth x what the bond expects.
+     */
     public static function deserveDegree(array $dynamics, ?array $cfg = null): float
     {
         $cfg = $cfg ?? self::config();
         if (empty($cfg['enabled'])) return 0.0;
         $c = self::corners($dynamics, $cfg);
         $d = (array) $cfg['deserve'];
-        return round(self::clamp01($c[self::DESERVE] * self::bondDepth($dynamics, (array) $d['bond']) * self::typeWeight($dynamics, $cfg)), 4);
+        $f = (array) $d['fall'];
+        $fall = RelDynTraits::smoothstep(self::trustFall($dynamics), floatval($f['from']), floatval($f['full']));
+        return round(self::clamp01($c[self::DESERVE] * $fall * self::bondDepth($dynamics, (array) $d['bond']) * self::typeWeight($dynamics, $cfg)), 4);
     }
 
     /** The codependent degree (0..1): (1 - maturity) x high trust x bond depth. */
@@ -376,7 +394,8 @@ final class RelDynDark
     // =====================================================================
 
     /**
-     * $dynamics['_dark']: v, deserve (pressure 0..1), adrift (pressure 0..1), parasite (the overlay is held by this path),
+     * $dynamics['_dark']: v, deserve (pressure 0..1), adrift (pressure 0..1), trust_peak (the highest trust reached), trust_low (trust
+     * fell below the NPC's line from that peak), parasite (the overlay is held by this path),
      * gamets (the last advance, raw), walks (walkaways started on it), growth {day, pts}, last (the numbers of the last
      * advance, for Jev).
      */
@@ -433,6 +452,19 @@ final class RelDynDark
         }
         if ($now <= 0) return $out;
         $state = &self::state($dynamics);
+        // the highest trust reached, kept until trust is back at the NPC's line after a fall (a clean slate then)
+        $trust = self::ownTrust($dynamics);
+        $line = self::trustLine($dynamics, $cfg);
+        $peak = is_numeric($state['trust_peak'] ?? null) ? floatval($state['trust_peak']) : $trust;
+        if (!empty($state['trust_low']) && $trust >= $line) {
+            $peak = $trust;
+            unset($state['trust_low']);
+        } elseif ($trust < $line && $peak - $trust >= floatval($cfg['deserve']['fall']['from'])) {
+            $state['trust_low'] = true;
+        }
+        $state['trust_peak'] = round(max($peak, $trust), 4);
+        unset($state);
+        $state = &self::state($dynamics);
         $last = floatval($state['gamets'] ?? 0);
         $hours = $last > 0 ? max(0.0, ($now - $last) / self::hour()) : 0.0;
         $deserveTarget = self::deserveDegree($dynamics, $cfg);
@@ -477,7 +509,9 @@ final class RelDynDark
             RelationshipDynamics::log("[DARK] {$npcName}: no floors and no trust, held: the bond turns transactional (parasite), adrift " . round($adrift, 3));
             return true;
         }
-        if ($held && $adrift < floatval($a['off'])) {
+        // held by the corner itself (no floors, no trust), not by the intensity that started it: a passion the overlay burned off does not
+        // lift it; maturity or trust coming back does
+        if ($held && floatval(self::corners($dynamics, $cfg)[self::ADRIFT]) < floatval($a['off'])) {
             self::releaseParasite($npcName, $dynamics);
             return false;
         }
@@ -540,18 +574,21 @@ final class RelDynDark
     // =====================================================================
 
     /**
-     * An exchange's trust signal ($raw, raw eval points) as this NPC lets it land: a negative one at max(trust_floor, 1 -
-     * trust_sticky x degree) of itself (trusts blindly, but can still be hurt); a positive one as it is.
+     * The share of a hit to trust that lands on this NPC (1 for most; max(trust_floor, 1 - trust_sticky x lean) for a codependent one:
+     * trusts blindly, but can still be hurt). Pure.
      */
+    public static function trustLanding(array $dynamics, ?array $cfg = null): float
+    {
+        $cfg = $cfg ?? self::config();
+        if (empty($cfg['enabled'])) return 1.0;
+        $c = (array) $cfg['codependent'];
+        return min(1.0, max(self::clamp01(floatval($c['trust_floor'])), 1.0 - floatval($c['trust_sticky']) * self::lean($dynamics, $cfg)));
+    }
+
+    /** An exchange's trust signal ($raw, raw eval points) as this NPC lets it land: a negative one at trustLanding() of itself; a positive one as it is. */
     public static function trustSignal(array $dynamics, float $raw, ?array $cfg = null): float
     {
-        if ($raw >= 0.0) return $raw;
-        $cfg = $cfg ?? self::config();
-        if (empty($cfg['enabled'])) return $raw;
-        $c = (array) $cfg['codependent'];
-        $degree = self::lean($dynamics, $cfg);
-        $factor = max(self::clamp01(floatval($c['trust_floor'])), 1.0 - floatval($c['trust_sticky']) * $degree);
-        return $raw * min(1.0, $factor);
+        return $raw >= 0.0 ? $raw : $raw * self::trustLanding($dynamics, $cfg);
     }
 
     /** Score points autonomy's compliant / resistant / refusing lines lift by (0 .. autonomy_lift). */
@@ -653,7 +690,7 @@ final class RelDynDark
             'gate_required' => self::gateRequired($c['m'], $cfg),
             'corners' => ['healthy' => $c[self::HEALTHY], 'deserve' => $c[self::DESERVE], 'codependent' => $c[self::CODEPENDENT], 'adrift' => $c[self::ADRIFT]],
             'dominant' => $c['dominant'],
-            'deserve' => round(floatval($s['deserve'] ?? 0.0), 3), 'walk_at' => self::walkAt($dynamics, $cfg),
+            'deserve' => round(floatval($s['deserve'] ?? 0.0), 3), 'walk_at' => self::walkAt($dynamics, $cfg), 'trust_fall' => round(self::trustFall($dynamics), 2),
             'adrift' => round(floatval($s['adrift'] ?? 0.0), 3), 'codependent' => self::codependence($dynamics, $cfg),
             'parasite_held' => self::holdsParasite($dynamics), 'walks' => intval($s['walks'] ?? 0),
         ];

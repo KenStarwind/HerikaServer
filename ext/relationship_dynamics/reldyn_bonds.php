@@ -40,7 +40,7 @@
  * write goes through RelationshipDynamics::changeCoreRelationshipType (its advisory lock, relationships_locked respected);
  * a refused write leaves the romance as it is and says so.
  *
- * REKINDLE (conflicted). Positive exchanges that mean something (quality time, reassurance, forgiveness, touch) build a progress
+ * REKINDLE (conflicted). Positive exchanges that mean something (quality time, reassurance, an apology, forgiveness, touch) build a progress
  * 0..1, scaled by the end's ill will, the NPC's attachment, and capped per game day (spamming warmth is not love); a setback
  * takes progress back. Time does nothing: contact does. At 1, with resentment low enough and trust standing, core goes 'ex' ->
  * 'crush' and the normal romance ladder carries on from there (a new beginning, not as if nothing happened). Resentment past
@@ -159,7 +159,7 @@ final class RelDynBonds
             'rekindle' => [
                 'enabled' => true,
                 // tag => weight of an exchange that carries it (the strongest counts); an unrelated positive exchange counts at `positive`
-                'tags' => ['quality_time' => 1.0, 'reassurance' => 1.0, 'forgiveness' => 1.5, 'touch' => 0.6, 'gift' => 0.3],
+                'tags' => ['quality_time' => 1.0, 'reassurance' => 1.0, 'apology' => 1.5, 'forgiveness' => 1.5, 'touch' => 0.6, 'gift' => 0.3],
                 'positive' => 0.4, 'min_significance' => 0.3,
                 // progress per exchange = step x significance x tag weight x (1 - ill will) x attachment; at most daily_cap a game day
                 'step' => 0.15, 'daily_cap' => 0.3, 'setback' => 1.5,
@@ -178,9 +178,9 @@ final class RelDynBonds
             'infidelity' => [
                 'enabled' => true,
                 // a romance (core rung) at least. The opening is how little holds the NPC: what neglect and low fulfillment cut from the pull
-                // (the cut), and how little of a pull there was to begin with (hollow = 1 - the pull unweakened, x hollow_weight): a
-                // fading passion makes a hollower pull, which closes the loop.
-                'min_rung' => 2, 'hollow_weight' => 0.5,
+                // (the cut), widened by how little of a pull there was to begin with (hollow = 1 - the pull unweakened, x hollow_weight, once
+                // the cut is under way): a fading passion makes a hollower pull, which closes the loop.
+                'min_rung' => 2, 'hollow_weight' => 0.5, 'max_steps' => 60,
                 // what the relationship preference expects of fidelity (1 = all of it); under open_below the NPC is open, not unfaithful
                 'expectation' => ['monogamous' => 1.0, 'demisexual' => 1.0, 'uncommitted' => 0.45, 'polyamorous' => 0.1, 'default' => 0.9],
                 'open_below' => 0.3,
@@ -204,7 +204,7 @@ final class RelDynBonds
                 // how it ends, game days from the line crossed: the mature and loyal confess, the anxious confess late, the avoidant
                 // and the rest leave, the fearful keep both for long (then leave). Mature = maturity weight at least, loyal = restraint at least.
                 'resolve' => ['mature_w' => 0.6, 'loyal' => 0.5, 'confess_mature' => 1.0, 'confess_anxious' => 3.0, 'leave_avoidant' => 4.0,
-                              'leave' => 3.0, 'both_fearful' => 21.0, 'anxious_at' => 0.5, 'avoidant_at' => 0.5, 'fearful_at' => 0.5],
+                              'leave' => 3.0, 'both_fearful' => 21.0, 'anxious_at' => 0.5, 'avoidant_at' => 0.5, 'fearful_at' => 0.35],
             ],
 
             // --- felt text (feelings, never numbers; {NAME} the NPC, {PLAYER} the player, {SUITOR}, {BECAUSE}; no pronoun of their own) ---
@@ -713,6 +713,28 @@ final class RelDynBonds
         return $out;
     }
 
+    /**
+     * The game calendar's step for this NPC, talked to or not (RelationshipDynamics::advanceNpcCalendar): an ended romance's hardening and
+     * way back, the formal rung, the infidelity loop. The oath's faction read (a database read) and core's own change of type are the
+     * NPC's own turn's. Returns ['changed' => bool, 'affinity' => bool (the aftermath moved the core affinity: commit it)].
+     */
+    public static function calendarTick(string $npc, array &$dynamics, float $now): array
+    {
+        $out = ['changed' => false, 'affinity' => false];
+        $cfg = self::config();
+        if (empty($cfg['enabled']) || $now <= 0) return $out;
+        // no romance, nothing ended, nothing stored: nothing to tick (and no state made for a bond that has none)
+        if (!is_array($dynamics[self::KEY] ?? null) && self::rung($dynamics) < 1) return $out;
+        $before = json_encode(self::stored($dynamics));
+        $aff = RelationshipDynamics::getCoreAffinity($dynamics);
+        self::stepCommitted($npc, $dynamics, $now, $cfg);
+        self::stepEnded($npc, $dynamics, $now, $cfg);
+        self::stepInfidelity($npc, $dynamics, $now, $cfg);
+        $out['changed'] = json_encode(self::stored($dynamics)) !== $before;
+        $out['affinity'] = abs(RelationshipDynamics::getCoreAffinity($dynamics) - $aff) > 1e-9;
+        return $out;
+    }
+
     // ---- the oath ---------------------------------------------------------
 
     private static function stepOath(string $npc, array &$dynamics, float $now, array $cfg): array
@@ -1030,7 +1052,8 @@ final class RelDynBonds
         $p = RelDynExclusivity::pull($dynamics, $now);
         $unweakened = floatval($p['unweakened']);
         $cut = $unweakened > 1e-6 ? self::clamp01(1.0 - floatval($p['pull']) / $unweakened) : 0.0;
-        $hollow = self::clamp01(1.0 - $unweakened) * self::clamp01(floatval($i['hollow_weight']));
+        // a hollow pull widens an opening that neglect has begun to make; it does not make one (a state that begins fresh has a low pull and nothing cut)
+        $hollow = self::clamp01(1.0 - $unweakened) * self::clamp01(floatval($i['hollow_weight'])) * RelDynTraits::smoothstep($cut, 0.05, 0.3);
         $opening = 1.0 - (1.0 - $cut) * (1.0 - $hollow);
         $suitor = self::bestSuitor($dynamics, $now);
         $t = (array) $i['tempt'];
@@ -1066,14 +1089,36 @@ final class RelDynBonds
         $w = RelationshipDynamics::attachmentWeights($dynamics);
         $m = self::maturityWeight($dynamics);
         $loyal = self::restraint($dynamics, $cfg) >= floatval($r['loyal']);
-        if ($m >= floatval($r['mature_w']) && $loyal) return ['kind' => 'confess', 'game_days' => floatval($r['confess_mature'])];
+        // the fearful keep both whatever their maturity: the pull of the one and the fear of losing the other
         if (floatval($w['toxic'] ?? 0.0) >= floatval($r['fearful_at'])) return ['kind' => 'both', 'game_days' => floatval($r['both_fearful'])];
+        if ($m >= floatval($r['mature_w']) && $loyal) return ['kind' => 'confess', 'game_days' => floatval($r['confess_mature'])];
         if (floatval($w['anxious'] ?? 0.0) >= floatval($r['anxious_at'])) return ['kind' => 'confess', 'game_days' => floatval($r['confess_anxious'])];
         if (floatval($w['avoidant'] ?? 0.0) >= floatval($r['avoidant_at'])) return ['kind' => 'leave', 'game_days' => floatval($r['leave_avoidant'])];
         return ['kind' => 'leave', 'game_days' => floatval($r['leave'])];
     }
 
+    /**
+     * The infidelity loop to $now. An absence is what feeds it and the NPC is only asked for on the player's turns (and by the calendar
+     * scan), so a long gap is walked in steps of at most a game day (the pull, the suitor's regard and the line crossed all move with the
+     * calendar inside it), at most infidelity.max_steps of them; an ending inside the gap ends the walk.
+     */
     private static function stepInfidelity(string $npc, array &$dynamics, float $now, array $cfg): array
+    {
+        $events = [];
+        $i = (array) $cfg['infidelity'];
+        $last = floatval(self::stored($dynamics)['infidelity']['gamets'] ?? 0);
+        $gap = $last > 0 ? $now - $last : 0.0;
+        $n = $gap > self::day() ? min(max(1, intval($i['max_steps'] ?? 60)), (int) ceil($gap / self::day())) : 1;
+        for ($k = 1; $k <= $n; $k++) {
+            $t = $n === 1 ? $now : $last + $gap * $k / $n;
+            $events = array_merge($events, self::infidelityStep($npc, $dynamics, $t, $cfg));
+            if (self::rung($dynamics) < intval($i['min_rung'])) break;   // the romance ended inside the gap
+        }
+        return $events;
+    }
+
+    /** One step of the loop at $now (see stepInfidelity). */
+    private static function infidelityStep(string $npc, array &$dynamics, float $now, array $cfg): array
     {
         $events = [];
         $i = (array) $cfg['infidelity'];

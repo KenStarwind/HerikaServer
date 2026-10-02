@@ -95,7 +95,7 @@ final class RelDynWBondsTest extends TestCase
         RelationshipDynamics::clearConfigCache();
     }
 
-    /** A suitor in her ledger with $interest at self::T0. */
+    /** A suitor in the NPC's ledger with $interest at self::T0. */
     private function suitor(array &$d, string $name, float $interest, float $at = self::T0): void
     {
         $d[RelDynExclusivity::STATE_KEY]['suitors'][RelDynFulfillment::pairKey($name)] = ['name' => $name, 'interest' => $interest, 'moves' => 3, 'seen_rowid' => 1, 'gamets' => $at];
@@ -611,7 +611,7 @@ final class RelDynWBondsTest extends TestCase
         $d = $this->npc($axes, $maturity, 60.0, $o + ['passion' => 60.0, 'contact_days_ago' => $days]);
         if ($interest > 0.0) {
             $this->suitor($d, 'Mikael', $interest);
-            $d['_test_suitor_interest'] = $interest;   // his attention goes on: the loops below keep the ledger at it
+            $d['_test_suitor_interest'] = $interest;   // Mikael's attention goes on: the loops below keep the ledger at it
         }
         return $d;
     }
@@ -653,7 +653,7 @@ final class RelDynWBondsTest extends TestCase
         // the player left four days ago and does not come back: the neglect begins past the grace and the pull is cut a little more each day
         $loose = $this->neglected(self::ANXIOUS, 30.0, 4, 60.0, ['traits' => ['D' => 0.15, 'Po' => 0.3]]);
         $stages = $this->loop($loose, 24 * 60);
-        $this->assertSame(['drifting', 'seeking', 'strayed', null], array_slice($stages, 0, 4), 'through the stages, and then the ending clears the loop: ' . json_encode($stages));
+        $this->assertSame([null, 'drifting', 'seeking', 'strayed', null], array_slice($stages, 0, 5), 'nothing, then through the stages, and the ending clears the loop: ' . json_encode($stages));
         $this->assertNotEmpty($loose[RelDynBonds::KEY]['breakup'], 'a line crossed ends in an ending');
         $this->assertSame('Mikael', $loose[RelDynBonds::KEY]['infidelity']['with'] ?? ($loose[RelDynBonds::KEY]['breakup']['with'] ?? null));
         // the loyal and mature need more of everything: the same weeks of neglect and suitor, not the same place
@@ -670,6 +670,37 @@ final class RelDynWBondsTest extends TestCase
         $far = $this->neglected(self::SECURE, 85.0, 200, 70.0, ['traits' => ['D' => 0.9, 'Po' => 0.7], 'preference' => 'monogamous']);
         $f = RelDynBonds::infidelityTarget($far, self::T0);
         $this->assertGreaterThanOrEqual($f['lines']['strayed'], $f['target'], 'half a year of neglect and a suitor who never stopped: even the loyal are at the line');
+    }
+
+    public function testALongAbsenceIsWalkedThroughInDaysNotJumpedOverAndTheCalendarScanRunsItForNpcsNotTalkedTo(): void
+    {
+        $make = function (): array {
+            $d = $this->neglected(self::ANXIOUS, 30.0, 3, 0.0, ['traits' => ['D' => 0.15, 'Po' => 0.3]]);
+            $this->at(self::T0);
+            RelDynBonds::advance('Rowan', $d, self::T0);
+            $this->suitor($d, 'Mikael', 100.0, self::T0 + 39 * self::DAY);   // Mikael's attention went on; the ledger was last written the day before
+            return $d;
+        };
+        // one turn after forty days away: the days in between count
+        $d = $make();
+        $t = self::T0 + 40 * self::DAY;
+        $this->at($t);
+        $r = RelDynBonds::advance('Rowan', $d, $t);
+        $ended = !empty($d[RelDynBonds::KEY]['breakup']);
+        $this->assertTrue($ended || in_array(RelDynBonds::infidelityStage($d), ['seeking', 'strayed'], true), 'a single turn after weeks away is not "nothing has happened"');
+        // the calendar scan, with no turn of the NPC's own, does the same
+        $e = $make();
+        $out = RelDynBonds::calendarTick('Rowan', $e, $t);
+        $this->assertTrue($out['changed']);
+        $this->assertSame(!empty($d[RelDynBonds::KEY]['breakup']), !empty($e[RelDynBonds::KEY]['breakup']), 'the same place by either road');
+        $this->assertSame(RelDynBonds::infidelityStage($d), RelDynBonds::infidelityStage($e));
+        // an ending in the calendar scan that costs affinity says so, so the scan commits it to core
+        if (!empty($e[RelDynBonds::KEY]['breakup']) && ($e[RelDynBonds::KEY]['breakup']['fork'] ?? '') !== 'friends') {
+            $this->assertTrue($out['affinity']);
+        }
+        // nothing to tick for a bond that is no romance
+        $friend = $this->npc(self::SECURE, 75.0, 60.0, ['core' => 'platonic']);
+        $this->assertFalse(RelDynBonds::calendarTick('Rowan', $friend, $t)['changed']);
     }
 
     public function testTheLoopNeedsARealSuitorHeldForAWhileBeforeALineIsCrossed(): void

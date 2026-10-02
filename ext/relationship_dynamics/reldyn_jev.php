@@ -112,7 +112,8 @@
  *   dark             ['enabled' => bool, 'floor_strength' => 0..1 (the maturity curve: how much of a floor), 'trust_sense' => 0..1,
  *                     'trust_line' => trust points (low below it, for this NPC), 'gate_required' => the value a floor's gate dimension
  *                     must reach to hold, 'corners' => [healthy, deserve, codependent, adrift each 0..1, summing to 1], 'dominant',
- *                     'deserve' => 0..1 (the "I deserve better" pressure), 'walk_at' => the pressure at which this NPC leaves,
+ *                     'deserve' => 0..1 (the "I deserve better" pressure), 'walk_at' => the pressure at which this NPC leaves, 'trust_fall' => points
+ *                     trust has fallen from its highest,
  *                     'adrift' => 0..1, 'codependent' => 0..1, 'parasite_held' => bool, 'walks' => int] (RelDynDark, decisions §24)
  *   bonds            ['enabled' => bool, 'kinds' => [committed | conflicted | sworn], 'core_type', 'bond_type' (RelDyn's own),
  *                     'committed' => ['since', 'held_game_days', 'needed_game_days'], 'oath' => ['active', 'source', 'strain' 0..1,

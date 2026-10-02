@@ -5561,6 +5561,16 @@ class RelationshipDynamics
             $result['protocols'] = true;
             $changed = true;
         }
+        // The extended bond kinds on the calendar (reldyn_bonds.php, decisions §24): an ended romance's hardening and way back, the
+        // formal rung, and the infidelity loop that the player's absence is what feeds
+        $bonds = RelDynBonds::calendarTick($npcName, $dyn, $now);
+        if ($bonds['changed']) {
+            $result['bonds'] = true;
+            $changed = true;
+            if ($bonds['affinity']) {
+                self::commitPlayerAffinity($npcName, $dyn);   // an ending's aftermath moved the core affinity
+            }
+        }
 
         // A walkaway resolves (or a Toxic sleeper hoovers back) while the player is elsewhere.
         // 'pending' waits for the NPC's own next request, when they physically leave.
@@ -9698,12 +9708,16 @@ class RelationshipDynamics
                 $raw *= floatval($n['duty_factor']);
                 if (abs($raw) < 0.0001) continue;
             }
-            // The codependent lean (RelDynDark): trust stays where it was against evidence, never entirely
-            if ($signal === 'trust' && $raw < 0) {
-                $raw = RelDynDark::trustSignal($dynamics, $raw);
-                if (abs($raw) < 0.0001) continue;
-            }
+            // The codependent lean (RelDynDark): trust stays where it was against evidence, never entirely. The share is taken from the
+            // state the words were spoken in, and given back from what the physics (plasticity, the pull toward the baseline) made of the hit
+            $trustKeeps = ($signal === 'trust' && $raw < 0) ? RelDynDark::trustLanding($dynamics) : 1.0;
             $r = self::applyEvalSignal($npcName, $dynamics, $signal, $raw, $n['tags'], $n['significance'], $bondLevel);
+            if ($trustKeeps < 1.0 && $r['actual'] < 0.0) {
+                $back = round(-$r['actual'] * (1.0 - $trustKeeps), 4);
+                $dynamics['dimensions']['trust']['x'] = min(100.0, floatval($dynamics['dimensions']['trust']['x'] ?? 0.0) + $back);
+                self::log("[DARK] {$npcName}: trusts blindly, the hit to trust lands at " . round($trustKeeps, 2) . ' of itself (' . round($r['actual'], 2) . ' -> ' . round($r['actual'] + $back, 2) . ')');
+                $r['actual'] = round($r['actual'] + $back, 4);
+            }
             $totals[$signal] = $r['actual'];
             // What the legacy path fed downstream: the reason per moved dimension (context
             // <recent_emotional_shifts>) and the dimensional memory (confrontation / diary fuel)
