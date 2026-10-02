@@ -73,7 +73,9 @@ final class RelDynGovernors
             'hostile_types' => ['hostile'],
             // RelDyn's own overlays (getRelationshipType) read as a tier whatever core's type says:
             // a parasite (MDD 6.2, the player as a wallet) is no partner's bond, its floor included
-            'overlay_types' => ['parasite' => 'distant'],
+            'overlay_types' => ['parasite' => 'distant', 'conflicted' => 'crush'],
+            // overlay types that outrank core's own hostile row (core 'ex'): the conflicted state of an ended romance (reldyn_bonds.php)
+            'overlay_first' => ['conflicted'],
             // RelDyn depth tier (core affinity, capped at the attraction ceiling) -> governor tier
             'depth' => ['hostile' => 'hostile', 'stranger' => 'distant', 'acquaintance' => 'distant',
                         'friend' => 'friendly', 'close_friend' => 'friendly', 'bonded' => 'friendly', 'devoted' => 'friendly'],
@@ -113,8 +115,14 @@ final class RelDynGovernors
         $core = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         $blocked = array_map('strtolower', (array) ($dynamics['_attraction']['blocked_types'] ?? []));
         $byCore = ((array) ($cfg['core_types'] ?? []))[$core] ?? null;
-        if (is_string($byCore) && $byCore === self::HOSTILE) return self::HOSTILE;
         $type = (string) RelationshipDynamics::getRelationshipType('', $dynamics);
+        // The soft end of a romance (core 'ex', RelDyn's conflicted state) outranks the hostile row core's 'ex' maps to: the passion
+        // that is left can burn, and the way back is not shut (reldyn_bonds.php)
+        if (in_array($type, (array) ($cfg['overlay_first'] ?? []), true)) {
+            $first = ((array) ($cfg['overlay_types'] ?? []))[$type] ?? null;
+            if (is_string($first) && self::rowOf($first, $cfg) !== null) return $first;
+        }
+        if (is_string($byCore) && $byCore === self::HOSTILE) return self::HOSTILE;
         if (in_array($type, (array) ($cfg['hostile_types'] ?? []), true)) return self::HOSTILE;
         $overlay = ((array) ($cfg['overlay_types'] ?? []))[$type] ?? null;
         if (is_string($overlay) && self::rowOf($overlay, $cfg) !== null) return $overlay;

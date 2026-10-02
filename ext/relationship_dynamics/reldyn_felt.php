@@ -655,8 +655,8 @@ final class RelDynFelt
             $lines[] = self::line('duty', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['duty']),
                 self::fill((string) $t['duty'], $vars + ['{QUEST}' => $quest !== '' ? $quest : 'the task at hand']), ['must' => true]);
         }
-        // --- Parasite ---
-        if (($dynamics['_relationship_type_override'] ?? null) === 'parasite') {
+        // --- Parasite --- (the dark path's own line replaces this one while it holds the overlay: reldyn_dark.php)
+        if (($dynamics['_relationship_type_override'] ?? null) === 'parasite' && !RelDynDark::holdsParasite($dynamics)) {
             $lines[] = self::line('parasite', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['parasite']), self::fill((string) $t['parasite'], $vars));
         }
 
@@ -693,6 +693,21 @@ final class RelDynFelt
         if ($keeping !== null) {
             $lines[] = self::line($keeping['key'], self::SCOPE_BOND, self::LANE_CORE, floatval($keeping['salience']), (string) $keeping['text'],
                 ['intense' => $keeping['band'] === 'controlling']);
+        }
+        // --- The maturity gate's dark path (reldyn_dark.php, decisions §24): deserving better, the codependent lean, the adrift state ---
+        foreach (RelDynDark::feltLines($dynamics, $npc, $player, $tier) as $l) {
+            $lines[] = self::line('dark_' . $l['key'], self::SCOPE_BOND, self::LANE_CORE, floatval($l['salience']), (string) $l['text']);
+        }
+        // --- Extended bond kinds (reldyn_bonds.php, decisions §24): an oath that binds, an ended romance, the pull toward someone else;
+        // the rung, the ending and the way back are said once to the player's face ---
+        foreach (RelDynBonds::feltLines($dynamics, $npc, $player, $tier) as $l) {
+            $lines[] = self::line('bonds_' . $l['key'], self::SCOPE_BOND, self::LANE_CORE, floatval($l['salience']), (string) $l['text']);
+        }
+        $bonds = RelDynBonds::takeFeltLines($dynamics, $npc, $player, !empty($env['player_addressed']));
+        if ($bonds['changed']) $changed = true;
+        foreach ($bonds['lines'] as $l) {
+            $lines[] = self::line('bonds_' . $l['key'], self::SCOPE_BOND, self::LANE_TURN, floatval($l['salience']), (string) $l['text'],
+                ['must' => !empty($l['must']), 'intense' => !empty($l['intense'])]);
         }
         // One voice: the standing pull-back that names what is missing makes the generic unmet line beside it a repeat
         if ($tier >= 1 && RelDynPullback::active($dynamics) && !RelDynPullback::notLetInYet($dynamics) && RelDynPullback::namesNeeds($dynamics)) {

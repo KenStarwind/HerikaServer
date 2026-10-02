@@ -713,6 +713,20 @@ final class RelDynTimeline
         self::clampIn($d, [RelDynKeeping::KEY, 'gamets'], $T);
         self::clampIn($d, [RelDynKeeping::KEY, 'controlling_since'], $T);
         self::clampIn($d, [RelDynKeeping::KEY, 'conflict', 'opened'], $T);
+        // The dark path (reldyn_dark.php) and the bond kinds (reldyn_bonds.php): their clocks and stamps on the loaded time at the latest
+        self::clampIn($d, [RelDynDark::KEY, 'gamets'], $T);
+        foreach (['romantic_since', 'committed_since'] as $stamp) {
+            self::clampIn($d, [RelDynBonds::KEY, $stamp], $T);
+        }
+        foreach (['checked', 'since', 'broken_at', 'renewed_at'] as $stamp) {
+            self::clampIn($d, [RelDynBonds::KEY, 'oath', $stamp], $T);
+        }
+        foreach (['at', 'hardened_at', 'rekindled_at', 'thawed_at'] as $stamp) {
+            self::clampIn($d, [RelDynBonds::KEY, 'breakup', $stamp], $T);
+        }
+        foreach (['gamets', 'strayed_since', 'line_crossed'] as $stamp) {
+            self::clampIn($d, [RelDynBonds::KEY, 'infidelity', $stamp], $T);
+        }
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'at_gamets'], $T);
         // Combat's rescue response (reldyn_combat.php): a fall the load discarded never happened (no

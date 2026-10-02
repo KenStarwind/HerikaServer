@@ -1498,6 +1498,12 @@ class RelationshipDynamics
             // Every NPC has it, scaled by her attachment corners, insecurity and possessiveness, and it costs the bond
             // above a point (reldyn_keeping.php, RelDynKeeping::configDefaults()).
             'keeping' => RelDynKeeping::configDefaults(),
+            // ===== The maturity gate and the dark path (Ken 2026-10-01 §24): floors that scale with maturity, "I deserve
+            // better", the codependent lean, the adrift state (reldyn_dark.php, RelDynDark::configDefaults()).
+            'dark_path' => RelDynDark::configDefaults(),
+            // ===== Extended bond kinds (Ken 2026-10-01 §24): committed, conflicted, sworn, the breakup fork and the infidelity
+            // loop (reldyn_bonds.php, RelDynBonds::configDefaults()).
+            'bonds' => RelDynBonds::configDefaults(),
             // ===== Consent (Ken 2026-10-01 §21): whether intimacy happens at all =====
             // The one decision Sharmat defers to: closed states (asexual, aromantic, friendzoned, walked away), then
             // what the NPC wants less what weighs on it, by who they are, and who gives in anyway
@@ -9692,6 +9698,11 @@ class RelationshipDynamics
                 $raw *= floatval($n['duty_factor']);
                 if (abs($raw) < 0.0001) continue;
             }
+            // The codependent lean (RelDynDark): trust stays where it was against evidence, never entirely
+            if ($signal === 'trust' && $raw < 0) {
+                $raw = RelDynDark::trustSignal($dynamics, $raw);
+                if (abs($raw) < 0.0001) continue;
+            }
             $r = self::applyEvalSignal($npcName, $dynamics, $signal, $raw, $n['tags'], $n['significance'], $bondLevel);
             $totals[$signal] = $r['actual'];
             // What the legacy path fed downstream: the reason per moved dimension (context
@@ -9793,6 +9804,9 @@ class RelationshipDynamics
         // Betrayal by a bonded partner (Divine Intervention) and the exchange's kind in the
         // parasite ledger (reldyn_protocols.php)
         RelDynProtocols::onEvalItem((string) $npcName, $n, $dynamics);
+        // Treated well, the NPC grows toward a floor (the dark path limits itself); an ended romance's way back or on (RelDynBonds)
+        RelDynDark::onEvalItem((string) $npcName, $n, $dynamics, $itemGamets);
+        RelDynBonds::onEvalItem((string) $npcName, $n, $dynamics, $itemGamets);
         // The exchange as an arousal spike whose valence its context decides (MDD 3.2, the social
         // feed of RelDynMoodAxes; off by default): the eval classified it, code sizes it
         foreach (RelDynMoodAxes::onEvalItem($dynamics, $n, $dynamics['inferred_temperament'] ?? null) as $dim => $v) {
@@ -10669,6 +10683,17 @@ class RelationshipDynamics
             'passion' => 0.5,
             'decay_rate' => 4.0,
         ],
+        // The soft end of a romance (reldyn_bonds.php, decisions §24; core 'ex' + RelDyn's own state): warmth and passion stay
+        // alive, trust and comfort are cooler than a friend's, the bond fades slower than a stranger's and is not held by a floor.
+        'conflicted' => [
+            'trust'   => 0.8,
+            'comfort' => 0.8,
+            'respect' => 1.0,
+            'warmth'  => 1.2,
+            'passion' => 1.0,
+            'decay_rate' => 0.8,
+            'resistance' => 1.0,
+        ],
     ];
     /**
      * Default mapping from relationship stage to relationship type.
@@ -10769,6 +10794,13 @@ class RelationshipDynamics
         $override = $dynamics['_relationship_type_override'] ?? null;
         if ($override && isset(self::RELATIONSHIP_TYPE_MODIFIERS[$override])) {
             return $override;
+        }
+
+        // 2b. Extended bond kinds (RelDynBonds, decisions §24): the soft end of a romance (conflicted: core 'ex' + RelDyn's own state)
+        // and an oath-bound NPC whose core type carries no romance (sworn). Core's UI keeps core's own types; committed is the bonded row.
+        $kindType = RelDynBonds::typeOverride($dynamics, $coreMapped);
+        if ($kindType !== null) {
+            return $kindType;
         }
 
         // 3. PR 12: Friendzone from Attraction Matrix
@@ -11034,6 +11066,7 @@ class RelationshipDynamics
         'loyal'         => ['trust', 'respect'], // Same as follower
         'mentor'        => ['respect', 'maturity'], // "Don't disrespect what I taught you"
         'student'       => ['respect', 'maturity'],
+        'conflicted'    => 'none',              // The soft end of a romance holds no tier: raw affinity (reldyn_bonds.php)
         'mercenary'     => 'none',              // Pure economics, no floor
         'transactional' => 'none',
         'rival'         => 'no_decay',          // Hate is self-sustaining
@@ -11291,9 +11324,13 @@ class RelationshipDynamics
         $maturity = floatval($dims['maturity']['x'] ?? 50);
         $maturityActive = ($maturity > self::MATURITY_FLOOR_THRESHOLD);
         $result['floor_active'] = $maturityActive;
+        // How much of a floor the NPC has (RelDynDark, decisions §24): the maturity curve, centred on the draft's 40, not
+        // a switch. The gate dimension must reach gateLine to hold: the old line at full strength, higher as maturity falls.
+        $strength = RelDynDark::floorStrength($dynamics);
+        $gateLine = RelDynDark::gateRequired($strength);
 
-        // Immature NPCs: NO floors. Demotion proceeds on raw affinity alone.
-        if (!$maturityActive) {
+        // No floor at all (immature, strength gone): demotion proceeds on raw affinity alone.
+        if (RelDynDark::floorOff($strength)) {
             $result['should_demote'] = true;
             $result['reason'] = 'immature_no_floor';
             $result['new_tier'] = self::getCurrentTier($affinity);
@@ -11314,16 +11351,16 @@ class RelationshipDynamics
         // Single dimension gate
         if (is_string($gate)) {
             $gateValue = floatval($dims[$gate]['x'] ?? 50);
-            if ($gateValue < self::TIER_GATE_THRESHOLD) {
+            if ($gateValue < $gateLine) {
                 $result['should_demote'] = true;
                 $result['reason'] = "gate_failed_{$gate}";
                 $result['new_tier'] = self::getCurrentTier($affinity);
-                $result['gate_status'] = "{$gate}=" . round($gateValue, 1) . '<' . self::TIER_GATE_THRESHOLD;
+                $result['gate_status'] = "{$gate}=" . round($gateValue, 1) . '<' . round($gateLine, 1);
                 return $result;
             }
             // Gate holds -- no demotion
             $result['reason'] = 'gate_holds';
-            $result['gate_status'] = "{$gate}=" . round($gateValue, 1) . '>=' . self::TIER_GATE_THRESHOLD;
+            $result['gate_status'] = "{$gate}=" . round($gateValue, 1) . '>=' . round($gateLine, 1);
             return $result;
         }
 
@@ -11333,8 +11370,8 @@ class RelationshipDynamics
             $gateDetails = [];
             foreach ($gate as $gateDim) {
                 $gateValue = floatval($dims[$gateDim]['x'] ?? 50);
-                $failed = ($gateValue < self::TIER_GATE_THRESHOLD);
-                $gateDetails[] = "{$gateDim}=" . round($gateValue, 1) . ($failed ? '<' : '>=') . self::TIER_GATE_THRESHOLD;
+                $failed = ($gateValue < $gateLine);
+                $gateDetails[] = "{$gateDim}=" . round($gateValue, 1) . ($failed ? '<' : '>=') . round($gateLine, 1);
                 if (!$failed) {
                     $allFailed = false;
                 }
@@ -16233,6 +16270,8 @@ class RelationshipDynamics
     {
         $currentOverride = $dynamics['_relationship_type_override'] ?? null;
         if ($currentOverride !== 'parasite') return null;
+        // The dark path holds this overlay until its own pressure eases (RelDynDark): the gift ledger does not lift it
+        if (RelDynDark::holdsParasite($dynamics)) return null;
         $p = RelDynProtocols::config()['parasite'];
 
         $pattern = $dynamics['_interaction_pattern'] ?? [];
@@ -18393,6 +18432,14 @@ class RelationshipDynamics
         // Check for hoover reduction (post-hoover NPCs trigger walkaway sooner)
         $hooverCount = intval($dynamics['_hoover_count'] ?? 0);
         $effectiveThresholds = array_replace(self::AUTONOMY_THRESHOLDS, (array) $acfg['thresholds']);
+        // The codependent lean (RelDynDark, decisions §24): trusting blindly, saying no does not come easily, so every line lifts
+        // by up to autonomy_lift points. The forced triggers below (resentment at 90, an affinity gone) are not lifted.
+        $lift = RelDynDark::autonomyLift($dynamics);
+        if ($lift > 0.0) {
+            foreach (['compliant', 'resistant', 'refusing'] as $line) {
+                if (isset($effectiveThresholds[$line])) $effectiveThresholds[$line] += $lift;
+            }
+        }
         if ($hooverCount > 0) {
             $reduction = self::HOOVER_WALKAWAY_THRESHOLD_REDUCTION * $hooverCount;
             // Lower the refusing/walkaway thresholds
@@ -18439,10 +18486,20 @@ class RelationshipDynamics
         if (self::affinityWalkawayDue($dynamics)) {
             $state = 'walkaway';
         }
+        // The maturity gate's dark path: a mature NPC whose trust stayed low has weighed it and deserves better
+        // (RelDynDark: the pressure reached the NPC's own line)
+        if (RelDynDark::walkawayDue($dynamics)) {
+            $state = 'walkaway';
+        }
         // resentment_self crisis (dimension design: above 90 the NPC seeks isolation, the autonomy
         // override self-triggered): a people-pleaser's silence ends here too
         if (RelDynResentment::selfCrisis($dynamics)) {
             $state = 'walkaway';
+        }
+        // An oath holds (RelDynBonds, decisions §24): a sworn NPC serves whatever they feel, until the oath itself strains and
+        // breaks; short of that the strongest state is a reluctant one
+        if (RelDynBonds::dutyHolds($dynamics) && ($state === 'refusing' || $state === 'walkaway')) {
+            $state = 'resistant';
         }
 
         // A walkaway is due; it starts only when one can (walkawayHold: walkaway_enabled on, no
@@ -18595,7 +18652,11 @@ class RelationshipDynamics
 
         // Walkaway
         $walkState = $dynamics['_walkaway_state'] ?? 'pending';
-        $shame = ($dynamics['_walkaway_reason'] ?? self::walkawayReason($dynamics)) === 'shame';
+        $walkReason = $dynamics['_walkaway_reason'] ?? self::walkawayReason($dynamics);
+        if ($walkReason === 'deserve' && $walkState !== 'permanent') {
+            return RelDynDark::walkawayText($npcName);
+        }
+        $shame = $walkReason === 'shame';
         if ($shame && ($walkState === 'active' || $walkState === 'boundary_test')) {
             // Rulings §18 #7: approaching her is not pursuit; a gentle word can reach her
             return "{$npcName} has gone off alone, too ashamed to face anyone. "
@@ -18630,7 +18691,7 @@ class RelationshipDynamics
     /**
      * Why an NPC the autonomy evaluation sends away is leaving (prerequest's walkaway
      * initiation): 'ick_comfort' (ick with comfort below 20), 'resentment' (above 70),
-     * 'jealousy' (MDD 6.5), else 'autonomy'. A resentment walkaway that starts on the player's
+     * 'jealousy' (MDD 6.5), 'affinity' (MDD 6.5), 'deserve' (the dark path, RelDynDark), else 'autonomy'. A resentment walkaway that starts on the player's
      * return from an absence whose neglect grew that resentment is 'neglect' (rulings
      * 2026-09-24 §8): its parting conversation is not pursuit (processWalkawayTick). Pure.
      */
@@ -18654,6 +18715,9 @@ class RelationshipDynamics
         }
         if (self::affinityWalkawayDue($dynamics)) {
             return 'affinity';   // MDD 6.5
+        }
+        if (RelDynDark::walkawayDue($dynamics)) {
+            return 'deserve';    // the maturity gate's dark path: a mature NPC with little trust deserves better
         }
         if (RelDynResentment::selfCrisis($dynamics)) {
             return 'shame';      // resentment_self crisis: the NPC isolates itself
@@ -18708,6 +18772,11 @@ class RelationshipDynamics
     public static function severBond(string $npcName, array &$dynamics): ?string
     {
         $dynamics['_reject_recruitment'] = true;
+        // A romance that is severed ends through the breakup fork (RelDynBonds): hard, conflicted or friends, by who the NPC is
+        $forked = RelDynBonds::onSever($npcName, $dynamics);
+        if ($forked !== null) {
+            return $forked['written'] ?? null;
+        }
         $from = strtolower(trim((string) ($dynamics['_core_rel_type'] ?? '')));
         $to = ((array) self::configValue('walkaway_sever_types'))[$from] ?? null;
         if (!is_string($to) || $to === '') {
@@ -18768,6 +18837,12 @@ class RelationshipDynamics
         $dynamics['_walkaway_player_followed'] = false;
 
         self::log("[WALKAWAY] Initiated for {$npcName}: reason={$reason}, boundary_test={$testHours}h");
+
+        // The dark path acted on its pressure; a romance that is walked out of ends through the breakup fork (RelDynBonds)
+        if ($reason === 'deserve') {
+            RelDynDark::onWalkaway((string) $npcName, $dynamics);
+        }
+        RelDynBonds::onWalkaway((string) $npcName, $dynamics, (string) $reason);
     }
 
     /**
@@ -19738,6 +19813,10 @@ require_once __DIR__ . '/reldyn_concern.php';
 require_once __DIR__ . '/reldyn_pullback.php';
 // Keeping: the fear of losing the relationship and acting to keep it (decisions §20.3); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_keeping.php';
+// The maturity gate and the dark path (decisions §24): floor strength, "I deserve better", codependent, adrift; defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_dark.php';
+// Extended bond kinds, the breakup fork and the infidelity loop (decisions §24); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_bonds.php';
 // Consent: whether intimacy happens at all, the one decision Sharmat defers to (decisions §21); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_consent.php';
 // Resentment threshold events: the MDD 15.5 confrontation, resentment_self, guilt bleed; defaults in defaultConfig().

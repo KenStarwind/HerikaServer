@@ -377,6 +377,16 @@ if (!empty($reldynCfg['internal_weather_enabled'])) {
 // on the game calendar; with internal weather off the held pull relaxes back to none.
 RelationshipDynamics::applyWeatherGravity($npcName, $dynamics);
 
+// ========== THE MATURITY GATE'S DARK PATH (Ken 2026-10-01 §24, reldyn_dark.php) ==========
+// "I deserve better" (a mature NPC whose trust stayed low), the adrift state (no floors, no trust: the parasite overlay) as pressures
+// on the game calendar. Before the pull-back: the pressure to deserve better is one of its inputs (the NPC closes off and says what is
+// missing before leaving); the walkaway it may lead to is asked for below, with the autonomy evaluation.
+try {
+    RelDynDark::advance($npcName, $dynamics, RelationshipDynamics::currentGamets());
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('dark path', $e);
+}
+
 // ========== LET IN / PULLING BACK (Ken 2026-10-01, reldyn_pullback.php) ==========
 // Temporary, not a pass / fail: the weather (and the gravity it has built up), the fulfillment deficit and
 // unresolved resentment press on her; mood sensitivity scales with immaturity, guard lowers the threshold, a
@@ -398,6 +408,16 @@ try {
     RelDynKeeping::advance($npcName, $dynamics, RelationshipDynamics::currentGamets());
 } catch (Throwable $e) {
     RelationshipDynamics::logError('keeping', $e);
+}
+
+// ========== EXTENDED BOND KINDS (Ken 2026-10-01 §24, reldyn_bonds.php) ==========
+// The formal rung of a romance (committed), the oath that binds (sworn), an ended romance's way back or on (conflicted, ex, friends),
+// and the infidelity loop (neglect makes room for someone else): on the game calendar, after the pull-back and the fear of losing the
+// player (they share their inputs) and before the autonomy evaluation (a broken oath, a leaving, a breakup are decided by then).
+try {
+    RelDynBonds::advance($npcName, $dynamics, RelationshipDynamics::currentGamets());
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('bond kinds', $e);
 }
 
 // ========== CREATURE MOODIFICATIONS (feedback_creature_moodifications, decisions §7) ==========
