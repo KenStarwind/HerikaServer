@@ -577,3 +577,4 @@ if (!empty($reldynCfg['parasite_detection_enabled'])) {
 if (RelDynConsent::refresh($npcName, $dynamics)) {
     RelationshipDynamics::saveDynamics($npcName, $dynamics);
 }
+RelDynVocal::refresh($npcName, $dynamics);

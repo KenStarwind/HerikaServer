@@ -236,6 +236,7 @@ final class RelDynSettings
             'pullback'           => [RelDynPullback::class, 'config'],
             'keeping'            => [RelDynKeeping::class, 'config'],
             'consent'            => [RelDynConsent::class, 'config'],
+            'vocal'              => [RelDynVocal::class, 'config'],
             'resentment_arc'     => [RelDynResentment::class, 'config'],
             'intimacy_need'      => [RelDynIntimacy::class, 'config'],
             'impulse'            => [RelDynImpulse::class, 'config'],
