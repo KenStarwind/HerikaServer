@@ -57,6 +57,9 @@ require_once __DIR__ . '/relationship_dynamics.php';
 final class RelDynCascadeExt
 {
     const KEY = '_circle';
+    /** plugin_extended_data.reldyn key of who the NPC talked to and when: [['with', 'gamets']], appended atomically, outside the bond state (an NPC-to-NPC exchange moves nothing of the player pair). */
+    const TALK_KEY = 'circle_talk';
+    const TALK_KEEP = 16;
     const MAX_MENTIONS = 8;
     const MAX_LINKS = 8;
     /** NPCs of the NPC's bonds (strongest first) a triangle looks through. */
@@ -277,7 +280,6 @@ final class RelDynCascadeExt
         $s['assoc'] = is_array($s['assoc'] ?? null) ? $s['assoc'] : [];
         $s['rivals'] = is_array($s['rivals'] ?? null) ? $s['rivals'] : [];
         $s['mentions'] = is_array($s['mentions'] ?? null) ? $s['mentions'] : [];
-        $s['talks'] = is_array($s['talks'] ?? null) ? $s['talks'] : [];
         return $s;
     }
 
@@ -555,13 +557,20 @@ final class RelDynCascadeExt
             || RelationshipDynamics::isPlayerRelationshipKey($other)) {
             return false;
         }
-        $dynamics = RelationshipDynamics::getDynamics($npcName);
-        if (empty($dynamics['love_language_primary'])) return false;   // no bond state of the NPC's own yet: nothing for the circle to hang on
-        $state = self::state($dynamics);
-        $state['talks'][mb_strtolower(trim($other))] = $now;
-        $state['talks'] = array_slice($state['talks'], -self::MAX_MENTIONS, null, true);
-        $dynamics[self::KEY] = $state;
-        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+        // only a talk with someone the NPC has a bond worth reading (the common radiant exchange writes nothing)
+        $minBond = floatval(self::config()['association']['min_bond']);
+        $counts = false;
+        foreach (self::npcBonds($npcName) as $name => $b) {
+            if (strcasecmp($name, trim($other)) === 0 && abs($b['aff']) > $minBond) { $counts = true; break; }
+        }
+        if (!$counts) return false;
+        $id = RelDynStorage::resolveNpcId($npcName);
+        if ($id === null) return false;
+        // a line in the NPC's own talk ledger, appended atomically; the bond state (dynamics) is not touched
+        if (!RelDynStorage::appendItem($id, self::TALK_KEY, ['with' => trim($other), 'gamets' => $now])) return false;
+        $have = RelDynStorage::readKeyForUpdate($id, self::TALK_KEY);
+        $n = is_array($have['value'] ?? null) && array_is_list($have['value']) ? count($have['value']) : 0;
+        if ($n > self::TALK_KEEP) RelDynStorage::dropFirstItems($id, self::TALK_KEY, $n - self::TALK_KEEP);
         RelationshipDynamics::log("[CIRCLE] {$npcName} and {$other} talked: what {$other} knows of the player's ties is known to the NPC");
         return true;
     }
@@ -578,6 +587,16 @@ final class RelDynCascadeExt
         $entries = self::playerEntries(array_keys($cands));
         $myHold = null;
         $links = [];
+        // who the NPC talked to, and when (the newest talk with each)
+        $talks = [];
+        $id = RelDynStorage::resolveNpcId($npcName);
+        $ledger = $id !== null ? RelDynStorage::readKeyForUpdate($id, self::TALK_KEY) : null;
+        foreach (is_array($ledger['value'] ?? null) && array_is_list($ledger['value']) ? $ledger['value'] : [] as $t) {
+            if (is_array($t) && is_string($t['with'] ?? null) && is_numeric($t['gamets'] ?? null)) {
+                $k = mb_strtolower(trim($t['with']));
+                $talks[$k] = max($talks[$k] ?? 0.0, floatval($t['gamets']));
+            }
+        }
         foreach ($cands as $name => $b) {
             $e = $entries[mb_strtolower($name)] ?? null;
             if ($e === null || !is_numeric($e['player']['aff'] ?? null)) continue;
@@ -586,7 +605,7 @@ final class RelDynCascadeExt
             $mention = $state['mentions'][mb_strtolower($name)] ?? null;
             $named = is_array($mention) && is_numeric($mention['at'] ?? null)
                 && $now - floatval($mention['at']) <= floatval($cfg['mention']['knowledge_hold_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0;
-            $talk = $state['talks'][mb_strtolower($name)] ?? null;
+            $talk = $talks[mb_strtolower($name)] ?? null;
             $talked = is_numeric($talk) && $now >= floatval($talk)
                 && $now - floatval($talk) <= floatval($a['talk_hold_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0;
             $via = $named ? 'named' : ($talked ? 'talked' : null);

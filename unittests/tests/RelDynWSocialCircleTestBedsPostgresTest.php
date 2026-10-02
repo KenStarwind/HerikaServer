@@ -283,8 +283,10 @@ final class RelDynWSocialCircleTestBedsPostgresTest extends TestCase
         $GLOBALS['RECHAT_PREVIOUS_SPEAKER'] = self::FARKAS;
         $talk->request(self::LYNLY, ['rechat', (string) $talk->realTs, (string) $this->t(5.0), json_encode(['speaker' => self::FARKAS, 'text' => 'Did you hear?'])], self::FARKAS, 'talk');
         unset($GLOBALS['RECHAT_PREVIOUS_SPEAKER']);
-        $this->assertArrayHasKey('farkas', $this->circle($talk, self::LYNLY)['talks'], 'noted in her own circle');
-        $this->assertSame(1, count($this->circle($talk, self::LYNLY)['talks']));
+        $ledger = $talk->pluginKey(self::LYNLY, RelDynCascadeExt::TALK_KEY);
+        $this->assertCount(1, $ledger, 'noted in her own talk ledger');
+        $this->assertSame(self::FARKAS, $ledger[0]['with']);
+        $this->assertArrayNotHasKey('talks', $this->circle($talk, self::LYNLY), 'and not in her bond state: an NPC-to-NPC exchange moves nothing of the player pair');
         $talk->turn(self::LYNLY, 'Good evening again.', $this->t(7.0), 'b');
         $this->assertSame('talked', $link($talk)['via']);
         $this->assertSame(1.0, floatval($link($talk)['knowledge']));

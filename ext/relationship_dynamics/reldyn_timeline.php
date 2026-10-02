@@ -725,9 +725,6 @@ final class RelDynTimeline
         foreach (array_keys(is_array($d[RelDynCascadeExt::KEY]['rivals'] ?? null) ? $d[RelDynCascadeExt::KEY]['rivals'] : []) as $rival) {
             foreach (['at', 'since'] as $stamp) self::clampIn($d, [RelDynCascadeExt::KEY, 'rivals', $rival, $stamp], $T);
         }
-        foreach (array_keys(is_array($d[RelDynCascadeExt::KEY]['talks'] ?? null) ? $d[RelDynCascadeExt::KEY]['talks'] : []) as $talked) {
-            self::clampIn($d, [RelDynCascadeExt::KEY, 'talks', $talked], $T);
-        }
         foreach (array_keys(is_array($d[RelDynCascadeExt::KEY]['mentions'] ?? null) ? $d[RelDynCascadeExt::KEY]['mentions'] : []) as $named) {
             foreach (['at', 'felt_at'] as $stamp) self::clampIn($d, [RelDynCascadeExt::KEY, 'mentions', $named, $stamp], $T);
         }
