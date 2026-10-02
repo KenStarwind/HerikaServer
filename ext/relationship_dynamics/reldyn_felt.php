@@ -736,6 +736,15 @@ final class RelDynFelt
             $lines[] = self::line('cascade_' . $l['key'], self::SCOPE_BOND, self::LANE_TURN, floatval($l['salience']), (string) $l['text']);
         }
 
+        // --- The circle (cascade-extensions, reldyn_cascade_ext.php): how her friends and foes colour the player, the
+        // rivalry of a love triangle, and the name the player just said (a one-shot) ---
+        $circle = RelDynCascadeExt::feltLines($dynamics, $npc, $player, (array) ($env['people'] ?? []), !empty($env['player_addressed']));
+        if ($circle['changed']) $changed = true;
+        foreach ($circle['lines'] as $l) {
+            $lines[] = self::line('circle_' . $l['key'], self::SCOPE_BOND, $l['lane'] === 'turn' ? self::LANE_TURN : self::LANE_CORE,
+                floatval($l['salience']), (string) $l['text'], ['tier0' => $l['key'] === 'association']);
+        }
+
         // --- Intimacy need (rulings §10) ---
         $intimacy = RelDynIntimacy::feltText($npc, $player, $dynamics, $now);
         if ($intimacy) $lines[] = self::line('intimacy', self::SCOPE_BOND, self::LANE_CORE, floatval($sal['intimacy']), $intimacy);

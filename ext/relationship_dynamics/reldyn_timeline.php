@@ -713,6 +713,21 @@ final class RelDynTimeline
         self::clampIn($d, [RelDynKeeping::KEY, 'gamets'], $T);
         self::clampIn($d, [RelDynKeeping::KEY, 'controlling_since'], $T);
         self::clampIn($d, [RelDynKeeping::KEY, 'conflict', 'opened'], $T);
+        // The duty affinity channel (reldyn_duty.php): its clocks on the loaded time at the latest
+        foreach (['gamets', 'last_credit', 'since'] as $stamp) {
+            self::clampIn($d, [RelDynDuty::KEY, $stamp], $T);
+        }
+        // The circle (reldyn_cascade_ext.php): the friend-of-a-friend reading's clocks, each rival's and each name the player said
+        foreach (['at', 'checked'] as $stamp) {
+            self::clampIn($d, [RelDynCascadeExt::KEY, 'assoc', $stamp], $T);
+        }
+        self::clampIn($d, [RelDynCascadeExt::KEY, 'rivals_checked'], $T);
+        foreach (array_keys(is_array($d[RelDynCascadeExt::KEY]['rivals'] ?? null) ? $d[RelDynCascadeExt::KEY]['rivals'] : []) as $rival) {
+            foreach (['at', 'since'] as $stamp) self::clampIn($d, [RelDynCascadeExt::KEY, 'rivals', $rival, $stamp], $T);
+        }
+        foreach (array_keys(is_array($d[RelDynCascadeExt::KEY]['mentions'] ?? null) ? $d[RelDynCascadeExt::KEY]['mentions'] : []) as $named) {
+            foreach (['at', 'felt_at'] as $stamp) self::clampIn($d, [RelDynCascadeExt::KEY, 'mentions', $named, $stamp], $T);
+        }
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'since_gamets'], $T);
         self::clampIn($d, [RelDynAbsence::BREAK_KEY, 'at_gamets'], $T);
         // Combat's rescue response (reldyn_combat.php): a fall the load discarded never happened (no

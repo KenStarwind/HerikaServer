@@ -1269,6 +1269,36 @@ final class RelDynEditor
             : 'no (pressure ' . self::num($pb['pressure'], 2) . ')', ['state' => 'state',
             'hint' => 'temporary: the weather, unmet needs, resentment and, after intimacy, a fear of closeness press on the NPC; reset lets them open up at once (it comes back if the pressure does)',
             'reset' => isset($d[RelDynPullback::KEY]) ? function (array &$dd) { unset($dd[RelDynPullback::KEY]); } : null]);
+        // The duty affinity channel (reldyn_duty.php, never desire): its state, and the role the NPC serves in (derived from the
+        // party, the factions and core's type, or hand-set)
+        $du = $jev['duty_channel'];
+        $fields[] = self::field('state:duty_affinity', 'Duty affinity', 'readonly', $du['value'] > 0 || $du['bound']
+            ? self::num($du['value'], 1) . ' (' . ($du['band'] ?? 'below the first band') . ', ' . ($du['role'] ?? 'no role') . ($du['bound'] ? ', serving now' : ', not serving now') . ')'
+            : 'none', ['state' => 'state',
+            'hint' => 'earned by serving the player (time in service, fights beside them, quests, being looked after); decays slowly after the service ends; it never feeds passion, romance or consent. Reset forgets it',
+            'reset' => isset($d[RelDynDuty::KEY]) ? function (array &$dd) { unset($dd[RelDynDuty::KEY]); } : null]);
+        $roleSet = is_string($d[RelDynDuty::ROLE_OVERRIDE_KEY] ?? null) ? (string) $d[RelDynDuty::ROLE_OVERRIDE_KEY] : '';
+        $fields[] = self::field('duty:role', 'Duty role', 'select', $roleSet, [
+            'options' => ['' => 'derived (party, factions, core type)', 'housecarl' => 'housecarl', 'follower' => 'follower', 'sworn' => 'sworn protector', 'none' => 'none (never bound)'],
+            'state' => $roleSet === '' ? 'derived' : 'override', 'derived' => '',
+            'hint' => 'who the NPC serves as; derived from the player\'s party, a housecarl or follower faction and core\'s sworn type. A hand-set role outranks the derivation',
+            'set' => function (array &$dd, $v): ?string {
+                if ($v === '') { unset($dd[RelDynDuty::ROLE_OVERRIDE_KEY]); return null; }
+                if (!in_array($v, ['housecarl', 'follower', 'sworn', 'none'], true)) return 'unknown role';
+                $dd[RelDynDuty::ROLE_OVERRIDE_KEY] = $v;
+                return null;
+            },
+            'reset' => function (array &$dd) { unset($dd[RelDynDuty::ROLE_OVERRIDE_KEY]); },
+        ]);
+        // The circle (reldyn_cascade_ext.php): derived from the NPC's bonds, so there is nothing to reset (what it applied is tracked)
+        $ci = $jev['circle'];
+        $links = array_map(fn($l) => $l['name'] . ' ' . sprintf('%+.1f', $l['lean']), $ci['association']['links']);
+        $fields[] = self::field('state:circle', 'Friends and foes', 'readonly', abs($ci['association']['applied']) >= 0.05 || $ci['rivals'] !== []
+            ? 'regard for the player ' . sprintf('%+.1f', $ci['association']['applied']) . ' (target ' . sprintf('%+.1f', $ci['association']['target']) . ')'
+                . ($links ? '; ' . implode(', ', $links) : '')
+                . ($ci['rivals'] ? '; rivals: ' . implode(', ', array_map(fn($n, $r) => $n . ' ' . sprintf('%+.1f', $r['applied']), array_keys($ci['rivals']), $ci['rivals'])) : '')
+            : 'none', ['state' => 'state',
+            'hint' => 'derived from the NPC\'s bonds to others: a friend of someone close to the player warms, a foe of theirs cools; two who want the player turn cool toward each other. Core points']);
         $walk = (string) ($d['_walkaway_state'] ?? 'normal');
         $fields[] = self::field('state:walkaway', 'Walkaway', 'readonly', $walk . (isset($d['_walkaway_reason']) ? ' (' . (string) $d['_walkaway_reason'] . ')' : ''), [
             'state' => 'state', 'hint' => 'reset brings the NPC back to normal (resetWalkawayState)',

@@ -47,6 +47,16 @@ if (!RelationshipDynamics::isEnabled()) {
 $reldynPlayer = (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player');
 if (!$reldynNpcExchange) {
     RelDynFelt::contextPost($npcName, $reldynPlayer);
+    // The duty affinity channel (reldyn_duty.php): its own <duty_context> block, apart from <subtext>
+    try {
+        $reldynDyn = RelationshipDynamics::getDynamics($npcName);
+        $reldynDuty = RelDynDuty::contextBlock($npcName, RelDynFelt::playerRef($reldynPlayer, RelationshipDynamics::getContextTier($reldynDyn), $reldynDyn), $reldynDyn);
+        if ($reldynDuty !== null) {
+            $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => $reldynDuty];
+        }
+    } catch (Throwable $e) {
+        RelationshipDynamics::logError('duty context', $e);
+    }
 }
 
 // Natural exclusivity (decisions §17): another NPC's romantic move in an NPC-to-NPC exchange

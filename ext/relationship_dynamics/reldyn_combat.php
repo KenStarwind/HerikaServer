@@ -233,6 +233,14 @@ final class RelDynCombat
         return is_numeric($m) ? max(0.0, floatval($m)) : 1.0;
     }
 
+    /** Was the NPC's live HP (an event of now only) under the shared-danger threshold of their combat taste? */
+    private static function sharedDanger(string $npc, float $at, array $prefs, array $cfg): bool
+    {
+        $now = RelationshipDynamics::currentGamets();
+        $hp = ($at > 0 && $now > 0 && abs($now - $at) <= RelationshipDynamics::COMBAT_ACTIVE_WINDOW_GAMETS) ? self::npcHealth($npc) : null;
+        return $hp !== null && $hp > 0 && $hp <= self::dangerThreshold(floatval($prefs['combat'] ?? 0.0), $cfg);
+    }
+
     // =====================================================================
     // CONTEXT AT AN EVENT
     // =====================================================================
@@ -413,6 +421,13 @@ final class RelDynCombat
                     // The first fight side by side is an anchor of the bond (Addendum 12, reldyn_memory.php)
                     RelDynMemory::noteAnchor($npc, $dynamics, 'first_combat', $at > 0 ? $at : RelationshipDynamics::currentGamets());
                 }
+            }
+
+            // Duty (reldyn_duty.php): fighting beside the player, or seeing it done, is service for a housecarl, follower or sworn
+            // protector, whether or not the NPC enjoys a fight (duty is not desire: it never reaches passion)
+            if ($type !== 'bleedout' && ($fought || $isWitness)) {
+                $dutyMoved = RelDynDuty::onFight($npc, $dynamics, $fought, $threat, fn(): bool => self::sharedDanger($npc, $at, $prefs, $cfg), $at);
+                $fightState = $fightState || $dutyMoved != 0.0;
             }
 
             if (abs($gain) > 0.01) {
