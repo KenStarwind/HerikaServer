@@ -3,6 +3,17 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## Unreleased (batch W, Sharmat lane) — how an NPC sounds in bed
+How much an NPC talks in bed is who they are. RelDyn now reads each NPC's character (guard and restraint, expressiveness
+and confidence, how they attach) and publishes a register for Sharmat's scene voice: bold and plainspoken, soft and close,
+few words, reassurance-seeking, or sharp. Alongside it goes the chance that a given beat of the scene is left unspoken:
+high for a guarded NPC, low for an expressive one, eased as the bond gets close, higher when something weighs on the NPC
+(a quarrel, the ick, hurt, pulling back) or when a yes was given in to, and never zero or certain for anyone. The game's
+own sounds still play; Sharmat never lets the quiet run unbroken, and speaks the beats that matter (the accept or refuse
+turn, a refusal, an orgasm) every time. Sharmat's own side (a local change on Ken's checkout, never sent upstream)
+also describes scenes it never imported from their tags, ignores OStim's hub nodes and applies the scene voice speeds
+to Cartesia voices. Nothing changes without Sharmat reading the new key.
+
 ## reldyn-v0.24 — consent, the body's needs, the night hours, and profiles that grow
 RelDyn now decides whether intimacy happens at all, and Sharmat handles what happens once it does; Sharmat defers to
 RelDyn when RelDyn is present (a local Sharmat change). The decision is about who the NPC is: some never will, a quarrel
