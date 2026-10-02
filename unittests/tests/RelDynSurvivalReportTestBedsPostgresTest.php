@@ -6,6 +6,8 @@ require_once __DIR__ . '/../../lib/logger.php';
 require_once __DIR__ . '/../../lib/core/npc_master.class.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/relationship_dynamics.php';
 require_once __DIR__ . '/../../ext/relationship_dynamics/eval_producer.php';
+require_once __DIR__ . '/../../lib/chat_helper_functions.php';
+require_once __DIR__ . '/../../lib/data_functions.php';
 
 /** `sql`-compatible adapter over one pg connection (CHIM conventions: fetchOne returns [] on failure). */
 final class RelDynSurvivalBedsPgDb
@@ -103,7 +105,7 @@ final class RelDynSurvivalReportTestBedsPostgresTest extends TestCase
         $this->dsn = $dsn;
         foreach (['db', 'PLAYER_NAME', 'gameRequest', 'HERIKA_NAME', 'RELLLM_CONNECTOR', 'CACHE_PEOPLE', 'CACHE_PARTY',
                      'CACHE_LOCATION', 'contextDataFull', 'OGHMA_PARITY_RESULT', 'SCRIPTLINE_LISTENER_ATOMIC',
-                     'SCRIPTLINE_LISTENER', 'LAST_LLM_RESPONSE', 'HERIKA_PERS'] as $key) {
+                     'SCRIPTLINE_LISTENER', 'LAST_LLM_RESPONSE', 'HERIKA_PERS', 'EXT_CONTEXT_SQL_FILTER1'] as $key) {
             $this->savedGlobals[$key] = array_key_exists($key, $GLOBALS) ? [$GLOBALS[$key]] : null;
             unset($GLOBALS[$key]);
         }
@@ -480,6 +482,37 @@ final class RelDynSurvivalReportTestBedsPostgresTest extends TestCase
             $d = $this->dynamics($npc);
             $this->assertSame([], array_intersect(self::SURVIVAL, $d['_active_physical_states'] ?? []), "{$npc}: back to unknown");
         }
+        $this->assertNoFailures();
+    }
+
+    public function testTheSurvivalReportNeverReachesAnyNpcsDialogueHistory(): void
+    {
+        // core feeds every info* eventlog row (raw JSON) to the nearby NPCs' history as a narrator line, except the few
+        // types it names; the report is read by RelDyn alone, so RelDyn's prerequest keeps it out of that history
+        $t0 = self::at(64, 12.0);
+        $this->event('infoloc', self::OUTSIDE, $t0 - 1000, $this->people());
+        $this->event('infoaction', self::PLAYER . ' lit a lantern.', $t0 - 700, $this->people());
+        $this->report($t0 - 500, ['player' => ['hunger' => 4]]);
+        $history = function (string $npc) use ($t0): string {
+            $GLOBALS['gameRequest'] = ['inputtext', (string) $this->realTs, (string) $t0, self::PLAYER . ': Hello.'];
+            $GLOBALS['HERIKA_NAME'] = $npc;
+            return json_encode(buildHistoricContext($npc, -10), JSON_UNESCAPED_SLASHES);
+        };
+        $this->assertStringContainsString('lastseed', $history(self::AELA), 'control: without the filter core would hand the report to the NPC as a narrator line');
+        $this->assertStringContainsString('lit a lantern', $history(self::AELA));
+        foreach (array_keys(self::BEDS) as $npc) {
+            $this->turn($npc, 'A fine day.', $t0, 'quiet');
+            $seen = $history($npc);
+            $this->assertStringNotContainsString('lastseed', $seen, "{$npc}: the report is not in the dialogue history");
+            $this->assertStringNotContainsString('"actors"', $seen, $npc);
+            $this->assertStringContainsString('lit a lantern', $seen, "{$npc}: and the rest of the history is untouched");
+        }
+        // a filter someone else set stays, and ours is added once
+        $GLOBALS['EXT_CONTEXT_SQL_FILTER1'] = " AND type<>'somethingelse' ";
+        $this->turn(self::AELA, 'Again.', $t0 + 600, 'again');
+        $this->turn(self::AELA, 'And again.', $t0 + 1200, 'again');
+        $this->assertStringContainsString("type<>'somethingelse'", $GLOBALS['EXT_CONTEXT_SQL_FILTER1']);
+        $this->assertSame(1, substr_count($GLOBALS['EXT_CONTEXT_SQL_FILTER1'], RelDynSurvival::EVENT_TYPE));
         $this->assertNoFailures();
     }
 }

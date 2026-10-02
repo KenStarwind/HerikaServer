@@ -197,6 +197,34 @@ final class RelDynVPeopleTest extends TestCase
         $this->assertEqualsWithDelta(self::T0 + 5 * self::DAY, RelationshipDynamics::lastContactGamets($fought), 1e-6);
     }
 
+    public function testAFightTheNpcDreadsStillCountsAsContactJustALittle(): void
+    {
+        // decisions §23: contact for one who enjoys it, "still counts a little" for one who does not: the share of the days
+        // since the last word that the fight forgives is the NPC's own weight for it
+        $quiet = $this->spouse();
+        $enjoys = $this->spouse();
+        $dreads = $this->spouse();
+        RelationshipDynamics::markFightContact($enjoys, self::T0 + 5 * self::DAY, 1.0, 1.0);
+        RelationshipDynamics::markFightContact($dreads, self::T0 + 5 * self::DAY, 1.0, 0.2);
+        $this->assertEqualsWithDelta(self::T0 + 5 * self::DAY, RelationshipDynamics::lastContactGamets($enjoys), 1e-6);
+        $this->assertEqualsWithDelta(self::T0 + 1 * self::DAY, RelationshipDynamics::lastContactGamets($dreads), 1e-6, 'a fifth of the five days');
+        $a = RelationshipDynamics::advanceCalendar($quiet, self::T0, self::T0 + 12 * self::DAY);
+        $b = RelationshipDynamics::advanceCalendar($enjoys, self::T0, self::T0 + 12 * self::DAY);
+        $c = RelationshipDynamics::advanceCalendar($dreads, self::T0, self::T0 + 12 * self::DAY);
+        $this->assertEqualsWithDelta($a['neglect_days'] - 5.0, $b['neglect_days'], 1e-6);
+        $this->assertEqualsWithDelta($a['neglect_days'] - 1.0, $c['neglect_days'], 1e-6, 'it counts a little');
+        $this->assertGreaterThan($c['neglect_days'], $a['neglect_days']);
+        $this->assertGreaterThan($b['neglect_days'], $c['neglect_days'], 'but less than for the one who enjoys it');
+        // the player's own word is untouched, and a later word is still the contact again
+        $this->assertEqualsWithDelta(self::T0, floatval($dreads['_last_contact_gamets']), 1e-6);
+        // the next fight forgives a share of the days since the last contact (the fight before counts)
+        RelationshipDynamics::markFightContact($dreads, self::T0 + 6 * self::DAY, 1.0, 0.2);
+        $this->assertEqualsWithDelta(self::T0 + 2 * self::DAY, RelationshipDynamics::lastContactGamets($dreads), 1e-6, 'a fifth of the five days since the last');
+        // an older fight never moves it back, whatever the share
+        $this->assertFalse(RelationshipDynamics::markFightContact($dreads, self::T0 + 2 * self::DAY, 0.0, 0.2));
+        $this->assertEqualsWithDelta(self::T0 + 2 * self::DAY, RelationshipDynamics::lastContactGamets($dreads), 1e-6);
+    }
+
     public function testAFightIsNoAbsenceForTheAffinityDecayEither(): void
     {
         $quiet = $this->spouse();

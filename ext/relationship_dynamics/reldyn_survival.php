@@ -4,7 +4,9 @@
  *
  * The AIAgent fork's survival reporter (CHIM Plugin/SurvivalReporter.cpp, branch reldyn-survival)
  * writes one "info_survival" event to core's eventlog (any "info*" request is logged and never
- * spoken): the party's physical conditions read softly from the optional survival mods. Last Seed
+ * spoken itself, but core's history builder, buildHistoricContext, hands every info* row it does not name
+ * to the nearby NPCs as a narrator line: hideFromDialogue() below keeps this one out of it, since its
+ * numbers are for RelDyn alone and a feeling is never a number): the party's physical conditions read softly from the optional survival mods. Last Seed
  * (hunger, thirst, fatigue), Frostfall (exposure, wetness), Campfire (who built the fire the party
  * is at), Dirt and Blood (the player and each NPC) and Survival Mode CC. This file reads the newest
  * report and turns it into the physical states RelationshipDynamics::detectPhysicalStates hands to
@@ -64,6 +66,21 @@ final class RelDynSurvival
             // How far from the player (game units) still counts as at the player's fire: Frostfall's own heat range
             'fire_max_distance' => 600.0,
         ];
+    }
+
+    /**
+     * Keeps the report out of every NPC's dialogue history. buildHistoricContext (lib/data_functions.php) renders each
+     * info* eventlog row it does not exclude as a narrator line, and the plugin repeats the report on every change and
+     * on a heartbeat: raw JSON of numbers in the nearby NPCs' context, pushing real dialogue out of its window. The
+     * query takes an extension's extra predicate from EXT_CONTEXT_SQL_FILTER1 (an AND clause); this appends ours,
+     * once, to whatever another extension set. RelDyn reads the report from the eventlog by its own query.
+     */
+    public static function hideFromDialogue(): void
+    {
+        $clause = " AND type<>'" . self::EVENT_TYPE . "' ";
+        $set = $GLOBALS['EXT_CONTEXT_SQL_FILTER1'] ?? '';
+        if (!is_string($set)) $set = '';
+        if (strpos($set, $clause) === false) $GLOBALS['EXT_CONTEXT_SQL_FILTER1'] = $set . $clause;
     }
 
     /** Stored physical_states.survival over the defaults, key by key. */

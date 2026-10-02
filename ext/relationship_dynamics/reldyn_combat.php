@@ -387,10 +387,11 @@ final class RelDynCombat
                         RelationshipDynamics::log(sprintf('Shared fight is partly unfulfilling: %s liking %.2f (%s)', $npc,
                             RelDynFulfillment::sharedFightLiking($prefs), json_encode($unmet)));
                     }
-                    // ... and contact for the neglect and absence rules, and a day the pair was together (decisions §23)
+                    // ... and contact for the neglect and absence rules, by the same weight (all of it for one who enjoys it, a little
+                    // for one who does not, decisions §23), and a day the pair was together
                     $sf = RelDynFulfillment::sharedFightConfig();
                     if (!empty($sf['enabled']) && !empty($sf['contact']) && $fightAt > 0) {
-                        $contact = RelationshipDynamics::markFightContact($dynamics, $fightAt, floatval($sf['contact_window_game_hours']));
+                        $contact = RelationshipDynamics::markFightContact($dynamics, $fightAt, floatval($sf['contact_window_game_hours']), RelDynFulfillment::sharedFightWeight($prefs));
                         $contact = RelDynFulfillment::recordContactDay($dynamics, $fightAt) || $contact;
                         if ($contact) RelationshipDynamics::log("Shared fight is contact: {$npc} (neglect and absence count from it)");
                         $fightState = $fightState || $contact;

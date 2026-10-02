@@ -653,23 +653,30 @@ final class RelDynVPeopleTestBedsPostgresTest extends TestCase
                 'neglect_with' => round($a['neglect_days'], 3), 'neglect_without' => round($b['neglect_days'], 3),
                 'resentment_with' => round($a['resentment_raw'], 4), 'resentment_without' => round($b['resentment_raw'], 4),
                 'liking' => round(RelDynFulfillment::sharedFightLiking(RelDynFacets::preferences($d, $npc)), 3),
+                'weight' => RelDynFulfillment::sharedFightWeight(RelDynFacets::preferences($d, $npc)),
             ];
         }
         $this->probe('fight contact', $rows);
         $log = $this->log();
         foreach ($beds as $npc) {
             $r = $rows[$npc];
-            $this->assertEqualsWithDelta($fightAt, $r['fight'], 1.0, "{$npc}: the fight is the contact");
+            // contact by the NPC's own weight for fighting (§23): all of the way to the fight for the one who lives for it, a little for the one who dreads it
+            $this->assertEqualsWithDelta($r['last_word'] + $r['weight'] * ($fightAt - $r['last_word']), $r['fight'], 1.0, "{$npc}: the fight is the contact, by how much the NPC enjoys it");
             $this->assertEqualsWithDelta(self::at(self::N0, 18.0), $r['last_word'], 3000.0, "{$npc}: the player's last word is still the evening");
             $this->assertTrue($r['present'], "{$npc}: a day the pair was together");
             $this->assertStringContainsString("Shared fight is contact: {$npc}", $log);
             $this->assertGreaterThan($r['neglect_with'], $r['neglect_without'], "{$npc}: the days up to the fight are not neglect");
-            $this->assertEqualsWithDelta(($fightAt - $r['last_word']) / self::DAY, $r['neglect_without'] - $r['neglect_with'], 0.05, "{$npc}: the days from the last word to the fight");
+            $this->assertEqualsWithDelta($r['weight'] * ($fightAt - $r['last_word']) / self::DAY, $r['neglect_without'] - $r['neglect_with'], 0.05, "{$npc}: the share of the days from the last word to the fight that the NPC's liking of it forgives");
         }
         // meaningfully apart: the same four days cost a different NPC different amounts (her own neglect rate)
         $saved = array_map(fn($r) => round($r['resentment_without'] - $r['resentment_with'], 4), $rows);
         $this->assertGreaterThan(0.0, min($saved));
         $this->assertGreaterThan(1.2 * min($saved), max($saved), 'who she is scales it');
+        // meaningfully apart: the one who dreads it is forgiven a little, the one who lives for it most of it
+        $forgiven = array_map(fn($r) => $r['neglect_without'] - $r['neglect_with'], $rows);
+        $this->assertGreaterThan(0.0, $forgiven['Ashe'], 'it still counts a little for Ashe');
+        $this->assertGreaterThan(1.5 * $forgiven['Ashe'], $forgiven[self::AELA], 'but far more for Aela, who lives for it');
+        $this->assertGreaterThan($rows['Ashe']['fight'], $rows[self::AELA]['fight']);
         // the dread: Ashe's enjoyed things are further off; Aela lost nothing
         $this->assertNotSame([], $rows['Ashe']['lost'], 'a fight she dreads is partly unfulfilling');
         $this->assertArrayHasKey('scholarly', $rows['Ashe']['lost']);

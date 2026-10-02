@@ -352,13 +352,14 @@ final class RelDynVTuningTest extends TestCase
         RelationshipDynamics::clearConfigCache();
     }
 
-    /** The row install.php wrote at v0.23 (stamped 4): today's defaults with the four values batch V changed put back. */
+    /** The row install.php wrote at v0.23 (stamped 4): today's defaults with the four values batch V changed put back (the relevel switch, the weather targets, the toxic row, the charm hill). */
     private static function rowOfV023(): array
     {
         $row = RelationshipDynamics::defaultConfig();
         $row['config_schema'] = 4;
         $row['traits']['read_calibration']['relevel_mult'] = false;
         $row['facet_appraisal']['weather_gravity']['targets'] = RelationshipDynamics::RETIRED_WEATHER_TARGETS_V5;
+        $row['attraction']['curve']['charm_hill_max'] = 0.15;   // what install.php stored at v0.23 (the whole defaultConfig, the curve table included)
         $out = [];
         foreach ($row['affinity_modifiers'] as $r) {
             if ($r['id'] === 'toxic_gains') { $out[] = RelationshipDynamics::RETIRED_TOXIC_ROW_V5; continue; }
@@ -377,6 +378,7 @@ final class RelDynVTuningTest extends TestCase
         $new = RelationshipDynamics::defaultConfig();
         $this->assertSame(['passion_mult', 'jealousy_mult'], RelDynTraits::relevelMultSetting(), 'the multipliers are neutral at the middle');
         $this->assertEqualsWithDelta(1.0, RelDynTraits::value(self::middle(), 'passion_mult'), 1e-12);
+        $this->assertEqualsWithDelta(0.13, RelDynAttraction::curveConfig()['charm_hill_max'], 1e-9, 'the charm retune comes with the neutral multiplier');
         $this->assertEquals($new['facet_appraisal']['weather_gravity']['targets'], RelDynFacets::getAppraisalConfig()['weather_gravity']['targets']);
         $ids = array_column(RelationshipDynamics::getConfig()['affinity_modifiers'], 'id');
         $this->assertNotContains('toxic_all', $ids);
@@ -388,6 +390,7 @@ final class RelDynVTuningTest extends TestCase
         $choice['config_schema'] = RelationshipDynamics::CONFIG_SCHEMA;
         $this->store($choice);
         $this->assertSame([], RelDynTraits::relevelMultSetting(), 'a stamped false is a choice');
+        $this->assertEqualsWithDelta(0.15, RelDynAttraction::curveConfig()['charm_hill_max'], 1e-9, 'and so is a stamped charm hill');
         $this->assertEquals(RelationshipDynamics::RETIRED_WEATHER_TARGETS_V5, RelDynFacets::getAppraisalConfig()['weather_gravity']['targets']);
         $this->assertContains('toxic_all', array_column(RelationshipDynamics::getConfig()['affinity_modifiers'], 'id'));
     }
@@ -399,8 +402,10 @@ final class RelDynVTuningTest extends TestCase
         $old['facet_appraisal']['weather_gravity']['targets']['overcast']['passion'] = -6.0;   // and tuned the grey day
         foreach ($old['affinity_modifiers'] as &$r) if ($r['id'] === 'toxic_all') $r['mult'] = 1.5;   // and the toxic row
         unset($r);
+        $old['attraction']['curve']['charm_hill_max'] = 0.2;   // and the charm hill
         $this->store($old);
         $this->assertTrue(RelDynTraits::relevelMultSetting());
+        $this->assertEqualsWithDelta(0.2, RelDynAttraction::curveConfig()['charm_hill_max'], 1e-9);
         $this->assertEqualsWithDelta(-6.0, RelDynFacets::getAppraisalConfig()['weather_gravity']['targets']['overcast']['passion'], 1e-9);
         $rows = RelationshipDynamics::getConfig()['affinity_modifiers'];
         $this->assertContains('toxic_all', array_column($rows, 'id'), 'an edited row is theirs');

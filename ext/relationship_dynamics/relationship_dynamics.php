@@ -706,7 +706,7 @@ class RelationshipDynamics
      * Schema 5 (rulings 2026-10-01 §21 #10, §22, batch V): install.php (a row stamped 4 included) stored the v0.23
      * defaults of four settings those rulings changed; loadStoredConfig() reads them as the current defaults
      * (dropRetiredV5Defaults): the multiplier re-levelling switch off, the April weather targets, the single toxic
-     * affinity row. A row stamped 5 or later is a choice.
+     * affinity row, the charm hill 0.15. A row stamped 5 or later is a choice.
      */
     const CONFIG_SCHEMA = 5;
 
@@ -720,6 +720,9 @@ class RelationshipDynamics
 
     /** The one toxic affinity-modifier row of v0.23 (x1.4 either way); §22 splits it into toxic_gains x1.2 and toxic_losses x1.6. */
     const RETIRED_TOXIC_ROW_V5 = ['id' => 'toxic_all', 'sign' => 'any', 'tags' => [], 'when' => [['attachment' => 'toxic']], 'mult' => 1.4];
+
+    /** attraction.curve.charm_hill_max as v0.23 shipped it (batch V retuned it to 0.13 beside the neutral passion multiplier, §21 #10). */
+    const RETIRED_CHARM_HILL_MAX_V5 = 0.15;
 
     /** cascade_decay as install.php stored it up to schema 3 (the hearsay damping of every ripple then; today's default is 0.9). */
     const RETIRED_CASCADE_DECAY = 0.3;
@@ -811,7 +814,9 @@ class RelationshipDynamics
      * still equals what v0.23 shipped (a value someone changed is theirs and stays):
      *   - traits.read_calibration.relevel_mult false (the multipliers off): back to the default list (§21 #10);
      *   - facet_appraisal.weather_gravity.targets equal to the April targets: the dimension draft's (§22);
-     *   - the affinity_modifiers row toxic_all (x1.4 either way): split in place into toxic_gains and toxic_losses (§22).
+     *   - the affinity_modifiers row toxic_all (x1.4 either way): split in place into toxic_gains and toxic_losses (§22);
+     *   - attraction.curve.charm_hill_max equal to the 0.15 v0.23 shipped: the retuned 0.13 that goes with the neutral
+     *     passion multiplier (§21 #10), so the silver tongue's margin of ruling #8 holds on an upgraded install too.
      * Nothing else is touched.
      */
     private static function dropRetiredV5Defaults(array $stored): array
@@ -820,6 +825,10 @@ class RelationshipDynamics
         if (is_array($stored['traits']['read_calibration'] ?? null) && array_key_exists('relevel_mult', $stored['traits']['read_calibration'])
             && $stored['traits']['read_calibration']['relevel_mult'] === false) {
             unset($stored['traits']['read_calibration']['relevel_mult']);
+        }
+        if (is_array($stored['attraction']['curve'] ?? null) && is_numeric($stored['attraction']['curve']['charm_hill_max'] ?? null)
+            && abs(floatval($stored['attraction']['curve']['charm_hill_max']) - self::RETIRED_CHARM_HILL_MAX_V5) < 1e-9) {
+            unset($stored['attraction']['curve']['charm_hill_max']);
         }
         $targets = $stored['facet_appraisal']['weather_gravity']['targets'] ?? null;
         if (is_array($targets) && $targets == self::RETIRED_WEATHER_TARGETS_V5) {
@@ -4786,14 +4795,21 @@ class RelationshipDynamics
      * 2026-10-01): the stamp moves the contact the absence and neglect charges count from, and the
      * $windowHours before it (the fight went on that long) are not an absence for the affinity decay either (a
      * closed decay pause, merged with any it overlaps). An older fight than the newest only adds its window.
+     * $share (0..1, the NPC's weight for fighting beside the player, RelDynFulfillment::sharedFightWeight): how much of
+     * the days since the last contact the fight forgives. 1 (the NPC enjoys it) moves the contact to the fight itself; a
+     * smaller share ("for one who doesn't it still counts a little") moves it that share of the way, so the neglect
+     * counts from there. The window of the fight itself is no absence either way, the pair was together.
      * Returns true when the state changed.
      */
-    public static function markFightContact(array &$dynamics, float $at, float $windowHours = 1.0): bool
+    public static function markFightContact(array &$dynamics, float $at, float $windowHours = 1.0, float $share = 1.0): bool
     {
         if ($at <= 0) return false;
         $changed = false;
-        if ($at > floatval($dynamics[self::FIGHT_CONTACT_KEY] ?? 0)) {
-            $dynamics[self::FIGHT_CONTACT_KEY] = $at;
+        $share = max(0.0, min(1.0, $share));
+        $base = self::lastContactGamets($dynamics);
+        $stamp = ($share >= 1.0 || $base <= 0.0 || $at <= $base) ? $at : $base + $share * ($at - $base);
+        if ($stamp > floatval($dynamics[self::FIGHT_CONTACT_KEY] ?? 0)) {
+            $dynamics[self::FIGHT_CONTACT_KEY] = $stamp;
             $changed = true;
         }
         $window = max(0.0, $windowHours) * self::GAMETS_PER_DAY / 24.0;

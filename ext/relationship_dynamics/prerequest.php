@@ -17,6 +17,11 @@ if ($reqType === 'maras_sync') {
     return;
 }
 
+// The survival reporter's info_survival rows are for RelDyn alone: core's history builder would hand each one to
+// the nearby NPCs as a narrator line (raw JSON), on every request including the NPC-to-NPC ones that return below
+require_once __DIR__ . '/relationship_dynamics.php';   // (it loads reldyn_survival.php)
+RelDynSurvival::hideFromDialogue();
+
 // ========== CORE'S REQUEST POLL (prerequest-on-poll) ==========
 // The plugin's poll for queued responses (every POLINT real seconds) reaches this hook only:
 // comm.php ends it before context_pre / context / postrequest. It carries no NPC, whatever

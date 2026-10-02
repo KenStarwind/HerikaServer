@@ -615,8 +615,12 @@ class RelDynPullback
             if (in_array($tag, (array) $met['tags'], true)) $positive = true;
         }
         if (!$positive) return 0.0;
-        // a kind word the morning after takes some of the closeness's weight off, pulled back or not
-        if ($morning) {
+        // a kind word the morning after takes some of the closeness's weight off, pulled back or not. Only a word from
+        // after the encounter's last scene request: the scene's own exchange (it carries reported_intimacy, and the
+        // pipeline queues an eval for it) is the closeness itself, and an item from before a later scene request is
+        // the encounter going on; the next scene request restores the full size anyway (onIntimacy)
+        if ($morning && !(is_string($n['reported_intimacy'] ?? null) && $n['reported_intimacy'] !== '')
+            && $at > floatval($dynamics[self::KEY]['aftermath']['last'] ?? 0)) {
             $relief = self::clamp01(floatval(((array) $cfg['aftermath'])['met_relief']));
             $size = floatval($dynamics[self::KEY]['aftermath']['size'] ?? 0);
             $dynamics[self::KEY]['aftermath']['size'] = round($size * (1.0 - $relief), 4);

@@ -246,6 +246,42 @@ final class RelDynVPeopleAftermathTest extends TestCase
         $this->assertSame($s0, $small['_pullback']['aftermath']['size'], 'only an exchange that meets them eases it');
     }
 
+    public function testTheScenesOwnExchangeNeverMeetsTheMorningAfterButALaterKindWordDoes(): void
+    {
+        // the real pipeline queues an eval request for the scene's own exchange (reported_intimacy), which is usually
+        // positive: it is the closeness, not the morning after, so it must not take the push off
+        $scene = ['tags' => ['quality_time'], 'positive_interaction' => true, 'significance' => 0.6, 'reported_intimacy' => 'sex', 'gamets' => self::T0];
+        foreach ([self::FEARFUL, [0.60, 0.60]] as $axes) {
+            $control = $this->bed($axes);
+            RelDynPullback::advance('Test', $control, self::T0);
+            RelDynPullback::onIntimacy('Test', $control, self::T0);
+            $this->hours($control, 36.0);
+            $everWithout = $control['_pullback']['episodes'] ?? 0;
+
+            $d = $this->bed($axes);
+            RelDynPullback::advance('Test', $d, self::T0);
+            $size = RelDynPullback::onIntimacy('Test', $d, self::T0);
+            RelDynPullback::onEvalItem('Test', $scene, $d, self::T0);   // the scene's own eval, at its own time
+            $quiet = ['gamets' => self::T0 - 30] + array_diff_key($scene, ['reported_intimacy' => 1]);
+            RelDynPullback::onEvalItem('Test', $quiet, $d, self::T0 - 30);   // and the same exchange when the item lost its marker: still not after the encounter
+            $this->assertSame($size, $d['_pullback']['aftermath']['size'], 'the scene exchange never eases its own aftermath');
+            $this->hours($d, 36.0);
+            $this->assertSame($everWithout, $d['_pullback']['episodes'] ?? 0, 'the NPC pulls back exactly as without the scene eval');
+        }
+        // an earlier exchange whose eval arrives after a later scene request is not the morning after either
+        $d = $this->bed(self::FEARFUL);
+        RelDynPullback::advance('Test', $d, self::T0);
+        RelDynPullback::onIntimacy('Test', $d, self::T0);
+        RelDynPullback::onIntimacy('Test', $d, self::T0 + 2 * self::HOUR);   // the encounter goes on
+        $s = $d['_pullback']['aftermath']['size'];
+        $plain = ['tags' => ['reassurance'], 'positive_interaction' => true, 'significance' => 0.6];
+        RelDynPullback::onEvalItem('Test', $plain, $d, self::T0 + self::HOUR);   // from before the last scene request
+        $this->assertSame($s, $d['_pullback']['aftermath']['size']);
+        // a word after the encounter does meet them
+        RelDynPullback::onEvalItem('Test', $plain, $d, self::T0 + 5 * self::HOUR);
+        $this->assertEqualsWithDelta(0.5 * $s, $d['_pullback']['aftermath']['size'], 1e-3);
+    }
+
     // =====================================================================
     // how it is said: a distance, never shame, never a pronoun of its own
     // =====================================================================
