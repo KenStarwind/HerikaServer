@@ -1300,7 +1300,7 @@ final class RelDynEditor
             'hint' => 'neglect and low fulfillment cut the exclusivity pull; with a suitor of real interest the NPC drifts, seeks and may stray, by who they are. Reset forgets it',
             'reset' => isset($d[RelDynBonds::KEY]['infidelity']) ? function (array &$dd) { unset($dd[RelDynBonds::KEY]['infidelity']); } : null]);
         // The duty affinity channel (reldyn_duty.php, never desire): its state, and the role the NPC serves in (derived from the
-        // party, the factions and core's type, or hand-set)
+        // party, the factions and the oath, or hand-set)
         $du = $jev['duty_channel'];
         $fields[] = self::field('state:duty_affinity', 'Duty affinity', 'readonly', $du['value'] > 0 || $du['bound']
             ? self::num($du['value'], 1) . ' (' . ($du['band'] ?? 'below the first band') . ', ' . ($du['role'] ?? 'no role') . ($du['bound'] ? ', serving now' : ', not serving now') . ')'
@@ -1309,9 +1309,9 @@ final class RelDynEditor
             'reset' => isset($d[RelDynDuty::KEY]) ? function (array &$dd) { unset($dd[RelDynDuty::KEY]); } : null]);
         $roleSet = is_string($d[RelDynDuty::ROLE_OVERRIDE_KEY] ?? null) ? (string) $d[RelDynDuty::ROLE_OVERRIDE_KEY] : '';
         $fields[] = self::field('duty:role', 'Duty role', 'select', $roleSet, [
-            'options' => ['' => 'derived (party, factions, core type)', 'housecarl' => 'housecarl', 'follower' => 'follower', 'sworn' => 'sworn protector', 'none' => 'none (never bound)'],
+            'options' => ['' => 'derived (party, factions, oath)', 'housecarl' => 'housecarl', 'follower' => 'follower', 'sworn' => 'sworn protector', 'none' => 'none (never bound)'],
             'state' => $roleSet === '' ? 'derived' : 'override', 'derived' => '',
-            'hint' => 'who the NPC serves as; derived from the player\'s party, a housecarl or follower faction and core\'s sworn type. A hand-set role outranks the derivation',
+            'hint' => 'who the NPC serves as; derived from the player\'s party, a housecarl or follower faction and the oath that binds them (core\'s fanatical or servant type, a housecarl oath). A hand-set role outranks the derivation',
             'set' => function (array &$dd, $v): ?string {
                 if ($v === '') { unset($dd[RelDynDuty::ROLE_OVERRIDE_KEY]); return null; }
                 if (!in_array($v, ['housecarl', 'follower', 'sworn', 'none'], true)) return 'unknown role';

@@ -668,17 +668,35 @@ final class RelDynBonds
         $cause = ['deserve' => 'standards', 'affinity' => 'affinity'][$reason] ?? null;
         if ($cause === null) return null;
         $r = self::breakup($npcName, $dynamics, $cause, 'npc');
+        if ($r['status'] === 'applied') {
+            // the ending belongs to this walkaway (its start stamp): following the NPC during its boundary test severs the walkaway, not
+            // a second ending (onSever)
+            $state = &self::state($dynamics);
+            $state['breakup']['walkaway'] = floatval($dynamics['_walkaway_started_calendar_gamets'] ?? 0.0);
+            unset($state);
+        }
         return $r['status'] === 'skipped' ? null : $r;
     }
 
     /**
      * A permanent walkaway (the player followed the NPC who left, RelationshipDynamics::severBond): a romance that is severed ends
-     * through the fork (cause 'pursued'). Returns null when the bond is no romance (severBond's own types apply), else the
-     * breakup result with 'written' the core type written (null when none).
+     * through the fork (cause 'pursued'). A romance this walkaway has already ended stands as the fork left it (status 'stands', nothing
+     * written). Returns null when the bond is no romance (severBond's own types apply), else the breakup result with 'written' the core
+     * type written (null when none).
      */
     public static function onSever(string $npcName, array &$dynamics): ?array
     {
-        if (!self::enabled() || self::rung($dynamics) < 2) return null;
+        if (!self::enabled()) return null;
+        // The romance was already ended by this very walkaway (standards, or the feeling gone: onWalkaway ends it when the NPC leaves):
+        // the fork has decided what it became, and core holds it. Following the NPC makes the leaving permanent (the caller's hard
+        // flag), it does not turn a former partner who left calmly into the 'estranged' of a friendship severed, nor end it twice.
+        $b = self::stored($dynamics)['breakup'] ?? null;
+        if (is_array($b) && ($b['status'] ?? '') === 'applied' && self::rung($dynamics) < 2 && is_numeric($b['walkaway'] ?? null)
+            && abs(floatval($b['walkaway']) - floatval($dynamics['_walkaway_started_calendar_gamets'] ?? 0.0)) < 1e-6) {
+            RelationshipDynamics::log("[BONDS] {$npcName}: followed after the romance ended (" . (string) ($b['fork'] ?? '') . '): the leaving is permanent, the ending stands');
+            return ['fork' => $b['fork'] ?? null, 'cause' => $b['cause'] ?? null, 'status' => 'stands', 'written' => null, 'scores' => null, 'aftermath' => []];
+        }
+        if (self::rung($dynamics) < 2) return null;
         $r = self::breakup($npcName, $dynamics, 'pursued', 'npc');
         return $r['status'] === 'skipped' ? null : $r;
     }

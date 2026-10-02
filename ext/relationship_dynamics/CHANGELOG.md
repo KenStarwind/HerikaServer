@@ -8,7 +8,8 @@ The dark path, bonds that are more than a crush, friends and foes, duty, fights,
 
 Floors that hold a bond up now depend on who the NPC is, not on a switch. A mature NPC whose trust has fallen from where it stood
 feels they deserve better, and the pressure builds until they walk away (a new "standards" reason, with its own words and its own
-ripple through the people who care about them). A trusting NPC who is not yet mature leans harder on whoever treats them well and
+ripple through the people who care about them). It is not only a partner who leaves: a mature friend, mentor or student betrayed
+deeply enough leaves too, later and from deeper than a partner would. A trusting NPC who is not yet mature leans harder on whoever treats them well and
 takes bad treatment more quietly. An NPC with neither maturity nor trust has no floors and can be pulled into a transactional
 bond, which lifts only when they have grown. It is all a matter of degree; nothing is a permanent gate, and being treated well
 slowly matures an NPC who is not yet held by their floors.
@@ -17,15 +18,20 @@ oath at any affinity: the NPC serves while it holds, refusing and walking away a
 as respect falls or betrayal builds, breaks at its limit, and mends if respect returns. Conflicted is the soft state after a
 breakup, with a way back that only meaningful exchanges walk (reassurance, apology, forgiveness, shared time), never time alone.
 A breakup forks by who the NPC is and why it ended: a hard ex (closed to intimacy until it thaws), conflicted, or friends. Core's
-relationship screen is untouched. The loop of infidelity runs on the calendar, so it plays out while the player is away: neglect
-and a suitor open a door, the NPC drifts, seeks and strays, then confesses, leaves, or (the fearful) hides it.
+relationship screen only ever sees the types it already has (ex for a hard or conflicted ending, platonic for friends).
+A walkaway on standards, or because the feeling has gone (affinity), ends the romance when the NPC leaves, not only if the
+leaving later turns permanent: a boundary test that ends with the NPC back clears the walkaway but does not bring the romance back,
+and following the NPC during it makes the leaving permanent without changing how it ended (a calm ending stays friends). The other
+walkaways (anger, jealousy, autonomy) still end nothing until the leaving is permanent. The loop of infidelity runs on the calendar,
+so it plays out while the player is away: neglect and a suitor open a door, the NPC drifts, seeks and strays, then confesses, leaves, or (the fearful) hides it.
 
 Friends and foes now matter. An NPC fond of someone close to the player warms to the player, and one who dislikes them cools; a
 friend of someone at odds with the player cools, and an enemy of their enemy warms. How much it sways them is who they are, and
 nobody is immune. Whether they know of the tie depends on whether they were there, talked to the other, or were told. Two NPCs who
 both want the player turn cool toward each other, and it is given back when the interest goes. When the player names someone who is
-not there, the NPC's own feeling about that person colours the answer.
-Duty is a channel of its own, apart from affinity and passion. A housecarl, a follower or a sworn protector earns it by serving,
+not there, the NPC's own feeling about that person colours the answer. Two requests of the same NPC that overlap take the
+points once, and what is written into core always matches the NPC's own ledger, so what was taken is given back exactly.
+Duty is a channel of its own, apart from affinity and passion. A housecarl, a follower or a sworn protector (anyone held by an oath) earns it by serving,
 fighting beside the player, finishing quests and being looked after; mistreatment wears it down, softened for the dutiful but never
 to nothing. It lingers slowly after service ends and has its own block in the context. It never feeds desire, romance or consent.
 

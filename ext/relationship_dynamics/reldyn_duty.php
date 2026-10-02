@@ -16,8 +16,10 @@
  *
  * WHO IS BOUND (roleFor): the strongest of the NPC's duty roles, each with a strength 0..1:
  *     housecarl  a member of a housecarl faction (core_npc_master.extended_data.factions)         1.0
- *     sworn      core's Player.type 'sworn' (the dark lane's sworn type reads this channel; this channel
- *                does not depend on it: defined independently, so 'sworn' can read value() / level())   1.0
+ *     sworn      the oath in force (RelDynBonds::oathActive: core's fanatical or servant type, a housecarl faction
+ *                oath, or the editor's oath). This channel reads the bonds lane's oath; the bonds lane does not read
+ *                this channel. A core Player.type 'sworn' is not a core type (core's TYPES has none), but the
+ *                roles.core_types map is configurable and still reads one if a setting maps it            1.0
  *     follower   in the player's party now, or in the follower faction                              0.8
  *   A hand-set role (the editor's Duty role field, _duty_role_override: housecarl / follower / sworn, or
  *   none) outranks the derivation. Duty is not romance and not a hard gate: every bound NPC earns it, and
@@ -75,7 +77,7 @@ final class RelDynDuty
                     ['match' => ['housecarl'], 'role' => 'housecarl'],
                     ['match' => ['currentfollower'], 'role' => 'follower'],
                 ],
-                // core Player.type => role
+                // core Player.type => role (an oath is read from the bonds lane, whatever core calls the bond: see roleFor)
                 'core_types' => ['sworn' => 'sworn'],
                 // in the player's current party
                 'in_party' => 'follower',
@@ -239,7 +241,8 @@ final class RelDynDuty
 
     /**
      * The NPC's duty role right now: ['role', 'strength' 0..1, 'source'] or null (not bound). The editor's hand-set role
-     * first; else the strongest of: a housecarl faction, core's 'sworn' type, the player's party or the follower faction.
+     * first; else the strongest of: a housecarl faction, the oath in force (the bonds lane's: sworn), a core type the roles map
+     * names, the player's party or the follower faction.
      */
     public static function roleFor(string $npcName, array $dynamics, ?array $cfg = null): ?array
     {
@@ -261,6 +264,9 @@ final class RelDynDuty
             if ($s > 0 && (!isset($found['strength']) || $s > $found['strength'])) $found = ['role' => $role, 'strength' => $s, 'source' => $why];
         };
         if (!empty($facts['in_party'])) $take((string) $cfg['roles']['in_party'], 'party');
+        // an NPC held by an oath (core's fanatical / servant, a housecarl oath, the editor's) serves under it: the oath that caps their
+        // autonomy is the oath that binds them for duty (a broken oath binds no one)
+        if (RelDynBonds::oathActive($dynamics)) $take('sworn', 'oath');
         $type = strtolower(trim((string) ($facts['core_type'] ?? '')));
         $byType = array_change_key_case((array) $cfg['roles']['core_types'], CASE_LOWER);
         if ($type !== '' && isset($byType[$type])) $take((string) $byType[$type], "type:{$type}");

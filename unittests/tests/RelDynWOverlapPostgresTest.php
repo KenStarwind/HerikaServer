@@ -137,4 +137,61 @@ final class RelDynWOverlapPostgresTest extends TestCase
         $this->assertEqualsWithDelta($ledgerAfter - $ledgerBefore, $after - $before, 0.01, 'what core and the queue moved is exactly what the ledger went through');
         $this->assertSame([], $kit->db->failures);
     }
+
+    // ------------------------------------------------------------------ a romance walked out of, then followed
+
+    /** Aela in a romance, mature and secure, trust and warmth mostly standing: the ending that forks to friends. */
+    private function aelaForAFriendsEnding(RelDynNetworkBedsKit $kit): array
+    {
+        $d = RelationshipDynamics::getDynamics(self::AELA);
+        foreach (['maturity' => 80.0, 'trust' => 45.0, 'resentment' => 5.0, 'comfort' => 60.0] as $dim => $x) $d['dimensions'][$dim]['x'] = $x;
+        RelationshipDynamics::setPassion($d, 5.0);
+        $d['_core_rel_type'] = 'romantic';
+        $d['context_tier_hwm'] = 3;
+        return $d;
+    }
+
+    public function testAFriendsEndingFollowedDuringTheBoundaryTestStaysFriendsAndIsNotEstranged(): void
+    {
+        $kit = $this->world();
+        $kit->setCoreAff(self::AELA, 70);
+        pg_query_params($kit->db->link, "UPDATE core_npc_master SET extended_data = jsonb_set(extended_data, '{relationships,Player,type}', '\"romantic\"') WHERE npc_name = \$1", [self::AELA]);
+        $d = $this->aelaForAFriendsEnding($kit);
+        RelationshipDynamics::initiateWalkaway($d, self::AELA, 'deserve');
+        $this->assertSame('friends', $d['_bonds']['breakup']['fork'], 'the calm ending: ' . json_encode($d['_bonds']['breakup']['shares'] ?? null));
+        $this->assertSame('platonic', $kit->core(self::AELA)['type'], 'core holds the friends the ending forked to');
+        // the player follows during the boundary test: the bond is severed for good
+        $written = RelationshipDynamics::severBond(self::AELA, $d);
+        $this->assertSame('platonic', $kit->core(self::AELA)['type'], 'a former partner who left calmly is not turned into an estranged stranger by the pursuit');
+        $this->assertNotSame('estranged', $written);
+        $this->assertTrue($d['_reject_recruitment'], 'but the NPC is gone for good, as every severed bond is');
+        $this->assertSame([], $kit->db->failures);
+    }
+
+    public function testAFriendshipThatWalksAwayOnItsOwnIsStillEstrangedWhenFollowed(): void
+    {
+        $kit = $this->world();
+        pg_query_params($kit->db->link, "UPDATE core_npc_master SET extended_data = jsonb_set(extended_data, '{relationships,Player,type}', '\"platonic\"') WHERE npc_name = \$1", [self::AELA]);
+        $d = RelationshipDynamics::getDynamics(self::AELA);
+        $d['_core_rel_type'] = 'platonic';
+        RelationshipDynamics::initiateWalkaway($d, self::AELA, 'jealousy');
+        RelationshipDynamics::severBond(self::AELA, $d);
+        $this->assertSame('estranged', $kit->core(self::AELA)['type'], 'the old rule for a friendship that is walked out of and followed');
+    }
+
+    public function testAnEarlierFriendsEndingDoesNotShieldALaterWalkawayFromTheSever(): void
+    {
+        $kit = $this->world();
+        pg_query_params($kit->db->link, "UPDATE core_npc_master SET extended_data = jsonb_set(extended_data, '{relationships,Player,type}', '\"romantic\"') WHERE npc_name = \$1", [self::AELA]);
+        $d = $this->aelaForAFriendsEnding($kit);
+        RelationshipDynamics::initiateWalkaway($d, self::AELA, 'deserve');
+        $this->assertSame('friends', $d['_bonds']['breakup']['fork']);
+        // that walkaway resolved; much later, as friends, the NPC walks out again over something else and is followed
+        $d['_walkaway_state'] = 'normal';
+        $d['_walkaway_started_calendar_gamets'] = 999999999;
+        RelationshipDynamics::initiateWalkaway($d, self::AELA, 'jealousy');
+        $d['_walkaway_started_calendar_gamets'] = 1999999999;
+        RelationshipDynamics::severBond(self::AELA, $d);
+        $this->assertSame('estranged', $kit->core(self::AELA)['type'], 'a different walkaway: the friendship it ends is estranged');
+    }
 }
