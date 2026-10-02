@@ -467,4 +467,23 @@ final class RelDynCombatMoodTest extends TestCase
         $this->assertSame($before, $f);
         $this->assertSame([], RelDynMoodAxes::settleToEvent($f, 0.0));
     }
+
+    public function testStampEventMarksTheClockAtTheEventAndLeavesTheStateAlone(): void
+    {
+        $d = $this->npc('Romantic');
+        $d['dimensions']['arousal']['x'] = 55.0;
+        $d['_accumulated_play_gamets'] = 500.0;
+        $d[RelDynMoodAxes::CLOCK_KEY] = ['play' => 400.0, 'gamets' => self::AT - 1000];
+        RelDynMoodAxes::stampEvent($d, self::AT);
+        $this->assertEqualsWithDelta(55.0, $this->x($d, 'arousal'), 1e-9, 'nothing settles');
+        $this->assertEqualsWithDelta(500.0, $d[RelDynMoodAxes::CLOCK_KEY]['play'], 1e-9);
+        $this->assertEqualsWithDelta(self::AT, $d[RelDynMoodAxes::CLOCK_KEY]['gamets'], 1e-6);
+        $this->assertTrue($d[RelDynMoodAxes::CLOCK_KEY]['by_event']);
+        $e = $this->npc('Romantic');
+        RelDynMoodAxes::stampEvent($e, self::AT);
+        $this->assertArrayNotHasKey(RelDynMoodAxes::CLOCK_KEY, $e, 'no clock yet: the first settle stamps it');
+        $f = $d;
+        RelDynMoodAxes::stampEvent($f, self::AT - 5000);
+        $this->assertSame($d, $f, 'an event older than the clock changes nothing');
+    }
 }

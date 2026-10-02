@@ -261,6 +261,18 @@ final class RelDynMoodAxes
         return $moved;
     }
 
+    /**
+     * Like settleToEvent, without settling what was there first: stamps the clock at the event so what the event
+     * adds fades from $at, and leaves the arousal / valence as they are (the fall of bleedout, whose spike is read
+     * against the state it found). A clock already past $at, or none yet, is left alone.
+     */
+    public static function stampEvent(array &$dynamics, float $at): void
+    {
+        $clock = $dynamics[self::CLOCK_KEY] ?? null;
+        if ($at <= 0.0 || !is_array($clock) || floatval($clock['gamets'] ?? 0) > $at) return;
+        $dynamics[self::CLOCK_KEY] = ['play' => floatval(RelationshipDynamics::getPlayGamets($dynamics)), 'gamets' => $at, 'by_event' => true];
+    }
+
     /** One dimension's event residue after $dt gamets (points moved, signed). */
     private static function settleDim(array &$dynamics, string $dim, float $dt, array $cfg): float
     {

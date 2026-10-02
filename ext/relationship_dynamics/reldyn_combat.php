@@ -687,8 +687,8 @@ final class RelDynCombat
                 if ($at > 0 && $last > 0 && $at >= $last && $at - $last <= RelationshipDynamics::COMBAT_ACTIVE_WINDOW_GAMETS) continue;
                 if ($at > 0) $dynamics['_combat_last_fall_gamets'] = $at;
                 // ... and hits by the foe the fight has shown so far (fight mood: a fall to a dragon is not a fall to a skeever).
-                // The row is routed on a later turn: what was there settles to the fall first, the fall fades from its own time
-                RelDynMoodAxes::settleToEvent($dynamics, $at);
+                // The row is routed on a later turn: the fall fades from its own time, not from the NPC's last turn
+                RelDynMoodAxes::stampEvent($dynamics, $at);
                 $acfg = self::arousalConfig();
                 $episode = self::episode($dynamics, $at > 0 ? $at : RelationshipDynamics::currentGamets());
                 $fallScale = !empty($acfg['enabled']) ? self::defeatScale($episode, $acfg) : 1.0;
