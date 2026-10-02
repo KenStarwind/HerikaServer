@@ -352,7 +352,7 @@ final class RelDynCombatMoodTest extends TestCase
         $this->assertEqualsWithDelta($trust, $this->x($rush, 'trust'), 1e-9, 'but it bonds once');
     }
 
-    public function testTheTerrorFollowsTheNpcsFearAndTheSwitchTurnsTheRushOff(): void
+    public function testAFallThatWasTheFirstValenceAsksNoTerrorAndTheSwitchTurnsTheRushOff(): void
     {
         $net = [];
         foreach (['Bold', 'Anxious'] as $t) {
@@ -361,9 +361,9 @@ final class RelDynCombatMoodTest extends TestCase
                 'outcome' => 'beaten', 'fell_at' => self::AT - 1000, 'near_miss' => false];
             $this->mood('N', $d, 'Dragon', true, 0.0);
             $net[$t] = $this->x($d, 'valence');
+            $this->assertGreaterThan(0.0, $net[$t], "{$t}: the win and the relief after the fall end well");
         }
-        $this->assertGreaterThan($net['Anxious'], $net['Bold'], 'the shaken feel less of the relief than the bold: ' . json_encode($net));
-        $this->assertGreaterThan(0.0, $net['Anxious'], 'the relief still wins');
+        $this->assertStringNotContainsString('terror -', (string) file_get_contents($this->errorLog), 'the fall already was the first valence');
         $this->setConfig(['near_miss' => ['enabled' => false]]);
         $d = $this->npc('Romantic');
         $d[RelDynCombat::MOOD_KEY] = ['gamets' => self::AT - 1000, 'arousal' => 40.0, 'reached' => 40.0, 'tier' => 'engaged', 'valence_granted' => 0.0,
@@ -427,5 +427,44 @@ final class RelDynCombatMoodTest extends TestCase
         $this->assertNotSame($lines['Bold'], $lines['Anxious'], json_encode($lines));
         $this->assertStringContainsString('burning', $lines['Bold']);
         $this->assertStringContainsString('shaking', $lines['Anxious']);
+    }
+
+    // ------------------------------------------------------------------ a fight routed on a later turn fades from its own time
+
+    public function testAFightRoutedOnALaterTurnFadesFromItsOwnTimeNotFromTheNpcsLastTurn(): void
+    {
+        $halfLife = 5.0 * 60.0 * RelationshipDynamics::GAMETS_PER_REAL_SECOND;   // arousal's half-life: five minutes of play
+        $d = $this->npc('Romantic');
+        $d['_accumulated_play_gamets'] = 1000.0;
+        $d['dimensions']['arousal']['x'] = 60.0;   // left from something an hour of play ago
+        $d[RelDynMoodAxes::CLOCK_KEY] = ['play' => 1000.0, 'gamets' => self::AT - 6 * $halfLife];
+        // the dragon fell at AT; the NPC's own turn comes one half-life later, after hours of play credited since its last turn
+        RelDynMoodAxes::settleToEvent($d, self::AT);
+        $this->assertEqualsWithDelta(10.0 + 50.0 / 64.0, $this->x($d, 'arousal'), 0.05, 'what was there settled to the fight: six half-lives');
+        $this->assertTrue($d[RelDynMoodAxes::CLOCK_KEY]['by_event']);
+        $this->assertEqualsWithDelta(self::AT, $d[RelDynMoodAxes::CLOCK_KEY]['gamets'], 1e-6);
+        $this->mood('N', $d, 'Dragon');
+        $peak = $this->x($d, 'arousal');
+        $this->assertGreaterThanOrEqual(90.0, $peak);
+        $d['_accumulated_play_gamets'] = 1000.0 + 40.0 * $halfLife;   // the play credited since the last turn, all of it before the fight
+        RelDynMoodAxes::settle($d, self::AT + $halfLife);
+        $this->assertEqualsWithDelta(10.0 + ($peak - 10.0) / 2.0, $this->x($d, 'arousal'), 0.5,
+            'one half-life after the fight: half of the dragon is left, not nothing');
+        $this->assertArrayNotHasKey('by_event', $d[RelDynMoodAxes::CLOCK_KEY], 'the next settle stamps its own clock');
+        // without the stamp the same turn would have erased it
+        $e = $this->npc('Romantic');
+        $e['_accumulated_play_gamets'] = 1000.0;
+        $e[RelDynMoodAxes::CLOCK_KEY] = ['play' => 1000.0, 'gamets' => self::AT - 6 * $halfLife];
+        $this->mood('N', $e, 'Dragon');
+        $e['_accumulated_play_gamets'] = 1000.0 + 40.0 * $halfLife;
+        RelDynMoodAxes::settle($e, self::AT + $halfLife);
+        $this->assertLessThan(12.0, $this->x($e, 'arousal'), 'the old way: the fight faded for the hours before it');
+        // an event older than the clock changes nothing
+        $f = $this->npc('Romantic');
+        $f[RelDynMoodAxes::CLOCK_KEY] = ['play' => 0.0, 'gamets' => self::AT];
+        $before = $f;
+        $this->assertSame([], RelDynMoodAxes::settleToEvent($f, self::AT - 1000));
+        $this->assertSame($before, $f);
+        $this->assertSame([], RelDynMoodAxes::settleToEvent($f, 0.0));
     }
 }

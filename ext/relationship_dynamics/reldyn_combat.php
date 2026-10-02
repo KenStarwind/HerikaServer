@@ -314,9 +314,9 @@ final class RelDynCombat
             ],
             // The fall hits by the foe: x arousal reached / reference_arousal within min..max (1.0 while no foe is known)
             'defeat' => ['reference_arousal' => 40.0, 'min_scale' => 0.6, 'max_scale' => 1.5],
-            // fight - fear (bleedoutResponse net, unitless): at least lean_bold_margin leans bold, at most minus
-            // lean_shaken_margin leans shaken; between is steady (the bleedout dead band is 0.05)
-            'lean_bold_margin' => 0.05,
+            // fight - fear (bleedoutResponse net, unitless): at least lean_bold_margin leans bold (the sign of the fall's
+            // valence: fight wins), at most minus lean_shaken_margin leans shaken; between is steady
+            'lean_bold_margin' => 0.02,
             'lean_shaken_margin' => 0.2,
         ];
     }
@@ -487,9 +487,10 @@ final class RelDynCombat
         }
         $ep['reached'] = max(floatval($ep['reached']), floatval($dynamics['dimensions']['arousal']['x'] ?? $x));
 
-        // A win: first the rush if it was a near miss (the terror, then the relief), then the thrill on top
+        // A win, in the order it is lived: a near miss's terror and adrenaline, the thrill of the kill, the relief after it
         if (!empty($ctx['victory'])) {
-            $out['near_miss'] = self::nearMiss($npc, $dynamics, $ep, $ctx, $cfg, $at);
+            $plan = self::nearMissPlan($npc, $ep, $ctx, $cfg, $at);
+            if ($plan !== null && empty($plan['done'])) self::nearMissBegin($npc, $dynamics, $plan, $cfg);
             // A win after high arousal: thrill (valence), by taste for a fight and by the temperament's own valence plasticity
             $v = (array) $cfg['victory'];
             $thrill = max(0.0, min(1.0, (floatval($ep['reached']) - floatval($v['min_arousal'])) / max(1e-6, 100.0 - floatval($v['min_arousal']))));
@@ -500,6 +501,8 @@ final class RelDynCombat
                 $out['valence'] = RelationshipDynamics::applyDelta('valence', $dynamics, $more, $temperament);
                 $ep['valence_granted'] = $asked;
             }
+            if ($plan !== null && empty($plan['done'])) self::nearMissEnd($npc, $dynamics, $ep, $plan, $cfg);
+            $out['near_miss'] = !empty($ep['near_miss']);
             $ep['outcome'] = $ep['near_miss'] ? 'near_miss' : 'triumph';
             $out['outcome'] = $ep['outcome'];
         }
@@ -511,46 +514,52 @@ final class RelDynCombat
     }
 
     /**
-     * The near miss (module doc): once per episode, when the NPC fell in it or core reports the NPC or the
-     * player under hp_below at the win. Terror, then relief; arousal toward the floor; and the bond it makes
-     * (a passion floor gain and spike, trust, comfort). Returns whether this episode had one. Mutates $dynamics and $ep.
+     * Is this win a near miss (module doc): the NPC fell in the episode, or core reports the NPC or the player under
+     * hp_below at the win (only for an event of now: no report is unknown, never healthy). Null for none (or the
+     * switch off); ['done' => true] when this episode already had its near miss; else the plan
+     * ['mult' (1, or player_mult for the player's near miss), 'why', 'fell'].
      */
-    private static function nearMiss(string $npc, array &$dynamics, array &$ep, array $ctx, array $cfg, float $at): bool
+    private static function nearMissPlan(string $npc, array $ep, array $ctx, array $cfg, float $at): ?array
     {
         $nm = (array) $cfg['near_miss'];
-        if (empty($nm['enabled'])) return false;
-        if (!empty($ep['near_miss'])) return true;
-        $mult = 0.0;
-        $why = null;
-        $fell = is_numeric($ep['fell_at'] ?? null);
-        if ($fell) {
-            [$mult, $why] = [1.0, 'fell in the fight'];
-        } elseif (!empty($ctx['fought'])) {
-            // Core's live HP, only for an event of now (no report is unknown, never healthy)
-            $now = RelationshipDynamics::currentGamets();
-            $isNow = $at > 0 && $now > 0 && abs($now - $at) <= RelationshipDynamics::COMBAT_ACTIVE_WINDOW_GAMETS;
-            $below = floatval($nm['hp_below']);
-            $hp = $isNow ? self::npcHealth($npc) : null;
-            if ($hp !== null && $hp > 0.0 && $hp <= $below) {
-                [$mult, $why] = [1.0, 'own HP'];
-            } else {
-                $playerHp = $isNow ? self::playerHealth() : null;
-                if ($playerHp !== null && $playerHp > 0.0 && $playerHp <= $below) [$mult, $why] = [floatval($nm['player_mult']), "the player's HP"];
-            }
+        if (empty($nm['enabled'])) return null;
+        if (!empty($ep['near_miss'])) return ['done' => true];
+        if (is_numeric($ep['fell_at'] ?? null)) return ['mult' => 1.0, 'why' => 'fell in the fight', 'fell' => true];
+        if (empty($ctx['fought'])) return null;
+        $now = RelationshipDynamics::currentGamets();
+        $isNow = $at > 0 && $now > 0 && abs($now - $at) <= RelationshipDynamics::COMBAT_ACTIVE_WINDOW_GAMETS;
+        $below = floatval($nm['hp_below']);
+        $hp = $isNow ? self::npcHealth($npc) : null;
+        if ($hp !== null && $hp > 0.0 && $hp <= $below) return ['mult' => 1.0, 'why' => 'own HP', 'fell' => false];
+        $playerHp = $isNow ? self::playerHealth() : null;
+        if ($playerHp !== null && $playerHp > 0.0 && $playerHp <= $below) {
+            return ['mult' => floatval($nm['player_mult']), 'why' => "the player's HP", 'fell' => false];
         }
-        if ($mult <= 0.0) return false;
+        return null;
+    }
+
+    /** The near miss, the first half: the adrenaline to the floor and the terror (none when a fall already was the first valence: bleedoutResponse's). */
+    private static function nearMissBegin(string $npc, array &$dynamics, array &$plan, array $cfg): void
+    {
+        $nm = (array) $cfg['near_miss'];
         $temperament = $dynamics['inferred_temperament'] ?? null;
         $r = RelationshipDynamics::bleedoutResponse($dynamics, false);
-        $fearShare = (!empty($r['vector']) && ($r['fight'] + $r['fear']) > 0) ? $r['fear'] / ($r['fight'] + $r['fear']) : 0.5;
-        // Adrenaline to the floor, then both valences in sequence: the terror, and the relief that follows it
+        $plan['fear_share'] = (!empty($r['vector']) && ($r['fight'] + $r['fear']) > 0) ? $r['fear'] / ($r['fight'] + $r['fear']) : 0.5;
         $x = floatval($dynamics['dimensions']['arousal']['x'] ?? 10.0);
         if (floatval($nm['arousal_floor']) > $x) {
-            RelationshipDynamics::applyDelta('arousal', $dynamics, (floatval($nm['arousal_floor']) - $x) * $mult, $temperament, self::LIFT);
+            RelationshipDynamics::applyDelta('arousal', $dynamics, (floatval($nm['arousal_floor']) - $x) * $plan['mult'], $temperament, self::LIFT);
         }
-        // (a fall in the fight already was the first valence, bleedoutResponse's: only a near miss without one asks the terror here)
-        $terror = $fell ? 0.0 : RelationshipDynamics::applyDelta('valence', $dynamics, -floatval($nm['terror_valence']) * $fearShare * $mult, $temperament);
+        $plan['terror'] = $plan['fell'] ? 0.0
+            : RelationshipDynamics::applyDelta('valence', $dynamics, -floatval($nm['terror_valence']) * $plan['fear_share'] * $plan['mult'], $temperament);
+    }
+
+    /** The near miss, the second half: the relief after the win, and the bond it makes (a passion floor gain and spike, trust, comfort). Marks the episode. */
+    private static function nearMissEnd(string $npc, array &$dynamics, array &$ep, array $plan, array $cfg): void
+    {
+        $nm = (array) $cfg['near_miss'];
+        $mult = $plan['mult'];
+        $temperament = $dynamics['inferred_temperament'] ?? null;
         $relief = RelationshipDynamics::applyDelta('valence', $dynamics, floatval($nm['relief_valence']) * $mult, $temperament);
-        // ... and the bond it makes
         $gain = RelationshipDynamics::gainPassion($npc, $dynamics, floatval($nm['passion']) * $mult, 'near_miss');
         $spike = RelDynPassion::addSpike($npc, $dynamics, floatval($nm['spike']) * $mult, 'near_miss');
         $trust = RelationshipDynamics::applyDelta('trust', $dynamics, floatval($nm['trust']) * $mult, $temperament);
@@ -558,8 +567,7 @@ final class RelDynCombat
         $dynamics['passion_sources']['near_miss'] = floatval($dynamics['passion_sources']['near_miss'] ?? 0) + $gain + $spike;
         $ep['near_miss'] = true;
         RelationshipDynamics::log(sprintf('NEAR MISS: %s (%s) terror %+.2f then relief %+.2f; passion +%.2f spike +%.2f trust %+.2f comfort %+.2f (fear share %.2f)',
-            $npc, $why, $terror, $relief, $gain, $spike, $trust, $comfort, $fearShare));
-        return true;
+            $npc, $plan['why'], $plan['terror'], $relief, $gain, $spike, $trust, $comfort, $plan['fear_share']));
     }
 
     // =====================================================================
@@ -678,10 +686,13 @@ final class RelDynCombat
                 $last = floatval($dynamics['_combat_last_fall_gamets'] ?? 0);
                 if ($at > 0 && $last > 0 && $at >= $last && $at - $last <= RelationshipDynamics::COMBAT_ACTIVE_WINDOW_GAMETS) continue;
                 if ($at > 0) $dynamics['_combat_last_fall_gamets'] = $at;
-                // ... and hits by the foe the fight has shown so far (fight mood: a fall to a dragon is not a fall to a skeever)
+                // ... and hits by the foe the fight has shown so far (fight mood: a fall to a dragon is not a fall to a skeever).
+                // The row is routed on a later turn: what was there settles to the fall first, the fall fades from its own time
+                RelDynMoodAxes::settleToEvent($dynamics, $at);
                 $acfg = self::arousalConfig();
                 $episode = self::episode($dynamics, $at > 0 ? $at : RelationshipDynamics::currentGamets());
-                $fall = RelationshipDynamics::bleedoutResponse($dynamics, true, !empty($acfg['enabled']) ? self::defeatScale($episode, $acfg) : 1.0);   // 0 inside the dead band
+                $fallScale = !empty($acfg['enabled']) ? self::defeatScale($episode, $acfg) : 1.0;
+                $fall = RelationshipDynamics::bleedoutResponse($dynamics, true, $fallScale);   // 0 inside the dead band
                 $gain = $fall['passion'];
                 if (!empty($acfg['enabled'])) {
                     $episode['fell_at'] = $at > 0 ? $at : RelationshipDynamics::currentGamets();
@@ -691,9 +702,9 @@ final class RelDynCombat
                 }
                 // MDD 3.3 rescue response: the player's next exchange with her answers this fall
                 self::noteFall($dynamics, $at);
-                RelationshipDynamics::log(sprintf('Bleedout: %s fight=%s fear=%s passion=%+.2f valence=%+.2f arousal=%+.2f',
+                RelationshipDynamics::log(sprintf('Bleedout: %s fight=%s fear=%s passion=%+.2f valence=%+.2f arousal=%+.2f foe scale=%.2f',
                     $npc, $fall['fight'] === null ? 'n/a' : round($fall['fight'], 3), $fall['fear'] === null ? 'n/a' : round($fall['fear'], 3),
-                    $gain, $fall['applied']['valence'], $fall['applied']['arousal']));
+                    $gain, $fall['applied']['valence'], $fall['applied']['arousal'], $fallScale));
             } else {
                 // Fighting together is an activity the NPC appraises (decisions §6); a fight she was
                 // in beside the player is shared with the player pair, one she only saw is hers alone
@@ -768,6 +779,7 @@ final class RelDynCombat
                     // Beside the fight is beside the fight, whoever made the kill: a player's kill is a witnessed kill for the
                     // passion rules above, but an NPC who barked, killed or fell in the window was in it
                     $engaged = $fought || self::fought($npc, $at > 0 ? $at : RelationshipDynamics::currentGamets());
+                    RelDynMoodAxes::settleToEvent($dynamics, $at);   // (a row routed on a later turn fades from its own time)
                     $mood = self::fightMood($npc, $dynamics, ['type' => $type, 'at' => $at, 'victim' => $victim, 'player' => $player,
                         'fought' => $engaged, 'victory' => $victory, 'prefs' => $prefs]);
                     $moodChanged = $mood !== [];

@@ -227,6 +227,9 @@ final class RelDynMoodAxes
         if ($clock !== null) {
             $last = floatval($clock['gamets'] ?? 0);   // raw gamets
             $dt = max(0.0, $play - floatval($clock['play'] ?? $play));   // play gamets
+            // A clock stamped by an event routed late (settleToEvent): the play credited since is mostly the time before
+            // the event, so only the calendar since the event counts
+            if (!empty($clock['by_event'])) $dt = 0.0;
             if ($now > 0 && $last > 0 && $now >= $last) $dt = max($dt, $now - $last);
             if ($dt > 0.0) {
                 foreach (self::MOOD_DIMS as $dim) {
@@ -240,6 +243,22 @@ final class RelDynMoodAxes
             RelationshipDynamics::log('[MOOD] settled ' . json_encode(array_map(fn($v) => round($v, 3), $out)));
         }
         return $out;
+    }
+
+    /**
+     * An event of game time $at reaches this NPC late (core's combat rows are routed on the NPC's next turn, which can
+     * be minutes after the fight): settle what was there to $at first, then stamp the clock at $at, so what the event
+     * adds starts to fade from $at and not from the NPC's last turn. The next settle() counts the calendar since the
+     * event only. A clock already past $at (rows out of order, a load) is left alone. Returns what settled (settle()).
+     */
+    public static function settleToEvent(array &$dynamics, float $at): array
+    {
+        if ($at <= 0.0) return [];
+        $clock = $dynamics[self::CLOCK_KEY] ?? null;
+        if (is_array($clock) && floatval($clock['gamets'] ?? 0) > $at) return [];
+        $moved = self::settle($dynamics, $at);
+        if (is_array($dynamics[self::CLOCK_KEY] ?? null)) $dynamics[self::CLOCK_KEY]['by_event'] = true;
+        return $moved;
     }
 
     /** One dimension's event residue after $dt gamets (points moved, signed). */
