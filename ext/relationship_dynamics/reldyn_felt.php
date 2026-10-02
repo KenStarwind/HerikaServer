@@ -923,8 +923,9 @@ final class RelDynFelt
 
         // One referent for the player: older text sources say "the player"; the LLM gets the same
         // name (or stranger reference) the headers define
-        $lines = array_values(array_filter(array_map(function (array $l) use ($player): array {
-            $l['text'] = self::nameThePlayer($l['text'], $player);
+        // and the NPC's own pronoun vars ({THEY} {THEIR} ...: core's gender, neutral when unstated, RelDynPronouns)
+        $lines = array_values(array_filter(array_map(function (array $l) use ($player, $npc): array {
+            $l['text'] = RelDynPronouns::fill(self::nameThePlayer($l['text'], $player), $npc);
             return $l;
         }, $lines), fn($l) => $l['text'] !== ''));
         return ['lines' => $lines, 'changed' => $changed, 'tier' => $tier, 'player_ref' => $player, 'knowledge' => $knowledge];
@@ -1137,6 +1138,9 @@ final class RelDynFelt
     public static function select(string $npc, string $player, array $lines, int $tier, array $dynamics, ?array $cfg = null): array
     {
         $cfg = $cfg ?? self::config();
+        // pronoun vars resolve before intensify() can change their case
+        foreach ($lines as &$pl) $pl['text'] = RelDynPronouns::fill((string) $pl['text'], $npc);
+        unset($pl);
         if ($tier <= 0) {
             $lines = array_filter($lines, fn($l) => $l['must'] || $l['scope'] === self::SCOPE_SELF || $l['tier0']);
         }
@@ -1201,7 +1205,7 @@ final class RelDynFelt
         $cfg = $cfg ?? self::config();
         $bond = false;
         foreach ($lines as $l) if ($l['scope'] === self::SCOPE_BOND) $bond = true;
-        $header = strtr((string) $cfg['text'][$bond ? 'header_bond' : 'header_self'], ['{NAME}' => $npc, '{PLAYER}' => $player]);
+        $header = RelDynPronouns::fill(strtr((string) $cfg['text'][$bond ? 'header_bond' : 'header_self'], ['{NAME}' => $npc, '{PLAYER}' => $player]), $npc);
         // A tagged line (the impulse layer's <inner_conflict>) is its own element after the list
         $plain = array_filter($lines, fn($l) => empty($l['tag']));
         $tagged = array_filter($lines, fn($l) => !empty($l['tag']));
@@ -1222,6 +1226,11 @@ final class RelDynFelt
      * and the rumours heard where she is (RelDynGating::withRumours).
      */
     public static function knowledgeOfPlayer(string $npc, string $player, array $dynamics, ?array $cfg = null, ?array $knowledge = null): string
+    {
+        return RelDynPronouns::fill(self::knowledgeOfPlayerText($npc, $player, $dynamics, $cfg, $knowledge), $npc);
+    }
+
+    private static function knowledgeOfPlayerText(string $npc, string $player, array $dynamics, ?array $cfg = null, ?array $knowledge = null): string
     {
         $cfg = $cfg ?? self::config();
         $t = (array) $cfg['text'];
@@ -1317,7 +1326,7 @@ final class RelDynFelt
             $parts[] = "<knowledge_of_player>\n{$knowledge}\n</knowledge_of_player>";
         }
         if ($core !== []) {
-            $header = strtr((string) $cfg['text']['core_header'], ['{NAME}' => $npc, '{PLAYER}' => $player]);
+            $header = RelDynPronouns::fill(strtr((string) $cfg['text']['core_header'], ['{NAME}' => $npc, '{PLAYER}' => $player]), $npc);
             $parts[] = "<emotional_core>\n{$header}\n" . implode("\n", array_map(fn($l) => '- ' . $l['text'], $core)) . "\n</emotional_core>";
         }
         return implode("\n", $parts);

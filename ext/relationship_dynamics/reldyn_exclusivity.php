@@ -564,7 +564,8 @@ final class RelDynExclusivity
     public static function render(string $npcName, string $suitor, string $text, ?array $cfg = null): string
     {
         $cfg = $cfg ?? self::config();
-        $header = strtr((string) $cfg['header'], ['{NAME}' => $npcName, '{SUITOR}' => $suitor]);
+        $header = RelDynPronouns::fill(strtr((string) $cfg['header'], ['{NAME}' => $npcName, '{SUITOR}' => $suitor]), $npcName);
+        $text = RelDynPronouns::fill($text, $npcName);
         return "<subtext>\n{$header}\n- {$text}\n</subtext>";
     }
 

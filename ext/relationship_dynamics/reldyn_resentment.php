@@ -625,7 +625,7 @@ final class RelDynResentment
         $total = $out['decay'] + $out['recovery'] + $out['gentle'];
         if ($total > 0) {
             RelationshipDynamics::log("[RESENT-SELF] {$npcName}: recovery -" . round($total, 3)
-                . ($out['gentle'] > 0 ? ' (gentle approach in her shame)' : '')
+                . ($out['gentle'] > 0 ? ' (gentle approach in their shame)' : '')
                 . ($out['tags'] ? ' (' . implode(',', $out['tags']) . ')' : '') . ', now ' . round(self::x($dynamics, 'resentment_self'), 2));
         }
         return $out;

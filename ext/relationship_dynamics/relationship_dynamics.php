@@ -18,6 +18,7 @@
  */
 
 require_once __DIR__ . '/reldyn_storage.php';
+require_once __DIR__ . '/reldyn_pronouns.php';
 require_once __DIR__ . '/reldyn_facets.php';
 require_once __DIR__ . '/reldyn_traits.php';
 require_once __DIR__ . '/reldyn_trait_read.php';
@@ -644,6 +645,7 @@ class RelationshipDynamics
         self::$bondCache = [];
         self::$requestScopePid = null;
         self::$requestScopeStartedAt = null;
+        RelDynPronouns::reset();
     }
 
     /**
@@ -17595,7 +17597,7 @@ class RelationshipDynamics
         }
         $dynamics['_ick_tracker']['romantic_count'] = intval($tracker['romantic_count']) + 1;
         $dynamics['_ick_tracker']['counted_gamets'] = array_slice(array_merge((array) ($tracker['counted_gamets'] ?? []), [$g]), -self::ICK_COUNTED_KEEP);
-        self::log("[ICK] {$npcName}: courting she did not answer in kind (eval, gamets {$g}, reply mood " . ($n['reply_mood'] ?? 'unknown') . ')');
+        self::log("[ICK] {$npcName}: courting the NPC did not answer in kind (eval, gamets {$g}, reply mood " . ($n['reply_mood'] ?? 'unknown') . ')');
         return self::ickAfterInteraction($dynamics, true, $dynamics['inferred_temperament'] ?? null, $g > 0 ? (float) $g : null,
             !empty($n['grievance']['flag']));
     }
@@ -17730,9 +17732,9 @@ class RelationshipDynamics
         }
 
         // Inside a romance the floors alone are not her coldness (a fresh start's seed reads
-        // below them): her comfort must have been pushed below where she rests (RelDynProtocols::ickColdIsHers)
+        // below them): their comfort must have been pushed below where the NPC rests (RelDynProtocols::ickColdIsHers)
         if (!RelDynProtocols::ickColdIsHers(is_array($dynamics) ? $dynamics : [], ['ick' => $ick])) {
-            self::log('[ICK] romantic pressure on a partner at her own resting ease: not the Ick');
+            self::log('[ICK] romantic pressure on a partner at their own resting ease: not the Ick');
             return false;
         }
 
@@ -18822,7 +18824,7 @@ class RelationshipDynamics
         $parting = ($dynamics['_walkaway_reason'] ?? null) === 'neglect' && $sinceLeftMinutes < $partingMinutes;
         $isPursuit = $isDialogue && ($state === 'active' || $state === 'boundary_test') && !$parting && !$shame;
         if ($isDialogue && $shame && ($state === 'active' || $state === 'boundary_test')) {
-            self::log("[WALKAWAY] {$npcName}: the player approached her after she left in shame: not pursuit");
+            self::log("[WALKAWAY] {$npcName}: the player approached the NPC after the NPC left in shame: not pursuit");
             $result['shame_approach'] = true;
         } elseif ($isDialogue && !$isPursuit && ($state === 'active' || $state === 'boundary_test')) {
             self::log("[WALKAWAY] {$npcName}: player spoke " . round($sinceLeftMinutes, 1)

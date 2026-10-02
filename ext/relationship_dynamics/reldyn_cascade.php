@@ -198,7 +198,7 @@ final class RelDynCascade
         }
         $out[] = $entry;
         $dynamics[self::OUT_KEY] = array_slice($out, -self::OUT_MAX);
-        RelationshipDynamics::log("[CASCADE] {$npcName}: an eval item moved her affinity " . sprintf('%+.2f', $delta)
+        RelationshipDynamics::log("[CASCADE] {$npcName}: an eval item moved their affinity " . sprintf('%+.2f', $delta)
             . ($defining ? ' (a defining moment)' : '') . '; the ripple waits to be queued');
         return $entry;
     }
@@ -453,7 +453,7 @@ final class RelDynCascade
             }
             $results[] = ['target' => $t['name'], 'cascade_delta' => $ripple, 'bond_strength' => round(abs($t['bond']) / 100.0, 2), 'via' => $how['via']];
             RelationshipDynamics::log("[CASCADE] {$source} -> {$t['name']}: ripple " . sprintf('%+.2f', $ripple) . " queued (bond {$t['bond']}, {$t['kind']}, "
-                . ($how['via'] === 'witnessed' ? 'she was there, at once'
+                . ($how['via'] === 'witnessed' ? 'the NPC was there, at once'
                     : "word travels {$how['steps']} hold(s), earliest in " . sprintf('%.1f', $how['delay_hours']) . ' game hours, sooner if they talk') . ')');
         }
         return $failed ? null : $results;
@@ -525,7 +525,7 @@ final class RelDynCascade
             }
         }
         if (!$complete) {
-            error_log("[RelDyn] ERROR cascade: {$npcName}'s ripples were not all queued; they stay noted for her next eval item");
+            error_log("[RelDyn] ERROR cascade: {$npcName}'s ripples were not all queued; they stay noted for their next eval item");
             return $queued;
         }
         unset($dynamics[self::OUT_KEY]);
@@ -630,7 +630,7 @@ final class RelDynCascade
                     'reason' => is_string($item['anchor'] ?? null) ? $item['anchor'] : null, 'gamets' => floatval($item['gamets'] ?? 0), 'via' => $via];
             }
             RelationshipDynamics::log("[CASCADE] {$npcName} " . ($via === 'witnessed' ? 'saw' : 'heard of') . " {$item['source']}: ripple " . sprintf('%+.2f', $raw)
-                . ' -> ' . sprintf('%+.2f', $adj) . ' through her curve' . ($via === 'told' ? ' (word of mouth)' : ''));
+                . ' -> ' . sprintf('%+.2f', $adj) . ' through their curve' . ($via === 'told' ? ' (word of mouth)' : ''));
         }
         $dynamics[self::APPLIED_KEY] = array_slice($applied, -self::APPLIED_KEEP);
         if ($felt !== []) $dynamics[self::FELT_KEY] = array_slice($felt, -self::FELT_MAX);
@@ -638,7 +638,7 @@ final class RelDynCascade
             RelationshipDynamics::queueAffinityDelta($dynamics, $total);
         }
         if (!RelationshipDynamics::saveDynamics($npcName, $dynamics)) {
-            error_log("[RelDyn] ERROR cascade: {$npcName}'s state was not saved; her ripples stay in the inbox for her next request");
+            error_log("[RelDyn] ERROR cascade: {$npcName}'s state was not saved; their ripples stay in the inbox for their next request");
             return [];
         }
         if (!self::dropConsumed($npcId, $consumed)) {
@@ -651,7 +651,7 @@ final class RelDynCascade
         $r = RelationshipDynamics::commitPlayerAffinity($npcName, $dynamics);
         if ($r !== null) {
             $GLOBALS['RELDYN_PRE_AFF'] = intval($r['new']);   // the affinity snapshot of this request is core's now
-            RelationshipDynamics::log("[CASCADE] {$npcName}: core affinity {$r['old']} -> {$r['new']} from what she heard");
+            RelationshipDynamics::log("[CASCADE] {$npcName}: core affinity {$r['old']} -> {$r['new']} from what the NPC heard");
         }
         return $results;
     }

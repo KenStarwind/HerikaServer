@@ -447,7 +447,7 @@ final class RelDynPassion
             return 0.0;
         }
         $applied = RelationshipDynamics::applyDelta('valence', $dynamics, $points, $dynamics['inferred_temperament'] ?? null);
-        RelationshipDynamics::log(sprintf('[DESIRE] %s: a flirt from the player (%s bond, intent %.1f) moves her mood %+.2f (applied %+.2f)',
+        RelationshipDynamics::log(sprintf('[DESIRE] %s: a flirt from the player (%s bond, intent %.1f) moves their mood %+.2f (applied %+.2f)',
             $npcName, $type, $intent, $points, $applied));
         return $applied;
     }

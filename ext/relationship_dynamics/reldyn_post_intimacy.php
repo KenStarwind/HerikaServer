@@ -661,7 +661,7 @@ final class RelDynPostIntimacy
         $state['tier'] = $tier;
         $state['uncertainty'] = $un['size'];
         $state['felt_until'] = $now + self::hours(floatval($cfg['regret_felt_game_hours']));
-        RelationshipDynamics::log(sprintf('[POST-INTIMACY] %s: the sober self wonders about the %s encounter (uncertainty %.2f, %s; trust %.1f of the %.1f she would normally need) %s',
+        RelationshipDynamics::log(sprintf('[POST-INTIMACY] %s: the sober self wonders about the %s encounter (uncertainty %.2f, %s; trust %.1f of the %.1f the NPC would normally need) %s',
             $npcName, $state['outcome'] ?? '', $un['size'], $tier, $trust === null ? 50.0 : floatval($trust), $un['need'], json_encode($applied)));
         return $applied;
     }
@@ -680,7 +680,7 @@ final class RelDynPostIntimacy
         if ($now <= floatval($w['since'] ?? 0)) return [];
         $trust = RelationshipDynamics::getEffectiveDimensionValue($dynamics, 'trust');
         if ($trust !== null && floatval($trust) >= self::uncertainty(floatval($trust), self::soberOpenness($dynamics))['need']) {
-            return self::resolveWobble($npcName, $dynamics, 'her trust has caught up with the night', $now);
+            return self::resolveWobble($npcName, $dynamics, 'their trust has caught up with the night', $now);
         }
         return [];
     }

@@ -662,7 +662,7 @@ final class RelDynEditor
         $fields[] = self::field('love:social_sensitivity_curve', 'Social sensitivity curve', 'select', $cur !== '' ? $cur : $sscDerived, [
             'options' => array_combine($ssc, array_map(fn($s) => str_replace('_', ' ', $s), $ssc)),
             'state' => $cur !== '' ? 'override' : 'derived', 'derived' => $sscDerived,
-            'hint' => 'how much the bond depth scales what she lets in',
+            'hint' => 'how much the bond depth scales what the NPC lets in',
             'set' => function (array &$dd, $v) use ($ssc): ?string {
                 if (!in_array($v, $ssc, true)) return 'unknown curve';
                 $dd['social_sensitivity_curve'] = $v;
@@ -744,7 +744,7 @@ final class RelDynEditor
             ]);
         }
         return self::section('intimacy', $fields, [
-            'intro' => 'How much physical and emotional intimacy she needs (0..1), derived from her traits. A preference that closes an axis wins over an override.',
+            'intro' => 'How much physical and emotional intimacy the NPC needs (0..1), derived from their traits. A preference that closes an axis wins over an override.',
             'reset' => function (array &$dd) { unset($dd['intimacy_need_overrides']); },
         ]);
     }
@@ -832,7 +832,7 @@ final class RelDynEditor
         ]);
         $fields[] = self::field('attr:status_share', 'Status share', 'number', round(floatval($def['status_share']), 2), [
             'min' => 0, 'max' => 1, 'step' => 0.01, 'state' => $state('status_share', null), 'derived' => $base['status_share'],
-            'hint' => 'how much of the status pillar is her own markers (faction standing) vs the generic footprint',
+            'hint' => 'how much of the status pillar is their own markers (faction standing) vs the generic footprint',
             'set' => self::numberSetter(fn(array &$dd, float $v) => self::setAttraction($dd, 'status_share', $v), 0, 1),
             'reset' => function (array &$dd) { self::clearAttraction($dd, 'status_share', null); },
         ]);
@@ -851,7 +851,7 @@ final class RelDynEditor
         ]);
         $fields[] = self::field('attr:beauty_keywords', 'Beauty keywords', 'text', implode(', ', (array) $def['beauty_keywords']), [
             'state' => $state('beauty_keywords', 'beauty_keywords'), 'derived' => implode(', ', (array) $base['beauty_keywords']),
-            'hint' => 'comma-separated words she finds beautiful in the player\'s appearance text',
+            'hint' => 'comma-separated words the NPC finds beautiful in the player\'s appearance text',
             'set' => function (array &$dd, $v): ?string {
                 $kw = array_values(array_filter(array_map(fn($k) => strtolower(trim($k)), explode(',', (string) $v)), fn($k) => $k !== ''));
                 self::setAttraction($dd, 'beauty_keywords', $kw);
@@ -874,7 +874,7 @@ final class RelDynEditor
         $markers = [];
         foreach ((array) $def['status_markers'] as $k => $spec) $markers[] = (string) $k;
         $fields[] = self::field('attr:status_markers', 'Status markers', 'readonly', $markers ? implode(', ', $markers) : 'none',
-            ['state' => 'readonly', 'hint' => 'from her factions (' . (string) ($def['sources']['status_markers'] ?? '?') . '); set per NPC in the attraction config']);
+            ['state' => 'readonly', 'hint' => 'from their factions (' . (string) ($def['sources']['status_markers'] ?? '?') . '); set per NPC in the attraction config']);
         $lens = [];
         foreach ((array) $def['lens'] as $p => $table) {
             arsort($table);
@@ -883,7 +883,7 @@ final class RelDynEditor
             $lens[] = $p . ': ' . implode(', ', $top);
         }
         $fields[] = self::field('attr:lens', 'Lens (what counts as strength / competence)', 'readonly', $lens ? implode('; ', $lens) : 'none',
-            ['state' => 'readonly', 'hint' => 'player archetypes she values, derived from her facet preferences (edit those)']);
+            ['state' => 'readonly', 'hint' => 'player archetypes the NPC values, derived from their facet preferences (edit those)']);
         $rig = RelDynAttraction::RIGIDITIES;
         foreach ($pillars as $p) {
             $fields[] = self::field("attr:rigidity:{$p}", ucfirst($p), 'select', $def['rigidity'][$p], [
@@ -925,9 +925,9 @@ final class RelDynEditor
             'friendzoned' => $a['friendzoned'], 'units' => $units, 'standards' => $def['standards'],
             'passes' => (array) ($d['_attraction']['passes'] ?? [])]];
         return self::section('attraction', $fields, [
-            'intro' => 'The Attraction Matrix is a bouncer, not an emotion: how the player scores on her four pillars as she defines them, '
+            'intro' => 'The Attraction Matrix is a bouncer, not an emotion: how the player scores on their four pillars as the NPC defines them, '
                 . 'and how steep the uphill to passion is. Overrides are stored per NPC (attraction_overrides) over the named preset and '
-                . 'the derivation. "Match" below is the player\'s pillar score in her eyes (points 0..100) against her floor.',
+                . 'the derivation. "Match" below is the player\'s pillar score in their eyes (points 0..100) against their floor.',
             'blocks' => $blocks,
             'reset' => function (array &$dd) {
                 unset($dd['attraction_overrides'], $dd['attraction_profile'], $dd['openness']);
@@ -1049,7 +1049,7 @@ final class RelDynEditor
             }
         }
         return self::section('fulfillment', $fields, [
-            'intro' => 'Per relationship pair: her needs (the spider\'s axes, from facet preferences, love languages, traits and intimacy need) '
+            'intro' => 'Per relationship pair: their needs (the spider\'s axes, from facet preferences, love languages, traits and intimacy need) '
                 . 'and how well this relationship has been covering them lately (-1..+1). Needs are edited through those sections; coverage is earned.',
             'blocks' => $blocks,
         ]);
@@ -1107,7 +1107,7 @@ final class RelDynEditor
             self::field('flag:creature_type', 'Creature', 'select', is_string($creature) ? $creature : '', [
                 'options' => ['' => '(from the game)', 'none' => 'not a creature'] + array_combine(RelDynCreatures::TYPES, RelDynCreatures::TYPES),
                 'state' => $creature !== null ? 'override' : 'derived', 'derived' => '',
-                'hint' => 'a Companions member cured of the blood ("Purity") is still a werewolf by faction: choose "not a creature" for her',
+                'hint' => 'a Companions member cured of the blood ("Purity") is still a werewolf by faction: choose "not a creature" for the NPC',
                 'set' => function (array &$dd, $v): ?string {
                     if ($v !== '' && $v !== 'none' && !in_array($v, RelDynCreatures::TYPES, true)) return 'unknown creature';
                     $dd['creature_type'] = $v !== '' ? $v : null;
@@ -1120,7 +1120,7 @@ final class RelDynEditor
                 'set' => function (array &$dd, $v): ?string { $v = trim((string) $v); $dd['home_location'] = $v !== '' ? $v : null; return null; },
                 'reset' => function (array &$dd) { $dd['home_location'] = null; },
             ]),
-            $bool('_director_goal_disabled', 'Director goals off for her'),
+            $bool('_director_goal_disabled', 'Director goals off for the NPC'),
             self::field('flag:director_goal', 'Director goal', 'readonly', is_array($goal) ? (string) ($goal['text'] ?? '') : 'none', [
                 'state' => 'state', 'reset' => is_array($goal) ? function (array &$dd) { $dd['_director_goal'] = null; } : null]),
         ];
@@ -1134,7 +1134,7 @@ final class RelDynEditor
         ] as $key => $label) {
             $timers[] = ['key' => $key, 'label' => $label, 'raw' => $d[$key] ?? 0, 'days' => self::gameDays($d[$key] ?? 0)];
         }
-        $timers[] = ['key' => '_accumulated_time', 'label' => 'Play seconds with her', 'raw' => $d['_accumulated_time'] ?? 0,
+        $timers[] = ['key' => '_accumulated_time', 'label' => 'Play seconds with the NPC', 'raw' => $d['_accumulated_time'] ?? 0,
             'days' => self::num(floatval($d['_accumulated_time'] ?? 0) / 3600, 2) . ' h'];
         return self::section('flags', $fields, [
             'intro' => 'Counters, switches and the clocks (read-only; raw gamets and game days).',
@@ -1260,7 +1260,7 @@ final class RelDynEditor
         // Let in (durable, earned) and pulling back (temporary): reldyn_pullback.php
         $pb = $jev['pullback'];
         $fields[] = self::field('state:let_in', 'Let in', 'readonly', self::num($pb['let_in'], 1) . ($pb['not_let_in_yet'] ? ' (not yet)' : ''), ['state' => 'state',
-            'hint' => 'how far she has let the player in: sqrt(comfort x trust), any bond type. Derived; change comfort or trust to move it']);
+            'hint' => 'how far the NPC has let the player in: sqrt(comfort x trust), any bond type. Derived; change comfort or trust to move it']);
         $fields[] = self::field('state:pullback', 'Pulling back', 'readonly', $pb['active']
             ? 'yes, ' . self::num($pb['pressure'], 2) . ' (on ' . self::num((float) $pb['on'], 2) . ', off ' . self::num((float) $pb['off'], 2) . '), '
                 . $pb['band'] . '/' . $pb['style'] . ($pb['attachment'] !== null ? '/' . $pb['attachment'] : '')
@@ -1271,10 +1271,10 @@ final class RelDynEditor
             'reset' => isset($d[RelDynPullback::KEY]) ? function (array &$dd) { unset($dd[RelDynPullback::KEY]); } : null]);
         $walk = (string) ($d['_walkaway_state'] ?? 'normal');
         $fields[] = self::field('state:walkaway', 'Walkaway', 'readonly', $walk . (isset($d['_walkaway_reason']) ? ' (' . (string) $d['_walkaway_reason'] . ')' : ''), [
-            'state' => 'state', 'hint' => 'reset brings her back to normal (resetWalkawayState)',
+            'state' => 'state', 'hint' => 'reset brings the NPC back to normal (resetWalkawayState)',
             'reset' => $walk !== 'normal' ? function (array &$dd) { RelationshipDynamics::resetWalkawayState($dd); } : null]);
         return self::section('states', $fields, [
-            'intro' => 'Temporary and situational states on top of who she is. Held offsets are part of the raw dimension values.',
+            'intro' => 'Temporary and situational states on top of who the NPC is. Held offsets are part of the raw dimension values.',
             'blocks' => [['type' => 'held', 'rows' => $held]],
             'reset' => function (array &$dd) use ($walk) {
                 self::releaseHeld($dd);
@@ -1704,7 +1704,7 @@ CSS;
             $out .= self::renderSection($s, $hidden);
         }
         $out .= '<div class="rd-section" id="sec-reset"><h2>Fresh start</h2><p class="rd-intro">Forget everything RelDyn holds for ' . self::h($npc)
-            . ': overrides, dimensions, states, counters. The next turn derives her again from her bio and traits. Core affinity is not touched.</p>'
+            . ': overrides, dimensions, states, counters. The next turn derives the NPC again from their bio and traits. Core affinity is not touched.</p>'
             . '<form method="post" action="' . self::h(self::PAGE) . '">' . $hidden . '<input type="hidden" name="op" value="reset_npc">'
             . '<div class="rd-actions"><label class="rd-confirm"><input type="checkbox" name="confirm" value="yes" required> I understand this cannot be undone</label>'
             . '<button type="submit" class="rd-danger">Reset the whole NPC</button></div></form></div>';
@@ -1807,7 +1807,7 @@ CSS;
                 }
                 return $out . '</tbody></table></div>';
             case 'held':
-                if ($b['rows'] === []) return '<p class="rd-intro">Nothing is held on her dimensions right now.</p>';
+                if ($b['rows'] === []) return '<p class="rd-intro">Nothing is held on their dimensions right now.</p>';
                 return '';
         }
         return '';
@@ -1820,7 +1820,7 @@ CSS;
             . (!empty($b['model']) ? ' (' . self::h($b['model']) . ')' : '');
         if (is_array($b['nearest'])) $out .= '; nearest preset: ' . self::h($b['nearest']['name']) . ' (distance ' . self::h(self::num($b['nearest']['distance'], 2)) . ')';
         $out .= '</p>';
-        if (!empty($b['screened'])) $out .= '<p class="rd-intro">This NPC is on the read skip list: her vector is hand-set, no bio is read and no quote is stored.</p>';
+        if (!empty($b['screened'])) $out .= '<p class="rd-intro">This NPC is on the read skip list: their vector is hand-set, no bio is read and no quote is stored.</p>';
         if ($b['traits'] === []) return $out;
         $out .= '<div class="rd-scroll"><table class="rd-table"><thead><tr><th>Trait</th><th>Source</th><th>Prior</th><th>Read</th><th>Conf.</th><th>Quote</th></tr></thead><tbody>';
         foreach ($b['traits'] as $name => $s) {
@@ -1888,7 +1888,7 @@ CSS;
 
     private static function renderAttractionEval(array $b): string
     {
-        if (empty($b['enabled'])) return '<p class="rd-intro">The Attraction Matrix has not evaluated her yet (or it is off).</p>';
+        if (empty($b['enabled'])) return '<p class="rd-intro">The Attraction Matrix has not evaluated the NPC yet (or it is off).</p>';
         $out = '<h3 class="rd-intro">Live evaluation (read-only)</h3><p class="rd-intro">Outcome: ' . self::h($b['outcome'] ?? '?')
             . '; curve ' . self::h(self::num($b['curve'], 2)) . '; spark ' . self::h(self::num($b['spark'], 1)) . '; passion gain x'
             . self::h(self::num($b['passion_mult'], 2)) . ($b['hard_zero'] !== null ? '; hard zero: ' . self::h($b['hard_zero']) : '')
@@ -1918,6 +1918,6 @@ CSS;
             $out .= '<tr><td>' . self::h($a['label']) . '</td><td>' . self::h($a['kind']) . '</td><td class="num">' . self::h(self::num($a['need'], 2))
                 . '</td><td class="num">' . self::h(self::num($a['coverage'], 2)) . '</td></tr>';
         }
-        return $out . '</tbody></table></div></div><p class="rd-meta">Dashed: how much she needs it (drawn relative to her largest need); solid: how well the bond covers it (centre -1, middle ring even, rim +1).</p>';
+        return $out . '</tbody></table></div></div><p class="rd-meta">Dashed: how much the NPC needs it (drawn relative to their largest need); solid: how well the bond covers it (centre -1, middle ring even, rim +1).</p>';
     }
 }

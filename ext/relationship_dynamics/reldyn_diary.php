@@ -275,7 +275,7 @@ final class RelDynDiary
             $lines[] = strtr($p['moments'], ['{MOMENTS}' => implode('; ', $phrases)]);
         }
         if ($lines === []) return null;
-        return strtr(trim((string) ($p['lead'] ?? '')) . "\n" . implode("\n", $lines), ['{NAME}' => $npcName]);
+        return RelDynPronouns::fill(strtr(trim((string) ($p['lead'] ?? '')) . "\n" . implode("\n", $lines), ['{NAME}' => $npcName]), $npcName);
     }
 
     /** The trajectory dimensions now (drift sample units) and the self-confidence evidence. */
@@ -603,6 +603,9 @@ final class RelDynDiary
         $phrases = self::momentPhrases($moments, $player, $cfg);
         if ($phrases !== []) $parts[] = 'Since they last took stock: ' . implode('; ', $phrases) . '.';
         if ($stateLines !== []) $parts[] = "How they are now:\n- " . implode("\n- ", array_map('strval', $stateLines));
+        // RelDyn's own wording carries the NPC's pronoun vars; the diary entries are the NPC's own words and are never touched
+        foreach ($parts as &$part) $part = RelDynPronouns::fill($part, $npc);
+        unset($part);
         $texts = [];
         foreach ($entries as $e) {
             $t = trim((string) ($e['content'] ?? ''));

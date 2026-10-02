@@ -59,29 +59,29 @@ that do nothing without RelDyn. The old give/trade request path, which CHIM no l
 ## reldyn-v0.22 — let in, and pulling back
 "Closed off" is no longer a permanent verdict. Two things replace it. Being let in is earned and lasting: it grows with
 comfort and trust in any kind of bond, friendship and family as much as romance, and a guarded NPC simply earns it
-slower. Until then she hasn't let the player in yet, and the text says "yet".
+slower. Until then they haven't let the player in yet, and the text says "yet".
 Pulling back is a mood that comes and goes, even deep into a bond. A stormy inner weather, needs that go unmet and
-unresolved hurt press on her; the less mature she is, the more her mood drives it, and it fades when things ease or when
-the player meets what she's missing. How it shows is who she is: a mature NPC says plainly what's missing and asks for
-it, an in-between one means to and it comes out sharp, an immature one pouts or picks a fight, and her attachment style
+unresolved hurt press on them; the less mature they are, the more their mood drives it, and it fades when things ease or when
+the player meets what they're missing. How it shows is who they are: a mature NPC says plainly what's missing and asks for
+it, an in-between one means to and it comes out sharp, an immature one pouts or picks a fight, and their attachment style
 colours it. The NPC editor, Jev and the state dump show both, and a switch restores the old behaviour.
-The gating preview now says its tier table changes only what she knows of the player, not how she feels.
+The gating preview now says its tier table changes only what they know of the player, not how they feel.
 
-## reldyn-v0.21 — gifts that count as gifts, ripples through her circle, the feelings that grow from the rest, and fame that follows what you joined
-What you hand her is read for what it is: food, drink and potions are help, anything else is a gift, and each handover
-counts once however many ways it was seen. Making up after a quarrel warms her more again in ordinary play, and open
+## reldyn-v0.21 — gifts that count as gifts, ripples through their circle, the feelings that grow from the rest, and fame that follows what you joined
+What you hand them is read for what it is: food, drink and potions are help, anything else is a gift, and each handover
+counts once however many ways it was seen. Making up after a quarrel warms them more again in ordinary play, and open
 flirting or an intimate scene in front of someone who cares about you now stings them right then.
 Word travels. Something big you do to one person reaches the people who care about them, gently and second-hand, the
 next time they talk to you; an enemy of theirs hears it the other way. NPCs talking among themselves now know a little
 about each other's feelings toward you, more as the bond deepens.
-Her inner life fills out: the emotions that grow out of the rest (loneliness, earned security, impostor feelings and the
+Their inner life fills out: the emotions that grow out of the rest (loneliness, earned security, impostor feelings and the
 others from the design) appear when their ingredients are there, and only the deepest couple speak. Reunions and the
-little hints of what she likes ride on what you just did, and name her instead of assuming a pronoun.
-Her warmth and love languages keep up with who she is when her personality is read or edited, and the diary's moments
+little hints of what they like ride on what you just did, and name them instead of assuming a pronoun.
+Their warmth and love languages keep up with who they are when their personality is read or edited, and the diary's moments
 no longer stall out on a steady pace of play.
 The body and the blood: the states the game can actually see (hurt, rain, cold, a clear night) count; hunger, fatigue and
-the like wait until something can sense them. Whoever heals you earns the trust, a werewolf comes back to herself after
-the change, and the old flat penalty for losing a fight is gone, since her own fall already says who she is.
+the like wait until something can sense them. Whoever heals you earns the trust, a werewolf comes back to themself after
+the change, and the old flat penalty for losing a fight is gone, since their own fall already says who they are.
 Fame follows the sides you joined (the civil war, the Bards, the Dawnguard or the Volkihar, a thane's title) and stays
 after the quest ends. A replay tool and a read-only health check for the live pipeline join the repo for testing on the
 real game.
@@ -89,10 +89,10 @@ real game.
 ## reldyn-v0.20 — love languages that work, and bio reads that are not inflated
 Love languages came out the same for everyone (quality time, then words of affirmation): the secondary read MARAS,
 which is retired, and the race map never matched CHIM's race names ("NordRace", "NordRaceVampire"). The primary now
-follows her attachment first (anxious and toxic corner weights summing to 0.5 or more seek reassurance: words of
-affirmation, config `love_language_attachment`), then her own temperament (the nearest preset of her trait vector,
+follows their attachment first (anxious and toxic corner weights summing to 0.5 or more seek reassurance: words of
+affirmation, config `love_language_attachment`), then their own temperament (the nearest preset of their trait vector,
 config `love_language_primary`), the
-secondary likewise (`love_language_secondary`); when the two come out equal the secondary is the language of her
+secondary likewise (`love_language_secondary`); when the two come out equal the secondary is the language of their
 next-nearest temperament, and only then rotated. The core race (normalised: Nord, Orc, Redguard: acts of service;
 Breton, Dunmer: words; High elf, Imperial: gifts; Khajiit, Wood elf: touch) is a minor prior used only when there is no
 temperament. Love languages already stored are kept.
@@ -106,20 +106,20 @@ unlevelled even then, as re-levelled they break the wrong-way guard. `leniency` 
 moved at use time by the seed population's mean (`x' = x - read_mean + 0.5`; stored reads stay raw; a hand-set vector,
 a preset or a label is never touched).
 
-## reldyn-v0.19 — RelDyn gets its own pages: the hub, every part of her, and how they see you
+## reldyn-v0.19 — RelDyn gets its own pages: the hub, every part of them, and how they see you
 The plugin button in CHIM's Server Plugins page now opens RelDyn's hub, and from there every RelDyn page is a click
 away. The hub holds every setting RelDyn has, grouped by what it shapes, each showing its default, whether it was
 changed and a way to put it back; a list of the feature switches, with the ones that ship off standing out; prompt
 gating, with its texts, its tiers, the fame of the player and the map of holds, and a preview of what any NPC would know
-about the player at her real bond or at any other, which changes nothing; and the formulas and tables for reference.
+about the player at their real bond or at any other, which changes nothing; and the formulas and tables for reference.
 Saving keeps only what differs from the defaults, so a later change to a default still reaches the settings nobody
 touched.
 The NPC editor shows everything RelDyn holds for one NPC on one page: each dimension as stored, where it rests, how it
-reads toward you and what a passing state is holding on it; her traits with the preset picker and, beside each trait,
-where it came from (the line of her bio it was read from, her class and voice, a preset, or a vector set by hand, whose
-bio is never read); her attachment, love languages, what she loves and hates, her intimacy need, what she finds
-attractive and how high her bar is, jealousy, resentment and its record, the fulfillment spider of each relationship,
-her switches and clocks, and the states she is in. Every value shows whether it is her own derivation or an edit;
+reads toward you and what a passing state is holding on it; their traits with the preset picker and, beside each trait,
+where it came from (the line of their bio it was read from, their class and voice, a preset, or a vector set by hand, whose
+bio is never read); their attachment, love languages, what they love and hate, their intimacy need, what they find
+attractive and how high their bar is, jealousy, resentment and its record, the fulfillment spider of each relationship,
+their switches and clocks, and the states they are in. Every value shows whether it is their own derivation or an edit;
 changing one stores an override, leaving it alone keeps it derived, and each field, each section or the whole NPC can
 be put back. Every save goes through the same merge the game's own writers use. The April editor, which nothing opened
 any more, is gone.
@@ -127,7 +127,7 @@ The player profile page shows how NPCs have come to see the player, from what th
 qualities they are read on, with how much each rests on and where it is heading, their style, their attachment pattern and whether it is
 shifting, how they show care, where they look for validation, their standing, and a few plain sentences about them. It
 makes a shareable spider-graph card, with or without the player's name and never with anyone else's, and shows for any
-NPC what she needs from the bond against what it gives her. Whether NPCs sense this profile at all is the player's
+NPC what they need from the bond against what it gives them. Whether NPCs sense this profile at all is the player's
 choice on that page, and it starts off.
 The debug pages come with them: a dry run that puts one evaluation, typed in or taken from what is waiting or was
 already applied, through the real pipeline and throws the result away, showing what would have changed and why; and a
@@ -137,53 +137,53 @@ from the page itself, and everything shown from the game is escaped.
 The NPC editor's Save works in a browser: the Dimensions, Attraction and Attachment forms no longer fail the browser's own
 step check on a value like 32.77, and saving the Interests form no longer pins every interest the browser had nudged to
 the slider's grid. A save also stops putting back what the game changed while the page sat open (an affinity gain, a
-trust gain, a switch changed on another page): only what you changed is written, on the editor and on the hub. Her record
+trust gain, a switch changed on another page): only what you changed is written, on the editor and on the hub. Their record
 of grievances shows what each one was, and the fulfillment spider is the same drawing on the editor and the player
 profile, sized so its words stay readable and whole at phone width; the shareable card scales to the screen instead of
 scrolling sideways. In the hub every setting reads in plain words: trait codes by name, abbreviations spelled out,
 a name that said "Beauty" seventeen times now says whose and which, every switch says what it switches and the ones that
 ship off say so, the big keyword and weight tables say what a row means and what its two numbers are, and each section
-says what it is. The editor's intimacy need now shows what her next turn would store, her race, her blood and her love languages included; before, it left them out and Aela's read as needing connection more than touch.
+says what it is. The editor's intimacy need now shows what their next turn would store, their race, their blood and their love languages included; before, it left them out and Aela's read as needing connection more than touch.
 
-## reldyn-v0.18 — Her own drink and the morning after, what follows a night, memories that keep what she felt, and the mirror
-A bond breaks while you are away only once the absence feels intentional to her, past what she would excuse given who
-she is and how fulfilled the bond was when you left: the fearful and the anxious break sooner, the secure and the
-mature give you longer. When it breaks, the hurt holds her back on your return until you have been warm to her since.
+## reldyn-v0.18 — Their own drink and the morning after, what follows a night, memories that keep what they felt, and the mirror
+A bond breaks while you are away only once the absence feels intentional to them, past what they would excuse given who
+they are and how fulfilled the bond was when you left: the fearful and the anxious break sooner, the secure and the
+mature give you longer. When it breaks, the hurt holds them back on your return until you have been warm to them since.
 A romance gone cold wears the bond down while you are there without warmth, not again while you are away, and a
-marriage without attraction is loveless by nature, not rotting. Care after her fall is the rescue itself, paid once,
-by who she is. The moment on top of the bond is the size her temperament makes it and halves within minutes of quiet;
-her warmth feels each held state once, fades while you are away by who she is, and a catastrophe closes it to anyone
-but her partner for a while.
-She drinks on her own account now, read from the game's own lines of her consuming. Each drink takes a little more of
-her judgement than the last: laughing easily, then her guard and her standards down and blind to desperation, and at
-last without the floors that keep her from slipping. It is a state, not who she is: it wears off on the game clock and
-leaves her exactly herself. Skooma, the sap and heavy drinking build a dependence and a tolerance: each high a little
+marriage without attraction is loveless by nature, not rotting. Care after their fall is the rescue itself, paid once,
+by who they are. The moment on top of the bond is the size their temperament makes it and halves within minutes of quiet;
+their warmth feels each held state once, fades while you are away by who they are, and a catastrophe closes it to anyone
+but their partner for a while.
+They drink on their own account now, read from the game's own lines of their consuming. Each drink takes a little more of
+their judgement than the last: laughing easily, then their guard and their standards down and blind to desperation, and at
+last without the floors that keep them from slipping. It is a state, not who they are: it wears off on the game clock and
+leaves them exactly themself. Skooma, the sap and heavy drinking build a dependence and a tolerance: each high a little
 less, the craving growing with the hours, then the sickness of going without, until the next use or a healing potion
-that eases it without feeding it. While she depends on it she does not grow up, unless someone who cares tells her to
-stop; once she knows she needs to stop she can set herself to stay clean, is ashamed when she slips, and is steadier
-for the days she stays clean. The player's own drinking still reaches her only as worry.
+that eases it without feeding it. While they depend on it they do not grow up, unless someone who cares tells them to
+stop; once they know they need to stop they can set themself to stay clean, are ashamed when they slip, and are steadier
+for the days they stay clean. The player's own drinking still reaches them only as worry.
 A scene the game reports is followed by its context, not by the act: a partner who trusts you deepens, a newer romance
-warms, one who backs away from closeness does (reading a woman who wants closeness and fears it as the draft's
-"manipulated" night is opt-in until Ken rules on it), a casual night stays light, and if she has a partner who is not you it is guilt. The glow lasts a little while and is
-then gone exactly. Every scene makes her pulse race; the context decides whether that reads as warmth or unease, and
-the evaluator is shown it, never asked to score it. Her pulse and her mood now settle with time instead of staying
-where the last event left them. How she carries herself toward you (steady and protective, cold, yielding, bitter)
-moves with how much she respects you and believes in herself, and how much she trusts you and is at ease with you,
-around the shape her personality gives her. A gift counts by her second love language too; a stolen gift, or a present
-she knows was someone else's first, is no gift at all.
-What she did drunk waits for her sober self. The morning judges a drunken night, and her first diary page after it
-looks back at what she let happen: whatever she would not have done sober is regretted, the more so the more she
-expects of herself, and a shallow mind never looks back. However many ways her sober self looks back on one night, and
-however many scenes it held, it is one verdict: for her shame, her ease and her trust alike the heavier counts, never
-both, and a second scene while she is still drunk never brings the morning early. Drink still in her is drunk, even
-when the moment of the mug has long passed; and a drink is dated when she had it, so last night's mead is not this
+warms, one who backs away from closeness does (reading someone who wants closeness and fears it as the draft's
+"manipulated" night is opt-in until Ken rules on it), a casual night stays light, and if they have a partner who is not you it is guilt. The glow lasts a little while and is
+then gone exactly. Every scene makes their pulse race; the context decides whether that reads as warmth or unease, and
+the evaluator is shown it, never asked to score it. Their pulse and their mood now settle with time instead of staying
+where the last event left them. How they carry themself toward you (steady and protective, cold, yielding, bitter)
+moves with how much they respect you and believe in themself, and how much they trust you and are at ease with you,
+around the shape their personality gives them. A gift counts by their second love language too; a stolen gift, or a present
+they know was someone else's first, is no gift at all.
+What they did drunk waits for their sober self. The morning judges a drunken night, and their first diary page after it
+looks back at what they let happen: whatever they would not have done sober is regretted, the more so the more they
+expect of themself, and a shallow mind never looks back. However many ways their sober self looks back on one night, and
+however many scenes it held, it is one verdict: for their shame, their ease and their trust alike the heavier counts, never
+both, and a second scene while they are still drunk never brings the morning early. Drink still in them is drunk, even
+when the moment of the mug has long passed; and a drink is dated when they had it, so last night's mead is not this
 morning's drunk. A drink or two of an evening is a habit, not a dependence; getting drunk every night is.
-Gold, ammunition, a mead or a potion are never "someone else's first": only a thing she could recognize is.
-Before an exchange becomes memory, who she was in it is written around it in words: how the moment landed on her by
-her own measure, what she carries, how she attaches, her mood, and how she carries herself toward you as she does now.
-One hurtful word said to four women is four different memories (opt-in: it writes into CHIM's own memory, right after
+Gold, ammunition, a mead or a potion are never "someone else's first": only a thing they could recognize is.
+Before an exchange becomes memory, who they were in it is written around it in words: how the moment landed on them by
+their own measure, what they carry, how they attach, their mood, and how they carry themself toward you as they do now.
+One hurtful word said to four people is four different memories (opt-in: it writes into CHIM's own memory, right after
 the exchange, at the exchange's own place, so CHIM packs it with the exchange). Some firsts are kept for good with the place they happened, and coming back there brings them back to
-her for a while, or an ache while the bond is strained, with a small moment of passion her own size.
+the NPC for a while, or an ache while the bond is strained, with a small moment of passion their own size.
 The player now has a profile of their own, built only from what the evaluators saw them do: maturity, trust, warmth,
 respect, how comfortable people are around them and self-confidence; where they look for validation; their charisma;
 their attachment pattern (read from how often they come back, visit by visit, never from the next line of one
@@ -192,142 +192,142 @@ role that play moves slowly. A trust record travels: strangers meet a reliable p
 with less. Whether NPCs sense the rest is opt-in; it follows the game back on a load, and a read API feeds the spider
 graph.
 
-## reldyn-v0.17 — The moment on top of the bond, the urge she acts on, and what time away does to it
-Passion now has two parts. The floor is what you have earned with her and changes slowly; on top of it, a moment (a
-touch, a flirt, a topic she loves, being helped up after a fall) makes her heart race for a little while and then
-fades over the next few exchanges, and faster while you are gone. How big the moment is depends on who she is: the
-restrained feel it least, and a woman barely drawn to you feels none. What she shows follows both: her warmth toward
-you is no longer a number of its own but how much she feels for you and how at ease she is with you, together, so it
-opens in a good moment and closes when she stops feeling safe. Excitement feeds desire, and her mood colours it; a
-move you make lands by what you are to her, welcome from a partner or a crush, shrugged off by an acquaintance,
-unwelcome from a stranger, and never welcome while the ick lasts. The weather now pulls her mood toward its own
+## reldyn-v0.17 — The moment on top of the bond, the urge they act on, and what time away does to it
+Passion now has two parts. The floor is what you have earned with them and changes slowly; on top of it, a moment (a
+touch, a flirt, a topic they love, being helped up after a fall) makes their heart race for a little while and then
+fades over the next few exchanges, and faster while you are gone. How big the moment is depends on who they are: the
+restrained feel it least, and an NPC barely drawn to you feels none. What they show follows both: their warmth toward
+you is no longer a number of its own but how much they feel for you and how at ease they are with you, together, so it
+opens in a good moment and closes when they stop feeling safe. Excitement feeds desire, and their mood colours it; a
+move you make lands by what you are to them, welcome from a partner or a crush, shrugged off by an acquaintance,
+unwelcome from a stranger, and never welcome while the ick lasts. The weather now pulls their mood toward its own
 feeling and holds it there instead of piling up.
-How far passion can go now depends on what you are to each other: a friend's has a ceiling unless she is drawn to
+How far passion can go now depends on what you are to each other: a friend's has a ceiling unless they are drawn to
 you and built to let it grow, a partner's has a floor it will not cool below, and an ex's does not grow at all, not
-even for a moment. Big fights stir her more than small ones, and when she goes down and your next word to her is
-care, it moves her by who she is: the self-reliant barely, the anxious deeply, and it can make her lean on you more.
-She now has a short band of wants that rise and fall with the moment: to be close to you when you are alone, to
-shield you when you are hurt, to seek your company when she has missed you, to get herself out of danger, to go and
-look at a place she has never seen. Each fires by how guarded and how sure of herself she is, and shows in her own
-way (plainly, held back, in false starts, in a joke). When what she wants right now pulls against what she is working
-toward in life, you see the struggle, and her temperament decides which wins.
+even for a moment. Big fights stir them more than small ones, and when they go down and your next word to them is
+care, it moves them by who they are: the self-reliant barely, the anxious deeply, and it can make them lean on you more.
+They now have a short band of wants that rise and fall with the moment: to be close to you when you are alone, to
+shield you when you are hurt, to seek your company when they have missed you, to get themself out of danger, to go and
+look at a place they have never seen. Each fires by how guarded and how sure of themself they are, and shows in their own
+way (plainly, held back, in false starts, in a joke). When what they want right now pulls against what they are working
+toward in life, you see the struggle, and their temperament decides which wins.
 Leave someone you are close to long enough and the absence starts to feel intentional. Come back past that point
-and it lands on who she is: an anxious or fearful partner lets it spill out, a guarded one lets the walls go back up,
-a mature one tells you calmly what she needs or steps back rather than exploding. It happens once per absence, costs
-her some comfort, and so some of her warmth toward you, and some trust. A fight left unresolved, or a romance gone
+and it lands on who they are: an anxious or fearful partner lets it spill out, a guarded one lets the walls go back up,
+a mature one tells you calmly what they need or steps back rather than exploding. It happens once per absence, costs
+them some comfort, and so some of their warmth toward you, and some trust. A fight left unresolved, or a romance gone
 cold, slowly and permanently wears the bond down after a week without a single good moment between you; one warm
 exchange starts the week over. Coming home after a long time away is itself a strain for now, and a strained bond
-reaches for nothing, however much she missed you. A reloaded save forgets any fall and rescue that happened after it.
+reaches for nothing, however much they missed you. A reloaded save forgets any fall and rescue that happened after it.
 
-## reldyn-v0.16 — Shame is met gently, the style you bring is graded, and the ick is hers
-When she walks off in shame, going to her is not chasing her: a gentle word can reach her, she can tell you what she
-is ashamed of, and you can forgive her, and each of those brings her back sooner. Admitting something she is ashamed
+## reldyn-v0.16 — Shame is met gently, the style you bring is graded, and the ick is theirs
+When they walk off in shame, going to them is not chasing them: a gentle word can reach them, they can tell you what they
+are ashamed of, and you can forgive them, and each of those brings them back sooner. Admitting something they are ashamed
 of is a confession; merely sharing a secret is not. A partner's trust and comfort show how high they really are
 instead of all reading as the top. The kind of presence you bring (a steady rock, a challenging catalyst, a charmer)
 is judged from how you actually behave in each exchange, not guessed from swings in affinity, and it is what a mature
-woman feels as pressure when you then push for more. Muiri now wants closeness and fears it at once, from the start.
-When she answers another NPC, it is their exchange, not a turn of yours. The ick is now only pressure she did not
-want, measured from her side: the touches the game reports inside your romance are the romance itself, a partner
+NPC feels as pressure when you then push for more. Muiri now wants closeness and fears it at once, from the start.
+When they answer another NPC, it is their exchange, not a turn of yours. The ick is now only pressure they did not
+want, measured from their side: the touches the game reports inside your romance are the romance itself, a partner
 who has not warmed yet is not cold toward you, answering you in kind is answering, and one pushy moment is resented
-once, not twice. Grief and its turning points are told the same way for men and women.
+once, not twice. Grief and its turning points are told the same way for every character.
 
 ## After reldyn-v0.15 (batch O review, untagged) — Crisis, grief, the ick and the parasite; and a suitor's flirt is not yours
-The protocols arrive. A catastrophe forks her on the game calendar: someone she trusts around her pulls her up, no
-one pulls her down, and in between a window stays open until an anchor comes or the time runs out; the dead anchor
-no one, nor the partner who betrayed her. Grief runs through its phases on the calendar, quiet in a mature woman and
-raw in an immature one; a widow does not let a new bond past a ceiling for a while, and the one she lost is idealised,
-then remembered. Pressing a woman who is cold toward you turns every gain of passion into a loss until you back off
-and she is at ease again. A bond that is only gifts turns transactional, and its passion drains fast unless it is fed.
-A rechat in which another NPC flirts with her is theirs, not yours: her reply is steered only by how she turns him
+The protocols arrive. A catastrophe forks them on the game calendar: someone they trust around them pulls them up, no
+one pulls them down, and in between a window stays open until an anchor comes or the time runs out; the dead anchor
+no one, nor the partner who betrayed them. Grief runs through its phases on the calendar, quiet in a mature NPC and
+raw in an immature one; a widowed NPC does not let a new bond past a ceiling for a while, and the one they lost is idealised,
+then remembered. Pressing an NPC who is cold toward you turns every gain of passion into a loss until you back off
+and they are at ease again. A bond that is only gifts turns transactional, and its passion drains fast unless it is fed.
+A rechat in which another NPC flirts with them is theirs, not yours: their reply is steered only by how they turn the suitor
 aside, and nothing of your bond moves with it (no passion, no contact, no needs met). Everyday words between
-companions are no courtship, a type core set between them long ago is no move now, and she drifts only when you have
-actually let her feel far away. Time in a place, a fight she only watched and her own drink meet her needs with you
-only when you were actually with her. Quest friction on duty is not held against you in her resentment either. Someone
-who already knows you hears no first impression of you on the upgrade, and a rumour held at the edge of her range gives
-back exactly what it took. Her backstory's goals stay hers however long nothing feeds them. Twelve gifts in one handover
-are twelve, and her drink is found behind other people's meals.
+companions are no courtship, a type core set between them long ago is no move now, and they drift only when you have
+actually let them feel far away. Time in a place, a fight they only watched and their own drink meet their needs with you
+only when you were actually with them. Quest friction on duty is not held against you in their resentment either. Someone
+who already knows you hears no first impression of you on the upgrade, and a rumour held at the edge of their range gives
+back exactly what it took. Their backstory's goals stay theirs however long nothing feeds them. Twelve gifts in one handover
+are twelve, and their drink is found behind other people's meals.
 
-## reldyn-v0.15 — Whom she saves herself for, what she will not do, what she wants, and what she makes of it
-She can be yours before anyone says so. A pull toward you grows out of her feelings (the spark, how deep the bond
-runs, how well you meet her needs) and is shaped by who she is: a monogamous, loyal, grown woman holds steadiest, a
-volatile or avoidant one keeps a door open. When another NPC courts her, she turns him aside in her own way (plainly,
-coolly, sharply or flustered) and her interest in him is held down. A title makes the pull stronger but never creates
-it, and she names you only once there is one. Leave her unmet or alone for long and it loosens, the anxious first,
-until she is drifting. Being there for her now means actually being with her: a follower you never talk to is not
-meeting her needs, and those needs are kept per relationship so other bonds can have their own later.
-She can say no. Under enough distrust, disrespect and resentment she refuses an order as she is (cleanly, with a yes
-that means no, or with silence), and the refusal is real: following, trading and giving come off her list, while
-leaving and ending the talk stay. A people-pleaser swallows it and turns it on herself. If a quest ties her to you,
-she does the task coldly instead, and your slights land softly for its length.
-She wants things of her own. Goals form from her story, from how the bond is going and from what she loves, grow as
-the world and your company feed them, and fade if nothing does; the need to become better than she is can form and
-hold, or slip into self-blame. The quest journal reaches the NPCs it names. What you are known for meets her before
-you do, read her way, and fades as she comes to know you. What she drinks, reads or wears means what it means to her.
-She reflects when core writes her diary. The moments that mattered are kept for her next entry, and when it comes she
-looks back at who she has been since, as deep as her maturity allows: growing lifts her, going nowhere weighs on
-her, spiralling costs her. Pages written drunk wait for her sober self.
-Where these meet: a suitor's move on her is no rival of yours and her jealousy over your nights out is no crack in
-her pull; a partner who has stepped back from the romance holds herself for no one any more; a refusal is not a
+## reldyn-v0.15 — Whom they save themself for, what they will not do, what they want, and what they make of it
+They can be yours before anyone says so. A pull toward you grows out of their feelings (the spark, how deep the bond
+runs, how well you meet their needs) and is shaped by who they are: a monogamous, loyal, grown NPC holds steadiest, a
+volatile or avoidant one keeps a door open. When another NPC courts them, they turn the suitor aside in their own way (plainly,
+coolly, sharply or flustered) and their interest in the suitor is held down. A title makes the pull stronger but never creates
+it, and they name you only once there is one. Leave them unmet or alone for long and it loosens, the anxious first,
+until they are drifting. Being there for them now means actually being with them: a follower you never talk to is not
+meeting their needs, and those needs are kept per relationship so other bonds can have their own later.
+They can say no. Under enough distrust, disrespect and resentment they refuse an order as they are (cleanly, with a yes
+that means no, or with silence), and the refusal is real: following, trading and giving come off their list, while
+leaving and ending the talk stay. A people-pleaser swallows it and turns it on themself. If a quest ties them to you,
+they do the task coldly instead, and your slights land softly for its length.
+They want things of their own. Goals form from their story, from how the bond is going and from what they love, grow as
+the world and your company feed them, and fade if nothing does; the need to become better than they are can form and
+hold, or slip into self-blame. The quest journal reaches the NPCs it names. What you are known for meets them before
+you do, read their way, and fades as they come to know you. What they drink, read or wear means what it means to them.
+They reflect when core writes their diary. The moments that mattered are kept for their next entry, and when it comes they
+look back at who they have been since, as deep as their maturity allows: growing lifts them, going nowhere weighs on
+them, spiralling costs them. Pages written drunk wait for their sober self.
+Where these meet: a suitor's move on them is no rival of yours and their jealousy over your nights out is no crack in
+their pull; a partner who has stepped back from the romance holds themself for no one any more; a refusal is not a
 step-back and does not end the probation of a boundary, and a step-back is not a refusal.
 
-## reldyn-v0.14 — What she carries, what the moon does to her, and who she slowly becomes
-A grievance is now said out loud. When resentment builds past her own point (an anxious partner speaks early, an
-avoidant one holds it long), she brings it up to your face, naming what actually happened, never a score. How it
-comes out is who she is: a mature partner says it calmly, once; one in between means to say it evenly and it comes
-out in her style; an immature one blows up, and it can happen again. Saying it takes some of the weight off. If you
-keep doing it after a mature partner has spoken, she draws the one calm boundary, and then steps back from the
-romance. A people-pleaser never says it: she turns it on herself, the guilt seeps into how safe she feels with you,
-and when you ask gently and she opens up, it lifts. Walking away now closes the door in core too: a romance ends as
+## reldyn-v0.14 — What they carry, what the moon does to them, and who they slowly become
+A grievance is now said out loud. When resentment builds past their own point (an anxious partner speaks early, an
+avoidant one holds it long), they bring it up to your face, naming what actually happened, never a score. How it
+comes out is who they are: a mature partner says it calmly, once; one in between means to say it evenly and it comes
+out in their style; an immature one blows up, and it can happen again. Saying it takes some of the weight off. If you
+keep doing it after a mature partner has spoken, they draw the one calm boundary, and then step back from the
+romance. A people-pleaser never says it: they turn it on themself, the guilt seeps into how safe they feel with you,
+and when you ask gently and they open up, it lifts. Walking away now closes the door in core too: a romance ends as
 an ex, a friendship as estranged.
 Vampires and werewolves follow Skyrim's real moon. Aela and the Circle carry the beast blood, read from their
-factions: by day it only simmers, on other nights it stirs, and under the full moon it takes her composure, so the
-same grievance she would mean to say evenly by day can come out as a blow-up that night. Coming back from beast form
-leaves her ashamed. Serana is sharp and hungry at night and worn by day. None of this touches anyone who is not a
-creature, and none of it changes who she is underneath: a full moon or a wound is taken back exactly when it ends,
-and it no longer counts toward the slow drift of her character.
-That drift is new: days of real contact slowly move who she is toward the bond you share, within limits, while
+factions: by day it only simmers, on other nights it stirs, and under the full moon it takes their composure, so the
+same grievance they would mean to say evenly by day can come out as a blow-up that night. Coming back from beast form
+leaves them ashamed. Serana is sharp and hungry at night and worn by day. None of this touches anyone who is not a
+creature, and none of it changes who they are underneath: a full moon or a wound is taken back exactly when it ends,
+and it no longer counts toward the slow drift of their character.
+That drift is new: days of real contact slowly move who they are toward the bond you share, within limits, while
 waiting and sleeping move nothing. How close you are now colours how a feeling reads (the same trust feels high
 with a partner and low after a betrayal) without changing what is stored. The same words land differently by
-closeness and by who she is: a guarded woman shrugs off a stranger's insult that would wound an open-hearted one.
-The eval now also tells whether you were courting her, whether you served what she is set on, and whether she was
-keeping up a front: your charm is judged from what you actually did, her goals last the evening instead of seconds
-and only the one you helped with is fulfilled, and a proud, guarded woman can keep a mask of ease in front of people
-she does not trust, which costs her and can slip (still switched off by default). Memories keep only the event.
+closeness and by who they are: a guarded NPC shrugs off a stranger's insult that would wound an open-hearted one.
+The eval now also tells whether you were courting them, whether you served what they are set on, and whether they were
+keeping up a front: your charm is judged from what you actually did, their goals last the evening instead of seconds
+and only the one you helped with is fulfilled, and a proud, guarded NPC can keep a mask of ease in front of people
+they do not trust, which costs them and can slip (still switched off by default). Memories keep only the event.
 Fights count for the one who fought: witnesses feel less, a kill streak builds, a fall is met with fight or with
 fear by temperament, and the afterglow fades with play instead of lasting forever. When you are badly hurt, everyone
 near you feels it, indoors or out, and it lifts when you heal.
 Where these meet, one voice is kept: the confrontation is the only place grievances are raised, and a worry beside
-a calm boundary stays calm even on a night the moon has her.
+a calm boundary stays calm even on a night the moon has them.
 
-## reldyn-v0.13 — Who she is decides what she wants, what she forgives and what she worries about
-Her standards come from her own personality now: a selective, mature, self-assured woman sets a high bar on every
+## reldyn-v0.13 — Who they are decides what they want, what they forgive and what they worry about
+Their standards come from their own personality now: a selective, mature, self-assured NPC sets a high bar on every
 pillar of attraction and a shy, open one sets a low bar, instead of everyone sharing the same line. An asexual NPC
-can still fall for you, through time together, kind words, reassurance, confiding and gentle touch; her longing
+can still fall for you, through time together, kind words, reassurance, confiding and gentle touch; their longing
 carries no desire, physical intimacy never comes into play and Sharmat stays closed.
-A partner who stays home now finds out about your nights out and reacts as who she is. She notices when you come back
-late from the tavern with drink on you, and she hears it when you mention the night yourself. Two feelings answer:
+A partner who stays home now finds out about your nights out and reacts as who they are. They notice when you come back
+late from the tavern with drink on you, and they hear it when you mention the night yourself. Two feelings answer:
 jealousy about the people circling you, which trust softens a lot, and a new worry for your safety, which trust
 softens only a little. A crowded market is not a risk; the tavern at night is. What matters is repetition: a mature
-partner tells you once, plainly, what she values; the next time it shows; if it keeps happening within the week it
-becomes a real grievance, she draws a calm boundary, and if it goes on she steps back from the romance. A less mature
-one accuses, tries to forbid it or sulks, and in the end it boils over. One night counts once however she learns of
-it, and reassurance takes the edge off. Witnesses telling her comes later.
-Anxiety now counts once, from how she attaches rather than again from her temperament. Trust is slow to win and
-quick to lose. A guarded, avoidant slow burn no longer stacks into an endless climb. Falling in battle is who she
-is: the confident and proud fight harder, the reactive and unsure panic, and every fall is a jolt. Values that turned
-the wrong way just off a preset now follow the traits, the eval sees her personality in words, Jev sees the numbers,
+partner tells you once, plainly, what they value; the next time it shows; if it keeps happening within the week it
+becomes a real grievance, they draw a calm boundary, and if it goes on they step back from the romance. A less mature
+one accuses, tries to forbid it or sulks, and in the end it boils over. One night counts once however they learn of
+it, and reassurance takes the edge off. Witnesses telling them comes later.
+Anxiety now counts once, from how they attach rather than again from their temperament. Trust is slow to win and
+quick to lose. A guarded, avoidant slow burn no longer stacks into an endless climb. Falling in battle is who they
+are: the confident and proud fight harder, the reactive and unsure panic, and every fall is a jolt. Values that turned
+the wrong way just off a preset now follow the traits, the eval sees their personality in words, Jev sees the numbers,
 and the editor lists every preset. CHIM's once-a-second poll now only keeps the play clock and save loads in step and
-never touches a bond, so an NPC set as the server default no longer has her absence erased every second.
+never touches a bond, so an NPC set as the server default no longer has their absence erased every second.
 
 ## reldyn-v0.12 — Personality read from each NPC's own bio
-Each NPC's personality now comes from her own CHIM bio: one read turns it into the ten traits, each backed by a short
-quote from the bio, blended with small hints from her voice, class, faction, skills and (a little) race. Reads stay
+Each NPC's personality now comes from their own CHIM bio: one read turns it into the ten traits, each backed by a short
+quote from the bio, blended with small hints from their voice, class, faction, skills and (a little) race. Reads stay
 near the middle unless the bio is clear. Around 100 key NPCs come pre-read; anyone else is read in the background
-the first time you meet her, after the conversation work, and keeps her hints until then. Ashe is never read: she is
+the first time you meet them, after the conversation work, and keeps their hints until then. Ashe is never read: their vector is
 Serene's hand-set, spoiler-free conclusion (Stoic-leaning, resilient, slow to warm, maturity 75). Ysolda is no longer
-forced to be Anxious (the old switch keeps her old preset). A quote only counts when it shows that trait of that
-character: an oath to a hold is duty, not protectiveness; a quest item or a daughter is not a partner to be jealous
-over; a wife's resentment is not her husband's coldness; a job or an aim is not a strong sign; taking pride in one's
+forced to be Anxious (the old switch keeps their old preset). A quote only counts when it shows that trait of that
+character: an oath to a hold is duty, not protectiveness; a quest item or a child is not a partner to be jealous
+over; a spouse's resentment is not their partner's coldness; a job or an aim is not a strong sign; taking pride in one's
 work is not vanity. Between the old temperaments the blend no longer makes spikes at a preset, though a few values
 still turn back briefly near one. The old class-based vote is still there as a switch (traits.assignment 'label'),
 and switching back to it restores everyone's old personality.
@@ -335,15 +335,15 @@ and switching back to it restores everyone's old personality.
 ## reldyn-v0.11 — Personality engine under the hood
 Temperaments are now presets inside a trait engine (guard, expressiveness, confidence, pride, resilience, reactivity,
 warmth, restraint, possessiveness, protectiveness). Nothing behaves differently yet: every NPC still sits exactly on
-her old temperament. This is the groundwork for reading each NPC's personality from her own bio.
+their old temperament. This is the groundwork for reading each NPC's personality from their own bio.
 
 ## reldyn-v0.10 — Play clock on game time
 Play time now comes only from the game's own event log. Waits, sleeps, fast travel and save loads never count as time
 spent together, and results no longer depend on real-world time between messages.
 
 ## reldyn-v0.9 — Attraction as an uphill
-Anyone can spark interest; past that, how an NPC's feelings grow depends on how close you are to what she's drawn to.
-Far from her type is a steep climb, not a wall; charm helps you climb; only true non-negotiables (orientation,
+Anyone can spark interest; past that, how an NPC's feelings grow depends on how close you are to what they're drawn to.
+Far from their type is a steep climb, not a wall; charm helps you climb; only true non-negotiables (orientation,
 asexual/aromantic, rigid tastes) close the door. The old hard friendzone cap is gone.
 
 ## reldyn-v0.8 — Attachment as two sliding scales
@@ -351,8 +351,8 @@ asexual/aromantic, rigid tastes) close the door. The old hard friendzone cap is 
 scale, and both drift with experience: earned trust brings them down, neglect and betrayal push them up.
 
 ## reldyn-v0.7 — Feelings, not numbers
-Everything RelDyn tells the LLM is behaviour and subtext, never numbers or "you feel X". Intensity shows in how she
-talks. Jev gets an explicit numeric state block. Loading an earlier save keeps RelDyn consistent with CHIM.
+Everything RelDyn tells the LLM is behaviour and subtext, never numbers or "you feel X". Intensity shows in how they
+talk. Jev gets an explicit numeric state block. Loading an earlier save keeps RelDyn consistent with CHIM.
 
 ## reldyn-v0.6 — Spells by subject, blended identity, two kinds of intimacy
 Nature magic isn't bookish; a bard who communes with animals reads as part druid. Intimacy need is physical and
@@ -370,7 +370,7 @@ RelDyn owns the affinity number (small marked CHIM hook, fork only).
 
 ## reldyn-v0.3 — RelDyn listens to conversations
 RelDyn's own evaluator reads each exchange and turns it into feelings and tags (insult, gift, neglect...). How much
-it moves an NPC depends on who she is: an immature, jealous NPC takes an insult harder; an egocentric one soaks up
+it moves an NPC depends on who they are: an immature, jealous NPC takes an insult harder; an egocentric one soaks up
 praise. Jealousy and resentment are real and separate.
 
 ## reldyn-v0.2 — Foundations

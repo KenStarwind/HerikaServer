@@ -451,7 +451,7 @@ final class RelDynGating
         if (!self::enabled() || RelDynFelt::coreNamesPlayer()) return;
         $k = self::knowledge($npcName);
         if ($k['name']) return;
-        $text = strtr((string) self::config()['text']['name_unknown'], ['{NAME}' => $npcName, '{PLAYER_NAME}' => $playerName]);
+        $text = RelDynPronouns::fill(strtr((string) self::config()['text']['name_unknown'], ['{NAME}' => $npcName, '{PLAYER_NAME}' => $playerName]), $npcName);
         $GLOBALS['COMMAND_PROMPT'] = rtrim((string) ($GLOBALS['COMMAND_PROMPT'] ?? '')) . "\n\n" . $text;
         RelationshipDynamics::log("[RelDyn-GATING] {$npcName}: does not know the player's name");
     }

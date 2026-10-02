@@ -323,7 +323,7 @@ final class RelDynRomance
                 $momentum += floatval($rec['weight'] ?? 0);
                 RelationshipDynamics::log("[ROMANCE] {$npcName}: moment +" . round(floatval($rec['weight'] ?? 0), 3)
                     . (!empty($rec['confession']) ? ' (confession)' : '')
-                    . (!empty($rec['hidden']) ? ' (her interest, unvoiced)' : '')
+                    . (!empty($rec['hidden']) ? ' (their interest, unvoiced)' : '')
                     . " momentum " . round($momentum, 3) . "/" . round($gate['required'], 3) . " toward {$gate['to']}");
             }
             if ($gate !== null && !$gate['open']) {

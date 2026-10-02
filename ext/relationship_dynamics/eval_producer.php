@@ -1208,6 +1208,10 @@ final class RelDynEval
         $stateText = implode("\n", array_map(static fn($s) => "- {$s}", $state));
         $tagText = implode("\n", $tagDefs);
         $signalText = implode(', ', $signalSpec);
+        // RelDyn's own tables carry the NPC's pronoun vars (core's gender); the dialogue itself is never touched
+        $stateText = RelDynPronouns::fill($stateText, $npc);
+        $tagText = RelDynPronouns::fill($tagText, $npc);
+        $signalGuideText = RelDynPronouns::fill($signalGuideText, $npc);
 
         // Additive v1 questions (decisions §8): romantic_intent always; goal_addressed only with
         // a goal shown; masking only with others present
@@ -1262,7 +1266,7 @@ GRIEVANCE: flag true when {$npc} was hurt or wronged and it was not resolved in 
 JEALOUSY: flag true when {$npc} felt jealous of a rival because of this exchange; rival = the rival's name; intensity 1..3.
 EXPOSURE: flag true only when {$player} tells {$npc} about something {$npc} was not there for that put {$player} near rivals or at risk. kinds, any of: rival_exposure (out where others could court {$player}, e.g. a tavern night with single company), place (a risky place: a tavern late at night among strangers, a skooma den), vice (drinking, skooma), danger (a fight, a deadly place), company (bad company: bandits, criminals). intensity 1 mild .. 3 serious. when: today, last_night or earlier.
 SIGNIFICANCE: 0..1, how much this exchange matters to {$npc} (small talk 0.1, meaningful 0.5, life-changing 1).
-SUMMARY: one short line saying what happened in this exchange, as an event (who did what). No numbers, no scores, no signal names, no feelings named (not "she trusts {$player} more").
+SUMMARY: one short line saying what happened in this exchange, as an event (who did what). No numbers, no scores, no signal names, no feelings named (not "{$npc} trusts {$player} more").
 {$extraSpec}
 
 Reply with exactly this JSON shape:

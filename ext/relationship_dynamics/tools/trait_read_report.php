@@ -226,7 +226,7 @@ foreach ($rows as $k => $r) {
         sprintf('%.0f', $b['trust']), sprintf('%.0f', $a['trust']), $b['att'], $a['att']);
 }
 $md[] = '';
-$md[] = '\\* assumed vanilla core row (class, factions, top skills, race) used for both columns; everyone else: template and voice type only (core_npc_master is empty on this install; the game fills class, factions, skills and race when she is met).';
+$md[] = '\\* assumed vanilla core row (class, factions, top skills, race) used for both columns; everyone else: template and voice type only (core_npc_master is empty on this install; the game fills class, factions, skills and race when the NPC is met).';
 $md[] = '';
 $md[] = '## Evidence per NPC';
 $md[] = '';

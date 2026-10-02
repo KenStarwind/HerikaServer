@@ -485,7 +485,7 @@ final class RelDynConsent
             if (isset($table[$reason]) && is_string($table[$reason])) { $text = $table[$reason]; break; }
         }
         $text = $text ?? ($table['default'] ?? null);
-        return is_string($text) ? str_replace(['{NAME}', '{PLAYER}'], [$npcName, $playerName], $text) : null;
+        return is_string($text) ? RelDynPronouns::fill(str_replace(['{NAME}', '{PLAYER}'], [$npcName, $playerName], $text), $npcName) : null;
     }
 
     // =====================================================================

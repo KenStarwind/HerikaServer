@@ -381,7 +381,7 @@ final class RelDynSettingsView
         return [
             'switches' => ['Switches & tiers', 'Who knows the player: the name from name_min_tier, the story (core\'s player bio) from bio_min_tier; once at floor_tier the name is never forgotten (lapsed). Fame is heard between fame_min_core_aff and fame_max_tier.',
                 array_merge([$pg('enabled'), ['context_pre_enabled'], ['reputation', 'enabled']], $tiers)],
-            'tiers' => ['Tier fragments', 'The <knowledge_of_player> sentence per knowledge tier, and the tension bridge added to it. {NAME} = the NPC, {PLAYER} = the player as she knows them.',
+            'tiers' => ['Tier fragments', 'The <knowledge_of_player> sentence per knowledge tier, and the tension bridge added to it. {NAME} = the NPC, {THEY} {THEM} {THEIR} {THEIRS} {THEMSELF} = the NPC\'s own pronouns (core\'s gender, neutral when not stated), {PLAYER} = the player as the NPC knows them.',
                 $tierText],
             'notes' => ['Core notes & the name instruction', 'The familiarity note on the player\'s nearby-actors entry by knowledge level, the rumour referent, and the COMMAND_PROMPT line for an NPC who does not know the name ({PLAYER_NAME} = the name).',
                 [$pg('text')]],
@@ -418,7 +418,7 @@ final class RelDynSettingsView
     public static function gatingPreviewPanel(string $npc, ?float $aff, array $names, bool $embed): string
     {
         $out = '<section class="rd-section" id="rd-gating-preview"><div class="rd-section-head"><h2>Preview for an NPC</h2></div>'
-            . '<p class="rd-blurb">Read-only: nothing is saved and no LLM is called. Affinity override: core points, -100..100 (empty = her real bond).</p>'
+            . '<p class="rd-blurb">Read-only: nothing is saved and no LLM is called. Affinity override: core points, -100..100 (empty = their real bond).</p>'
             . '<form method="get" action="settings.php" class="rd-preview-form">'
             . '<input type="hidden" name="tab" value="gating">' . ($embed ? '<input type="hidden" name="embed" value="1">' : '')
             . '<label for="rd-preview-npc">NPC</label><input type="text" id="rd-preview-npc" name="npc" list="rd-npc-names" value="' . self::h($npc) . '" required>'
@@ -434,25 +434,25 @@ final class RelDynSettingsView
             return $out . '<div class="rd-msg err">The preview failed (see the server log).</div></section>';
         }
         $k = $p['knowledge'];
-        $state = ['stored' => 'her RelDyn state', 'core' => 'core\'s Player entry (no RelDyn state yet)', 'none' => 'no bond on record'][$p['state']] ?? $p['state'];
+        $state = ['stored' => 'the NPC\'s RelDyn state', 'core' => 'core\'s Player entry (no RelDyn state yet)', 'none' => 'no bond on record'][$p['state']] ?? $p['state'];
         $rows = [
             'Knowledge level' => $k['level'],
             'Knows the name' => $k['name'] ? 'yes' : 'no',
             'Knows the story (bio)' => $k['bio'] ? 'yes' : 'no',
             'Core affinity now / peak' => RelDynSettings::numberText($k['core_aff']) . ' / ' . RelDynSettings::numberText($k['peak_core_aff']),
             'Read from' => $aff !== null ? 'the override' : $state,
-            'Her hold' => $k['hold'] !== '' ? $k['hold'] : '(not heard / unknown)',
+            'Their hold' => $k['hold'] !== '' ? $k['hold'] : '(not heard / unknown)',
             'Fames heard there' => $k['fames'] ? implode(', ', array_keys($k['fames'])) : 'none',
         ];
         $out .= '<div class="rd-preview"><h3>' . self::h($p['npc']) . '</h3><table class="rd-table rd-kv">';
         foreach ($rows as $label => $v) $out .= '<tr><th>' . self::h($label) . '</th><td>' . self::h($v) . '</td></tr>';
         $out .= '</table>';
-        if (!$p['gating_on']) $out .= '<div class="rd-msg err">Prompt gating is off: RelDyn does not add this text to her prompt now.</div>';
+        if (!$p['gating_on']) $out .= '<div class="rd-msg err">Prompt gating is off: RelDyn does not add this text to the NPC\'s prompt now.</div>';
         $out .= '<h4>&lt;knowledge_of_player&gt;</h4><pre class="rd-pre">' . self::h($p['text']) . '</pre>'
             . '<h4>Note on the player\'s nearby-actors entry</h4><pre class="rd-pre">'
             . self::h($p['note'] ?? '(core\'s own note)') . '</pre>'
-            . '<h4>COMMAND_PROMPT</h4><pre class="rd-pre">' . self::h($p['name_unknown'] ?? '(nothing: she knows the name)') . '</pre>';
-        $out .= '<h4>At every tier</h4><p class="rd-blurb">This table changes only what she knows of the player, tier by tier. Her current feelings (let-in, a pull-back, resentment) are held fixed, so the line under each tier is what she would say about the player if only the bond were that deep.</p><div class="rd-scroll"><table class="rd-table rd-tiers"><tr><th>Tier</th><th>Affinity</th><th>Level</th><th>&lt;knowledge_of_player&gt;</th></tr>';
+            . '<h4>COMMAND_PROMPT</h4><pre class="rd-pre">' . self::h($p['name_unknown'] ?? '(nothing: the NPC knows the name)') . '</pre>';
+        $out .= '<h4>At every tier</h4><p class="rd-blurb">This table changes only what the NPC knows of the player, tier by tier. Their current feelings (let-in, a pull-back, resentment) are held fixed, so the line under each tier is what the NPC would say about the player if only the bond were that deep.</p><div class="rd-scroll"><table class="rd-table rd-tiers"><tr><th>Tier</th><th>Affinity</th><th>Level</th><th>&lt;knowledge_of_player&gt;</th></tr>';
         foreach ($tiers as $tier => $t) {
             $out .= '<tr><td>' . self::h($tier) . '</td><td>' . self::h(RelDynSettings::numberText($t['core_aff'])) . '</td><td>'
                 . self::h($t['knowledge']['level']) . '</td><td>' . self::h($t['text']) . '</td></tr>';

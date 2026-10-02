@@ -189,7 +189,7 @@ final class RelDynPipelineCheck
             // a mirror drifting from core is stale until her next request; one with no core entry is a mirror of nothing
             if ($core !== null && abs($core - $mirror) > $warn) $drift[] = sprintf('%s: core %.2f, mirror %.2f (%+.2f)', $name, $core, $mirror, $mirror - $core);
             elseif ($core === null && abs($mirror) > 1e-6) $drift[] = "{$name}: mirror {$mirror} with no core Player entry";
-            if ($hwm < min($supports, 2)) $tierBad[] = "{$name}: high-water {$hwm} below what her affinity supports ({$supports}): updateContextTierHWM has not run since it rose";
+            if ($hwm < min($supports, 2)) $tierBad[] = "{$name}: high-water {$hwm} below what their affinity supports ({$supports}): updateContextTierHWM has not run since it rose";
         }
         $results = [];
         if ($checked === 0) {
