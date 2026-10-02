@@ -570,3 +570,10 @@ if (!empty($reldynCfg['parasite_detection_enabled'])) {
     RelationshipDynamics::checkParasiteRecovery($npcName, $dynamics);
     RelationshipDynamics::saveDynamics($npcName, $dynamics);
 }
+
+// ========== CONSENT, AFTER THE STATE MOVED (Ken 2026-10-01 §21) ==========
+// Sharmat reads the published decision in its own prerequest, which sorts before RelDyn's: what this request and its eval
+// changed (a quarrel opened, the ick, resentment, the pull-back, keeping) is published now, not a request or two later.
+if (RelDynConsent::refresh($npcName, $dynamics)) {
+    RelationshipDynamics::saveDynamics($npcName, $dynamics);
+}

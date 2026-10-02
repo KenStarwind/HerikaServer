@@ -141,7 +141,9 @@ class RelDynFulfillment
             // Decisions §23 (Ken, 2026-10-01): a fight beside the player is also contact for the neglect and
             // absence rules ('contact': the fight stamps the contact those count from, RelationshipDynamics::
             // markFightContact, and the contact_window_game_hours before it are no absence for the affinity decay
-            // either), and for the NPC who does not enjoy it a fight reads as partly unfulfilling ("I wish it was
+            // either; the days since the last contact are forgiven by the same weight as the time together, all of them for
+            // one who lives for the fight, a little for one who dreads it, RelationshipDynamics::markFightContact's $share),
+            // and for the NPC who does not enjoy it a fight reads as partly unfulfilling ("I wish it was
             // something I enjoy"): 'unmet' takes units x how far the NPC dislikes it (their signed liking under -from,
             // 0..1 of the rest) off the levels of the things they DO enjoy (their strongest `axes` facet needs, by
             // weight; their other needs when they have no facet need), never more than that. A shrug (liking above

@@ -393,7 +393,7 @@ final class RelDynConsentTestBedsPostgresTest extends TestCase
     private function states(): array
     {
         return [
-            'conflict'    => function (array &$d): void { $d['in_conflict'] = true; },
+            'conflict'    => function (array &$d): void { $d['in_conflict'] = true; $d['conflict_positive_count'] = 0; },   // (the quarrel holds through the exchange that follows: three kind words repair it)
             'ick'         => function (array &$d): void {
                 $d['_ick_tracker'] = ['ick_active' => true, 'quiet' => 0, 'romantic_count' => 3, 'total_count' => 3, 'counted_gamets' => []];
                 $d['dimensions']['comfort']['x'] = $d['dimensions']['comfort']['baseline'] = 25.0;
@@ -473,6 +473,76 @@ final class RelDynConsentTestBedsPostgresTest extends TestCase
         $this->assertSame('declines', $this->scene($npc, $this->states()['conflict'])['stance']);
         $after = $this->scene($npc);
         $this->assertTrue($after['allow'], 'a closed door is not permanent: ' . json_encode($after));
+        $this->assertNoDbFailures();
+    }
+
+    /** An exchange the eval scored (contract v1), applied as the eval worker applies it: into the eval inbox, then RelDynEval::applyInboxInWorker. */
+    private function evalItem(string $npc, array $o): void
+    {
+        $this->gamets += 2 * 60 * RelationshipDynamics::GAMETS_PER_DAY / 1440;
+        $npcId = RelDynStorage::resolveNpcId($npc);
+        $item = array_replace([
+            'v' => 1, 'npc' => $npc, 'npc_id' => $npcId, 'gamets' => (int) $this->gamets, 'source' => 'reldyn_eval',
+            'signals' => ['affinity' => 0, 'trust' => 0, 'comfort' => 0, 'respect' => 0, 'passion' => 0, 'maturity' => 0],
+            'tags' => [], 'grievance' => ['flag' => false, 'kind' => null, 'severity' => 0],
+            'jealousy' => ['flag' => false, 'rival' => null, 'intensity' => 0],
+            'significance' => 0.6, 'positive_interaction' => false, 'summary' => 'a scene at the inn', 'witnesses' => [],
+        ], $o);
+        pg_query_params($this->db->link,
+            "INSERT INTO eventlog (type, data, gamets, localts, ts, people, location) VALUES ('chat', $1, $2, $3, $3, $4, $5)",
+            [$npc . ': ' . $item['summary'], (int) $this->gamets, $this->realTs, '|' . $npc . '|', 'Whiterun']);
+        $this->assertTrue(RelDynStorage::appendItem($npcId, RelDynStorage::KEY_EVAL_INBOX, $item));
+        $GLOBALS['gameRequest'] = ['inputtext', (string) $this->realTs, (string) (int) $this->gamets, self::PLAYER . ': ...'];
+        $GLOBALS['HERIKA_NAME'] = $npc;
+        $GLOBALS['PLAYER_NAME'] = self::PLAYER;
+        $this->assertNotNull(RelDynEval::applyInboxInWorker($npc), 'the worker applied the inbox');
+        unset($GLOBALS['gameRequest']);
+        $this->clearReldynGlobals();
+    }
+
+    public function testWhatTheEvalMovesReachesSharmatAtOnceNotAnExchangeOrTwoLater(): void
+    {
+        // Sharmat reads the published decision in its own prerequest, which sorts before RelDyn's: the eval consumer (the worker)
+        // and the end of postrequest publish again after the state moved, so a quarrel the eval opens is in the decision by the
+        // very next request, on every bed, by who the NPC is
+        $stances = [];
+        $declined = [];
+        foreach (array_keys(self::BEDS) as $npc) {
+            $before = $this->scene($npc, null, ['comfort' => 85.0, 'trust' => 85.0], 85, 'romantic', 80.0);
+            $this->assertTrue($before['allow'], "{$npc}: open before the quarrel: " . json_encode($before));
+            // the eval sees the player courting another in front of this NPC, on the edge of the jealousy that opens a quarrel
+            $this->editDynamics($npc, function (array &$d): void { RelationshipDynamics::setJealousy($d, 39.9); });
+            $this->evalItem($npc, ['jealousy' => ['flag' => true, 'rival' => 'Farkas', 'intensity' => 3], 'summary' => 'the player flirts with Farkas']);
+            $d = $this->dynamics($npc);
+            $published = $this->consent($npc);
+            $this->assertNotEmpty($d['in_conflict'] ?? null, "{$npc}: the eval opened a quarrel");
+            // published by the worker itself, before any request: the quarrel weighs on the decision (by who the NPC is: some
+            // decline, a bond this deep leaves another hesitant)
+            $this->assertContains('conflict', $published['reasons'], "{$npc}: " . json_encode($published));
+            $this->assertLessThan($before['willingness'], $published['willingness'], "{$npc}: the quarrel is in the decision at once");
+            $this->assertGreaterThan($before['gamets'], $published['gamets'], "{$npc}: republished by the worker");
+            $this->assertSame($published['stance'], $d['_consent']['stance'], 'the state and the decision agree');
+            $stances[$npc] = $published['stance'];
+            if (!$published['allow']) $declined[] = $npc;
+        }
+        $this->assertNotSame([], $declined, 'the quarrel closes the door for some of them: ' . json_encode($stances));
+        $this->assertNoDbFailures();
+    }
+
+    public function testAQuarrelRepairedByThisRequestIsPublishedByTheEndOfItNotTheNextOne(): void
+    {
+        // the third kind word repairs the quarrel in postrequest, after prerequest published "declines": Sharmat's prerequest
+        // (which sorts first) would otherwise go on reading the quarrel for another exchange
+        $npc = 'Aela the Huntress';
+        $this->assertTrue($this->scene($npc, null, ['comfort' => 85.0, 'trust' => 85.0], 85, 'romantic', 80.0)['allow']);
+        $this->editDynamics($npc, function (array &$d): void { $d['in_conflict'] = true; $d['conflict_positive_count'] = 2; });
+        $this->turn($npc, 'I am sorry. You mean a great deal to me.');
+        $d = $this->dynamics($npc);
+        $this->assertEmpty($d['in_conflict'] ?? null, 'the quarrel is repaired by this exchange');
+        $c = $this->consent($npc);
+        $this->assertTrue($c['allow'], 'and the published decision already says so: ' . json_encode($c));
+        $this->assertNotContains('conflict', $c['reasons']);
+        $this->assertSame($c['stance'], $d['_consent']['stance']);
         $this->assertNoDbFailures();
     }
 

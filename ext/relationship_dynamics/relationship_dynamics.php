@@ -8826,6 +8826,11 @@ class RelationshipDynamics
         if ($promoted !== null && RelDynMemory::notePartners($npcName, $dynamics, $reldynTypeBefore, self::currentGamets())) {
             self::saveDynamics($npcName, $dynamics);
         }
+        // What these items moved (a quarrel opened, the ick, a hurt) reaches Sharmat's consent gate now, not on the NPC's
+        // next prerequest, which Sharmat's own sorts ahead of (RelDynConsent::refresh)
+        if ($evalResults !== [] || !empty($evalFeelings) || $promoted !== null) {
+            if (RelDynConsent::refresh($npcName, $dynamics)) self::saveDynamics($npcName, $dynamics);
+        }
         return $evalResults;
     }
 

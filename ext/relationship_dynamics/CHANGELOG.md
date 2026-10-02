@@ -41,6 +41,12 @@ in the conversation. Vampires keep an inverted sleep schedule: cranky from about
 from dusk to dawn. Not feeding makes it worse and direct sunlight worse still. Thirst grows with every game day without
 feeding and a feeding sates it; until the game can signal a feeding, a night in which the vampire fought and killed stands in
 for it, and a feeding mod can be wired in through the settings.
+Review fixes. The intimate scene's own exchange can no longer ease the fearful morning after before it has begun: only a
+kind word from after the encounter does. A shared fight forgives the days since the last word by how much the NPC enjoys it
+(all of them for one who lives for it, a little for one who dreads it). The survival report stays out of the NPCs' dialogue
+history. A decision about intimacy is published to the adult-content mod again once an exchange and its eval have moved the
+state, so a quarrel (or its repair) reaches the mod at once and not an exchange or two later. Settings saved by an older
+install also read the retuned charm curve.
 
 ## reldyn-v0.23 — a flirt that lands, the fear of losing someone, news that travels like news
 A flirt that lands skips the slow climb of attraction only as far as the NPC already finds the player their type, or

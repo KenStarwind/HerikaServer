@@ -39,8 +39,8 @@
  * friendzoned, walked_away), strongest first. A felt line (feelings, the NPC's name, no pronoun, no
  * digits) says it in words.
  *
- * PUBLISHED to core_npc_master.plugin_extended_data.reldyn.consent (publish(): only when it changed;
- * 'gamets' stamps when) for Sharmat, which reads it and defers (its aiagentNsfwRelDynConsentDecision, a
+ * PUBLISHED to core_npc_master.plugin_extended_data.reldyn.consent (publish(): only when it changed, from RelDyn's
+ * prerequest and again by refresh() once postrequest and the eval consumer have moved the state; 'gamets' stamps when) for Sharmat, which reads it and defers (its aiagentNsfwRelDynConsentDecision, a
  * local hook that does nothing without RelDyn). The older reldyn.romance state keeps its blunt
  * consent_block flag for what already reads it; this key is the decision that supersedes it. RelDyn never
  * writes Sharmat's store.
@@ -502,6 +502,25 @@ final class RelDynConsent
             'willingness' => $decision['willingness'], 'bar' => $decision['bar'],
             'felt' => $decision['felt'],
         ];
+    }
+
+    /**
+     * Publish again after the state moved (the end of postrequest, the eval consumer's inbox): Sharmat reads the published
+     * decision in its own prerequest, which sorts before RelDyn's, so a decision published only from RelDyn's prerequest
+     * reaches it an exchange or two after the quarrel, the ick or the hurt it follows. Never throws. Returns true when the
+     * answer in $dynamics['_consent'] (allow, stance) changed and the caller should save the dynamics.
+     */
+    public static function refresh(string $npcName, array &$dynamics): bool
+    {
+        try {
+            $before = is_array($dynamics[self::KEY] ?? null) ? [$dynamics[self::KEY]['allow'] ?? null, $dynamics[self::KEY]['stance'] ?? null] : null;
+            self::publish($npcName, $dynamics, (string) ($GLOBALS['RELDYN_PLAYER_NAME'] ?? $GLOBALS['PLAYER_NAME'] ?? 'the player'));
+            $after = is_array($dynamics[self::KEY] ?? null) ? [$dynamics[self::KEY]['allow'] ?? null, $dynamics[self::KEY]['stance'] ?? null] : null;
+            return $before !== $after;
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('consent refresh', $e);
+            return false;
+        }
     }
 
     /**
