@@ -155,7 +155,7 @@
  *                    'magnitude' => 0..1, 'pace' => slow|normal|fast, 'cartesia' => ?emotion tag] (the TTS emotion from passion,
  *                    arousal and valence), 'voice_held_back' => bool (Jev's last pick kept the voice ordinary), 'blush' => ['on' => bool, 'play_seconds_left' => seconds, 'blushiness' => 0.6..1.6],
  *                    'inputs' => ['passion', 'shyness', 'guard', 'pullback', 'withdraw', 'arousal', 'valence']]
- *                    Jev picks the cue to fire with RelDynBody::pick($npc, $cueOrNull, 'jev', $voiceOrNull) (RelDynBody, roadmap bio-mimetic-feedback)
+ *                    Jev picks the cue to fire with RelDynBody::pick($npc, $cueOrNull, 'jev', $voiceOrNull) (RelDynBody, roadmap bio-mimetic-feedback; not in the compact text, which has a length budget)
  *   reputation       null | ['fame' => 0..1, 'infamy' => 0..1, 'weight' => 0..1 (fades with meaningful
  *                    interactions), 'meaningful' => int, 'offsets' => dimension => points held now]
  *   duty             null | ['quest' => ?string, 'factor' => 0..1 on negative eval signals, 'hostile' => ?string]
@@ -523,16 +523,6 @@ final class RelDynJev
                 $c = $im['conflict'];
                 $parts[] = "inner_conflict={$c['impulse']} vs {$c['motivation']}(" . number_format($c['weight'], 2, '.', '') . ") -> {$c['resolution']}";
             }
-        }
-        // compact: only while a cue is offered or the voice has an emotion ("body=<cue> <strength>[ also <cue>...] [voice=<mood or family>/<intensity>/<pace>]")
-        $bd = $s['body'] ?? null;
-        if (is_array($bd) && !empty($bd['enabled']) && ($bd['offered'] !== [] || $bd['voice'] !== null)) {
-            $bits = [];
-            foreach ($bd['offered'] as $cue) $bits[] = $cue . ':' . number_format((float) $bd['cues'][$cue]['strength'], 2, '.', '');
-            $part = 'body=' . ($bits !== [] ? implode(',', $bits) : '-')
-                . ($bd['chosen']['cue'] !== null ? ' chosen=' . $bd['chosen']['cue'] . '(' . $bd['chosen']['source'] . ')' : '');
-            if ($bd['voice'] !== null) $part .= ' voice=' . ($bd['voice']['mood'] ?? $bd['voice']['family']) . '/' . $bd['voice']['intensity'] . '/' . $bd['voice']['pace'];
-            $parts[] = $part;
         }
         // compact: a reputation she has heard nothing of says nothing (the state block keeps it)
         if (($s['reputation'] ?? null) !== null && (floatval($s['reputation']['fame']) > 0.0 || floatval($s['reputation']['infamy']) > 0.0)) {

@@ -892,7 +892,7 @@ final class RelDynFelt
         if (RelDynBody::enabled()) {
             foreach (RelDynBody::feltLines($npc, $player, $dynamics) as $l) {
                 $lines[] = self::line($l['key'], self::SCOPE_BOND, self::LANE_TURN, floatval($l['salience']), (string) $l['text'],
-                    ['intense' => !empty($l['intense']), 'tag' => $l['tag']]);
+                    ['intense' => !empty($l['intense']), 'tag' => $l['tag'], 'extra' => true]);
             }
             RelDynBody::applyVoice($dynamics);
         }
@@ -1161,9 +1161,11 @@ final class RelDynFelt
         $kept = [];
         $n = 0;
         foreach ($lines as $l) {
-            if ($l['must'] || !empty($l['keep']) || $n < $max) {
+            // 'extra' lines (the body: a cue, the voice) are not counted against the tier's line cap, so they never push the NPC's own
+            // state out of it; the token budget below still cuts them first (they are the least salient)
+            if ($l['must'] || !empty($l['keep']) || !empty($l['extra']) || $n < $max) {
                 $kept[] = $l;
-                if (!$l['must'] && empty($l['keep'])) $n++;
+                if (!$l['must'] && empty($l['keep']) && empty($l['extra'])) $n++;
             }
         }
         foreach ($kept as &$l) {

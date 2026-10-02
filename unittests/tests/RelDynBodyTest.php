@@ -462,14 +462,52 @@ final class RelDynBodyTest extends TestCase
             $this->assertDoesNotMatchRegularExpression('/\d/', $l['text'], 'felt text carries no numbers');
             $this->assertDoesNotMatchRegularExpression('/\b(she|her|hers|he|him|his)\b/i', $l['text'], 'pronouns are vars, resolved from the NPC own gender');
         }
-        foreach (['m' => ['he is', 'his'], 'f' => ['she is', 'her'], 'n' => ['they are', 'their']] as $class => [$are, $their]) {
-            $text = strtr(RelDynBody::cueText('approach', 0.9), ['{NAME}' => 'X', '{PLAYER}' => 'Y']);
-            $filled = strtr($text, ['{THEY_ARE}' => RelDynPronouns::form('are', $class)]);
-            $this->assertStringContainsString($are, $filled, $class);
+        // the shipped wording names the NPC and assumes no pronoun for the NPC, whatever gender core gives
+        foreach (RelDynBody::configDefaults()['text'] as $cue => $variants) {
+            foreach ($variants as $variant => $text) {
+                $this->assertDoesNotMatchRegularExpression('/\{(?:THEY|THEM|THEIR|THEMSELF|THEIRS|They|Them|Their|S)[A-Za-z_]*\}/', (string) $text, "{$cue} {$variant}");
+                $this->assertStringContainsString('{NAME}', (string) $text, "{$cue} {$variant}");
+            }
         }
         $cfg = RelDynBody::configDefaults();
         $cfg['enabled'] = false;
         $this->assertSame([], RelDynBody::feltLines('Aela', 'Kaida', $d, $cfg));
+    }
+
+    public function testWhereThereIsNoDesireTheBodyIsAFriendsAndTheVoiceIsKind(): void
+    {
+        $d = self::npc('Bold', ['passion' => 90.0, 'valence' => 30.0, 'arousal' => 60.0]);
+        $this->assertFalse(RelDynBody::pull($d)['platonic']);
+        $d['_attraction'] = ['enabled' => true, 'hard_zero' => 'orientation'];
+        $this->assertTrue(RelDynBody::pull($d)['platonic'], 'a hard zero');
+        $in = RelDynBody::inputs($d);
+        $this->assertSame(0.0, RelDynBody::strengths(array_replace($in, ['shyness' => 1.0]))['shy_glance'], 'no glance of desire where there is none');
+        $this->assertSame('kindly', RelDynBody::voice($in)['family'], 'warm, not seductive');
+        $lines = RelDynBody::feltLines('Aela', 'Kaida', $d);
+        $text = implode(' | ', array_column($lines, 'text'));
+        $this->assertDoesNotMatchRegularExpression('/touch|close it|gaze|idealizes|voice drops|excuses/i', $text, 'no desire next to a deflection');
+        $this->assertStringContainsString('company', $text, 'the platonic approach');
+        // an asexual NPC (emotional channel): closeness without the physical, a lovely voice rather than a seductive one
+        $e = self::npc('Bold', ['passion' => 90.0, 'valence' => 30.0, 'arousal' => 60.0]);
+        $e['_attraction'] = ['enabled' => true, 'passion_channel' => 'emotional', 'attracted' => true];
+        $this->assertTrue(RelDynBody::pull($e)['emotional']);
+        $this->assertSame('lovely', RelDynBody::voice(RelDynBody::inputs($e))['family']);
+        $this->assertStringNotContainsString('touch', implode(' ', array_column(RelDynBody::feltLines('Aela', 'Kaida', $e), 'text')));
+    }
+
+    public function testTheBodyLinesDoNotCountAgainstTheTierCapSoTheNpcsOwnStateIsNeverPushedOut(): void
+    {
+        $line = fn(string $key, float $sal, array $x = []) => array_merge(['key' => $key, 'scope' => 'bond', 'lane' => 'turn', 'salience' => $sal, 'must' => false,
+            'keep' => false, 'intense' => false, 'handwritten' => false, 'tier0' => false, 'tag' => null, 'text' => "{NAME} {$key}"], $x);
+        $cfg = RelDynFelt::config();
+        $cfg['tier_max_lines'][2] = 3;
+        $own = [$line('a', 0.9), $line('b', 0.8), $line('c', 0.7)];
+        $kept = RelDynFelt::select('Aela', 'Kaida', array_merge($own, [$line('body_approach', 0.1, ['extra' => true]), $line('voice', 0.05, ['extra' => true])]), 2, self::npc('Stoic'), $cfg);
+        $this->assertSame(['a', 'b', 'c', 'body_approach', 'voice'], array_column($kept, 'key'), 'all three of the NPC own lines, and the body after them');
+        $cfg['tier_token_budget'][2] = 40;
+        $kept = RelDynFelt::select('Aela', 'Kaida', array_merge($own, [$line('body_approach', 0.1, ['extra' => true])]), 2, self::npc('Stoic'), $cfg);
+        $this->assertNotContains('body_approach', array_column($kept, 'key'), 'the token budget cuts the body first');
+        $this->assertContains('a', array_column($kept, 'key'));
     }
 
     public function testTheSoftAndStrongWordingFollowTheStrengthAndEveryCueHasBoth(): void

@@ -360,8 +360,11 @@ final class RelDynBodyTestBedsPostgresTest extends TestCase
                 if (str_starts_with((string) $key, 'body_') || $key === 'voice') $this->assertDoesNotMatchRegularExpression('/\d/', (string) $text, "{$npc} {$key}");
             }
         }
-        $this->assertStringContainsString('he is near enough', $felt(self::FARKAS)['body_approach'], 'a man: his own pronoun');
-        $this->assertStringContainsString('she is near enough', $felt(self::MUIRI)['body_approach'], 'a woman: hers');
+        $this->assertStringContainsString('Farkas', $felt(self::FARKAS)['body_approach'], 'a man: named, no assumed pronoun');
+        $this->assertStringContainsString('Muiri', $felt(self::MUIRI)['body_approach']);
+        foreach ([self::FARKAS, self::MUIRI, self::LYNLY, self::ASHE] as $npc) {
+            $this->assertDoesNotMatchRegularExpression('/\b(she|her|hers|herself|he|him|his|himself)\b/i', implode(' ', array_filter($felt($npc), fn($k) => str_starts_with((string) $k, 'body_') || $k === 'voice', ARRAY_FILTER_USE_KEY)), $npc);
+        }
         $this->assertStringNotContainsString('{', implode(' ', $felt(self::MUIRI)), 'no unresolved var');
         $this->assertClean();
     }
@@ -394,7 +397,6 @@ final class RelDynBodyTestBedsPostgresTest extends TestCase
         $this->assertTrue($j['body']['enabled']);
         $this->assertTrue($j['body']['cues']['approach']['offered']);
         $this->assertSame('ComeCloser', $j['body']['cues']['approach']['action']);
-        $this->assertStringContainsString('body=', $j['text'], 'the compact line carries it');
         $this->assertNotNull($j['body']['voice']);
 
         // Jev picks the glance for the shy copy (not the default's approach), refuses a cue she does not show, and the approach fires ComeCloser

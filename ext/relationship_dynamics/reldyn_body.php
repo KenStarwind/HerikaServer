@@ -176,20 +176,24 @@ final class RelDynBody
                 'blushiness' => ['shyness' => 0.8, 'confidence' => 0.3, 'min' => 0.6, 'max' => 1.6],
             ],
             'text' => [
+                // The shipped wording names the NPC and carries no pronoun for the NPC ("they" in a felt block is the player); the
+                // pronoun vars are there for whoever edits it. 'platonic_*': an NPC who is not drawn that way, or whose passion is emotional.
                 'approach' => [
                     'soft' => "{NAME} edges a little closer to {PLAYER} than the moment needs, shortening the distance a step at a time",
-                    'strong' => "{NAME} keeps closing the distance to {PLAYER}, unhurried, until {THEY_ARE} near enough to touch and does not pull away",
+                    'strong' => "{NAME} keeps closing the distance to {PLAYER}, unhurried, until near enough to touch, and does not pull away",
+                    'platonic_soft' => "{NAME} lingers near {PLAYER}, easy in their company",
+                    'platonic_strong' => "{NAME} seeks {PLAYER} out and stays near, glad of their company",
                 ],
                 'turn_away' => [
-                    'soft' => "{NAME} angles {THEIR} body away from {PLAYER}, answers sideways, eyes on anything else",
-                    'strong' => "{NAME} turns {THEIR} shoulder to {PLAYER}, then {THEIR} back, and keeps the way out in view",
+                    'soft' => "{NAME} angles away from {PLAYER}, answers sideways, eyes on anything else",
+                    'strong' => "{NAME} turns a shoulder to {PLAYER}, then a back, and keeps the way out in view",
                 ],
                 'shy_glance' => [
                     'soft' => "{NAME} glances at {PLAYER} and away again before it can be noticed",
-                    'strong' => "{NAME} steals looks at {PLAYER} and drops {THEIR} eyes the moment they are caught, hands busy with nothing, words coming out smaller than meant",
+                    'strong' => "{NAME} steals looks at {PLAYER} and drops the eyes the moment they are caught, hands busy with nothing, words coming out smaller than meant",
                 ],
                 'tense_stance' => [
-                    'soft' => "{NAME} holds {THEMSELF} a little too still, jaw set, weight braced",
+                    'soft' => "{NAME} stays a little too still, jaw set, weight braced",
                     'strong' => "{NAME} stands rigid and braced, jaw locked, hands closed, every muscle ready for a fight that has not started",
                 ],
                 'voice' => [
@@ -205,7 +209,8 @@ final class RelDynBody
                 ],
             ],
             // Felt salience (0..1): base per kind; the cue adds up to 'cue_gain' x its strength
-            'salience' => ['cue' => 0.4, 'cue_gain' => 0.3, 'voice' => 0.3, 'voice_gain' => 0.15],
+            // (secondary to the NPC's own state: a crowded tier drops these first)
+            'salience' => ['cue' => 0.05, 'cue_gain' => 0.2, 'voice' => 0.03, 'voice_gain' => 0.07],
             // The cue text reads as the strong variant from this strength
             'strong_at' => 0.55,
         ];
@@ -248,9 +253,25 @@ final class RelDynBody
     // WHAT THE NPC FEELS, AS THE BODY READS IT
     // =====================================================================
 
+    /**
+     * The kind of pull, as the felt compose reads it: platonic (not attracted that way, a hard zero, or a deliberate step back out of a
+     * romance: whatever passion there is reads as affection, no desire) and emotional (an asexual NPC: longing without the physical).
+     *
+     * @return array{platonic: bool, emotional: bool}
+     */
+    public static function pull(array $dynamics): array
+    {
+        $att = is_array($dynamics['_attraction'] ?? null) ? $dynamics['_attraction'] : [];
+        $romantic = in_array((string) ($dynamics['_core_rel_type'] ?? ''), (array) RelDynFelt::config()['romantic_types'], true);
+        $platonic = !empty($att['enabled']) && (!empty($att['hard_zero']) || (($att['attracted'] ?? true) === false && !$romantic));
+        $platonic = $platonic || RelDynFulfillment::romanceSteppedBack($dynamics) !== null;
+        return ['platonic' => $platonic, 'emotional' => !$platonic && ($att['passion_channel'] ?? null) === 'emotional'];
+    }
+
     /** The inputs the cues and the voice read, each as points / 0..1 as documented; pure over the NPC's state. */
     public static function inputs(array $dynamics): array
     {
+        $pull = self::pull($dynamics);
         $dims = is_array($dynamics['dimensions'] ?? null) ? $dynamics['dimensions'] : [];
         $x = fn(string $d, float $default): float => is_numeric($dims[$d]['x'] ?? null) ? floatval($dims[$d]['x']) : $default;
         $vec = RelDynTraits::vectorFor(RelDynTraits::FROM_DYNAMICS, $dynamics);
@@ -276,6 +297,8 @@ final class RelDynBody
             'arousal' => $x('arousal', 10.0),
             'valence' => $x('valence', 0.0),
             'flush_held' => intval($dynamics[RelDynFelt::BLUSH_HOLD_KEY] ?? 0) > 0,
+            'platonic' => $pull['platonic'],
+            'emotional' => $pull['emotional'],
         ];
     }
 
@@ -330,6 +353,7 @@ final class RelDynBody
         if ($in['flush_held']) $shy += floatval($s['blush_hold']);
         $overwhelm = self::clamp(($in['passion'] - floatval($s['overwhelm_from'])) / max(1.0, 100.0 - floatval($s['overwhelm_from']))) * floatval($s['overwhelm_strength']);
         $shy = max($shy, $overwhelm);
+        if (!empty($in['platonic'])) $shy = 0.0;   // nothing to be shy about in that way: whatever passion there is reads as affection
         $ssup = (array) $s['suppress'];
         foreach ([floatval($ssup['pullback']) * $in['pullback'], floatval($ssup['walkaway']) * $walk, $in['conflict'] ? floatval($ssup['conflict']) : 0.0] as $eased) {
             $shy *= (1.0 - self::clamp($eased));
@@ -401,6 +425,9 @@ final class RelDynBody
             $family = $ar >= floatval($av['high']) ? 'happy' : 'kindly';
             $mag = max($val / 100.0, $ar / 100.0 * 0.6);
         }
+        // no desire there (platonic) or none of the body (emotional): warm and kind, not seductive, shy or teasing
+        if (in_array($family, ['seductive', 'shy', 'teasing', 'lovely'], true) && !empty($in['platonic'])) $family = 'kindly';
+        if ($family === 'seductive' && !empty($in['emotional'])) $family = 'lovely';
         if ($family === null || $mag < floatval($v['min_intensity'])) return null;
         $mag = self::clamp($mag);
         $at = (array) $v['intensity_at'];
@@ -486,10 +513,10 @@ final class RelDynBody
     // =====================================================================
 
     /** Text of a cue at a strength (soft / strong variant). */
-    public static function cueText(string $cue, float $strength, ?array $cfg = null): string
+    public static function cueText(string $cue, float $strength, ?array $cfg = null, bool $platonic = false): string
     {
         $cfg = $cfg ?? self::config();
-        $variant = $strength >= floatval($cfg['strong_at']) ? 'strong' : 'soft';
+        $variant = ($platonic && isset($cfg['text'][$cue]['platonic_soft']) ? 'platonic_' : '') . ($strength >= floatval($cfg['strong_at']) ? 'strong' : 'soft');
         return (string) ($cfg['text'][$cue][$variant] ?? '');
     }
 
@@ -508,7 +535,7 @@ final class RelDynBody
         $c = self::chosen($dynamics, $in, $cfg);
         if ($c['cue'] !== null) {
             $lines[] = ['key' => 'body_' . $c['cue'], 'scope' => 'bond', 'salience' => min(1.0, floatval($sal['cue']) + floatval($sal['cue_gain']) * $c['strength']),
-                'text' => strtr(self::cueText($c['cue'], $c['strength'], $cfg), $vars), 'tag' => null, 'intense' => false];
+                'text' => strtr(self::cueText($c['cue'], $c['strength'], $cfg, !empty($in['platonic']) || !empty($in['emotional'])), $vars), 'tag' => null, 'intense' => false];
         }
         $voice = $c['voice'] === false ? null : self::voice($in, $cfg);
         if ($voice !== null && isset($cfg['text']['voice'][$voice['family']])) {
