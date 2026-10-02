@@ -3,6 +3,23 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## batch W (unreleased) — the dark path, and bonds that are more than a crush
+The floors that hold a bond up now depend on who the NPC is. A mature NPC whose trust has fallen from where it stood feels they
+deserve better, and the pressure builds until they walk away (a new "standards" reason, with its own words and its own ripple
+through the people who care about them). A trusting NPC who is not yet mature leans harder on the one who treats them well and
+takes bad treatment more quietly. An NPC with neither maturity nor trust has no floors at all and can be pulled into the parasite
+state, which lifts only when they have grown. All of it is a matter of degree; nothing is a permanent gate. Being treated well
+slowly matures an NPC who is not yet held by their floors, a little a day and given at their next turn.
+New kinds of bond sit beside the old ones. Committed is a formal bond beyond a crush: it holds its place in the bond ladder and
+weighs a betrayal more. Sworn is duty by oath at any affinity: the NPC serves while it holds, caps the refusing and walking away
+at plain reluctance, and the oath strains as respect falls or betrayal builds, breaks at its limit, and mends if respect comes back.
+Conflicted is the soft state after a breakup, with a way back that only meaningful exchanges walk (reassurance, apology,
+forgiveness, shared time), never time alone; it can rekindle into a crush again.
+A breakup now forks three ways by who the NPC is and why it ended: a hard ex (closed to intimacy until it thaws), conflicted, or
+friends. Core's own relationship type is written under its own names (ex, platonic, crush) and its relationship screen is untouched.
+The loop of infidelity runs on the calendar, so it plays out while the player is away: neglect and a suitor open a door, the NPC
+drifts, seeks, and strays, then confesses, leaves, or (the fearful) hides it, by character.
+
 ## reldyn-v0.24 — consent, the body's needs, the night hours, and profiles that grow
 RelDyn now decides whether intimacy happens at all, and Sharmat handles what happens once it does; Sharmat defers to
 RelDyn when RelDyn is present (a local Sharmat change). The decision is about who the NPC is: some never will, a quarrel

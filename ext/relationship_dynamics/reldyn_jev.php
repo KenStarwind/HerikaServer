@@ -109,6 +109,17 @@
  *                     withdraw | express (what the fear makes the NPC do, by who they are), 'lean' => avoidance minus
  *                     anxiety, 'conflict' => ['open' => bool (a conflict the fear started is open), 'count' => int]]
  *                     (RelDynKeeping, decisions §20.3 and §23)
+ *   dark             ['enabled' => bool, 'floor_strength' => 0..1 (the maturity curve: how much of a floor), 'trust_sense' => 0..1,
+ *                     'trust_line' => trust points (low below it, for this NPC), 'gate_required' => the value a floor's gate dimension
+ *                     must reach to hold, 'corners' => [healthy, deserve, codependent, adrift each 0..1, summing to 1], 'dominant',
+ *                     'deserve' => 0..1 (the "I deserve better" pressure), 'walk_at' => the pressure at which this NPC leaves, 'trust_fall' => points
+ *                     trust has fallen from its highest,
+ *                     'adrift' => 0..1, 'codependent' => 0..1, 'parasite_held' => bool, 'walks' => int] (RelDynDark, decisions §24)
+ *   bonds            ['enabled' => bool, 'kinds' => [committed | conflicted | sworn], 'core_type', 'bond_type' (RelDyn's own),
+ *                     'committed' => ['since', 'held_game_days', 'needed_game_days'], 'oath' => ['active', 'source', 'strain' 0..1,
+ *                     'broken'], 'breakup' => null | ['fork' => ex | conflicted | friends, 'cause', 'status', 'hardness', 'rekindle' 0..1,
+ *                     'thaw' 0..1, 'shares'], 'infidelity' => ['stage' => ?drifting | seeking | strayed, 'pressure' 0..1, 'with', 'style',
+ *                     'target', 'cut', 'expectation' 0..1, 'line_crossed']] (RelDynBonds, decisions §24)
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
  *   governor         null | ['tier' => distant|friendly|crush|committed|hostile, 'passion_floor',
  *                    'passion_ceiling' (passion points), 'raised' => bool] (MDD 8 tiered governors,
@@ -311,6 +322,8 @@ final class RelDynJev
             'let_in' => round(RelDynPullback::letIn($dynamics), 2),
             'pullback' => RelDynPullback::jev($dynamics, $now),
             'keeping' => RelDynKeeping::jev($dynamics),
+            'dark' => RelDynDark::jev($dynamics),
+            'bonds' => RelDynBonds::jev($dynamics, $now),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'resentment_arc' => RelDynResentment::jev($dynamics),
             'absence' => RelDynAbsence::jev($dynamics),
@@ -403,6 +416,32 @@ final class RelDynJev
             $parts[] = 'keeping=' . number_format((float) $kp['fear'], 2, '.', '') . "({$kp['band']} {$kp['expression']}/{$kp['style']})"
                 . (floatval($kp['held']['trust'] ?? 0.0) != 0.0 ? ' held trust ' . $f((float) $kp['held']['trust']) : '')
                 . (($kp['response'] ?? 'express') !== 'express' ? ' response=' . $kp['response'] : '') . (!empty($kp['conflict']['open']) ? ' conflict' : '');
+        }
+        // compact: only while the dark path says something loudly ("dark=deserve=<pressure>/<walk_at>,codep=<degree>,parasite");
+        // the corners and the quieter states are in the structured fields
+        $dk = $s['dark'] ?? null;
+        if (is_array($dk) && !empty($dk['enabled']) && ($dk['deserve'] >= 0.7 || $dk['codependent'] >= 0.5 || !empty($dk['parasite_held']))) {
+            $bits = [];
+            if ($dk['deserve'] >= 0.7) $bits[] = 'deserve=' . number_format((float) $dk['deserve'], 2, '.', '') . '/' . number_format((float) $dk['walk_at'], 2, '.', '');
+            if ($dk['codependent'] >= 0.5) $bits[] = 'codep=' . number_format((float) $dk['codependent'], 2, '.', '');
+            if (!empty($dk['parasite_held'])) $bits[] = 'parasite';
+            $parts[] = 'dark=' . implode(',', $bits);
+        }
+        // compact: only while a bond kind holds, a romance has ended or the pull toward someone else is on
+        // ("bonds=<kinds> oath=<strain> ended=<fork>(<cause>) rekindle=<progress> straying=<stage>[ with X]")
+        $bk = $s['bonds'] ?? null;
+        if (is_array($bk) && !empty($bk['enabled']) && ($bk['kinds'] !== [] || $bk['breakup'] !== null || $bk['infidelity']['stage'] !== null)) {
+            $bits = [];
+            if ($bk['kinds'] !== []) $bits[] = 'bonds=' . implode('+', $bk['kinds']);
+            if ($bk['oath']['active'] || $bk['oath']['broken']) $bits[] = 'oath=' . number_format((float) $bk['oath']['strain'], 2, '.', '') . ($bk['oath']['broken'] ? '(broken)' : '');
+            if ($bk['breakup'] !== null) {
+                $bits[] = 'ended=' . $bk['breakup']['fork'] . '(' . $bk['breakup']['cause'] . ')' . ($bk['breakup']['status'] !== 'applied' ? '[' . $bk['breakup']['status'] . ']' : '')
+                    . ' rekindle=' . number_format((float) $bk['breakup']['rekindle'], 2, '.', '');
+            }
+            if ($bk['infidelity']['stage'] !== null) {
+                $bits[] = 'straying=' . $bk['infidelity']['stage'] . ($bk['infidelity']['with'] !== null ? ' with ' . $bk['infidelity']['with'] : '');
+            }
+            $parts[] = implode(' ', $bits);
         }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];

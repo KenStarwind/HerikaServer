@@ -77,6 +77,7 @@ class RelDynPullback
                 'deficit'   => 0.60,   // the relationship's fulfillment deficit (unmet needs)
                 'grievance' => 0.35,   // unresolved resentment or an open conflict
                 'aftermath' => 2.00,   // the morning after intimacy, for the one who fears the closeness (aftermath below): at half the push it presses in full
+                'standards' => 0.90,   // "I deserve better" (reldyn_dark.php): a mature NPC whose trust stayed low closes off before leaving
             ],
             // Decisions §22 (Ken, 2026-10-01): the fearful morning after, through the pull-back. The input is
             // size x shape: size = push x how fearful the NPC is (fearful: the attachment corner => 0..1,
@@ -161,6 +162,15 @@ class RelDynPullback
                 'enter_aftermath_mixed'      => "{NAME} means to say evenly that getting that close was a lot and some room would help, but it comes out {HOW}.",
                 'enter_aftermath_accusation' => "{NAME} picks at {PLAYER} the morning after: how quickly it all went, what it was supposed to mean. It is really the closeness that frightens {NAME}, and it comes out as a fight.",
                 'enter_aftermath_sulking'    => "{NAME} keeps {PLAYER} at arm's length the morning after: short answers, room left between them, waiting to be asked what is wrong and not offering it.",
+                // "I deserve better" (Ken §24, reldyn_dark.php): a mature NPC whose trust stayed low closes off, and says what the line is
+                'standing_standards_mature'     => "Has pulled back from {PLAYER} and has said why: more trust than this is what {NAME} needs from someone this close; the care is still there, and so is the line.",
+                'standing_standards_mixed'      => "Pulling back from {PLAYER}, and it comes out sharp: means to say plainly that {NAME} needs more trust than this, and says it {HOW} instead.",
+                'standing_standards_accusation' => "Spoiling for a fight with {PLAYER}: there is no trust to stand on, and everything small becomes proof of it; it comes out as blame.",
+                'standing_standards_sulking'    => "Pouting and pulled back from {PLAYER}: short answers, less warmth than usual, hurt that there is so little to lean on.",
+                'enter_standards_mature'     => "{NAME} tells {PLAYER} plainly that {NAME} needs to be able to trust {PLAYER} more than {NAME} can right now, and that without that {NAME} will not stay where this is going. Calm, and meant; then room for {PLAYER} to answer.",
+                'enter_standards_mixed'      => "{NAME} means to say evenly that there is not enough trust here for what {NAME} wants, but it comes out {HOW}.",
+                'enter_standards_accusation' => "{NAME} picks at {PLAYER}: what has {PLAYER} ever done to be trusted, why is it always like this. It is really about wanting something to lean on, and it comes out as a fight.",
+                'enter_standards_sulking'    => "{NAME} withdraws from {PLAYER}: short answers, eyes elsewhere, no warmth, hurt that there is so little to trust and not saying so.",
                 'reopen_mature'    => "Something in {NAME} eases: what was missing has been given, and the distance closes without a speech.",
                 'reopen_immature'  => "The mood lifts without anyone saying so: {NAME} is warmer toward {PLAYER} again, a little grudgingly.",
             ],
@@ -335,8 +345,9 @@ class RelDynPullback
             $grievance = max($grievance, self::clamp01($open));
         }
         $aftermath = self::aftermathInput(is_array($dynamics[self::KEY]['aftermath'] ?? null) ? $dynamics[self::KEY]['aftermath'] : null, $now, $cfg);
+        $standards = self::clamp01(RelDynDark::deservePressure($dynamics));
         return ['weather' => round($weather, 4), 'gravity' => round($gravity, 4), 'deficit' => round($deficit, 4), 'grievance' => round($grievance, 4),
-                'aftermath' => round($aftermath, 4)];
+                'aftermath' => round($aftermath, 4), 'standards' => round($standards, 4)];
     }
 
     /** The pressure the inputs pull toward (0..1): the weighted sum, the weather x the mood gain. */
@@ -346,7 +357,8 @@ class RelDynPullback
         return self::clamp01(floatval($w['weather']) * $moodGain * floatval($inputs['weather'] ?? 0)
             + floatval($w['deficit']) * floatval($inputs['deficit'] ?? 0)
             + floatval($w['grievance']) * floatval($inputs['grievance'] ?? 0)
-            + floatval($w['aftermath'] ?? 0) * floatval($inputs['aftermath'] ?? 0));
+            + floatval($w['aftermath'] ?? 0) * floatval($inputs['aftermath'] ?? 0)
+            + floatval($w['standards'] ?? 0) * floatval($inputs['standards'] ?? 0));
     }
 
     /** The pressure after $hours game hours toward $target: up at rise_per_game_hour, down at fall_per_game_hour. */
@@ -429,12 +441,13 @@ class RelDynPullback
 
     /**
      * The text key of a line ('standing' | 'enter') by the NPC's expression: mature, mixed, or the immature style; for the
-     * fearful morning after ($cause 'aftermath') the line of that cause when the config has one.
+     * fearful morning after ($cause 'aftermath') or the dark path's "I deserve better" ($cause 'standards') the line of that
+     * cause when the config has one.
      */
     private static function expressionKey(string $kind, array $e, ?string $cause = null, ?array $cfg = null): string
     {
         $how = $e['band'] === 'mature' ? 'mature' : ($e['band'] === 'mixed' ? 'mixed' : $e['style']);
-        if ($cause === 'aftermath' && isset((($cfg ?? self::config())['felt_text'])["{$kind}_aftermath_{$how}"])) return "{$kind}_aftermath_{$how}";
+        if ($cause !== null && isset((($cfg ?? self::config())['felt_text'])["{$kind}_{$cause}_{$how}"])) return "{$kind}_{$cause}_{$how}";
         return $kind . '_' . $how;
     }
 
@@ -468,12 +481,12 @@ class RelDynPullback
     /** Does the standing line name what is missing (so the generic unmet line beside it would only repeat)? */
     public static function namesNeeds(array $dynamics, ?array $cfg = null): bool
     {
-        if (self::cause($dynamics) === 'aftermath') return false;   // the morning after names the closeness, not what is missing
+        if (in_array(self::cause($dynamics), ['aftermath', 'standards'], true)) return false;   // these name the closeness / the trust, not what is missing
         $e = self::expression($dynamics, $cfg);
         return !($e['band'] === 'immature' && $e['style'] === 'sulking');
     }
 
-    /** What the current pull-back is mostly about: 'aftermath' (the fearful morning after) or null (the weather, the needs, a grievance). */
+    /** What the current pull-back is mostly about: 'aftermath' (the fearful morning after), 'standards' (the dark path's "I deserve better") or null (the weather, the needs, a grievance). */
     public static function cause(array $dynamics): ?string
     {
         $c = $dynamics[self::KEY]['cause'] ?? null;
@@ -526,9 +539,11 @@ class RelDynPullback
             $w = (array) $cfg['weights'];
             $parts = ['weather' => floatval($w['weather']) * self::moodGain($e['w'], $cfg) * floatval($inputs['weather']),
                 'deficit' => floatval($w['deficit']) * floatval($inputs['deficit']), 'grievance' => floatval($w['grievance']) * floatval($inputs['grievance']),
-                'aftermath' => floatval($w['aftermath'] ?? 0) * floatval($inputs['aftermath'])];
+                'aftermath' => floatval($w['aftermath'] ?? 0) * floatval($inputs['aftermath']),
+                'standards' => floatval($w['standards'] ?? 0) * floatval($inputs['standards'] ?? 0)];
             arsort($parts);
-            $cause = array_key_first($parts) === 'aftermath' && $parts['aftermath'] > 0.0 ? 'aftermath' : null;
+            $top = (string) array_key_first($parts);
+            $cause = in_array($top, ['aftermath', 'standards'], true) && $parts[$top] > 0.0 ? $top : null;
             $state['cause'] = $cause;
             self::queue($state, ['key' => 'enter', 'band' => $e['band'], 'style' => $e['style'], 'attachment' => $e['attachment'], 'cause' => $cause]);
             $out['entered'] = true;

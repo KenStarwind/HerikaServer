@@ -36,7 +36,7 @@
  * STANCES: willing | hesitant (yes, unsure) | appeasing (yes, unwilling) | declines (no) | closed (no).
  * allow is true for the first three. The reasons are codes (conflict, ick, withdrawn, resentful, pulled_back,
  * not_let_in, fear; for closed: asexual, aromantic, not_interested, not_bonded_yet,
- * friendzoned, walked_away), strongest first. A felt line (feelings, the NPC's name, no pronoun, no
+ * friendzoned, walked_away, ended), strongest first. A felt line (feelings, the NPC's name, no pronoun, no
  * digits) says it in words.
  *
  * PUBLISHED to core_npc_master.plugin_extended_data.reldyn.consent (publish(): only when it changed, from RelDyn's
@@ -154,6 +154,7 @@ final class RelDynConsent
                     'not_bonded_yet' => "{NAME} needs far more closeness and time with {PLAYER} before intimacy is even a question.",
                     'friendzoned' => "{NAME} cares for {PLAYER} as a friend, and not in the way that would make this right. The answer is no.",
                     'walked_away' => "{NAME} has walked away from {PLAYER} and is not open to any closeness at all right now.",
+                    'ended' => "{NAME} and {PLAYER} were together once and it ended hard; {NAME} is not open to that closeness with {PLAYER} now.",
                     'default'    => "{NAME} is not open to intimacy with {PLAYER}. The answer is no.",
                 ],
                 'declines' => [
@@ -257,6 +258,8 @@ final class RelDynConsent
         if ($friendzoned) $out[] = 'friendzoned';
         $walk = $dynamics['_walkaway_state'] ?? 'normal';
         if (is_string($walk) && $walk !== '' && $walk !== 'normal') $out[] = 'walked_away';
+        // a romance that ended hard is over until it thaws or starts again (RelDynBonds, decisions §24): not a verdict, a state
+        if (RelDynBonds::endedHard($dynamics)) $out[] = 'ended';
         return $out;
     }
 

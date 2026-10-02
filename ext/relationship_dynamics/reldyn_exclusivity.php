@@ -300,6 +300,9 @@ final class RelDynExclusivity
         // She stepped back from the romance on purpose (rulings §9): that closeness is over
         $steppedBack = RelDynFulfillment::romanceSteppedBack($dynamics) !== null;
         $release = $steppedBack ? self::clamp01(floatval($cfg['stepped_back_mult'] ?? 0.0)) : 1.0;
+        // An ended romance holds no one out for the player: an ex or a friend not at all, a conflicted bond still carries a torch
+        // (reldyn_bonds.php, decisions §24)
+        $release *= RelDynBonds::release($dynamics);
 
         $unweakened = self::clamp01($drive * $disposition * $title * $release);
         $pull = self::clamp01($unweakened * $lowCut * $neglect);
@@ -693,6 +696,9 @@ final class RelDynExclusivity
         RelationshipDynamics::log("[EXCL] {$npcName} <- {$suitor}: pull " . $p['pull'] . " ({$p['band']}), " . count($lines)
             . " new move(s), interest +{$added} -> " . round($interest, 2) . ($coreRomantic ? ', core romantic' : ''));
         if (!$recentMove) return null;
+        // Seeking or strayed with this suitor (the infidelity loop, reldyn_bonds.php): the reply is warm, not a deflection
+        $warm = RelDynBonds::suitorLine($view, $npcName, $suitor, $playerName);
+        if ($warm !== null) return self::render($npcName, $suitor, $warm, $cfg);
         $line = self::feltLine($view, $p, $npcName, $suitor, $playerName, $interest, $cfg);
         return $line === null ? null : self::render($npcName, $suitor, $line['text'], $cfg);
     }
