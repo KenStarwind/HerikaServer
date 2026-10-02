@@ -18,6 +18,8 @@ $jevDefaults = [
     "JEV_LOW_CONFIDENCE_ESCALATE_AFTER" => 3,      // consecutive low-confidence ticks before waking the main LLM
     "JEV_GOAL_TTL_SECONDS"              => 900,    // a standing goal expires after this many real seconds
     "JEV_TICK_TYPES"                    => "funcret,bored,jev_tick",
+    "JEV_BODY_ENABLED"                  => false,  // body language and voice emotion from RelDyn (needs ext/relationship_dynamics)
+    "JEV_BODY_MIN_INTERVAL"             => 20,     // real seconds between two body decisions for the same NPC
 ];
 
 foreach ($jevDefaults as $jevKey => $jevValue) {
@@ -29,3 +31,4 @@ unset($jevDefaults, $jevKey, $jevValue);
 
 require_once __DIR__ . "/lib/jev_client.php";
 require_once __DIR__ . "/lib/jev_tactical.php";
+require_once __DIR__ . "/lib/jev_body.php";

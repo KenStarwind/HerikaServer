@@ -114,6 +114,8 @@ function chimPrismaGlobalSettingsSections(): array
             ['name' => 'JEV_LOW_CONFIDENCE_ESCALATE_AFTER', 'type' => 'integer', 'min' => 0, 'max' => 20, 'default' => 3],
             ['name' => 'JEV_GOAL_TTL_SECONDS', 'type' => 'integer', 'min' => 30, 'max' => 7200, 'default' => 900],
             ['name' => 'JEV_TIMEOUT', 'type' => 'integer', 'min' => 1, 'max' => 30, 'default' => 5],
+            ['name' => 'JEV_BODY_ENABLED', 'type' => 'boolean', 'default' => false],
+            ['name' => 'JEV_BODY_MIN_INTERVAL', 'type' => 'integer', 'min' => 1, 'max' => 600, 'default' => 20],
         ],
         'Context Selections' => [
             ['name' => 'MAGIC_EVENT_BLACKLIST', 'type' => 'longstring'],

@@ -32,6 +32,16 @@ if (empty($GLOBALS["JEV_TACTICAL_ENABLED"])) {
     return;
 }
 
+// Body language (RelDyn's bio-mimetic feedback): when the player speaks to the NPC, Jev picks which body cue fires and whether the
+// voice carries its emotion. Never ends the request; the NPC answers as usual, now with the cue in its felt text.
+if (!empty($GLOBALS["JEV_BODY_ENABLED"])) {
+    try {
+        jev_body_prerequest($gameRequest);
+    } catch (Throwable $jevBodyError) {
+        Logger::warn("[JEV] body language failed, normal flow: " . $jevBodyError->getMessage());
+    }
+}
+
 if (!in_array($jevType, jev_tactical_tick_types(), true)) {
     return;
 }

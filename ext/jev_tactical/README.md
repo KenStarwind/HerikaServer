@@ -125,6 +125,28 @@ its premise ("Assume Erik is about to perform 'Attack'. Which target ...?") and 
 only the answers that apply. Asking `action`, `target`, `item` as three unrelated questions would
 produce well-typed nonsense.
 
+## Body language (RelDyn)
+
+Ken's relationship extension (`ext/relationship_dynamics`, RelDyn) works out how an NPC's body would show what the NPC feels: four
+body-language cues, each with a strength that depends on who the NPC is (`approach`, `turn_away`, `shy_glance`, `tense_stance`), and the
+emotion of the voice for TTS. Without Jev the strongest cue just speaks as felt text for the dialogue model. With `JEV_BODY_ENABLED`, this
+is the "if I feel this and my goal is that, then I do x" the layer was built for: when the player speaks to an NPC (`JEV_BODY_TYPES`,
+at most once per `JEV_BODY_MIN_INTERVAL` seconds per NPC), Jev is given RelDyn's explicit state (`RelationshipDynamics::jevStateBlock`, the
+numbers, not the felt prose) and the NPC's goal, and answers two questions:
+
+| Question | Type   | Meaning                                                                                              |
+|----------|--------|------------------------------------------------------------------------------------------------------|
+| `cue`    | choice | which of the cues RelDyn offers fires now, or `none` (a quiet body, e.g. when the goal is to stay unnoticed) |
+| `voice`  | noul   | whether the voice carries the emotion RelDyn read, or stays ordinary                                 |
+
+The answer goes to `RelDynBody::pick()`: the cue then speaks in the NPC's felt text for a while, and RelDyn's own per-cue cooldown stops
+repeats. The one cue core has an action for, `approach`, comes back as `ComeCloser` and is sent the way this layer's tactical acts are (echoed
+into the response, recorded in `actions_issued` as `jev_body`, logged as an `infoaction`), only when `ComeCloser` is enabled for the NPC.
+`turn_away`, `shy_glance` and `tense_stance` have no animation channel in CHIM 3.4.1 and stay text until a game-side hook exists (RelDyn's
+`reldyn_body.php` lists what it would need). A low-confidence answer picks nothing and RelDyn's default stays. Inert without RelDyn, off by
+default, needs the layer's master switch and `JEV_API_KEY`; any failure leaves the request to the normal flow. Tests: `JevBodyTest.php`
+(RelDyn stubbed at its API) and, in the RelDyn tree, `RelDynBodyJevTestBedsPostgresTest.php` (this code against the real RelDyn).
+
 ## Configuration
 
 Global settings (CHIM configuration UI, section "Jev Tactical Layer (Experimental)", or `conf/conf.php`):
@@ -139,6 +161,8 @@ Global settings (CHIM configuration UI, section "Jev Tactical Layer (Experimenta
 | `JEV_LOW_CONFIDENCE_ESCALATE_AFTER`| `3`           | consecutive low-confidence ticks before escalating       |
 | `JEV_GOAL_TTL_SECONDS`             | `900`         | standing goals expire unless renewed                     |
 | `JEV_TIMEOUT`                      | `5`           | HTTP timeout                                             |
+| `JEV_BODY_ENABLED`                 | `false`       | body language and voice emotion from RelDyn (see above)  |
+| `JEV_BODY_MIN_INTERVAL`            | `20`          | real seconds between two body decisions for one NPC      |
 | `JEV_TICK_TYPES`                   | `funcret,bored,jev_tick` | request types that run a tick (conf.php only) |
 
 Try the request shape without a game running:
