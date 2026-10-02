@@ -129,9 +129,11 @@ final class RelDynDark
             ],
 
             // --- growth: positive treatment lifts maturity, toward the floors switching on ---
-            // A positive exchange of at least min_significance gives per_item x significance x (1 - maturity strength)
-            // points through applyDelta (plasticity applies: a Rigid NPC grows slowly), at most daily_cap points per game day.
-            'growth' => ['per_item' => 0.8, 'min_significance' => 0.3, 'daily_cap' => 3.0, 'enabled' => true],
+            // A positive exchange of at least min_significance asks per_item x significance x (1 - maturity strength) points of
+            // maturity through applyDelta (its own physics apply: plasticity, and the pull toward the NPC's baseline that makes a
+            // low maturity gain about 2-3 times what was asked; the fearful region's maturity floor of 30 holds), at most daily_cap
+            // points asked per game day. About a fortnight of daily warmth takes an immature NPC across the line.
+            'growth' => ['per_item' => 0.3, 'min_significance' => 0.3, 'daily_cap' => 1.2, 'enabled' => true],
 
             // --- felt text (feelings, never numbers; {NAME} the NPC, {PLAYER} the player, no pronoun of their own) ---
             'felt_text' => [
@@ -215,7 +217,7 @@ final class RelDynDark
         $m = self::dim($dynamics, 'maturity', 50.0);
         if (empty($cfg['enabled'])) return $m > floatval(RelationshipDynamics::MATURITY_FLOOR_THRESHOLD) ? 1.0 : 0.0;
         $c = (array) $cfg['maturity'];
-        return round(self::logistic($m, floatval($c['centre']), floatval($c['width'])), 6);
+        return self::logistic($m, floatval($c['centre']), floatval($c['width']));
     }
 
     /** Is the floor gone altogether (the old "immature: no floors")? */
@@ -264,7 +266,7 @@ final class RelDynDark
     public static function trustSense(array $dynamics, ?array $cfg = null): float
     {
         $cfg = $cfg ?? self::config();
-        return round(self::logistic(self::ownTrust($dynamics), self::trustLine($dynamics, $cfg), floatval(((array) $cfg['trust'])['width'])), 6);
+        return self::logistic(self::ownTrust($dynamics), self::trustLine($dynamics, $cfg), floatval(((array) $cfg['trust'])['width']));
     }
 
     // =====================================================================
@@ -287,7 +289,7 @@ final class RelDynDark
         foreach ($c as $k => $v) {
             if ($v > $c[$dominant] + 1e-12) $dominant = $k;
         }
-        return ['m' => round($m, 4), 't' => round($t, 4)] + array_map(fn($v) => round($v, 4), $c) + ['dominant' => $dominant];
+        return ['m' => round($m, 6), 't' => round($t, 6)] + array_map(fn($v) => round($v, 6), $c) + ['dominant' => $dominant];
     }
 
     /** What this kind of bond expects of the other (getRelationshipType), 0..1; 'other' for a kind not listed. */
@@ -400,6 +402,13 @@ final class RelDynDark
     public static function holdsParasite(array $dynamics): bool
     {
         return !empty($dynamics[self::KEY]['parasite']) && ($dynamics['_relationship_type_override'] ?? null) === 'parasite';
+    }
+
+    /** Forget the state (the editor's reset): an overlay this path set is lifted, the pressures and the growth ledger are gone. */
+    public static function reset(array &$dynamics): void
+    {
+        if (self::holdsParasite($dynamics)) self::releaseParasite('', $dynamics);
+        unset($dynamics[self::KEY]);
     }
 
     // =====================================================================

@@ -1269,6 +1269,36 @@ final class RelDynEditor
             : 'no (pressure ' . self::num($pb['pressure'], 2) . ')', ['state' => 'state',
             'hint' => 'temporary: the weather, unmet needs, resentment and, after intimacy, a fear of closeness press on the NPC; reset lets them open up at once (it comes back if the pressure does)',
             'reset' => isset($d[RelDynPullback::KEY]) ? function (array &$dd) { unset($dd[RelDynPullback::KEY]); } : null]);
+        // The maturity gate's dark path (reldyn_dark.php): the corners, "I deserve better", the adrift state
+        $dk = $jev['dark'];
+        $fields[] = self::field('state:dark', 'Dark path', 'readonly',
+            $dk['dominant'] . ', floor strength ' . self::num($dk['floor_strength'], 2) . ' (gate ' . self::num($dk['gate_required'], 0) . '), deserve ' . self::num($dk['deserve'], 2)
+            . ' (walks at ' . self::num($dk['walk_at'], 2) . '), codependent ' . self::num($dk['codependent'], 2) . ', adrift ' . self::num($dk['adrift'], 2)
+            . ($dk['parasite_held'] ? ', transactional bond held' : ''), ['state' => 'state',
+            'hint' => 'derived from maturity and trust: a mature NPC with little trust deserves better and walks; a low-maturity one with high trust leans on the player; low and low drifts into a transactional bond. Reset forgets the pressures and lifts the bond it set',
+            'reset' => isset($d[RelDynDark::KEY]) ? function (array &$dd) { RelDynDark::reset($dd); } : null]);
+        // The extended bond kinds (reldyn_bonds.php): committed, conflicted, sworn, how a romance ended, the pull toward someone else
+        $bk = $jev['bonds'];
+        $fields[] = self::field('state:bonds', 'Bond kinds', 'readonly', $bk['kinds'] === [] ? 'none' : implode(', ', $bk['kinds']), ['state' => 'state',
+            'hint' => 'committed (a romance made formal), conflicted (the soft end of a romance), sworn (an oath): the type of relationship RelDyn holds beside core\'s own, which stays core\'s. Reset forgets all of it (and how a romance ended); it does not write core',
+            'reset' => isset($d[RelDynBonds::KEY]) ? function (array &$dd) { RelDynBonds::reset($dd); } : null]);
+        $fields[] = self::field('state:oath', 'Oath', 'bool', !empty($bk['oath']['active']), ['state' => 'state', 'derived' => false,
+            'hint' => 'an NPC bound by an oath serves whatever they feel, until respect is gone and it breaks; core\'s fanatical and servant types are the oath already',
+            'set' => function (array &$dd, $v): ?string { RelDynBonds::setOath($dd, (bool) $v); return null; },
+            'reset' => function (array &$dd) { RelDynBonds::setOath($dd, false); }]);
+        $b = $bk['breakup'];
+        $fields[] = self::field('state:breakup', 'How the romance ended', 'readonly', $b === null ? 'it has not'
+            : $b['fork'] . ' (' . $b['cause'] . ', ' . $b['status'] . '), way back ' . self::num($b['rekindle'], 2) . ', thaw ' . self::num($b['thaw'], 2), ['state' => 'state',
+            'hint' => 'ex, conflicted or friends by who the NPC is and how it ended; a conflicted bond can start again through exchanges that mean something, an ex can thaw. Reset forgets it (core\'s type stays)',
+            'reset' => $b !== null ? function (array &$dd) {
+                unset($dd[RelDynBonds::KEY]['breakup'], $dd[RelDynBonds::KEY]['breakup_blocked']);
+                if (($dd[RelDynBonds::KEY]['kind'] ?? null) === 'conflicted') unset($dd[RelDynBonds::KEY]['kind']);
+            } : null]);
+        $inf = $bk['infidelity'];
+        $fields[] = self::field('state:infidelity', 'Pull toward someone else', 'readonly', $inf['stage'] === null ? 'none (' . self::num($inf['pressure'], 2) . ')'
+            : $inf['stage'] . ($inf['with'] !== null ? ' with ' . $inf['with'] : '') . ', ' . self::num($inf['pressure'], 2), ['state' => 'state',
+            'hint' => 'neglect and low fulfillment cut the exclusivity pull; with a suitor of real interest the NPC drifts, seeks and may stray, by who they are. Reset forgets it',
+            'reset' => isset($d[RelDynBonds::KEY]['infidelity']) ? function (array &$dd) { unset($dd[RelDynBonds::KEY]['infidelity']); } : null]);
         $walk = (string) ($d['_walkaway_state'] ?? 'normal');
         $fields[] = self::field('state:walkaway', 'Walkaway', 'readonly', $walk . (isset($d['_walkaway_reason']) ? ' (' . (string) $d['_walkaway_reason'] . ')' : ''), [
             'state' => 'state', 'hint' => 'reset brings the NPC back to normal (resetWalkawayState)',
@@ -1280,6 +1310,7 @@ final class RelDynEditor
                 self::releaseHeld($dd);
                 unset($dd[RelDynPassion::SPIKE_KEY], $dd[RelDynPassion::SPIKE_TRIGGER_KEY], $dd[RelDynPassion::SPIKE_CLOCK_KEY], $dd[RelDynConcern::STATE_KEY],
                     $dd[RelDynPullback::KEY]);
+                RelDynDark::reset($dd);
                 $dd['_grief_bonds'] = [];
                 $dd['_widow_lock_ceiling'] = 100;
                 if ($walk !== 'normal') RelationshipDynamics::resetWalkawayState($dd);

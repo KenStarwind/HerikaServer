@@ -131,7 +131,7 @@ final class RelDynBonds
                 'enabled' => true,
                 // how hard an ending is by its cause (0..1); a cause not listed is default_cause
                 'causes' => ['standards' => 0.35, 'affinity' => 0.5, 'jealousy' => 0.55, 'resentment' => 0.65, 'neglect' => 0.35,
-                             'ick_comfort' => 0.7, 'autonomy' => 0.5, 'shame' => 0.3, 'pursued' => 0.9, 'infidelity_confessed' => 0.4,
+                             'ick_comfort' => 0.7, 'autonomy' => 0.5, 'shame' => 0.3, 'pursued' => 0.9, 'infidelity_confessed' => 0.3,
                              'left_for_other' => 0.9, 'boundary' => 0.1, 'core' => 0.45, 'player' => 0.2],
                 'default_cause' => 0.5,
                 // longing = the mean of passion / passion_full and (core affinity above 0) / aff_full, each clamped 0..1
@@ -177,8 +177,10 @@ final class RelDynBonds
             // --- the infidelity loop ---
             'infidelity' => [
                 'enabled' => true,
-                // a romance (core rung) at least; the pull she would have unweakened at least this (nothing to cut below it)
-                'min_rung' => 2, 'min_unweakened' => 0.25,
+                // a romance (core rung) at least. The opening is how little holds the NPC: what neglect and low fulfillment cut from the pull
+                // (the cut), and how little of a pull there was to begin with (hollow = 1 - the pull unweakened, x hollow_weight): a
+                // fading passion makes a hollower pull, which closes the loop.
+                'min_rung' => 2, 'hollow_weight' => 0.5,
                 // what the relationship preference expects of fidelity (1 = all of it); under open_below the NPC is open, not unfaithful
                 'expectation' => ['monogamous' => 1.0, 'demisexual' => 1.0, 'uncommitted' => 0.45, 'polyamorous' => 0.1, 'default' => 0.9],
                 'open_below' => 0.3,
@@ -191,8 +193,8 @@ final class RelDynBonds
                 // the pressure follows its target on the game calendar
                 'rates' => ['rise_per_game_hour' => 0.02, 'fall_per_game_hour' => 0.03, 'max_step_game_hours' => 72.0],
                 // the stage lines (pressure) and how far restraint lifts them: line + shift x restraint
-                'stages' => ['drifting' => 0.25, 'seeking' => 0.5, 'strayed' => 0.8],
-                'restraint_shift' => ['drifting' => 0.15, 'seeking' => 0.2, 'strayed' => 0.15],
+                'stages' => ['drifting' => 0.25, 'seeking' => 0.45, 'strayed' => 0.7],
+                'restraint_shift' => ['drifting' => 0.15, 'seeking' => 0.2, 'strayed' => 0.25],
                 // strayed also needs a suitor of real interest (points), held for this long (game hours)
                 'strayed_interest' => 40.0, 'strayed_hold_game_hours' => 12.0, 'min_interest' => 15.0,
                 // passion toward the player fades while it lasts (points a game day x the stage's factor), down to the floor
@@ -202,7 +204,7 @@ final class RelDynBonds
                 // how it ends, game days from the line crossed: the mature and loyal confess, the anxious confess late, the avoidant
                 // and the rest leave, the fearful keep both for long (then leave). Mature = maturity weight at least, loyal = restraint at least.
                 'resolve' => ['mature_w' => 0.6, 'loyal' => 0.5, 'confess_mature' => 1.0, 'confess_anxious' => 3.0, 'leave_avoidant' => 4.0,
-                              'leave' => 3.0, 'both_fearful' => 14.0, 'anxious_at' => 0.5, 'avoidant_at' => 0.5, 'fearful_at' => 0.5],
+                              'leave' => 3.0, 'both_fearful' => 21.0, 'anxious_at' => 0.5, 'avoidant_at' => 0.5, 'fearful_at' => 0.5],
             ],
 
             // --- felt text (feelings, never numbers; {NAME} the NPC, {PLAYER} the player, {SUITOR}, {BECAUSE}; no pronoun of their own) ---
@@ -346,6 +348,24 @@ final class RelDynBonds
         return is_array($dynamics[self::KEY] ?? null) ? $dynamics[self::KEY] : [];
     }
 
+    /** Forget the stored claims, the oath, the ending's record and the infidelity loop (the editor's reset). Core's type is not touched. */
+    public static function reset(array &$dynamics): void
+    {
+        unset($dynamics[self::KEY]);
+    }
+
+    /** Set or clear the oath by hand (the editor): an oath the NPC took (source 'editor'), or none. A cleared oath also forgets a broken one. */
+    public static function setOath(array &$dynamics, bool $on, ?float $now = null): void
+    {
+        $state = &self::state($dynamics);
+        if ($on) {
+            $state['oath'] = ['active' => true, 'source' => 'editor', 'since' => $now ?? RelationshipDynamics::currentGamets(), 'strain' => 0.0, 'betrayal' => 0.0];
+        } else {
+            unset($state['oath']);
+        }
+        unset($state);
+    }
+
     // =====================================================================
     // THE KINDS (pure)
     // =====================================================================
@@ -483,7 +503,7 @@ final class RelDynBonds
         $cling = self::clamp01(RelationshipDynamics::attachmentBlend($dynamics, (array) $b['cling'], 0.0));
         $avoid = self::clamp01(RelationshipDynamics::attachmentBlend($dynamics, (array) $b['avoid'], 0.0));
 
-        $friends = $friendsOpen ? $g * (0.25 + 0.75 * $m) * (1.0 - 0.6 * $l) * (1.0 - 0.5 * $cling) : 0.0;
+        $friends = $friendsOpen ? $g * (0.25 + 0.75 * $m) * (1.0 - 0.6 * $l) * (1.0 - 0.5 * $cling) * (1.0 - 0.4 * $avoid) : 0.0;
         $conflicted = $l * (0.3 + 0.7 * $g) * (0.5 + 0.5 * (1.0 - $m)) * max(0.0, 0.7 + 0.5 * $cling - 0.3 * $avoid);
         $ex = pow($h, 1.3) * (0.6 + 0.4 * (1.0 - $g)) * (1.0 - 0.5 * $l * (1.0 - $h)) * (1.0 + 0.2 * $avoid);
         $scores = [self::FORK_EX => self::clamp01($ex), self::FORK_CONFLICTED => self::clamp01($conflicted), self::FORK_FRIENDS => self::clamp01($friends)];
@@ -1001,7 +1021,7 @@ final class RelDynBonds
      * The infidelity loop's pull toward straying at $now (module doc), pure: cut (how far neglect and low fulfillment have cut the
      * exclusivity pull), temptation (the best suitor's interest), the target the pressure follows, the stage lines (lifted by restraint).
      *
-     * @return array{cut: float, restraint: float, temptation: float, target: float, lines: array, suitor: ?array, unweakened: float, pull: float}
+     * @return array{cut: float, hollow: float, opening: float, restraint: float, temptation: float, target: float, lines: array, suitor: ?array, unweakened: float, pull: float}
      */
     public static function infidelityTarget(array $dynamics, float $now, ?array $cfg = null): array
     {
@@ -1009,12 +1029,14 @@ final class RelDynBonds
         $i = (array) $cfg['infidelity'];
         $p = RelDynExclusivity::pull($dynamics, $now);
         $unweakened = floatval($p['unweakened']);
-        $cut = $unweakened >= floatval($i['min_unweakened']) ? self::clamp01(1.0 - floatval($p['pull']) / max(1e-6, $unweakened)) : 0.0;
+        $cut = $unweakened > 1e-6 ? self::clamp01(1.0 - floatval($p['pull']) / $unweakened) : 0.0;
+        $hollow = self::clamp01(1.0 - $unweakened) * self::clamp01(floatval($i['hollow_weight']));
+        $opening = 1.0 - (1.0 - $cut) * (1.0 - $hollow);
         $suitor = self::bestSuitor($dynamics, $now);
         $t = (array) $i['tempt'];
         $temptation = $suitor !== null ? self::between($suitor['interest'], floatval($t['from']), floatval($t['full'])) : 0.0;
         $base = self::clamp01(floatval($i['tempt_base']));
-        $target = $cut * ($base + (1.0 - $base) * $temptation);
+        $target = $opening * ($base + (1.0 - $base) * $temptation);
         $jealous = self::between(self::dim($dynamics, 'jealousy', 0.0), 0.0, floatval($i['jealous_full']));
         $target *= 1.0 - self::clamp01(floatval($i['jealous_damp'])) * $jealous;
         $restraint = self::restraint($dynamics, $cfg);
@@ -1022,7 +1044,7 @@ final class RelDynBonds
         foreach (self::STAGES as $stage) {
             $lines[$stage] = round(min(0.98, floatval($i['stages'][$stage]) + floatval($i['restraint_shift'][$stage]) * $restraint), 4);
         }
-        return ['cut' => round($cut, 4), 'restraint' => round($restraint, 4), 'temptation' => round($temptation, 4), 'target' => round(self::clamp01($target), 4),
+        return ['cut' => round($cut, 4), 'hollow' => round($hollow, 4), 'opening' => round($opening, 4), 'restraint' => round($restraint, 4), 'temptation' => round($temptation, 4), 'target' => round(self::clamp01($target), 4),
                 'lines' => $lines, 'suitor' => $suitor, 'unweakened' => $unweakened, 'pull' => floatval($p['pull'])];
     }
 
@@ -1115,7 +1137,7 @@ final class RelDynBonds
         $inf['stage'] = $stage;
         $inf['with'] = $with;
         $inf['gamets'] = $now;
-        $inf['last'] = ['target' => $tgt['target'], 'cut' => $tgt['cut'], 'temptation' => $tgt['temptation'], 'restraint' => $tgt['restraint'], 'lines' => $tgt['lines']];
+        $inf['last'] = ['target' => $tgt['target'], 'cut' => $tgt['cut'], 'opening' => $tgt['opening'], 'temptation' => $tgt['temptation'], 'restraint' => $tgt['restraint'], 'lines' => $tgt['lines']];
         $state = &self::state($dynamics);
         $state['infidelity'] = $inf;
         unset($state);
