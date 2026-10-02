@@ -400,6 +400,18 @@ try {
     RelationshipDynamics::logError('keeping', $e);
 }
 
+// ========== THE BODY: the blush safeguard (Ken 2026-10-01 §24, reldyn_body.php) ==========
+// A blush whose end the game never confirmed (a save loaded in the middle of it) is taken off once, a grace after
+// it was due; the command goes through the same channel as the blush itself. The blush is started in the context
+// hook, on the moment that earns it.
+try {
+    if (RelDynBody::tick($npcName, $dynamics)) {
+        RelDynBody::flush($npcName, $dynamics);
+    }
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('body blush safeguard', $e);
+}
+
 // ========== CREATURE MOODIFICATIONS (feedback_creature_moodifications, decisions §7) ==========
 // Vampires by night / day, werewolves by Skyrim's moon: the row's offsets are held while it
 // holds and taken back when it changes (or when creature_moodifications_enabled is off); a

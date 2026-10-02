@@ -1515,6 +1515,11 @@ class RelationshipDynamics
             // Drives, decay, trait threshold / style, the inner conflict with her motivation, felt
             // text (reldyn_impulse.php, RelDynImpulse::configDefaults()).
             'impulse' => RelDynImpulse::configDefaults(),
+            // ===== The body: bio-mimetic feedback and the physical blush (Ken 2026-10-01 §24) =====
+            // Body-language cues (approach, turn away, shy glance, tense stance) as strengths from who the NPC
+            // is, the voice emotion for TTS, and the OBlush blush command with its duration and cooldown
+            // (reldyn_body.php, RelDynBody::configDefaults()).
+            'body' => RelDynBody::configDefaults(),
             // ===== Creature moodifications (feedback_creature_moodifications, decisions §7) =====
             // Detection, Skyrim's moon cycle, the night / day / moon rows, the return from
             // beast form, felt text (reldyn_creatures.php, RelDynCreatures::configDefaults()).
@@ -19732,6 +19737,8 @@ require_once __DIR__ . '/reldyn_timeline.php';
 require_once __DIR__ . '/reldyn_felt.php';
 // Jev's explicit state block (the §3 exception): numbers, for the action picker.
 require_once __DIR__ . '/reldyn_jev.php';
+// The body: body-language cues, the voice emotion for TTS and the OBlush blush; defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_body.php';
 // Protective concern and the values path of both channels (traits design §1); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_concern.php';
 // Let in (comfort x trust) and the temporary state of pulling back; defaults in defaultConfig().

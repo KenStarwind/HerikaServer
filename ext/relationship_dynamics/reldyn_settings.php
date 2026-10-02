@@ -85,7 +85,7 @@ final class RelDynSettings
         'gift_delta' => 'world', 'quests' => 'world', 'duty_override_enabled' => 'world', 'cascade_network_enabled' => 'world',
         'cascade_threshold' => 'world', 'cascade_decay' => 'world', 'cascade' => 'world',
         'npc_npc_facts' => 'steering',
-        'fulfillment' => 'inner', 'concern' => 'inner', 'pullback' => 'inner', 'impulse' => 'inner', 'intrinsic_goals' => 'inner',
+        'fulfillment' => 'inner', 'concern' => 'inner', 'pullback' => 'inner', 'impulse' => 'inner', 'body' => 'steering', 'intrinsic_goals' => 'inner',
         'director_goals' => 'inner', 'director_goals_enabled' => 'inner', 'diary_reflection' => 'inner',
         'diary_reflection_mode' => 'inner', 'autonomous_diary_enabled' => 'inner', 'diary_interaction_gap' => 'inner',
         'protocols' => 'inner', 'divine_intervention_enabled' => 'inner', 'grief_system_enabled' => 'inner',
@@ -239,6 +239,7 @@ final class RelDynSettings
             'resentment_arc'     => [RelDynResentment::class, 'config'],
             'intimacy_need'      => [RelDynIntimacy::class, 'config'],
             'impulse'            => [RelDynImpulse::class, 'config'],
+            'body'               => [RelDynBody::class, 'config'],
             'creatures'          => [RelDynCreatures::class, 'config'],
             'combat'             => [RelDynCombat::class, 'config'],
             'governors'          => [RelDynGovernors::class, 'config'],
@@ -298,7 +299,7 @@ final class RelDynSettings
     public static function deepNodes(): array
     {
         return ['felt_steering.text', 'felt_steering.intensity', 'memory_translation.text', 'prompt_gating.text',
-                'facet_appraisal.felt_text', 'impulse.alignment'];
+                'facet_appraisal.felt_text', 'impulse.alignment', 'body.cues', 'body.voice', 'body.blush', 'body.text'];
     }
 
     /** May the stored row hold $path's children in part (its reader merges them key by key)? */

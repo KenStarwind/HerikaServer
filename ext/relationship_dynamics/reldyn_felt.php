@@ -498,6 +498,8 @@ final class RelDynFelt
             if ($hold > 0) $dynamics[self::BLUSH_HOLD_KEY] = $hold; else unset($dynamics[self::BLUSH_HOLD_KEY]);
             $blushNow = true;
             $changed = true;
+            // The same moment on the model: a physical blush through OBlush (reldyn_body.php; sent by build() once saved)
+            RelDynBody::onBlushMoment($npc, $dynamics, $lastDelta, $blushMult);
         }
         // The flush a primary match held: still there on the player's next word
         if (!$blushNow && intval($dynamics[self::BLUSH_HOLD_KEY] ?? 0) > 0 && !empty($env['player_addressed'])) {
@@ -883,6 +885,16 @@ final class RelDynFelt
                     floatval($l['salience']), (string) $l['text'], ['intense' => !empty($l['intense']), 'tag' => $l['tag']]);
                 if ($l['motivation'] !== null) $voiced = $l['motivation'];
             }
+        }
+
+        // --- The body: the cue that speaks (approach, turn away, a shy glance, a tense stance; Jev's pick, else the
+        // strongest) and the voice's emotion (reldyn_body.php); text only, the cue's core action is Jev's to fire ---
+        if (RelDynBody::enabled()) {
+            foreach (RelDynBody::feltLines($npc, $player, $dynamics) as $l) {
+                $lines[] = self::line($l['key'], self::SCOPE_BOND, self::LANE_TURN, floatval($l['salience']), (string) $l['text'],
+                    ['intense' => !empty($l['intense']), 'tag' => $l['tag']]);
+            }
+            RelDynBody::applyVoice($dynamics);
         }
 
         // --- Intrinsic goal (MDD 13.2 / 14.2: what she wants from life, her own) ---
@@ -1690,6 +1702,10 @@ final class RelDynFelt
         $cfg = self::config();
         $composed = self::compose($npc, $player, $dynamics, RelationshipDynamics::currentGamets(), self::envFromGlobals($dynamics));
         if ($composed['changed']) {
+            RelationshipDynamics::saveDynamics($npc, $dynamics);
+        }
+        // What the body queued this request (the blush) goes out through the command channel, once the state holding it is saved
+        if (RelDynBody::flush($npc, $dynamics)) {
             RelationshipDynamics::saveDynamics($npc, $dynamics);
         }
         $player = $composed['player_ref'];
