@@ -826,8 +826,9 @@ final class RelDynCascadeExt
                     $r = $rivals[$name] ?? $r;   // nothing written by this request (its state was not kept, or another request has the step)
                 }
             }
-            // a settled rivalry leaves the ledger (a residue under a point is not worth carrying), once nothing it took is still owed back
-            if (abs($target) < 0.001 && abs($r['applied']) < 0.5 && abs(floatval($r['written'] ?? 0.0)) < 0.5) {
+            // a settled rivalry leaves the ledger (a residue under a point is not worth carrying), once no whole point it took is still owed back
+            // (a give-back that failed leaves the difference as it was: the record stays until it is made)
+            if (abs($target) < 0.001 && abs($r['applied']) < 0.5 && abs(floatval($r['applied']) - floatval($r['written'] ?? 0.0)) < 1.0) {
                 unset($rivals[$name]);
                 continue;
             }
