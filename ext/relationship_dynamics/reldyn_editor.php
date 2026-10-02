@@ -1299,6 +1299,36 @@ final class RelDynEditor
             : $inf['stage'] . ($inf['with'] !== null ? ' with ' . $inf['with'] : '') . ', ' . self::num($inf['pressure'], 2), ['state' => 'state',
             'hint' => 'neglect and low fulfillment cut the exclusivity pull; with a suitor of real interest the NPC drifts, seeks and may stray, by who they are. Reset forgets it',
             'reset' => isset($d[RelDynBonds::KEY]['infidelity']) ? function (array &$dd) { unset($dd[RelDynBonds::KEY]['infidelity']); } : null]);
+        // The duty affinity channel (reldyn_duty.php, never desire): its state, and the role the NPC serves in (derived from the
+        // party, the factions and core's type, or hand-set)
+        $du = $jev['duty_channel'];
+        $fields[] = self::field('state:duty_affinity', 'Duty affinity', 'readonly', $du['value'] > 0 || $du['bound']
+            ? self::num($du['value'], 1) . ' (' . ($du['band'] ?? 'below the first band') . ', ' . ($du['role'] ?? 'no role') . ($du['bound'] ? ', serving now' : ', not serving now') . ')'
+            : 'none', ['state' => 'state',
+            'hint' => 'earned by serving the player (time in service, fights beside them, quests, being looked after); decays slowly after the service ends; it never feeds passion, romance or consent. Reset forgets it',
+            'reset' => isset($d[RelDynDuty::KEY]) ? function (array &$dd) { unset($dd[RelDynDuty::KEY]); } : null]);
+        $roleSet = is_string($d[RelDynDuty::ROLE_OVERRIDE_KEY] ?? null) ? (string) $d[RelDynDuty::ROLE_OVERRIDE_KEY] : '';
+        $fields[] = self::field('duty:role', 'Duty role', 'select', $roleSet, [
+            'options' => ['' => 'derived (party, factions, core type)', 'housecarl' => 'housecarl', 'follower' => 'follower', 'sworn' => 'sworn protector', 'none' => 'none (never bound)'],
+            'state' => $roleSet === '' ? 'derived' : 'override', 'derived' => '',
+            'hint' => 'who the NPC serves as; derived from the player\'s party, a housecarl or follower faction and core\'s sworn type. A hand-set role outranks the derivation',
+            'set' => function (array &$dd, $v): ?string {
+                if ($v === '') { unset($dd[RelDynDuty::ROLE_OVERRIDE_KEY]); return null; }
+                if (!in_array($v, ['housecarl', 'follower', 'sworn', 'none'], true)) return 'unknown role';
+                $dd[RelDynDuty::ROLE_OVERRIDE_KEY] = $v;
+                return null;
+            },
+            'reset' => function (array &$dd) { unset($dd[RelDynDuty::ROLE_OVERRIDE_KEY]); },
+        ]);
+        // The circle (reldyn_cascade_ext.php): derived from the NPC's bonds, so there is nothing to reset (what it applied is tracked)
+        $ci = $jev['circle'];
+        $links = array_map(fn($l) => $l['name'] . ' ' . sprintf('%+.1f', $l['lean']), $ci['association']['links']);
+        $fields[] = self::field('state:circle', 'Friends and foes', 'readonly', abs($ci['association']['applied']) >= 0.05 || $ci['rivals'] !== []
+            ? 'regard for the player ' . sprintf('%+.1f', $ci['association']['applied']) . ' (target ' . sprintf('%+.1f', $ci['association']['target']) . ')'
+                . ($links ? '; ' . implode(', ', $links) : '')
+                . ($ci['rivals'] ? '; rivals: ' . implode(', ', array_map(fn($n, $r) => $n . ' ' . sprintf('%+.1f', $r['applied']), array_keys($ci['rivals']), $ci['rivals'])) : '')
+            : 'none', ['state' => 'state',
+            'hint' => 'derived from the NPC\'s bonds to others: a friend of someone close to the player warms, a foe of theirs cools; two who want the player turn cool toward each other. Core points']);
         $walk = (string) ($d['_walkaway_state'] ?? 'normal');
         $fields[] = self::field('state:walkaway', 'Walkaway', 'readonly', $walk . (isset($d['_walkaway_reason']) ? ' (' . (string) $d['_walkaway_reason'] . ')' : ''), [
             'state' => 'state', 'hint' => 'reset brings the NPC back to normal (resetWalkawayState)',
@@ -1417,6 +1447,12 @@ final class RelDynEditor
                 if (isset($d['_aff_mirror_x'])) $fresh['_aff_mirror_x'] = $d['_aff_mirror_x'];
                 if (is_array($d['dimensions']['affinity'] ?? null)) $fresh['dimensions']['affinity'] = $d['dimensions']['affinity'];
                 if (isset($d['_core_rel_type'])) $fresh['_core_rel_type'] = $d['_core_rel_type'];
+                // ... nor what the circle has written into core (the friend-of-a-friend points, a rivalry's cooling): its ledger stays,
+                // or the reading would apply itself again on top of what core holds
+                $ledger = RelDynCascadeExt::ledger($d);
+                if ($ledger !== []) $fresh[RelDynCascadeExt::KEY] = $ledger;
+                // ... and the fraction of a core point still waiting to be committed is core's affinity too
+                if (isset($d['_pending_aff_delta'])) $fresh['_pending_aff_delta'] = $d['_pending_aff_delta'];
                 if ($token !== null) $fresh[RelationshipDynamics::LOAD_TOKEN_KEY] = $token;
                 $d = $fresh;
                 $changed[] = '*';

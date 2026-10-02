@@ -120,6 +120,13 @@
  *                     'broken'], 'breakup' => null | ['fork' => ex | conflicted | friends, 'cause', 'status', 'hardness', 'rekindle' 0..1,
  *                     'thaw' 0..1, 'shares'], 'infidelity' => ['stage' => ?drifting | seeking | strayed, 'pressure' 0..1, 'with', 'style',
  *                     'target', 'cut', 'expectation' 0..1, 'line_crossed']] (RelDynBonds, decisions §24)
+ *   circle           ['enabled' => bool, 'association' => ['applied' => core points the friend-of-a-friend reading holds on the NPC's regard for
+ *                     the player, 'target', 'susceptibility' => who the NPC is, 'links' => [['name', 'lean', 'kind' => ally|rival_close|foe]]],
+ *                     'rivals' => [name => ['pressure' => 0..1, 'applied' => core points off the NPC's regard for that rival]],
+ *                     'mentions' => [names the player said]] (RelDynCascadeExt, decisions §24)
+ *   duty_channel     ['enabled' => bool, 'value' => 0..100 (duty affinity), 'band' => ?steady|devoted|sworn, 'role' => ?housecarl|sworn|follower,
+ *                     'bound' => bool, 'override' => ?string (the editor's hand-set role), 'sources' => [service|combat|quest|care|mistreat => points],
+ *                     'regard' => warm|plain|cool|hostile, 'disposition' => who the NPC is] (RelDynDuty, decisions §24; never desire)
  *   place            null | ['name' => ?string, 'valence' => -1..1, 'intensity' => 0..1, 'dominant' => ?string]
  *   governor         null | ['tier' => distant|friendly|crush|committed|hostile, 'passion_floor',
  *                    'passion_ceiling' (passion points), 'raised' => bool] (MDD 8 tiered governors,
@@ -324,6 +331,8 @@ final class RelDynJev
             'keeping' => RelDynKeeping::jev($dynamics),
             'dark' => RelDynDark::jev($dynamics),
             'bonds' => RelDynBonds::jev($dynamics, $now),
+            'circle' => RelDynCascadeExt::jev($dynamics),
+            'duty_channel' => RelDynDuty::jev($dynamics),
             'walkaway' => (string) ($dynamics['_walkaway_state'] ?? 'normal'),
             'resentment_arc' => RelDynResentment::jev($dynamics),
             'absence' => RelDynAbsence::jev($dynamics),
@@ -442,6 +451,16 @@ final class RelDynJev
                 $bits[] = 'straying=' . $bk['infidelity']['stage'] . ($bk['infidelity']['with'] !== null ? ' with ' . $bk['infidelity']['with'] : '');
             }
             $parts[] = implode(' ', $bits);
+        }
+        // compact: only while the circle colours the NPC's regard ("circle=<core points>(<friend or foe>)"), a rivalry stands, or duty is held
+        $ci = $s['circle'] ?? null;
+        if (is_array($ci) && !empty($ci['enabled']) && (abs($ci['association']['applied']) >= 0.5 || $ci['rivals'] !== [])) {
+            $parts[] = 'circle=' . $f((float) $ci['association']['applied']) . ($ci['association']['links'] !== [] ? '(' . $ci['association']['links'][0]['name'] . ')' : '')
+                . ($ci['rivals'] !== [] ? ' rivals=' . implode(',', array_keys($ci['rivals'])) : '');
+        }
+        $du = $s['duty_channel'] ?? null;
+        if (is_array($du) && !empty($du['enabled']) && $du['value'] >= 5.0) {
+            $parts[] = 'duty=' . $f((float) $du['value']) . "({$du['band']} " . ($du['role'] ?? 'former') . (empty($du['bound']) ? ' lapsed' : '') . ')';
         }
         $parts[] = "walkaway={$s['walkaway']}";
         $r = $s['resentment_arc'];

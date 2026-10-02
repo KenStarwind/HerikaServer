@@ -1078,6 +1078,12 @@ class RelationshipDynamics
             'cascade_decay' => 0.9,                  // fraction
             // Cascade: who hears, the defining moments, her felt line (reldyn_cascade.php)
             'cascade' => RelDynCascade::configDefaults(),
+            // Cascade extensions (batch W, Ken 2026-10-01 §24): friend-of-a-friend, love triangles, the name lookup
+            // (reldyn_cascade_ext.php, RelDynCascadeExt::configDefaults())
+            'cascade_ext' => RelDynCascadeExt::configDefaults(),
+            // Duty affinity channel (batch W, Ken 2026-10-01 §24; pipeline Addendum 9): housecarls, followers and sworn
+            // protectors earn a separate duty affinity (reldyn_duty.php, RelDynDuty::configDefaults())
+            'duty' => RelDynDuty::configDefaults(),
             // Tiered personality facts for core's NPC-to-NPC eval (reldyn_npc_facts.php)
             'npc_npc_facts' => RelDynNpcFacts::configDefaults(),
             'duty_override_enabled' => true,
@@ -9731,6 +9737,9 @@ class RelationshipDynamics
         // A big enough change of her affinity ripples to the NPCs who care about her (cascade-network,
         // MDD 10: lazy; noted on her state with the item, queued on the targets by applyEvalInbox)
         RelDynCascade::noteItem((string) $npcName, $n, $totals, $dynamics, $itemGamets, $fingerprint, $anchor);
+        // A housecarl, follower or sworn protector the player looked after earns duty, one badly treated loses some (the
+        // duty channel, reldyn_duty.php; never desire)
+        RelDynDuty::onEvalItem((string) $npcName, $n, $totals, $dynamics, $itemGamets);
         // The drunk self's gains go to the night's ledger for the sober diary (RelDynSubstances)
         RelDynSubstances::afterEvalItem((string) $npcName, $n, $totals, $dynamics, $itemGamets);
         // The player's first exchange after her fall, answered with care or not (MDD 3.3 rescue
@@ -12056,6 +12065,8 @@ class RelationshipDynamics
             $event['divine'] = true;
             $out['divine'] = true;
         }
+        // A journal quest that names a bound NPC moved: service on the quest (the duty channel, reldyn_duty.php)
+        RelDynDuty::onQuest($npcName, $dynamics, $questId, $stageId, $gamets);
         $events[] = $event;
         $dynamics[RelDynQuests::EVENTS_KEY] = array_slice($events, -max(1, intval(RelDynQuests::config()['events_keep'])));
         $out['recorded'] = true;
@@ -19882,4 +19893,8 @@ require_once __DIR__ . '/reldyn_memory.php';
 require_once __DIR__ . '/reldyn_mirror.php';
 // The cascading affinity network (cascade-network) and the NPC-NPC eval's tiered facts (npc-npc-tiered-eval)
 require_once __DIR__ . '/reldyn_cascade.php';
+// Cascade extensions: friend-of-a-friend, love triangles, the name lookup (cascade-extensions)
+require_once __DIR__ . '/reldyn_cascade_ext.php';
 require_once __DIR__ . '/reldyn_npc_facts.php';
+// The duty affinity channel (duty-affinity-channel)
+require_once __DIR__ . '/reldyn_duty.php';

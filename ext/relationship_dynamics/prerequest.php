@@ -277,6 +277,14 @@ if (!empty($reldynCfg['dimension_engine_enabled'])) {
     } catch (Throwable $e) {
         RelationshipDynamics::logError('cascade ripples on prerequest', $e);
     }
+    // ========== CASCADE EXTENSIONS (batch W, Ken 2026-10-01 §24, reldyn_cascade_ext.php) ==========
+    // The same lazy rule on her own bonds: friend of a friend (a friend of someone close to the player warms, a foe of
+    // theirs cools), the rivalry of a love triangle, and the name the player just said. Only her own row is ever written.
+    try {
+        RelDynCascadeExt::onPrerequest($npcName, $dynamics);
+    } catch (Throwable $e) {
+        RelationshipDynamics::logError('cascade extensions on prerequest', $e);
+    }
 }
 
 // ========== FULFILLMENT (rulings 2026-09-24 §9: neglect = absence of fulfillment) ==========
@@ -365,6 +373,15 @@ try {
 // A hostile NPC an active journal quest names: cold, professional compliance (context), her
 // negative eval signals of the exchange dampened (the eval job carries RELDYN_DUTY_FACTOR).
 RelDynQuests::onPrerequest($npcName, $dynamics);
+
+// ========== DUTY AFFINITY (batch W, Ken 2026-10-01 §24; pipeline Addendum 9, reldyn_duty.php) ==========
+// A housecarl, follower or sworn protector earns a separate duty affinity from service; it decays slowly after the
+// service ends. Never desire: nothing here reaches passion, the attraction matrix, consent or sex_disposal.
+try {
+    RelDynDuty::advance($npcName, $dynamics, RelationshipDynamics::currentGamets());
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('duty affinity', $e);
+}
 
 // ========== INTERNAL WEATHER + CREATURE MODIFIERS (PR 13) ==========
 if (!empty($reldynCfg['internal_weather_enabled'])) {

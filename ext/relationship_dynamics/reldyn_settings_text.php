@@ -111,6 +111,8 @@ final class RelDynSettingsText
         'post_intimacy' => 'Aftermath states: afterglow, the sober morning (uncertainty after a drunken night, guilt, distance), and their words.',
         'gift_delta' => 'How a gift moves affinity: the base points, love language, and the stolen and re-gifted cases.',
         'cascade' => 'The cascading affinity network: who hears of what the player did to an NPC (how strong their bond to that NPC must be, enemies inverted), what counts as a defining moment, how long the news takes to reach someone who was not there (by hold distance and bond), and the felt line the NPC says when the NPC hears.',
+        'cascade_ext' => 'The cascade\'s extensions: friend of a friend (an NPC fond of someone close to the player warms to the player, one who dislikes them cools; how strong a bond counts, how likely the NPC is to know of the tie, how easily the NPC is swayed), love triangles (two NPCs who both want the player cool toward each other), and the name lookup (the NPC\'s own feeling about someone the player names who is not here).',
+        'duty' => 'The duty affinity channel: how housecarls, followers and sworn protectors earn a regard for the player that is separate from affection (service, fighting beside the player, quests, being looked after), how fast it builds and fades, how mistreatment wears it down, and the <duty_context> words. It never feeds desire, romance or consent.',
         'npc_npc_facts' => 'Which personality facts the NPC-to-NPC evaluation of core is told, by how well the player knows each NPC: where the tiers start, how many trait words, how much of their speech style.',
     ];
 
@@ -214,6 +216,13 @@ final class RelDynSettingsText
         'diary_reflection.prompt.enabled' => 'The NPC\'s depth (by maturity) and the moments marked since the NPC last wrote reach core\'s diary prompt, so the entry itself carries them. Off: core writes the entry from its own prompt alone.',
         'exclusivity.enabled' => 'A natural pull toward the player that grows as the bond deepens, with its own reactions around suitors.',
         'romance_promotion.enabled' => 'A romance can climb its ladder (moments, confession, momentum) and hand over to Sharmat.',
+        'cascade_ext.enabled' => 'Master switch for the cascade extensions: friend of a friend, love triangles and the name lookup. Off: none of them runs, and what a friend-of-a-friend reading already applied stays where it is.',
+        'cascade_ext.association.enabled' => 'An NPC fond of someone who is close to the player warms to the player, and one who dislikes them cools, by how easily this NPC is swayed and how likely they are to know of the tie. Off: only what the player does to someone ripples.',
+        'cascade_ext.association.felt.enabled' => 'The NPC says, in a standing line, that their friend or foe colours how they see the player. Off: the affinity still moves, silently.',
+        'cascade_ext.triangle.enabled' => 'Two NPCs who both want the player grow cool toward each other, each at their own next turn, by who they are. Off: no rivalry between NPCs; what it took is given back.',
+        'cascade_ext.triangle.felt.enabled' => 'The NPC says, in a standing line, who the rival for the player is and how they carry it. Off: the coolness still happens, silently.',
+        'cascade_ext.mention.enabled' => 'When the player names someone who is not here, the NPC\'s own feeling about them colours the answer (once per name per cooldown) and the NPC knows the player\'s tie to them from then on for a while. Off: a name is just a name.',
+        'duty.enabled' => 'Housecarls, followers and sworn protectors earn a duty affinity for the player from service, fights beside the player, quests and being looked after, and it speaks in its own <duty_context> block. It never feeds desire, passion, romance or consent. Off: nothing new is earned and no block is written; what was earned is kept.',
         'cascade.felt.enabled' => 'When the NPC hears what the player did to someone the NPC cares about, the NPC says so once at their next turn with the player (a felt line, no numbers). Off: the affinity still ripples, silently.',
         'save_load.enabled' => 'Loading an earlier save puts RelDyn\'s state back in step with it (relationship state, gold ledger).',
         'substances.enabled' => 'The NPC\'s own drinking and addiction: drunk levels, tolerance, craving, withdrawal.',

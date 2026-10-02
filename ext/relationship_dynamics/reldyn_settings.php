@@ -83,9 +83,9 @@ final class RelDynSettings
         'thing_appraisal' => 'world', 'physical_states' => 'world', 'item_modifiers' => 'world', 'creatures' => 'world',
         'creature_moodifications_enabled' => 'world', 'combat' => 'world', 'combat_enabled' => 'world', 'substances' => 'world',
         'gift_delta' => 'world', 'quests' => 'world', 'duty_override_enabled' => 'world', 'cascade_network_enabled' => 'world',
-        'cascade_threshold' => 'world', 'cascade_decay' => 'world', 'cascade' => 'world',
+        'cascade_threshold' => 'world', 'cascade_decay' => 'world', 'cascade' => 'world', 'cascade_ext' => 'world',
         'npc_npc_facts' => 'steering',
-        'fulfillment' => 'inner', 'concern' => 'inner', 'pullback' => 'inner', 'impulse' => 'inner', 'intrinsic_goals' => 'inner',
+        'fulfillment' => 'inner', 'concern' => 'inner', 'pullback' => 'inner', 'impulse' => 'inner', 'intrinsic_goals' => 'inner', 'duty' => 'inner',
         'director_goals' => 'inner', 'director_goals_enabled' => 'inner', 'diary_reflection' => 'inner',
         'diary_reflection_mode' => 'inner', 'autonomous_diary_enabled' => 'inner', 'diary_interaction_gap' => 'inner',
         'protocols' => 'inner', 'divine_intervention_enabled' => 'inner', 'grief_system_enabled' => 'inner',
@@ -254,6 +254,8 @@ final class RelDynSettings
             'post_intimacy'      => [RelDynPostIntimacy::class, 'config'],
             'gift_delta'         => [RelDynGifts::class, 'config'],
             'cascade'            => [RelDynCascade::class, 'config'],
+            'cascade_ext'        => [RelDynCascadeExt::class, 'config'],
+            'duty'               => [RelDynDuty::class, 'config'],
             'npc_npc_facts'      => [RelDynNpcFacts::class, 'config'],
         ];
     }
@@ -292,6 +294,15 @@ final class RelDynSettings
             'substances.drunk', 'substances.sober', 'substances.addiction',
             'facet_classifier.embedding', 'facet_classifier.build',
             'cascade.defining', 'cascade.felt', 'cascade.felt_text',
+            'cascade_ext.association', 'cascade_ext.association.knowledge', 'cascade_ext.association.susceptibility',
+            'cascade_ext.association.susceptibility.trait_gain', 'cascade_ext.association.rates', 'cascade_ext.association.felt',
+            'cascade_ext.association.felt_text',
+            'cascade_ext.triangle', 'cascade_ext.triangle.type_interest', 'cascade_ext.triangle.disposition',
+            'cascade_ext.triangle.disposition.trait_gain', 'cascade_ext.triangle.rates', 'cascade_ext.triangle.felt', 'cascade_ext.triangle.felt_text',
+            'cascade_ext.mention', 'cascade_ext.mention.felt', 'cascade_ext.mention.felt_text',
+            'duty.roles', 'duty.roles.strength', 'duty.service', 'duty.combat', 'duty.combat.threat_mult', 'duty.quest', 'duty.care',
+            'duty.mistreat', 'duty.disposition', 'duty.decay', 'duty.felt', 'duty.felt.bands', 'duty.text', 'duty.text.role', 'duty.text.band',
+            'duty.text.regard',
             'creatures.post_transform', 'creatures.vampire', 'creatures.vampire.rows', 'creatures.vampire.thirst',
         ]);
     }

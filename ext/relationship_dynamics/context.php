@@ -47,6 +47,16 @@ if (!RelationshipDynamics::isEnabled()) {
 $reldynPlayer = (string) ($GLOBALS['PLAYER_NAME'] ?? 'Player');
 if (!$reldynNpcExchange) {
     RelDynFelt::contextPost($npcName, $reldynPlayer);
+    // The duty affinity channel (reldyn_duty.php): its own <duty_context> block, apart from <subtext>
+    try {
+        $reldynDyn = RelationshipDynamics::getDynamics($npcName);
+        $reldynDuty = RelDynDuty::contextBlock($npcName, RelDynFelt::playerRef($reldynPlayer, RelationshipDynamics::getContextTier($reldynDyn), $reldynDyn), $reldynDyn);
+        if ($reldynDuty !== null) {
+            $GLOBALS['contextDataFull'][] = ['role' => 'system', 'content' => $reldynDuty];
+        }
+    } catch (Throwable $e) {
+        RelationshipDynamics::logError('duty context', $e);
+    }
 }
 
 // Natural exclusivity (decisions §17): another NPC's romantic move in an NPC-to-NPC exchange
@@ -67,6 +77,8 @@ try {
 try {
     if ($reldynNpcExchange && isset($reldynSuitor) && $reldynSuitor !== null) {
         RelDynCascade::noteTalk($npcName, $reldynSuitor, RelationshipDynamics::currentGamets());
+        // ... and the NPC's own circle: what the one they talked to knows of the player's ties is known to them too (reldyn_cascade_ext.php)
+        RelDynCascadeExt::noteTalk($npcName, $reldynSuitor, RelationshipDynamics::currentGamets());
     }
 } catch (Throwable $e) {
     RelationshipDynamics::logError('cascade word of mouth', $e);
