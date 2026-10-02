@@ -163,6 +163,17 @@
  *                    'director', 'weight' => 0..1, 'alignment' => -1..1, 'resolution' => impulse|
  *                    impulse_soft|motivation|freeze|dignity_motivation|dignity_impulse|dignity_neither]]
  *                    (RelDynImpulse, MDD 13.3)
+ *   body             ['enabled' => bool, 'cues' => cue => ['strength' => 0..1, 'offered' => bool (at or over min_strength),
+ *                    'action' => ?string (the core action firing it maps to: approach -> ComeCloser; the rest are context text),
+ *                    'cooldown_play_seconds' => seconds before the same cue may be picked again] for approach, turn_away,
+ *                    shy_glance, tense_stance, 'offered' => cue ids strongest first, 'approach_threshold' => passion points
+ *                    this NPC approaches at (60 average; guard and shyness raise it, boldness lowers it), 'chosen' => ['cue'
+ *                    => ?id, 'source' => ?jev|default, 'strength' => 0..1] (what speaks as felt text now),
+ *                    'voice' => null | ['family', 'mood' => ?string (from the NPC's emote_moods), 'intensity' => low|moderate|strong,
+ *                    'magnitude' => 0..1, 'pace' => slow|normal|fast, 'cartesia' => ?emotion tag] (the TTS emotion from passion,
+ *                    arousal and valence), 'voice_held_back' => bool (Jev's last pick kept the voice ordinary), 'blush' => ['on' => bool, 'play_seconds_left' => seconds, 'blushiness' => 0.6..1.6],
+ *                    'inputs' => ['passion', 'shyness', 'guard', 'pullback', 'withdraw', 'arousal', 'valence']]
+ *                    Jev picks the cue to fire with RelDynBody::pick($npc, $cueOrNull, 'jev', $voiceOrNull) (RelDynBody, roadmap bio-mimetic-feedback; not in the compact text, which has a length budget)
  *   reputation       null | ['fame' => 0..1, 'infamy' => 0..1, 'weight' => 0..1 (fades with meaningful
  *                    interactions), 'meaningful' => int, 'offsets' => dimension => points held now]
  *   duty             null | ['quest' => ?string, 'factor' => 0..1 on negative eval signals, 'hostile' => ?string]
@@ -210,6 +221,9 @@ final class RelDynJev
         'protocols.gift_share' => '0..1 of the exchanges in the parasite ledger',
         'intrinsic_goals.priority' => '0..1', 'intrinsic_goals.progress' => '0..1',
         'impulse.levels' => 'impulse points 0..100', 'impulse.threshold' => 'impulse points 0..100',
+        'body.cues.strength' => '0..1', 'body.cues.cooldown_play_seconds' => 'play seconds', 'body.approach_threshold' => 'effective passion points',
+        'body.chosen.strength' => '0..1', 'body.voice.magnitude' => '0..1', 'body.blush.play_seconds_left' => 'play seconds',
+        'body.blush.blushiness' => 'multiplier 0.6..1.6 on the blush duration', 'body.inputs' => 'passion / arousal points 0..100, valence -100..100, the rest 0..1',
         'impulse.motivations.weight' => '0..1', 'impulse.conflict.weight' => '0..1', 'impulse.conflict.alignment' => '-1..1',
         'reputation.fame' => '0..1', 'reputation.infamy' => '0..1', 'reputation.weight' => '0..1',
         'reputation.offsets' => 'dimension points held now', 'duty.factor' => 'multiplier on negative eval signals',
@@ -348,6 +362,7 @@ final class RelDynJev
             'goal' => $goal,
             'intrinsic_goals' => RelDynGoals::jev($dynamics),
             'impulse' => RelDynImpulse::jev($dynamics),
+            'body' => RelDynBody::jev($dynamics, $now),
             'reputation' => RelDynReputation::jev($dynamics),
             'duty' => RelDynQuests::jev($dynamics),
             'autonomy' => self::autonomy($dynamics),

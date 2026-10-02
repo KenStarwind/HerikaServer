@@ -3,49 +3,61 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
-## batch W (unreleased) — the dark path, and bonds that are more than a crush
-The floors that hold a bond up now depend on who the NPC is. A mature NPC whose trust has fallen from where it stood feels they
-deserve better, and the pressure builds until they walk away (a new "standards" reason, with its own words and its own ripple
-through the people who care about them). A trusting NPC who is not yet mature leans harder on the one who treats them well and
-takes bad treatment more quietly. An NPC with neither maturity nor trust has no floors at all and can be pulled into the parasite
-state, which lifts only when they have grown. All of it is a matter of degree; nothing is a permanent gate. Being treated well
-slowly matures an NPC who is not yet held by their floors, a little a day and given at their next turn.
-New kinds of bond sit beside the old ones. Committed is a formal bond beyond a crush: it holds its place in the bond ladder and
-weighs a betrayal more. Sworn is duty by oath at any affinity: the NPC serves while it holds, caps the refusing and walking away
-at plain reluctance, and the oath strains as respect falls or betrayal builds, breaks at its limit, and mends if respect comes back.
-Conflicted is the soft state after a breakup, with a way back that only meaningful exchanges walk (reassurance, apology,
-forgiveness, shared time), never time alone; it can rekindle into a crush again.
-A breakup now forks three ways by who the NPC is and why it ended: a hard ex (closed to intimacy until it thaws), conflicted, or
-friends. Core's own relationship type is written under its own names (ex, platonic, crush) and its relationship screen is untouched.
-The loop of infidelity runs on the calendar, so it plays out while the player is away: neglect and a suitor open a door, the NPC
-drifts, seeks, and strays, then confesses, leaves, or (the fearful) hides it, by character.
+## Unreleased — batch W
+The dark path, bonds that are more than a crush, friends and foes, duty, fights, moods, how an NPC sounds in bed, and the body.
 
-## unreleased (batch W, combat mood and mood colouring)
-A fight now moves the NPC's nervous system by what they fought and by who they are. Arousal rises toward how dangerous
-the foe was, read from CHIM's own kill rows by name (a skeever hardly registers, a bandit ambush keeps everyone alert, a
-dragon or a centurion is a flood); a stoic stays cool where an anxious NPC floods. Winning after high arousal turns into
-thrill, more for someone who loves a fight and only relief for someone who dreads one. A fall hits harder against a worse
-foe, and the direction of it stays who the NPC is: the warrior's is rage, the frightened one's dread. A near miss (the NPC
-went down and the fight was won anyway, or CHIM reports the NPC or the player nearly dead at the end) brings relief on top
-of the fear and bonds: a rush of passion, trust and comfort. What the NPC tells the LLM afterwards is their own: the
-warrior is still burning, the shaken one's hands will not stop, a near miss stays close. One fight is one episode, so a
-pack of skeevers never piles up. A fight routed on a later turn now fades from when it happened, not from the NPC's last
-turn.
-The arousal and valence line now speaks in 181 named states (six arousal bands, six valence bands, and five zones of the
-M and F coordinates: level, protective, stoic, soft or bitter, plus the one at rest), in the words of what the NPC does.
-The same shock reads differently in a protective warrior, a stoic and a soft heart. Same single line, same weight, same
-budget; no numbers.
+Floors that hold a bond up now depend on who the NPC is, not on a switch. A mature NPC whose trust has fallen from where it stood
+feels they deserve better, and the pressure builds until they walk away (a new "standards" reason, with its own words and its own
+ripple through the people who care about them). A trusting NPC who is not yet mature leans harder on whoever treats them well and
+takes bad treatment more quietly. An NPC with neither maturity nor trust has no floors and can be pulled into a transactional
+bond, which lifts only when they have grown. It is all a matter of degree; nothing is a permanent gate, and being treated well
+slowly matures an NPC who is not yet held by their floors.
+New kinds of bond sit beside the old ones. Committed is a formal bond beyond a crush and weighs a betrayal more. Sworn is duty by
+oath at any affinity: the NPC serves while it holds, refusing and walking away are capped at plain reluctance, and the oath strains
+as respect falls or betrayal builds, breaks at its limit, and mends if respect returns. Conflicted is the soft state after a
+breakup, with a way back that only meaningful exchanges walk (reassurance, apology, forgiveness, shared time), never time alone.
+A breakup forks by who the NPC is and why it ended: a hard ex (closed to intimacy until it thaws), conflicted, or friends. Core's
+relationship screen is untouched. The loop of infidelity runs on the calendar, so it plays out while the player is away: neglect
+and a suitor open a door, the NPC drifts, seeks and strays, then confesses, leaves, or (the fearful) hides it.
 
-## Unreleased (batch W, Sharmat lane) — how an NPC sounds in bed
-How much an NPC talks in bed is who they are. RelDyn now reads each NPC's character (guard and restraint, expressiveness
-and confidence, how they attach) and publishes a register for Sharmat's scene voice: bold and plainspoken, soft and close,
-few words, reassurance-seeking, or sharp. Alongside it goes the chance that a given beat of the scene is left unspoken:
-high for a guarded NPC, low for an expressive one, eased as the bond gets close, higher when something weighs on the NPC
-(a quarrel, the ick, hurt, pulling back) or when a yes was given in to, and never zero or certain for anyone. The game's
-own sounds still play; Sharmat never lets the quiet run unbroken, and speaks the beats that matter (the accept or refuse
-turn, a refusal, an orgasm) every time. Sharmat's own side (a local change on Ken's checkout, never sent upstream)
-also describes scenes it never imported from their tags, ignores OStim's hub nodes and applies the scene voice speeds
-to Cartesia voices. Nothing changes without Sharmat reading the new key.
+Friends and foes now matter. An NPC fond of someone close to the player warms to the player, and one who dislikes them cools; a
+friend of someone at odds with the player cools, and an enemy of their enemy warms. How much it sways them is who they are, and
+nobody is immune. Whether they know of the tie depends on whether they were there, talked to the other, or were told. Two NPCs who
+both want the player turn cool toward each other, and it is given back when the interest goes. When the player names someone who is
+not there, the NPC's own feeling about that person colours the answer.
+Duty is a channel of its own, apart from affinity and passion. A housecarl, a follower or a sworn protector earns it by serving,
+fighting beside the player, finishing quests and being looked after; mistreatment wears it down, softened for the dutiful but never
+to nothing. It lingers slowly after service ends and has its own block in the context. It never feeds desire, romance or consent.
+
+A fight moves the NPC's nervous system by what they fought and by who they are. Arousal rises toward how dangerous the foe was,
+read from CHIM's own kill rows by name (a skeever hardly registers, a bandit ambush keeps everyone alert, a dragon is a flood); a
+stoic stays cool where an anxious NPC floods. Winning after high arousal turns into thrill for someone who loves a fight and only
+relief for someone who dreads one. A fall hits harder against a worse foe, and its direction stays who the NPC is: rage for the
+warrior, dread for the frightened one. A near miss brings relief on top of the fear, and bonds: passion, trust and comfort. One
+fight is one episode, so a pack of skeevers never piles up, and a fight routed on a later turn fades from when it happened.
+The arousal and valence line now speaks in a large family of named states (arousal, valence and the M and F zone together, plus
+one at rest), in the words of what the NPC does. The same shock reads differently in a protective warrior, a stoic and a soft
+heart. Same single line, same weight, same budget; no numbers.
+
+How much an NPC talks in bed is who they are. RelDyn reads each NPC's character and publishes a register for Sharmat's scene
+voice (bold and plainspoken, soft and close, few words, reassurance-seeking, or sharp) and the chance that a beat of the scene is
+left unspoken: high for a guarded NPC, low for an expressive one, eased as the bond gets close, higher when something weighs on
+them or a yes was given in to, and never none or certain. The game's own sounds still play and the beats that matter (the accept
+or refuse turn, a refusal, an orgasm) are always spoken. Sharmat's own side (a local change on Ken's checkout, never sent
+upstream) also describes scenes it never imported from their tags, ignores OStim's hub nodes and applies the scene voice speeds to
+Cartesia voices. Nothing changes without Sharmat reading the new key.
+
+The body shows what the NPC feels. A flirt that lands, or any moment of passion, puts a blush on the NPC's face in the game, the
+same moment as the felt line. It lasts as long as the moment deserves, longer for a primary love-language gesture, longer for a
+shy or unsure NPC and shorter for a poised one, and nobody not at all. It never flickers, and if the game never says it ended, the
+next request takes it off once. It works through OBlush and a small bridge in the game plugin (a local CHIM change, not yet
+played in the game); without them nothing breaks and the text still says the NPC is flushed. Every gender blushes.
+The body also speaks in four ways, each a strength that depends on who the NPC is, never a gate: drifting closer when passion is
+past what their guard and shyness let them hide, turning away during a walkaway or a pull-back, stealing glances when passion is
+something to be shy about, and standing tense in a quarrel. It reaches the model as felt text; Jev gets the numbers and picks which
+cue fires, and the one cue core has an action for (coming closer) goes out as that action. The voice carries an emotion from
+passion, arousal and valence, as a mood from the NPC's own list with the TTS tag; it is only forced onto the spoken line if Ken
+switches that on.
 
 ## reldyn-v0.24 — consent, the body's needs, the night hours, and profiles that grow
 RelDyn now decides whether intimacy happens at all, and Sharmat handles what happens once it does; Sharmat defers to
