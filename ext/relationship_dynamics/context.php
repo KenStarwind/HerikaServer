@@ -11,7 +11,9 @@
  * trust the player": decisions 2026-09-23 §3), tiered and token-budgeted (RelDynFelt). When
  * context_pre.php ran this request it already composed every line, put <knowledge_of_player>
  * and the emotional core into <character>, and handed the remaining lines over; otherwise the
- * lines are composed here and <subtext> carries all of them.
+ * lines are composed here and <subtext> carries all of them. The arousal / valence line speaks in one of 181 named
+ * states, by arousal, valence and the M/F zone (reldyn_moods.php, mood-coloring-181); after a fight the NPC's lines
+ * are their own (reldyn_combat.php fight mood: the aftermath by who they are).
  *
  * NPC-to-NPC exchanges (a radiant round, or a rechat whose previous speaker is another NPC) get
  * no player-directed steering from here, but natural exclusivity (decisions §17): when that NPC

@@ -114,7 +114,7 @@ final class RelDynFelt
                 'emergent' => 0.65, 'place' => 0.6, 'gift' => 0.6, 'intimacy' => 0.6, 'unmet' => 0.6,
                 'post_intimacy' => 0.75,
                 'creature' => 0.6, 'mask_drop' => 0.6, 'topic' => 0.55, 'attraction' => 0.5,
-                'post_combat' => 0.5, 'rescue' => 0.8, 'duty' => 0.9, 'charisma' => 0.45, 'memory' => 0.45, 'weather' => 0.4,
+                'post_combat' => 0.5, 'near_miss' => 0.8, 'beaten' => 0.7, 'triumph' => 0.6, 'rescue' => 0.8, 'duty' => 0.9, 'charisma' => 0.45, 'memory' => 0.45, 'weather' => 0.4,
                 'intrinsic_goal' => 1.0, 'reputation' => 0.9,   // x the goal's priority (as the director goal) / x the first impression's weight
             ],
             'passion_salience_offset' => 0.1,    // passion line salience = passion / 100 + this
@@ -316,6 +316,28 @@ final class RelDynFelt
             'hurt'         => "{NAME} is wounded but holding the line with {PLAYER}, all adrenaline",
             'fighting'     => "{NAME} fights beside {PLAYER}: watches their back, calls out threats, moves in step with them",
             'after'        => "the fight is barely over; adrenaline still in {NAME}'s hands, the shared danger hanging in the air",
+            // The fight in progress by who the NPC is (RelDynCombat::lean): one who fights back relishes it, one who
+            // breaks fights through the fear; a steady one keeps the plain line above
+            'fighting_bold'   => "{NAME} fights beside {PLAYER} with fierce relish, laughing at the danger, pressing in where it is thickest",
+            'fighting_shaken' => "{NAME} fights beside {PLAYER} through the fear, flinching at every blow and keeping close to {PLAYER}",
+            // After a fight whose foe was worth it (RelDynCombat::aftermath): outcome, then the NPC's lean
+            'aftermath' => [
+                'triumph' => [
+                    'bold'   => "{NAME} is still burning from the kill, grinning, replaying the best of the fight and wanting {PLAYER} to share the thrill of it",
+                    'steady' => "{NAME} lets out a slow breath and looks {PLAYER} and the others over; the victory sits quietly, satisfied and unhurried",
+                    'shaken' => "{NAME}'s hands are shaking now that it is over; relief comes out as thin laughter, and {NAME} keeps glancing back at where the danger was",
+                ],
+                'near_miss' => [
+                    'bold'   => "{NAME} is wild with having lived through it, laughing, alive in every nerve, and will not leave {PLAYER}'s side after what they came through together",
+                    'steady' => "{NAME} and {PLAYER} nearly did not walk away from that, and {NAME} knows it; quiet, grateful, standing closer to {PLAYER} than before",
+                    'shaken' => "{NAME} is shaking with how close it was, tears of relief near the surface, holding on to the fact that {PLAYER} is alive and near",
+                ],
+                'beaten' => [
+                    'bold'   => "{NAME} burns with the shame of having been put down; furious at the foe and at the fall, hungry to get back up and finish it",
+                    'steady' => "{NAME} is grimly quiet after being put down; tightly controlled, checking the damage, not admitting how badly it shook {NAME}",
+                    'shaken' => "{NAME} is rattled to the bone after going down; keeps checking where {PLAYER} is, afraid of being left and of the fight not being done",
+                ],
+            ],
         ],
         // creature lines: RelDynCreatures config felt_text (reldyn_creatures.php)
         'memory'       => "Still carries: {ITEMS}.",
@@ -592,13 +614,26 @@ final class RelDynFelt
             } elseif (!empty($combat['in_combat'])) {
                 $hp = $combat['health_pct'];   // null: core does not report NPC health
                 $k = ($hp !== null && $hp < 0.3) ? 'badly_hurt' : (($hp !== null && $hp < 0.6) ? 'hurt' : 'fighting');
+                // Not yet hurt: how this NPC fights (RelDynCombat::lean: bold relishes it, shaken fights through fear)
+                if ($k === 'fighting') {
+                    $lean = RelDynCombat::lean($dynamics);
+                    if (isset($t['combat']['fighting_' . $lean])) $k = 'fighting_' . $lean;
+                }
                 $lines[] = self::line('combat', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['combat']),
                     self::fill((string) $t['combat'][$k], $vars), ['intense' => true]);
             }
         }
         $aftermath = false;
         if (!$combat || empty($combat['in_combat'])) {
-            if (RelationshipDynamics::getRecentCombatSummary($npc)) {
+            // How the fight went for this NPC (fight mood: a win against a foe worth it, a near miss, a fall), by who
+            // the NPC is; else the plain glow after a fight the NPC was in
+            $after = RelDynCombat::aftermath($dynamics, $now > 0 ? $now : RelationshipDynamics::currentGamets());
+            if ($after !== null && empty($combat['bleeding_out']) && isset($t['combat']['aftermath'][$after['outcome']][$after['lean']])) {
+                $aftermath = true;
+                $lines[] = self::line('post_combat', self::SCOPE_SELF, self::LANE_TURN, floatval($sal[$after['outcome'] === 'near_miss' ? 'near_miss'
+                    : ($after['outcome'] === 'beaten' ? 'beaten' : 'triumph')]),
+                    self::fill((string) $t['combat']['aftermath'][$after['outcome']][$after['lean']], $vars), ['intense' => true]);
+            } elseif (RelationshipDynamics::getRecentCombatSummary($npc)) {
                 $aftermath = true;
                 $lines[] = self::line('post_combat', self::SCOPE_SELF, self::LANE_TURN, floatval($sal['post_combat']),
                     self::fill((string) $t['combat']['after'], $vars));
@@ -1032,8 +1067,11 @@ final class RelDynFelt
             if ($dist > $dead) {
                 $band = RelationshipDynamics::getArousalValenceBand($a, $v);
                 $extreme = $a > 80;
+                // Mood colouring (reldyn_moods.php): the named state's words, by arousal, valence and the
+                // M/F zone, in place of the plain band's; the same single line, so the felt budget holds
+                $words = RelDynMoods::feltKeywords($dynamics, $a, $v, $m, $f) ?? $band['keywords'];
                 $out[] = self::line('arousal_valence', self::SCOPE_SELF, self::LANE_CORE,
-                    min(1.0, $dist / 100 * floatval($w['arousal_valence'] ?? 1)) + ($extreme ? $bonus : 0), $band['keywords'], ['intense' => true]);
+                    min(1.0, $dist / 100 * floatval($w['arousal_valence'] ?? 1)) + ($extreme ? $bonus : 0), $words, ['intense' => true]);
             }
         }
 

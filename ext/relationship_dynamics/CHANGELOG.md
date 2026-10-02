@@ -20,6 +20,22 @@ friends. Core's own relationship type is written under its own names (ex, platon
 The loop of infidelity runs on the calendar, so it plays out while the player is away: neglect and a suitor open a door, the NPC
 drifts, seeks, and strays, then confesses, leaves, or (the fearful) hides it, by character.
 
+## unreleased (batch W, combat mood and mood colouring)
+A fight now moves the NPC's nervous system by what they fought and by who they are. Arousal rises toward how dangerous
+the foe was, read from CHIM's own kill rows by name (a skeever hardly registers, a bandit ambush keeps everyone alert, a
+dragon or a centurion is a flood); a stoic stays cool where an anxious NPC floods. Winning after high arousal turns into
+thrill, more for someone who loves a fight and only relief for someone who dreads one. A fall hits harder against a worse
+foe, and the direction of it stays who the NPC is: the warrior's is rage, the frightened one's dread. A near miss (the NPC
+went down and the fight was won anyway, or CHIM reports the NPC or the player nearly dead at the end) brings relief on top
+of the fear and bonds: a rush of passion, trust and comfort. What the NPC tells the LLM afterwards is their own: the
+warrior is still burning, the shaken one's hands will not stop, a near miss stays close. One fight is one episode, so a
+pack of skeevers never piles up. A fight routed on a later turn now fades from when it happened, not from the NPC's last
+turn.
+The arousal and valence line now speaks in 181 named states (six arousal bands, six valence bands, and five zones of the
+M and F coordinates: level, protective, stoic, soft or bitter, plus the one at rest), in the words of what the NPC does.
+The same shock reads differently in a protective warrior, a stoic and a soft heart. Same single line, same weight, same
+budget; no numbers.
+
 ## reldyn-v0.24 — consent, the body's needs, the night hours, and profiles that grow
 RelDyn now decides whether intimacy happens at all, and Sharmat handles what happens once it does; Sharmat defers to
 RelDyn when RelDyn is present (a local Sharmat change). The decision is about who the NPC is: some never will, a quarrel

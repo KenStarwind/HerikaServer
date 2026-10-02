@@ -4569,10 +4569,14 @@ class RelationshipDynamics
      * caller's route (gainPassion when positive, a drain when negative, nothing inside the dead
      * band). No vector: no_vector_passion (today's -1.5 drain), nothing else.
      *
+     * $scale (unitless, default 1): how hard the fall hits by the foe (combat.arousal.defeat,
+     * RelDynCombat::defeatScale): the asked arousal spike and valence move by it, the passion
+     * and the fight / fear that decide the direction do not.
+     *
      * @return array ['passion' (passion points), 'valence', 'arousal' (points asked),
      *                'applied' => ['valence' => actual, 'arousal' => actual], 'fight', 'fear', 'net', 'vector' => bool]
      */
-    public static function bleedoutResponse(array &$dynamics, bool $apply = false): array
+    public static function bleedoutResponse(array &$dynamics, bool $apply = false, float $scale = 1.0): array
     {
         $cfg = (array) (self::configValue('bleedout_response') ?? []) + self::defaultConfig()['bleedout_response'];
         $temperament = $dynamics['inferred_temperament'] ?? null;
@@ -4583,6 +4587,10 @@ class RelationshipDynamics
         }
         $r = RelDynTraits::bleedout($x, $cfg, self::getAttachmentAxes($dynamics));
         if (abs($r['passion']) < floatval($cfg['dead_band'])) $r['passion'] = 0.0;
+        if (abs($scale - 1.0) > 1e-9) {
+            $r['arousal'] = max(0.0, min(100.0, $r['arousal'] * $scale));
+            $r['valence'] = max(-100.0, min(100.0, $r['valence'] * $scale));
+        }
         $r['applied'] = ['valence' => 0.0, 'arousal' => 0.0];
         if ($apply) {
             $flat = ['Y_up' => 1.0, 'Y_down' => 1.0];
@@ -19884,6 +19892,8 @@ require_once __DIR__ . '/reldyn_passion.php';
 require_once __DIR__ . '/reldyn_substances.php';
 // The M/F envelope derived at display time, arousal / valence settling (mf-coordinates, arousal-valence).
 require_once __DIR__ . '/reldyn_mood_axes.php';
+// 181 named emotional states that colour the felt arousal / valence line (mood-coloring-181).
+require_once __DIR__ . '/reldyn_moods.php';
 // What follows a scene the plugin reports (post-intimacy); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_post_intimacy.php';
 // The gift delta formula's base, love language and inversions (gift-delta-formula).
