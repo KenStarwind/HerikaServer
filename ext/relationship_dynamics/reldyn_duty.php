@@ -216,6 +216,27 @@ final class RelDynDuty
         return preg_replace('/[^a-z0-9]/', '', strtolower((string) $value));
     }
 
+    /** @var array<string, array> lower(npc) => the power-gap facts, for the request scope $factsScope only */
+    private static array $factsCache = [];
+    private static ?string $factsScope = null;
+
+    /**
+     * The facts a role is read from (party, core type, factions: RelationshipDynamics::powerGapFacts), read once per NPC per request
+     * scope: this runs at every prerequest, and the party does not change inside one request. Outside a scope nothing is kept.
+     */
+    private static function facts(string $npcName, array $dynamics): array
+    {
+        $scope = RelationshipDynamics::requestScopeToken();
+        $key = strtolower(trim($npcName)) . '|' . (string) ($dynamics['_core_rel_type'] ?? '');
+        if ($scope !== null) {
+            if (self::$factsScope !== $scope) { self::$factsCache = []; self::$factsScope = $scope; }
+            if (isset(self::$factsCache[$key])) return self::$factsCache[$key];
+        }
+        $facts = RelationshipDynamics::powerGapFacts($npcName, $dynamics);
+        if ($scope !== null) self::$factsCache[$key] = $facts;
+        return $facts;
+    }
+
     /**
      * The NPC's duty role right now: ['role', 'strength' 0..1, 'source'] or null (not bound). The editor's hand-set role
      * first; else the strongest of: a housecarl faction, core's 'sworn' type, the player's party or the follower faction.
@@ -232,7 +253,7 @@ final class RelDynDuty
                 return ['role' => $override, 'strength' => self::clamp(floatval($strength[$override] ?? 1.0), 0.0, 1.0), 'source' => 'editor'];
             }
         }
-        $facts = RelationshipDynamics::powerGapFacts($npcName, $dynamics);
+        $facts = self::facts($npcName, $dynamics);
         $found = [];
         $take = function (string $role, string $why) use (&$found, $strength): void {
             if (!in_array($role, self::ROLES, true)) return;

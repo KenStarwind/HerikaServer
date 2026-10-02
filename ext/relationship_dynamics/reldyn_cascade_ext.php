@@ -59,6 +59,8 @@ final class RelDynCascadeExt
     const KEY = '_circle';
     const MAX_MENTIONS = 8;
     const MAX_LINKS = 8;
+    /** NPCs of the NPC's bonds (strongest first) a triangle looks through. */
+    const MAX_SCAN = 40;
 
     // =====================================================================
     // CONFIG
@@ -681,8 +683,8 @@ final class RelDynCascadeExt
         $due = $checked === null || $now - $checked >= $recheck || $now < $checked;
         $pressures = [];
         if ($due && ($mine >= floatval($t['min_interest']) || $rivals !== [])) {
-            $others = $bonds;
-            $entries = self::playerEntries(array_keys($others));
+            // the strongest bonds only (a core NPC can hold hundreds): the one query stays small
+            $entries = self::playerEntries(array_slice(array_keys($bonds), 0, self::MAX_SCAN));
             $cands = [];
             foreach ($entries as $low => $e) {
                 $aff = floatval($e['player']['aff'] ?? 0.0);
