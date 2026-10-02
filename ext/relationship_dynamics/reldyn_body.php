@@ -455,7 +455,10 @@ final class RelDynBody
      * The cue that speaks now: a fresh pick (Jev's) whose cue is still offered, else (default_pick) the strongest offered one,
      * else none. A pick of no cue (Jev decided nothing fits) keeps the default quiet for its lifetime.
      *
-     * @return array{cue: ?string, source: ?string, strength: float}
+     * 'voice' is Jev's word on the voice with its pick: false = the voice stays ordinary for the pick's lifetime, true or null = the
+     * voice speaks by its own rule.
+     *
+     * @return array{cue: ?string, source: ?string, strength: float, voice: ?bool}
      */
     public static function chosen(array $dynamics, ?array $in = null, ?array $cfg = null): array
     {
@@ -466,15 +469,16 @@ final class RelDynBody
         if (is_array($p) && is_numeric($p['play'] ?? null)) {
             $age = (self::play($dynamics) - floatval($p['play'])) / self::perSecond();
             if ($age >= 0 && $age <= floatval($cfg['cues']['pick_ttl_play_seconds'])) {
-                if (!isset($p['cue']) || $p['cue'] === null) return ['cue' => null, 'source' => (string) ($p['source'] ?? 'jev'), 'strength' => 0.0];
-                if (isset($offered[$p['cue']])) return ['cue' => (string) $p['cue'], 'source' => (string) ($p['source'] ?? 'jev'), 'strength' => $offered[$p['cue']]];
+                $voice = array_key_exists('voice', $p) && $p['voice'] !== null ? (bool) $p['voice'] : null;
+                if (!isset($p['cue']) || $p['cue'] === null) return ['cue' => null, 'source' => (string) ($p['source'] ?? 'jev'), 'strength' => 0.0, 'voice' => $voice];
+                if (isset($offered[$p['cue']])) return ['cue' => (string) $p['cue'], 'source' => (string) ($p['source'] ?? 'jev'), 'strength' => $offered[$p['cue']], 'voice' => $voice];
             }
         }
         if (!empty($cfg['cues']['default_pick']) && $offered !== []) {
             $cue = array_key_first($offered);
-            return ['cue' => $cue, 'source' => 'default', 'strength' => $offered[$cue]];
+            return ['cue' => $cue, 'source' => 'default', 'strength' => $offered[$cue], 'voice' => null];
         }
-        return ['cue' => null, 'source' => null, 'strength' => 0.0];
+        return ['cue' => null, 'source' => null, 'strength' => 0.0, 'voice' => null];
     }
 
     // =====================================================================
@@ -506,7 +510,7 @@ final class RelDynBody
             $lines[] = ['key' => 'body_' . $c['cue'], 'scope' => 'bond', 'salience' => min(1.0, floatval($sal['cue']) + floatval($sal['cue_gain']) * $c['strength']),
                 'text' => strtr(self::cueText($c['cue'], $c['strength'], $cfg), $vars), 'tag' => null, 'intense' => false];
         }
-        $voice = self::voice($in, $cfg);
+        $voice = $c['voice'] === false ? null : self::voice($in, $cfg);
         if ($voice !== null && isset($cfg['text']['voice'][$voice['family']])) {
             $lines[] = ['key' => 'voice', 'scope' => 'bond', 'salience' => min(1.0, floatval($sal['voice']) + floatval($sal['voice_gain']) * $voice['magnitude']),
                 'text' => strtr((string) $cfg['text']['voice'][$voice['family']], $vars), 'tag' => null, 'intense' => false];
@@ -523,7 +527,9 @@ final class RelDynBody
         $cfg = $cfg ?? self::config();
         if (empty($cfg['enabled']) || empty($cfg['voice']['enabled']) || empty($cfg['voice']['force_mood'])) return null;
         if (isset($GLOBALS['FORCE_MOOD']) && $GLOBALS['FORCE_MOOD'] !== '') return null;
-        $voice = self::voice(self::inputs($dynamics), $cfg);
+        $in = self::inputs($dynamics);
+        if (self::chosen($dynamics, $in, $cfg)['voice'] === false) return null;
+        $voice = self::voice($in, $cfg);
         if ($voice === null || $voice['mood'] === null) return null;
         $GLOBALS['FORCE_MOOD'] = $voice['mood'];
         return $voice['mood'];
@@ -565,6 +571,7 @@ final class RelDynBody
             'approach_threshold' => round(self::approachThreshold($in, $cfg), 2),
             'chosen' => ['cue' => $chosen['cue'], 'source' => $chosen['source'], 'strength' => $chosen['strength']],
             'voice' => self::voice($in, $cfg),
+            'voice_held_back' => $chosen['voice'] === false,
             'blush' => ['on' => $left > 0, 'play_seconds_left' => round($left, 1), 'blushiness' => round(self::blushiness($dynamics, $cfg), 3)],
             'inputs' => ['passion' => $in['passion'], 'shyness' => round($in['shyness'], 3), 'guard' => round($in['guard'], 3), 'pullback' => round($in['pullback'], 3),
                 'withdraw' => $in['withdraw'], 'arousal' => $in['arousal'], 'valence' => $in['valence']],
@@ -577,9 +584,11 @@ final class RelDynBody
      * ("Name|command|ComeCloser@") for the caller to send through the channel it already uses; the cue then speaks as felt text
      * from the NPC's next compose.
      *
+     * $voice is Jev's word on the voice: false keeps it ordinary while the pick speaks, true or null leaves it to its own rule.
+     *
      * @return array{ok: bool, reason: ?string, cue: ?string, strength: float, action: ?string, command: ?string, voice: ?array}
      */
-    public static function pick(string $npcName, ?string $cue, string $source = 'jev'): array
+    public static function pick(string $npcName, ?string $cue, string $source = 'jev', ?bool $voice = null): array
     {
         $none = ['ok' => false, 'reason' => null, 'cue' => $cue, 'strength' => 0.0, 'action' => null, 'command' => null, 'voice' => null];
         try {
@@ -600,14 +609,14 @@ final class RelDynBody
                 }
                 $state['last'][$cue] = $play;
             }
-            $state['picked'] = ['cue' => $cue, 'source' => $source, 'play' => $play];
+            $state['picked'] = ['cue' => $cue, 'source' => $source, 'play' => $play, 'voice' => $voice];
             $action = $cue !== null ? ($cfg['cues']['actions'][$cue] ?? null) : null;
             RelationshipDynamics::saveDynamics($npcName, $dynamics);
             RelationshipDynamics::log("[BODY] {$npcName}: " . ($cue ?? 'no cue') . " picked by {$source}" . ($cue !== null ? ' strength=' . $strengths[$cue] : ''));
             return ['ok' => true, 'reason' => null, 'cue' => $cue, 'strength' => $cue !== null ? $strengths[$cue] : 0.0,
                 'action' => is_string($action) && $action !== '' ? $action : null,
                 'command' => is_string($action) && $action !== '' ? "{$npcName}|command|{$action}@" : null,
-                'voice' => self::voice($in, $cfg)];
+                'voice' => $voice === false ? null : self::voice($in, $cfg)];
         } catch (\Throwable $e) {
             RelationshipDynamics::logError("body pick {$npcName}", $e);
             return ['reason' => 'error'] + $none;

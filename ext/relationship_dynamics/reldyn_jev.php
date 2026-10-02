@@ -153,9 +153,9 @@
  *                    => ?id, 'source' => ?jev|default, 'strength' => 0..1] (what speaks as felt text now),
  *                    'voice' => null | ['family', 'mood' => ?string (from the NPC's emote_moods), 'intensity' => low|moderate|strong,
  *                    'magnitude' => 0..1, 'pace' => slow|normal|fast, 'cartesia' => ?emotion tag] (the TTS emotion from passion,
- *                    arousal and valence), 'blush' => ['on' => bool, 'play_seconds_left' => seconds, 'blushiness' => 0.6..1.6],
+ *                    arousal and valence), 'voice_held_back' => bool (Jev's last pick kept the voice ordinary), 'blush' => ['on' => bool, 'play_seconds_left' => seconds, 'blushiness' => 0.6..1.6],
  *                    'inputs' => ['passion', 'shyness', 'guard', 'pullback', 'withdraw', 'arousal', 'valence']]
- *                    Jev picks the cue to fire with RelDynBody::pick($npc, $cueOrNull) (RelDynBody, roadmap bio-mimetic-feedback)
+ *                    Jev picks the cue to fire with RelDynBody::pick($npc, $cueOrNull, 'jev', $voiceOrNull) (RelDynBody, roadmap bio-mimetic-feedback)
  *   reputation       null | ['fame' => 0..1, 'infamy' => 0..1, 'weight' => 0..1 (fades with meaningful
  *                    interactions), 'meaningful' => int, 'offsets' => dimension => points held now]
  *   duty             null | ['quest' => ?string, 'factor' => 0..1 on negative eval signals, 'hostile' => ?string]

@@ -265,6 +265,29 @@ final class RelDynBodyTest extends TestCase
         $this->assertSame('jev', RelDynBody::chosen($d)['source']);
     }
 
+    public function testJevCanKeepTheVoiceOrdinaryWithItsPickAndTheDefaultSpeaksItAgainAfterwards(): void
+    {
+        $d = self::npc('Bold', ['passion' => 90.0, 'valence' => 30.0, 'arousal' => 60.0]);
+        $keys = fn(array $lines) => array_column($lines, 'key');
+        $this->assertContains('voice', $keys(RelDynBody::feltLines('Aela', 'Kaida', $d)), 'by its own rule');
+        $d[RelDynBody::KEY] = ['v' => 1, 'picked' => ['cue' => 'approach', 'source' => 'jev', 'play' => self::PLAY0, 'voice' => false], 'last' => [], 'blush' => null, 'outbox' => []];
+        $lines = RelDynBody::feltLines('Aela', 'Kaida', $d);
+        $this->assertContains('body_approach', $keys($lines));
+        $this->assertNotContains('voice', $keys($lines), 'Jev kept the voice ordinary');
+        $this->assertTrue(RelDynBody::jev($d)['voice_held_back']);
+        $cfg = RelDynBody::configDefaults();
+        $cfg['voice']['force_mood'] = true;
+        $this->assertNull(RelDynBody::applyVoice($d, $cfg), 'and it is not forced either');
+        $d[RelDynBody::KEY]['picked']['voice'] = true;
+        $this->assertContains('voice', $keys(RelDynBody::feltLines('Aela', 'Kaida', $d)));
+        $d[RelDynBody::KEY]['picked']['voice'] = null;
+        $this->assertContains('voice', $keys(RelDynBody::feltLines('Aela', 'Kaida', $d)), 'no word on the voice: its own rule');
+        $d['_accumulated_play_gamets'] = self::PLAY0 + 400 * self::PER_SECOND;
+        $d[RelDynBody::KEY]['picked']['voice'] = false;
+        $this->assertContains('voice', $keys(RelDynBody::feltLines('Aela', 'Kaida', $d)), 'the pick has run out: the voice speaks again');
+        $this->assertFalse(RelDynBody::jev($d)['voice_held_back']);
+    }
+
     // ------------------------------------------------------------------ the blush
 
     public function testABlushLastsLongerForABiggerMomentAPrimaryMatchAndAShyNpcAndNeverNothing(): void
