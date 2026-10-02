@@ -218,7 +218,7 @@ final class RelDynPipelineCheckPostgresTest extends TestCase
         pg_query($this->link, "UPDATE core_npc_master SET plugin_extended_data = jsonb_set(plugin_extended_data, '{reldyn,dynamics,context_tier_hwm}', '0') WHERE npc_name = 'Aela the Huntress'");
         $t = $this->check()['context_tier'];
         $this->assertSame('WARN', $t['status']);
-        $this->assertStringContainsString('Aela the Huntress: high-water 0 below what her affinity supports (2)', $t['items'][0]);
+        $this->assertStringContainsString('Aela the Huntress: high-water 0 below what their affinity supports (2)', $t['items'][0]);
         // a mirror with no core entry to match
         $this->npc('Hulda', 0.0, 12.0, 0, false);
         $this->assertStringContainsString('Hulda: mirror 12 with no core Player entry', implode("\n", $this->check()['affinity_mirror']['items']));

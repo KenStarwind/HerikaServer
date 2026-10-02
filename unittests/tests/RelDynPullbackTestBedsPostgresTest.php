@@ -599,9 +599,9 @@ final class RelDynPullbackTestBedsPostgresTest extends TestCase
             $this->note(sprintf('%-18s stormy, the old rule (what it would have said): %s', '', self::bridge($this->oldLine($npc, $this->dynamics($npc)))));
         }
 
-        // the gating preview: the "At every tier" table changes only what she knows of the player and holds her feelings fixed
+        // the gating preview: the "At every tier" table changes only what the NPC knows of the player and holds their feelings fixed
         $html = RelDynSettingsView::gatingPreviewPanel('Aela the Huntress', null, array_keys(self::BEDS), false);
-        $this->assertStringContainsString('This table changes only what she knows of the player', $html);
+        $this->assertStringContainsString('This table changes only what the NPC knows of the player', $html);
         $this->assertStringContainsString('held fixed', $html);
         $preview = RelDynSettings::gatingTierPreview('Aela the Huntress');
         foreach (['acquaintance', 'friend', 'close_friend', 'bonded', 'devoted'] as $tier) {
