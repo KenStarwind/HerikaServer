@@ -3,6 +3,23 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## unreleased (batch W, the body): a blush you can see, and a body that says what the NPC feels
+A flirt that lands, or any moment of passion, now puts a blush on the NPC's face in the game, the same moment as the felt
+line. It lasts as long as the moment deserves: a faint one half a minute, a strong one two, a huge one three; a primary
+love-language gesture holds it twice as long, a secondary one half as long again; a shy or unsure NPC blushes longer and a
+poised one shorter, nobody not at all. It never flickers (a blush still on is not sent again for a smaller moment, and a new
+one waits a little after the last one ended), and if the game never says it ended, the next request takes it off once. It works
+through OBlush and a small bridge in the game plugin (a local CHIM change); without them nothing breaks, the text still says
+the NPC is flushed. Every gender blushes: the bridge does not look at the sex toggles OBlush keeps for its own scenes.
+The body now also speaks in four ways, each a strength that depends on who the NPC is, never a gate: an NPC drifts closer when
+passion is past what their guard and shyness let them show (60 for an average NPC, lower for a bold one, higher for a guarded or
+shy one, and at overwhelming passion everyone does); turns away during a walkaway, a pull-back or the withdrawing end of the fear
+of losing the player (the avoidant more, the anxious less); steals glances when passion is something to be shy about; and stands
+tense in a quarrel, with resentment, jealousy or the ick (the immature show it more, the mature less). It reaches the model as
+felt text. Jev gets the numbers and picks which cue fires; the one cue core has an action for (coming closer) goes out as that
+action, the rest wait for a game-side hook. The voice carries an emotion from passion, arousal and valence, as a mood from the
+NPC's own list, with the Cartesia tag, pace and intensity for TTS; it is only forced onto the spoken line if Ken switches that on.
+
 ## reldyn-v0.24 — consent, the body's needs, the night hours, and profiles that grow
 RelDyn now decides whether intimacy happens at all, and Sharmat handles what happens once it does; Sharmat defers to
 RelDyn when RelDyn is present (a local Sharmat change). The decision is about who the NPC is: some never will, a quarrel

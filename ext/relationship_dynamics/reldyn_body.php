@@ -161,10 +161,11 @@ final class RelDynBody
             ],
             'blush' => [
                 'enabled' => true,
-                // Seconds of a blush at the faintest felt blush (felt_steering.blush.faint_at) and at the strongest (strong_at); linear between and past
-                'seconds_faint' => 30.0, 'seconds_strong' => 120.0,
-                // A blush is never shorter or longer than this (seconds)
-                'min_seconds' => 10.0, 'max_seconds' => 240.0,
+                // Seconds of a blush at the faintest felt blush (felt_steering.blush.faint_at), at the strongest (strong_at) and at a huge
+                // moment (huge_at passion points, where it stops growing); linear between the three
+                'seconds_faint' => 30.0, 'seconds_strong' => 120.0, 'seconds_huge' => 180.0, 'huge_at' => 20.0,
+                // A blush is never shorter or longer than this (seconds), whatever the match and the NPC multiply it to
+                'min_seconds' => 10.0, 'max_seconds' => 300.0,
                 // A new blush waits this long (play seconds) after the last one ended: no flicker
                 'cooldown_play_seconds' => 20.0,
                 // A blush still on is extended only when the new moment would outlast it by this many seconds
@@ -634,8 +635,14 @@ final class RelDynBody
         $felt = (array) RelDynFelt::config()['blush'];
         $faint = floatval($felt['faint_at']);
         $strong = floatval($felt['strong_at']);
-        $base = floatval($bc['seconds_faint']) + (floatval($bc['seconds_strong']) - floatval($bc['seconds_faint'])) * ($delta - $faint) / max(0.01, $strong - $faint);
-        $s = max(floatval($bc['seconds_faint']) * 0.5, $base) * max(1.0, $mult) * self::blushiness($dynamics, $cfg);
+        $huge = max($strong + 0.01, floatval($bc['huge_at']));
+        $sf = floatval($bc['seconds_faint']);
+        $ss = floatval($bc['seconds_strong']);
+        $sh = floatval($bc['seconds_huge']);
+        $base = $delta <= $strong
+            ? $sf + ($ss - $sf) * ($delta - $faint) / max(0.01, $strong - $faint)
+            : $ss + ($sh - $ss) * min(1.0, ($delta - $strong) / ($huge - $strong));
+        $s = max($sf * 0.5, $base) * max(1.0, $mult) * self::blushiness($dynamics, $cfg);
         return round(self::clamp($s, floatval($bc['min_seconds']), floatval($bc['max_seconds'])), 1);
     }
 

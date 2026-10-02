@@ -281,7 +281,10 @@ final class RelDynBodyTest extends TestCase
         $this->assertGreaterThan($s($avg, 4.0), $s($unsure, 4.0), 'an unsure NPC blushes longer');
         $this->assertLessThan($s($avg, 4.0), $s($poised, 4.0), 'a poised one shorter');
         $this->assertGreaterThan(10.0, $s($poised, 2.0), 'and never to nothing');
-        $this->assertEqualsWithDelta(240.0, $s($avg, 20.0, 2.0), 1e-6, 'capped');
+        $this->assertEqualsWithDelta(180.0, $s($avg, 20.0), 1e-6, 'a huge moment stops growing');
+        $this->assertEqualsWithDelta(180.0, $s($avg, 40.0), 1e-6);
+        $this->assertEqualsWithDelta(150.0, $s($avg, 13.5), 1e-6, 'linear between the strongest and the huge');
+        $this->assertEqualsWithDelta(300.0, $s($avg, 20.0, 2.0), 1e-6, 'capped');
         $this->assertGreaterThanOrEqual(10.0, $s($poised, 0.5));
     }
 
@@ -312,8 +315,9 @@ final class RelDynBodyTest extends TestCase
         $r = RelDynBody::onBlushMoment('Aela', $d, 9.0, 2.0);
         $this->assertSame('extend', $r['action']);
         $this->assertSame(2, $r['token']);
-        $this->assertSame('240@2', $d['_body']['outbox'][1]['param']);
-        $this->assertEqualsWithDelta(240.0, ($d['_body']['blush']['until_play'] - $d['_accumulated_play_gamets']) / self::PER_SECOND, 1e-6);
+        $big = 2.0 * (120.0 + 60.0 * (9.0 - 7.0) / 13.0);   // 9 points: between the strongest and the huge, x the primary match
+        $this->assertSame((int) round(round($big, 1)) . '@2', $d['_body']['outbox'][1]['param']);
+        $this->assertEqualsWithDelta($big, ($d['_body']['blush']['until_play'] - $d['_accumulated_play_gamets']) / self::PER_SECOND, 0.06);
     }
 
     public function testANewBlushWaitsForTheCooldownAfterTheLastEndedSoItNeverFlickers(): void
