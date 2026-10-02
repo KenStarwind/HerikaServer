@@ -1515,6 +1515,10 @@ class RelationshipDynamics
             // what the NPC wants less what weighs on it, by who they are, and who gives in anyway
             // (reldyn_consent.php, RelDynConsent::configDefaults()).
             'consent' => RelDynConsent::configDefaults(),
+            // ===== Vocal style (Ken 2026-10-01 §24): how much an NPC talks in bed, and how they sound =====
+            // The silence chance by who the NPC is, a register (vocal, whispered, minimal, seeking, sharp) and a pace, published for
+            // Sharmat's scene voice (reldyn_vocal.php, RelDynVocal::configDefaults()).
+            'vocal' => RelDynVocal::configDefaults(),
             // ===== Resentment threshold events (MDD 15.5, dimension design resentment_self) =====
             // Confrontation at the NPC's threshold, resentment_self's thresholds and recovery,
             // cross-bond guilt bleed, felt text (reldyn_resentment.php, RelDynResentment::configDefaults()).
@@ -19852,6 +19856,8 @@ require_once __DIR__ . '/reldyn_dark.php';
 require_once __DIR__ . '/reldyn_bonds.php';
 // Consent: whether intimacy happens at all, the one decision Sharmat defers to (decisions §21); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_consent.php';
+// Vocal style: how much an NPC talks in bed and how they sound, for Sharmat's scene voice (decisions §24); defaults in defaultConfig().
+require_once __DIR__ . '/reldyn_vocal.php';
 // Resentment threshold events: the MDD 15.5 confrontation, resentment_self, guilt bleed; defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_resentment.php';
 // Creature moodifications (vampires, werewolves; Skyrim's moon cycle)

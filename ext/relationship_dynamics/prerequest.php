@@ -631,6 +631,14 @@ try {
     RelationshipDynamics::logError('consent', $e);
 }
 
+// Vocal style (Ken 2026-10-01 §24, reldyn_vocal.php): how much this NPC talks in bed and how they sound, for Sharmat's scene voice.
+// After the consent decision above (the last stance it kept feeds the reading).
+try {
+    RelDynVocal::publish($npcName, $dynamics, $GLOBALS['PLAYER_NAME'] ?? 'the player');
+} catch (Throwable $e) {
+    RelationshipDynamics::logError('vocal', $e);
+}
+
 // ========== DIRECTOR GOAL — PASSIVE BRIDGE (PR 39, Step 9) ==========
 // If no director goal is currently active, check CHIM's HERIKA_GOALS for
 // Director/SNQE-assigned goals and bridge them into the RelDyn goal system.

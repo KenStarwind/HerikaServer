@@ -238,6 +238,7 @@ final class RelDynSettings
             'dark_path'          => [RelDynDark::class, 'config'],
             'bonds'              => [RelDynBonds::class, 'config'],
             'consent'            => [RelDynConsent::class, 'config'],
+            'vocal'              => [RelDynVocal::class, 'config'],
             'resentment_arc'     => [RelDynResentment::class, 'config'],
             'intimacy_need'      => [RelDynIntimacy::class, 'config'],
             'impulse'            => [RelDynImpulse::class, 'config'],
