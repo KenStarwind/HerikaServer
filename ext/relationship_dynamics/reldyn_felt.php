@@ -1008,8 +1008,11 @@ final class RelDynFelt
             if ($dist > $dead) {
                 $band = RelationshipDynamics::getArousalValenceBand($a, $v);
                 $extreme = $a > 80;
+                // Mood colouring (reldyn_moods.php): the named state's words, by arousal, valence and the
+                // M/F zone, in place of the plain band's; the same single line, so the felt budget holds
+                $words = RelDynMoods::feltKeywords($dynamics, $a, $v, $m, $f) ?? $band['keywords'];
                 $out[] = self::line('arousal_valence', self::SCOPE_SELF, self::LANE_CORE,
-                    min(1.0, $dist / 100 * floatval($w['arousal_valence'] ?? 1)) + ($extreme ? $bonus : 0), $band['keywords'], ['intense' => true]);
+                    min(1.0, $dist / 100 * floatval($w['arousal_valence'] ?? 1)) + ($extreme ? $bonus : 0), $words, ['intense' => true]);
             }
         }
 

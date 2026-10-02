@@ -19780,6 +19780,8 @@ require_once __DIR__ . '/reldyn_passion.php';
 require_once __DIR__ . '/reldyn_substances.php';
 // The M/F envelope derived at display time, arousal / valence settling (mf-coordinates, arousal-valence).
 require_once __DIR__ . '/reldyn_mood_axes.php';
+// 181 named emotional states that colour the felt arousal / valence line (mood-coloring-181).
+require_once __DIR__ . '/reldyn_moods.php';
 // What follows a scene the plugin reports (post-intimacy); defaults in defaultConfig().
 require_once __DIR__ . '/reldyn_post_intimacy.php';
 // The gift delta formula's base, love language and inversions (gift-delta-formula).

@@ -210,6 +210,7 @@ final class RelDynSettingsText
         'mood_axes.derived_coords.enabled' => 'The M and F coordinates are derived from respect, self-confidence, trust and comfort.',
         'mood_axes.settle.enabled' => 'Arousal and valence settle back toward rest over play time after an event.',
         'mood_axes.social.enabled' => 'Ships off. Social events (grievance, jealousy, rescue, insult, betrayal, praise...) also push arousal and valence.',
+        'mood_axes.coloring.enabled' => 'The felt arousal and valence line uses 181 named states (arousal, valence and the M and F zone) for its words, instead of the four plain bands. The line, its place and its weight do not change.',
         'post_intimacy.enabled' => 'After intimacy the NPC is in an aftermath state (afterglow, the sober morning: uncertainty after a drunken night, guilt, distance) with its own words.',
         'gift_delta.value_base.enabled' => 'Ships off. A gift\'s worth in gold scales how much it moves the NPC (between the minimum and maximum multiplier below). Off: every gift counts the same.',
         'gift_delta.stolen.enabled' => 'A gift that was stolen costs the player trust and respect (and a grievance).',

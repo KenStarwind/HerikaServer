@@ -102,6 +102,9 @@ final class RelDynMoodAxes
             ],
             // the eval sees the arousal / valence band as input (evalLine)
             'eval_input' => true,
+            // 181 named states from the M/F coordinates and arousal / valence colour the felt line's
+            // vocabulary (reldyn_moods.php, roadmap mood-coloring-181)
+            'coloring' => RelDynMoods::configDefaults(),
         ];
     }
 
