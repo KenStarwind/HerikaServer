@@ -728,6 +728,12 @@ final class RelDynTimeline
         if (is_array($last) && is_numeric($last['gamets'] ?? null) && floatval($last['gamets']) > $T) {
             unset($d[RelDynCombat::RESCUE_LAST_KEY]);
         }
+        // Combat's fight mood (reldyn_combat.php): a fight episode the load discarded never happened (its arousal and
+        // valence were the loaded game's to settle, and no aftermath is felt for it)
+        $mood = $d[RelDynCombat::MOOD_KEY] ?? null;
+        if (is_array($mood) && is_numeric($mood['gamets'] ?? null) && floatval($mood['gamets']) > $T) {
+            unset($d[RelDynCombat::MOOD_KEY]);
+        }
         // The short band (impulses) starts over; the loneliness timer and places seen come back to it
         if (is_array($d[RelDynImpulse::KEY] ?? null)) {
             RelDynImpulse::rebaseline($d[RelDynImpulse::KEY], $T);

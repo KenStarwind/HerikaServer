@@ -29,6 +29,20 @@
  *           the named participant. A bystander at a combat event is no longer "confirmed".
  *   grief   a death: RelDyn NPCs around (people + party) with a bond to the deceased
  *           (RelDynProtocols::onDeath -> RelationshipDynamics::onNpcDeath).
+ * fight mood (MDD 3.3 Stage 2, roadmap combat-arousal-temperament-context): the fight also moves the NPC's
+ *         arousal and valence, by the foe and by who the NPC is (config combat.arousal). The foe is read from
+ *         core's own rows: a death row names the victim, a combat end names none (the toughest recent kill
+ *         in the window; combatendmighty a mighty one). Arousal rises toward the foe's difficulty (a skeever
+ *         about 10, a bandit ambush about 40, a dragon or a centurion 90+) through applyDelta, so the
+ *         temperament's own reactivity decides how far: a stoic stays cool, an anxious NPC floods. A win
+ *         after high arousal turns that arousal into positive valence (thrill, pride), more for an NPC who
+ *         likes a fight and less for one who does not. A fall (bleedout) hits by the foe too, and its valence
+ *         stays the trait outcome of bleedoutResponse: who fights back and who breaks. A near miss (the NPC
+ *         fell and the fight was won anyway, or core reports the NPC or the player under 15% health at
+ *         the win) delivers both valences in sequence (the fall's own, then the relief; an HP-only near miss asks
+ *         the terror too) and bonds: a passion spike, trust and comfort. One fight is one episode in dynamics key _combat_mood (a new episode starts
+ *         after COMBAT_KILL_STREAK_WINDOW_GAMETS without a combat event), so a pack of skeevers never
+ *         stacks; the felt aftermath (reldyn_felt.php) reads it by the NPC's lean: bold, steady or shaken.
  * Defeat: April's flat "party defeated: -1.5 to -3 passion" is RETIRED (review queue 2026-09-30, JUDGED;
  * status decided). CHIM 3.4.1 has no defeat event, and the design already says it better: MDD 3.3 reads
  * "defeat / bleedout -> temperament-dependent drain" and the section 18 #4 bleedout redesign is that
@@ -89,6 +103,8 @@ final class RelDynCombat
                              'ebony warrior', 'karstaag', 'miraak', 'alduin', 'harkon'],
             ],
             'rescue' => self::rescueDefaults(),
+            // Arousal by the foe, the win's valence, the near miss, the fall (module doc, fight mood)
+            'arousal' => self::arousalDefaults(),
         ];
     }
 
@@ -234,6 +250,319 @@ final class RelDynCombat
     }
 
     // =====================================================================
+    // FIGHT MOOD (MDD 3.3 Stage 2, roadmap combat-arousal-temperament-context)
+    // =====================================================================
+
+    /** dynamics key: the current fight episode ['gamets', 'arousal' (foe points), 'reached', 'tier', 'valence_granted', 'outcome', 'fell_at', 'near_miss']. */
+    const MOOD_KEY = '_combat_mood';
+    /** The ways a fight can have gone (outcome of the episode). */
+    const OUTCOMES = ['triumph', 'near_miss', 'beaten'];
+    const LEANS = ['bold', 'steady', 'shaken'];
+    /** applyDelta overrides for a lift to a level: no rubber band on the way (Z huge), the temperament's own Y still applies. */
+    const LIFT = ['Z' => 100000.0];
+
+    /**
+     * Config combat.arousal. MDD 3.3 Stage 2: "Arousal scales with enemy difficulty: skeever fight 10,
+     * bandit ambush 40, dragon or centurion 90+. Valence flips on the outcome: victory after high arousal
+     * is positive (thrill, pride, shared triumph); defeat drains by temperament; a near miss (survived
+     * under 15% HP) delivers both valences in rapid succession, the highest bonding potential."
+     * Units: arousal and valence points; HP as a ratio 0..1; passion points; trust and comfort points
+     * through applyDelta.
+     */
+    public static function arousalDefaults(): array
+    {
+        return [
+            'enabled' => true,
+            // Arousal points a fight against this class of foe lifts the NPC toward (the NPC's temperament
+            // scales how far it gets: applyDelta's arousal plasticity)
+            'foe_points' => ['trivial' => 10.0, 'animal' => 25.0, 'engaged' => 40.0, 'serious' => 60.0, 'dreaded' => 78.0, 'overwhelming' => 95.0],
+            // Victim-name words (whole words, case-insensitive) of each class, checked in this order, first
+            // match wins (a Giant Frostbite Spider is a spider). A name no list names is the default class.
+            'foe_words' => [
+                'trivial' => ['skeever', 'mudcrab', 'rabbit', 'hare', 'deer', 'elk', 'fox', 'goat', 'cow', 'chicken', 'dog', 'horker', 'slaughterfish'],
+                'animal' => ['wolf', 'bear', 'sabre cat', 'spider', 'chaurus'],
+                'overwhelming' => ['dragon', 'dragon priest', 'centurion', 'ancient dragon', 'alduin', 'miraak', 'harkon', 'vampire lord',
+                                   'lich', 'ebony warrior', 'karstaag'],
+                'dreaded' => ['giant', 'mammoth', 'troll', 'atronach', 'werewolf', 'werebear', 'spriggan', 'hagraven', 'sphere'],
+                'serious' => ['necromancer', 'warlock', 'vampire', 'overlord', 'deathlord', 'briarheart', 'wraith', 'ballista'],
+            ],
+            // A fight against a foe no list names: bandits, draugr, thieves ("a bandit ambush: alert, engaged")
+            'default_tier' => 'engaged',
+            // combatendmighty (the plugin's mighty-foe combat end)
+            'mighty_tier' => 'overwhelming',
+            // A win after high arousal is positive valence
+            'victory' => [
+                'min_arousal' => 25.0,          // below this arousal reached, a win stirs no valence
+                'valence_max' => 60.0,          // valence points asked at arousal 100, before taste and temperament
+                // x taste_base + taste_slope x the MDD 1.2 interest multiplier of the NPC's combat preference
+                // (0.5x..2.0x): thrill for one who likes a fight, relief for one who does not
+                'taste_base' => 0.25, 'taste_slope' => 0.75,
+                'glow_min_arousal' => 40.0,     // the felt aftermath of a win speaks from this arousal reached
+            ],
+            // A near miss: the NPC fell and the fight was won anyway, or core reports the NPC or the
+            // player under hp_below at the win. Terror then relief, and the bond it makes.
+            'near_miss' => [
+                'enabled' => true,
+                'hp_below' => 0.15,
+                'player_mult' => 0.75,          // the player's near miss, seen: x this
+                'arousal_floor' => 88.0,        // arousal the rush lifts toward at least
+                'terror_valence' => 40.0,       // valence points of the terror x the NPC's fear share (fear / (fight + fear))
+                'relief_valence' => 45.0,       // valence points of the relief
+                'passion' => 3.0,               // passion points (the floor)
+                'spike' => 6.0,                 // passion spike trigger points (RelDynPassion::addSpike)
+                'trust' => 2.0, 'comfort' => 2.0,   // dimension points through applyDelta
+            ],
+            // The fall hits by the foe: x arousal reached / reference_arousal within min..max (1.0 while no foe is known)
+            'defeat' => ['reference_arousal' => 40.0, 'min_scale' => 0.6, 'max_scale' => 1.5],
+            // fight - fear (bleedoutResponse net, unitless): at least lean_bold_margin leans bold, at most minus
+            // lean_shaken_margin leans shaken; between is steady (the bleedout dead band is 0.05)
+            'lean_bold_margin' => 0.05,
+            'lean_shaken_margin' => 0.2,
+        ];
+    }
+
+    /** combat.arousal over its defaults, per key and per table. */
+    public static function arousalConfig(): array
+    {
+        $d = self::arousalDefaults();
+        $stored = self::config()['arousal'] ?? null;
+        if (!is_array($stored)) return $d;
+        $out = array_replace($d, $stored);
+        foreach (['foe_points', 'foe_words', 'victory', 'near_miss', 'defeat'] as $table) {
+            $out[$table] = array_replace($d[$table], is_array($stored[$table] ?? null) ? $stored[$table] : []);
+        }
+        return $out;
+    }
+
+    /** The class of foe a victim name belongs to (whole words, the lists in order); null when no list names it. Pure. */
+    public static function matchTier(?string $name, ?array $cfg = null): ?string
+    {
+        if ($name === null || trim($name) === '') return null;
+        $cfg = $cfg ?? self::arousalConfig();
+        foreach ((array) $cfg['foe_words'] as $tier => $words) {
+            foreach ((array) $words as $word) {
+                $word = trim((string) $word);
+                if ($word !== '' && preg_match('/\b' . preg_quote($word, '/') . '\b/iu', $name)) return (string) $tier;
+            }
+        }
+        return null;
+    }
+
+    /** Arousal points of a foe class (config foe_points); the default class's for one it does not list. */
+    public static function foePoints(string $tier, ?array $cfg = null): float
+    {
+        $cfg = $cfg ?? self::arousalConfig();
+        $p = ((array) $cfg['foe_points'])[$tier] ?? null;
+        if (!is_numeric($p)) $p = ((array) $cfg['foe_points'])[$cfg['default_tier']] ?? 40.0;
+        return max(0.0, min(100.0, floatval($p)));
+    }
+
+    /**
+     * The foe class of a combat event: the toughest of the victim (a death row), the mighty class
+     * (combatendmighty) and the $recent victims named in core's death rows just before; the default
+     * class when nothing names the foe. Pure.
+     *
+     * @param string[] $recent victim names of the death rows in the kill-streak window
+     */
+    public static function foeTier(string $type, ?string $victim, array $recent = [], ?array $cfg = null): string
+    {
+        $cfg = $cfg ?? self::arousalConfig();
+        $found = [];
+        if ($type === 'combatendmighty') $found[] = (string) $cfg['mighty_tier'];
+        if ($victim !== null && trim($victim) !== '') {
+            $found[] = self::matchTier($victim, $cfg) ?? (string) $cfg['default_tier'];
+        } else {
+            foreach ($recent as $name) {
+                $t = self::matchTier((string) $name, $cfg);
+                if ($t !== null) $found[] = $t;
+            }
+        }
+        if ($found === []) return (string) $cfg['default_tier'];
+        usort($found, fn($a, $b) => self::foePoints($b, $cfg) <=> self::foePoints($a, $cfg));
+        return $found[0];
+    }
+
+    /** Victims of the death rows in the kill-streak window up to $at (core's "X has defeated Y"), newest first. */
+    public static function recentVictims(float $at, string $player): array
+    {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || $at <= 0) return [];
+        $since = intval($at - RelationshipDynamics::COMBAT_KILL_STREAK_WINDOW_GAMETS);
+        $until = intval($at);
+        try {
+            $rows = $db->fetchAll("SELECT data FROM eventlog WHERE type = 'death' AND gamets > {$since} AND gamets <= {$until} ORDER BY rowid DESC LIMIT 25");
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError('combat recent victims', $e);
+            return [];
+        }
+        $out = [];
+        foreach (is_array($rows) ? $rows : [] as $r) {
+            $victim = self::parse((string) ($r['data'] ?? ''), $player)[2];
+            if ($victim !== null && strcasecmp($victim, $player) !== 0) $out[] = $victim;
+        }
+        return array_values(array_unique($out));
+    }
+
+    /** How hard a fall hits for the foe known in the episode (combat.arousal.defeat); 1.0 while none is known. Pure. */
+    public static function defeatScale(?array $episode, ?array $cfg = null): float
+    {
+        $cfg = $cfg ?? self::arousalConfig();
+        $d = (array) $cfg['defeat'];
+        $foe = is_array($episode) ? floatval($episode['arousal'] ?? 0) : 0.0;
+        if ($foe <= 0.0) return 1.0;
+        return max(floatval($d['min_scale']), min(floatval($d['max_scale']), $foe / max(1e-6, floatval($d['reference_arousal']))));
+    }
+
+    /**
+     * Who the NPC is in a fight, from the bleedout response's own fight and fear (RelDynTraits::bleedout):
+     * 'bold' (fight beats fear by lean_bold_margin), 'shaken' (fear beats fight by lean_shaken_margin), else
+     * 'steady'. 'steady' too without a trait vector. Reads the dynamics, changes nothing.
+     */
+    public static function lean(array $dynamics, ?array $cfg = null): string
+    {
+        $cfg = $cfg ?? self::arousalConfig();
+        $r = RelationshipDynamics::bleedoutResponse($dynamics, false);
+        if (empty($r['vector']) || !is_numeric($r['net'])) return 'steady';
+        return $r['net'] >= floatval($cfg['lean_bold_margin']) ? 'bold'
+            : ($r['net'] <= -floatval($cfg['lean_shaken_margin']) ? 'shaken' : 'steady');
+    }
+
+    /** The fight episode in the dynamics at game time $at, or a fresh one (an episode older than the kill-streak window is over). */
+    public static function episode(array $dynamics, float $at): array
+    {
+        $ep = $dynamics[self::MOOD_KEY] ?? null;
+        $window = RelationshipDynamics::COMBAT_KILL_STREAK_WINDOW_GAMETS;
+        if (is_array($ep) && is_numeric($ep['gamets'] ?? null) && abs($at - floatval($ep['gamets'])) <= $window) return $ep;
+        return ['gamets' => $at, 'arousal' => 0.0, 'reached' => 0.0, 'tier' => null, 'valence_granted' => 0.0, 'outcome' => null,
+                'fell_at' => null, 'near_miss' => false];
+    }
+
+    /**
+     * The felt aftermath of the last fight, or null: ['outcome' (triumph|near_miss|beaten), 'lean', 'age' (gamets),
+     * 'tier'] while the episode is inside the post-combat glow window before $now. A win speaks only from
+     * glow_min_arousal reached (a skeever is nothing); a near miss and a defeat always do.
+     */
+    public static function aftermath(array $dynamics, float $now, ?array $cfg = null): ?array
+    {
+        $cfg = $cfg ?? self::arousalConfig();
+        $ep = $dynamics[self::MOOD_KEY] ?? null;
+        if (empty($cfg['enabled']) || !is_array($ep) || !in_array($ep['outcome'] ?? null, self::OUTCOMES, true) || $now <= 0) return null;
+        $age = $now - floatval($ep['gamets'] ?? 0);
+        if ($age < 0 || $age > RelationshipDynamics::POST_COMBAT_GLOW_GAMETS) return null;
+        if ($ep['outcome'] === 'triumph' && floatval($ep['reached'] ?? 0) < floatval($cfg['victory']['glow_min_arousal'])) return null;
+        return ['outcome' => $ep['outcome'], 'lean' => self::lean($dynamics, $cfg), 'age' => $age, 'tier' => $ep['tier'] ?? null];
+    }
+
+    /**
+     * A fight's mood for one NPC (module doc, fight mood): arousal toward the foe, a win's valence, a near
+     * miss's rush. Mutates $dynamics (the caller saves). $ctx: type, at, victim, player, fought (bool),
+     * victory (bool), prefs (facet preferences).
+     *
+     * @return array ['tier', 'points', 'arousal' (applied), 'valence' (applied), 'near_miss' (bool), 'outcome']
+     */
+    public static function fightMood(string $npc, array &$dynamics, array $ctx): array
+    {
+        $cfg = self::arousalConfig();
+        if (empty($cfg['enabled'])) return [];
+        $at = floatval($ctx['at'] ?? 0) > 0 ? floatval($ctx['at']) : RelationshipDynamics::currentGamets();
+        $victim = $ctx['victim'] ?? null;
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        // Beside the fight: all of it. Only around it: the witness share
+        $share = !empty($ctx['fought']) ? 1.0 : floatval(self::config()['witness_mult']);
+        $ep = self::episode($dynamics, $at);
+        $recent = $victim === null ? self::recentVictims($at, (string) ($ctx['player'] ?? '')) : [];
+        $tier = self::foeTier((string) $ctx['type'], $victim, $recent, $cfg);
+        $points = self::foePoints($tier, $cfg);
+        $out = ['tier' => $tier, 'points' => $points, 'arousal' => 0.0, 'valence' => 0.0, 'near_miss' => false, 'outcome' => $ep['outcome']];
+
+        // Arousal rises toward the foe's difficulty; the NPC's own reactivity (applyDelta's plasticity) decides how far
+        // (Z overridden: the lift is the whole way to the foe's level whatever the NPC was already feeling; the rubber
+        // band is what settle() does with it afterwards, RelDynMoodAxes)
+        $x = floatval($dynamics['dimensions']['arousal']['x'] ?? 10.0);
+        $lift = ($points - $x) * $share;
+        if ($lift > 0.5) $out['arousal'] = RelationshipDynamics::applyDelta('arousal', $dynamics, $lift, $temperament, self::LIFT);
+        if ($points >= floatval($ep['arousal'])) {
+            $ep['arousal'] = $points;
+            $ep['tier'] = $tier;
+        }
+        $ep['reached'] = max(floatval($ep['reached']), floatval($dynamics['dimensions']['arousal']['x'] ?? $x));
+
+        // A win: first the rush if it was a near miss (the terror, then the relief), then the thrill on top
+        if (!empty($ctx['victory'])) {
+            $out['near_miss'] = self::nearMiss($npc, $dynamics, $ep, $ctx, $cfg, $at);
+            // A win after high arousal: thrill (valence), by taste for a fight and by the temperament's own valence plasticity
+            $v = (array) $cfg['victory'];
+            $thrill = max(0.0, min(1.0, (floatval($ep['reached']) - floatval($v['min_arousal'])) / max(1e-6, 100.0 - floatval($v['min_arousal']))));
+            $taste = floatval($v['taste_base']) + floatval($v['taste_slope']) * RelDynFacets::interestMultiplier(floatval(($ctx['prefs'] ?? [])['combat'] ?? 0.0));
+            $asked = $thrill * floatval($v['valence_max']) * max(0.0, $taste) * $share;
+            $more = $asked - floatval($ep['valence_granted']);   // an episode grants its thrill once: only what the foe adds
+            if ($more > 0.5) {
+                $out['valence'] = RelationshipDynamics::applyDelta('valence', $dynamics, $more, $temperament);
+                $ep['valence_granted'] = $asked;
+            }
+            $ep['outcome'] = $ep['near_miss'] ? 'near_miss' : 'triumph';
+            $out['outcome'] = $ep['outcome'];
+        }
+        $ep['gamets'] = max(floatval($ep['gamets']), $at);
+        $dynamics[self::MOOD_KEY] = $ep;
+        RelationshipDynamics::log(sprintf('Fight mood: %s foe=%s (%s) arousal %+.2f valence %+.2f%s outcome=%s', $npc, $tier,
+            $victim ?? $ctx['type'], $out['arousal'], $out['valence'], $out['near_miss'] ? ' NEAR MISS' : '', (string) $out['outcome']));
+        return $out;
+    }
+
+    /**
+     * The near miss (module doc): once per episode, when the NPC fell in it or core reports the NPC or the
+     * player under hp_below at the win. Terror, then relief; arousal toward the floor; and the bond it makes
+     * (a passion floor gain and spike, trust, comfort). Returns whether this episode had one. Mutates $dynamics and $ep.
+     */
+    private static function nearMiss(string $npc, array &$dynamics, array &$ep, array $ctx, array $cfg, float $at): bool
+    {
+        $nm = (array) $cfg['near_miss'];
+        if (empty($nm['enabled'])) return false;
+        if (!empty($ep['near_miss'])) return true;
+        $mult = 0.0;
+        $why = null;
+        $fell = is_numeric($ep['fell_at'] ?? null);
+        if ($fell) {
+            [$mult, $why] = [1.0, 'fell in the fight'];
+        } elseif (!empty($ctx['fought'])) {
+            // Core's live HP, only for an event of now (no report is unknown, never healthy)
+            $now = RelationshipDynamics::currentGamets();
+            $isNow = $at > 0 && $now > 0 && abs($now - $at) <= RelationshipDynamics::COMBAT_ACTIVE_WINDOW_GAMETS;
+            $below = floatval($nm['hp_below']);
+            $hp = $isNow ? self::npcHealth($npc) : null;
+            if ($hp !== null && $hp > 0.0 && $hp <= $below) {
+                [$mult, $why] = [1.0, 'own HP'];
+            } else {
+                $playerHp = $isNow ? self::playerHealth() : null;
+                if ($playerHp !== null && $playerHp > 0.0 && $playerHp <= $below) [$mult, $why] = [floatval($nm['player_mult']), "the player's HP"];
+            }
+        }
+        if ($mult <= 0.0) return false;
+        $temperament = $dynamics['inferred_temperament'] ?? null;
+        $r = RelationshipDynamics::bleedoutResponse($dynamics, false);
+        $fearShare = (!empty($r['vector']) && ($r['fight'] + $r['fear']) > 0) ? $r['fear'] / ($r['fight'] + $r['fear']) : 0.5;
+        // Adrenaline to the floor, then both valences in sequence: the terror, and the relief that follows it
+        $x = floatval($dynamics['dimensions']['arousal']['x'] ?? 10.0);
+        if (floatval($nm['arousal_floor']) > $x) {
+            RelationshipDynamics::applyDelta('arousal', $dynamics, (floatval($nm['arousal_floor']) - $x) * $mult, $temperament, self::LIFT);
+        }
+        // (a fall in the fight already was the first valence, bleedoutResponse's: only a near miss without one asks the terror here)
+        $terror = $fell ? 0.0 : RelationshipDynamics::applyDelta('valence', $dynamics, -floatval($nm['terror_valence']) * $fearShare * $mult, $temperament);
+        $relief = RelationshipDynamics::applyDelta('valence', $dynamics, floatval($nm['relief_valence']) * $mult, $temperament);
+        // ... and the bond it makes
+        $gain = RelationshipDynamics::gainPassion($npc, $dynamics, floatval($nm['passion']) * $mult, 'near_miss');
+        $spike = RelDynPassion::addSpike($npc, $dynamics, floatval($nm['spike']) * $mult, 'near_miss');
+        $trust = RelationshipDynamics::applyDelta('trust', $dynamics, floatval($nm['trust']) * $mult, $temperament);
+        $comfort = RelationshipDynamics::applyDelta('comfort', $dynamics, floatval($nm['comfort']) * $mult, $temperament);
+        $dynamics['passion_sources']['near_miss'] = floatval($dynamics['passion_sources']['near_miss'] ?? 0) + $gain + $spike;
+        $ep['near_miss'] = true;
+        RelationshipDynamics::log(sprintf('NEAR MISS: %s (%s) terror %+.2f then relief %+.2f; passion +%.2f spike +%.2f trust %+.2f comfort %+.2f (fear share %.2f)',
+            $npc, $why, $terror, $relief, $gain, $spike, $trust, $comfort, $fearShare));
+        return true;
+    }
+
+    // =====================================================================
     // CONTEXT AT AN EVENT
     // =====================================================================
 
@@ -294,7 +623,8 @@ final class RelDynCombat
      * are passed as 'bleedout'); $people / $party: who was around (CACHE_PEOPLE / CACHE_PARTY
      * for a request, the row's columns for an eventlog row); $at: the event's game time.
      *
-     * @return array npc => ['gain' => passion change, 'witness' => bool, 'fought' => bool, 'kind' => 'fall'|'gain']
+     * @return array npc => ['gain' => passion change, 'witness' => bool, 'fought' => bool, 'kind' => 'fall'|'gain',
+     *                       'threat' => class, 'mood' => fightMood()'s summary ([] for a fall or none)]
      */
     public static function route(string $type, string $data, float $at, $people, $party, string $player): array
     {
@@ -302,6 +632,14 @@ final class RelDynCombat
         $nearby = array_values(array_filter(self::names($people), fn($n) => strcasecmp($n, $player) !== 0));
         [$direct, $killer, $victim] = self::parse($data, $player);
         $isRelDyn = fn(string $n) => !empty(RelationshipDynamics::getDynamics($n)['love_language_primary']);
+        // A win (fight mood): a combat end, or a kill by the player, a RelDyn NPC beside the player or a party member
+        // of a victim who is no ally (an ally's death is grief, not triumph)
+        $partyLower = array_map('strtolower', self::partyNames($party));
+        $directLower0 = array_map('strtolower', $direct);
+        $ourKill = $type === 'death' && $killer !== null && $victim !== null
+            && (strcasecmp($killer, $player) === 0 || in_array(strtolower($killer), array_merge($directLower0, $partyLower), true))
+            && strcasecmp($victim, $player) !== 0 && !in_array(strtolower($victim), $partyLower, true) && !$isRelDyn($victim);
+        $victory = $type === 'combatend' || $type === 'combatendmighty' || $ourKill;
 
         // Nobody named: the RelDyn NPCs around fought it (a combat end, a bark-less event). Not
         // for a kill (they are witnesses) nor a fall (only the fallen falls: the player's own
@@ -332,14 +670,25 @@ final class RelDynCombat
             $together = [];
             $fightState = false;   // a fight beside the player left something in the NPC's state (time together, what they miss, contact)
             $threat = null;
+            $mood = [];
+            $moodChanged = false;   // the fight moved the NPC's arousal / valence / episode (saved even when no passion moved)
 
             if ($type === 'bleedout') {
                 // One fall, however many reports of it (bleedout + the RecoverFromCombat instruction)
                 $last = floatval($dynamics['_combat_last_fall_gamets'] ?? 0);
                 if ($at > 0 && $last > 0 && $at >= $last && $at - $last <= RelationshipDynamics::COMBAT_ACTIVE_WINDOW_GAMETS) continue;
                 if ($at > 0) $dynamics['_combat_last_fall_gamets'] = $at;
-                $fall = RelationshipDynamics::bleedoutResponse($dynamics, true);   // 0 inside the dead band
+                // ... and hits by the foe the fight has shown so far (fight mood: a fall to a dragon is not a fall to a skeever)
+                $acfg = self::arousalConfig();
+                $episode = self::episode($dynamics, $at > 0 ? $at : RelationshipDynamics::currentGamets());
+                $fall = RelationshipDynamics::bleedoutResponse($dynamics, true, !empty($acfg['enabled']) ? self::defeatScale($episode, $acfg) : 1.0);   // 0 inside the dead band
                 $gain = $fall['passion'];
+                if (!empty($acfg['enabled'])) {
+                    $episode['fell_at'] = $at > 0 ? $at : RelationshipDynamics::currentGamets();
+                    $episode['gamets'] = max(floatval($episode['gamets']), $episode['fell_at']);
+                    $episode['outcome'] = 'beaten';
+                    $dynamics[self::MOOD_KEY] = $episode;
+                }
                 // MDD 3.3 rescue response: the player's next exchange with her answers this fall
                 self::noteFall($dynamics, $at);
                 RelationshipDynamics::log(sprintf('Bleedout: %s fight=%s fear=%s passion=%+.2f valence=%+.2f arousal=%+.2f',
@@ -413,6 +762,16 @@ final class RelDynCombat
                     // The first fight side by side is an anchor of the bond (Addendum 12, reldyn_memory.php)
                     RelDynMemory::noteAnchor($npc, $dynamics, 'first_combat', $at > 0 ? $at : RelationshipDynamics::currentGamets());
                 }
+                // The fight's mood (module doc): arousal by the foe, a win's valence, a near miss's rush (an ally's
+                // death is grief, handled below; a fall is the other branch)
+                if ($victory) {
+                    // Beside the fight is beside the fight, whoever made the kill: a player's kill is a witnessed kill for the
+                    // passion rules above, but an NPC who barked, killed or fell in the window was in it
+                    $engaged = $fought || self::fought($npc, $at > 0 ? $at : RelationshipDynamics::currentGamets());
+                    $mood = self::fightMood($npc, $dynamics, ['type' => $type, 'at' => $at, 'victim' => $victim, 'player' => $player,
+                        'fought' => $engaged, 'victory' => $victory, 'prefs' => $prefs]);
+                    $moodChanged = $mood !== [];
+                }
             }
 
             if (abs($gain) > 0.01) {
@@ -431,8 +790,8 @@ final class RelDynCombat
                 RelationshipDynamics::saveDynamics($npc, $dynamics);
                 RelationshipDynamics::log("COMBAT EVENT: {$npc} type={$type} gain=" . round($gain, 2) . ' passion='
                     . round(RelationshipDynamics::getPassion($dynamics), 2) . ($fought ? ' [FOUGHT]' : '') . ($isWitness ? ' [WITNESS]' : ''));
-            } elseif ($together !== [] || $fightState) {
-                // A fight that moved no passion still gave the NPC time with the player (decisions §20.4, §23)
+            } elseif ($together !== [] || $fightState || $moodChanged) {
+                // A fight that moved no passion still gave the NPC time with the player (decisions §20.4, §23) and a mood
                 RelationshipDynamics::saveDynamics($npc, $dynamics);
             } elseif ($fall !== null) {
                 // Inside the dead band the fall moves no passion; its arousal spike and valence stay
@@ -441,7 +800,7 @@ final class RelDynCombat
                     . round($fall['applied']['valence'], 2) . ' arousal=' . round($fall['applied']['arousal'], 2));
             }
             $out[$npc] = ['gain' => round($gain, 4), 'witness' => $isWitness, 'fought' => $fought, 'kind' => $fall !== null ? 'fall' : 'gain',
-                'threat' => $threat];
+                'threat' => $threat, 'mood' => $mood];
         }
 
         if ($type === 'death' && $victim !== null && !empty(RelationshipDynamics::configValue('grief_system_enabled') ?? true)) {
