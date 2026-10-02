@@ -77,6 +77,8 @@ try {
 try {
     if ($reldynNpcExchange && isset($reldynSuitor) && $reldynSuitor !== null) {
         RelDynCascade::noteTalk($npcName, $reldynSuitor, RelationshipDynamics::currentGamets());
+        // ... and the NPC's own circle: what the one they talked to knows of the player's ties is known to them too (reldyn_cascade_ext.php)
+        RelDynCascadeExt::noteTalk($npcName, $reldynSuitor, RelationshipDynamics::currentGamets());
     }
 } catch (Throwable $e) {
     RelationshipDynamics::logError('cascade word of mouth', $e);

@@ -1416,6 +1416,12 @@ final class RelDynEditor
                 if (isset($d['_aff_mirror_x'])) $fresh['_aff_mirror_x'] = $d['_aff_mirror_x'];
                 if (is_array($d['dimensions']['affinity'] ?? null)) $fresh['dimensions']['affinity'] = $d['dimensions']['affinity'];
                 if (isset($d['_core_rel_type'])) $fresh['_core_rel_type'] = $d['_core_rel_type'];
+                // ... nor what the circle has written into core (the friend-of-a-friend points, a rivalry's cooling): its ledger stays,
+                // or the reading would apply itself again on top of what core holds
+                $ledger = RelDynCascadeExt::ledger($d);
+                if ($ledger !== []) $fresh[RelDynCascadeExt::KEY] = $ledger;
+                // ... and the fraction of a core point still waiting to be committed is core's affinity too
+                if (isset($d['_pending_aff_delta'])) $fresh['_pending_aff_delta'] = $d['_pending_aff_delta'];
                 if ($token !== null) $fresh[RelationshipDynamics::LOAD_TOKEN_KEY] = $token;
                 $d = $fresh;
                 $changed[] = '*';

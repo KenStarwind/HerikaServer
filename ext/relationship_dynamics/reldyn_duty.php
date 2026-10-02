@@ -305,9 +305,11 @@ final class RelDynDuty
         $out = ['role' => null, 'service' => 0.0, 'decay' => 0.0, 'value' => self::value($dynamics)];
         $cfg = self::config();
         if (!self::enabled() || $now <= 0) return $out;
-        $s = self::state($dynamics);
         $role = self::roleFor($npcName, $dynamics, $cfg);
         $out['role'] = $role;
+        // an NPC who never served and does not now has no channel (no state is written for them)
+        if ($role === null && !is_array($dynamics[self::KEY] ?? null)) return $out;
+        $s = self::state($dynamics);
         $prev = is_numeric($s['gamets'] ?? null) ? floatval($s['gamets']) : null;
 
         // The decay: from grace after the last credit, over the time since the previous advance; slower while bound, for a dutiful NPC

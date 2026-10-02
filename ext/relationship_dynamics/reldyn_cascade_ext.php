@@ -19,8 +19,11 @@
  *               minimums (a stranger of A's does not cascade; a B who barely knows the player says nothing).
  *   knowledge   how likely A is to know of the tie: a close friend of B hears more than an acquaintance, and one
  *               who lives in B's hold hears more than one across the map (the prompt-gating hold graph, where
- *               each was last seen); never below knowledge.floor (word gets round), and 1 while the player has
- *               just named B (mentions, below).
+ *               each was last seen); never below knowledge.floor (word gets round). It is 1 when A has reason to
+ *               know in full, the way the cascade's ripples reach someone: A was THERE (B was seen in A's hold
+ *               within association.witness_window_game_minutes, so A can see for themself), A and B actually TALKED
+ *               (an NPC-to-NPC exchange, within association.talk_hold_game_hours: word of mouth needs no clock), or
+ *               the player has just named B (mentions, below); otherwise it is the delay's guess, by bond and distance.
  *   the sum     is softened toward association.cap (tanh: the fifth friend adds less than the first) and
  *               multiplied by WHO A IS (susceptibility): a guarded, self-assured or proud NPC makes up their own
  *               mind, a warm one is swayed by those they love, a mature one is steadier (the same softening that
@@ -81,6 +84,9 @@ final class RelDynCascadeExt
                 // how likely A is to know of the tie: floor + bond_relief x |bond|/100 (within 0..1), x 1 / (1 + per_hold_step x hold steps),
                 // never below floor. An unknown place is as far as the hold graph's unknown_hold_distance.
                 'knowledge' => ['floor' => 0.25, 'bond_relief' => 0.5, 'per_hold_step' => 0.35],
+                // the ways the tie is known in full: B was seen in A's hold this recently (game minutes), A and B talked this recently (game hours)
+                'witness_window_game_minutes' => 60.0,
+                'talk_hold_game_hours' => 48.0,
                 // who A is: x (1 + sum of gain x (trait - 0.5) x 2) x the maturity softening, within floor..ceiling
                 'susceptibility' => ['floor' => 0.3, 'ceiling' => 1.6, 'trait_gain' => ['G' => -0.35, 'C' => -0.25, 'Pd' => -0.2, 'W' => 0.25]],
                 // settling: this share of the gap per game hour (1 - exp(-rate x hours)); the first reading counts first_game_hours
@@ -269,7 +275,27 @@ final class RelDynCascadeExt
         $s['assoc'] = is_array($s['assoc'] ?? null) ? $s['assoc'] : [];
         $s['rivals'] = is_array($s['rivals'] ?? null) ? $s['rivals'] : [];
         $s['mentions'] = is_array($s['mentions'] ?? null) ? $s['mentions'] : [];
+        $s['talks'] = is_array($s['talks'] ?? null) ? $s['talks'] : [];
         return $s;
+    }
+
+    /**
+     * What the circle has WRITTEN into core: the friend-of-a-friend points applied to the NPC's regard for the player, and the whole
+     * points each rivalry took off their regard for a rival. A whole-NPC reset starts the NPC's RelDyn state over but leaves core's
+     * numbers where they are, so this ledger is what must survive it: without it the reading would apply itself a second time on top
+     * of what core already holds. Rivals keep a target of nothing, so a reset rivalry is given back, not forgotten.
+     */
+    public static function ledger(array $dynamics): array
+    {
+        $s = self::state($dynamics);
+        $out = [];
+        if (abs(floatval($s['assoc']['applied'] ?? 0.0)) >= 0.0001) $out['assoc'] = ['applied' => floatval($s['assoc']['applied'])];
+        foreach ($s['rivals'] as $name => $r) {
+            if (is_array($r) && abs(floatval($r['written'] ?? 0.0)) >= 0.5) {
+                $out['rivals'][$name] = ['applied' => floatval($r['applied'] ?? 0.0), 'written' => floatval($r['written']), 'target' => 0.0, 'pressure' => 0.0];
+            }
+        }
+        return $out;
     }
 
     /** The core affinity applied by the association, core points (0 when none). */
@@ -479,6 +505,65 @@ final class RelDynCascadeExt
         return $out;
     }
 
+    /**
+     * Where and when $npcName was last seen: ['hold' => the hold ('' when unknown), 'gamets' => when]. The newest eventlog row that had
+     * them present (people column) with a location, at most the cascade's delivery.last_seen_lookback_game_days before $before. The
+     * place is read as the cascade reads it (core logs the whole location context string: the hold is in it; a bare place name is
+     * looked up in core's locations table).
+     */
+    public static function lastSeen(string $npcName, float $before): array
+    {
+        $none = ['hold' => '', 'gamets' => 0.0];
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || trim($npcName) === '') return $none;
+        $days = max(0.0, floatval(RelDynCascade::config()['delivery']['last_seen_lookback_game_days']));
+        $since = $before > 0 ? (int) floor($before - $days * RelationshipDynamics::GAMETS_PER_DAY) : 0;
+        $bare = $db->escapeLiteral('|' . mb_strtolower(trim($npcName)) . '|');
+        $stated = $db->escapeLiteral('|' . mb_strtolower(trim($npcName)) . ' (');
+        try {
+            $row = $db->fetchOne(
+                "SELECT e.location, e.gamets FROM eventlog e
+                 WHERE e.location IS NOT NULL AND e.location <> '' AND e.gamets >= {$since}
+                   AND (position({$bare} in lower(e.people)) > 0 OR position({$stated} in lower(e.people)) > 0)
+                 ORDER BY e.gamets DESC, e.rowid DESC LIMIT 1");
+            $location = is_array($row) ? trim((string) ($row['location'] ?? '')) : '';
+            if ($location === '') return $none;
+            $hold = RelDynFacets::parseLocationContext($location)['hold'];
+            if ($hold === '') {
+                $parsed = RelDynFacets::parseLocationContext($location);
+                $place = $parsed['name'] !== '' ? $parsed['name'] : $location;
+                $loc = $db->fetchOne('SELECT hold FROM locations WHERE lower(name) = lower(' . $db->escapeLiteral($place) . ') LIMIT 1');
+                $hold = is_array($loc) ? trim((string) ($loc['hold'] ?? '')) : '';
+            }
+            return ['hold' => $hold, 'gamets' => floatval($row['gamets'] ?? 0)];
+        } catch (\Throwable $e) {
+            RelationshipDynamics::logError("cascade extensions: where {$npcName} was last seen", $e);
+            return $none;
+        }
+    }
+
+    /**
+     * Word of mouth: $npcName and $other actually talked (an NPC-to-NPC exchange, in $npcName's own request: the context hook). The
+     * NPC's own circle notes it, so what $other has to say of the player's tie to them is known in full for a while
+     * (association.talk_hold_game_hours). Only the speaker's own row is written. Returns true when something was noted.
+     */
+    public static function noteTalk(string $npcName, string $other, float $now): bool
+    {
+        if (!self::enabled() || empty(self::config()['association']['enabled']) || $now <= 0 || trim($other) === '' || strcasecmp($npcName, $other) === 0
+            || RelationshipDynamics::isPlayerRelationshipKey($other)) {
+            return false;
+        }
+        $dynamics = RelationshipDynamics::getDynamics($npcName);
+        if (empty($dynamics['love_language_primary'])) return false;   // no bond state of the NPC's own yet: nothing for the circle to hang on
+        $state = self::state($dynamics);
+        $state['talks'][mb_strtolower(trim($other))] = $now;
+        $state['talks'] = array_slice($state['talks'], -self::MAX_MENTIONS, null, true);
+        $dynamics[self::KEY] = $state;
+        RelationshipDynamics::saveDynamics($npcName, $dynamics);
+        RelationshipDynamics::log("[CIRCLE] {$npcName} and {$other} talked: what {$other} knows of the player's ties is known to the NPC");
+        return true;
+    }
+
     /** The links (A's friends and foes who are close to, or at odds with, the player) with their lean, knowledge and kind. */
     private static function readLinks(string $npcName, array $bonds, array $state, float $now, array $cfg): array
     {
@@ -499,16 +584,24 @@ final class RelDynCascadeExt
             $mention = $state['mentions'][mb_strtolower($name)] ?? null;
             $named = is_array($mention) && is_numeric($mention['at'] ?? null)
                 && $now - floatval($mention['at']) <= floatval($cfg['mention']['knowledge_hold_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0;
+            $talk = $state['talks'][mb_strtolower($name)] ?? null;
+            $talked = is_numeric($talk) && $now >= floatval($talk)
+                && $now - floatval($talk) <= floatval($a['talk_hold_game_hours']) * RelationshipDynamics::GAMETS_PER_DAY / 24.0;
+            $via = $named ? 'named' : ($talked ? 'talked' : null);
             $steps = 0;
-            if (!$named) {
+            if ($via === null) {
                 $myHold = $myHold ?? RelDynCascade::lastSeenHold($npcName, $now);
-                $steps = RelDynCascade::holdSteps($myHold, RelDynCascade::lastSeenHold($e['name'], $now));
+                $seen = self::lastSeen($e['name'], $now);
+                $near = $seen['hold'] !== '' && $seen['hold'] === $myHold
+                    && $now - $seen['gamets'] <= floatval($a['witness_window_game_minutes']) * RelationshipDynamics::GAMETS_PER_DAY / 1440.0;
+                if ($near) $via = 'near';
+                $steps = RelDynCascade::holdSteps($myHold, $seen['hold']);
             }
-            $knowledge = $named ? 1.0 : self::knowledgeOf($b['aff'], $steps, $cfg);
+            $knowledge = $via !== null ? 1.0 : self::knowledgeOf($b['aff'], $steps, $cfg);
             $lean = self::leanOf($b['aff'], $closeness, $cfg) * $knowledge;
             if (abs($lean) < 0.0001) continue;
             $links[] = ['name' => $e['name'], 'bond' => round($b['aff'], 1), 'closeness' => round($closeness, 1), 'knowledge' => round($knowledge, 3),
-                'lean' => round($lean, 4), 'kind' => ($b['aff'] >= 0 ? 'ally' : 'rival') . '_' . ($closeness >= 0 ? 'close' : 'foe')];
+                'lean' => round($lean, 4), 'via' => $via ?? 'guess', 'kind' => ($b['aff'] >= 0 ? 'ally' : 'rival') . '_' . ($closeness >= 0 ? 'close' : 'foe')];
         }
         usort($links, fn($x, $y) => abs($y['lean']) <=> abs($x['lean']));
         return array_slice($links, 0, max(1, intval($a['max_links'])));
