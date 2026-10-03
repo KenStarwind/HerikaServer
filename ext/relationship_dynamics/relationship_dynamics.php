@@ -2631,7 +2631,7 @@ class RelationshipDynamics
     // 3.4.1 no longer defines GAMETS / gamets / HERIKA_TIME. The live game clock is
     // $gameRequest[2] (raw gamets, 1 game day = 1e7, day starts at midnight — same
     // math as lib/utils_game_timestamp.php). Outside a game request (worker, pages)
-    // fall back to the newest eventlog gamets via core DataLastKnownGameTS().
+    // fall back to the newest eventlog gamets (the probe core DataLastKnownGameTS() runs).
 
     /** Raw gamets per game day (core convert_gamets2days: gamets * 0.0000001). */
     const GAMETS_PER_DAY = 10000000;
@@ -2645,8 +2645,19 @@ class RelationshipDynamics
         if (is_array($gameRequest) && isset($gameRequest[2]) && floatval($gameRequest[2]) > 0) {
             return floatval($gameRequest[2]);
         }
-        if (function_exists('DataLastKnownGameTS') && isset($GLOBALS['db'])) {
-            return max(0.0, floatval(DataLastKnownGameTS()));
+        if (isset($GLOBALS['db'])) {
+            // The same probe as core's DataLastKnownGameTS(), without its Logger warning: 3.4.2
+            // loads that helper in every bootstrapped page (lib/settings.php requires
+            // utils_game_timestamp.php), standalone pages never load Logger, and an empty
+            // eventlog (a fresh install) is a normal state here, not a warning.
+            try {
+                $rows = $GLOBALS['db']->fetchAll("SELECT MAX(gamets) AS m_gts FROM eventlog WHERE (gamets > 0) LIMIT 1");
+            } catch (\Throwable $e) {
+                self::logError('currentGamets', $e);
+                return 0.0;
+            }
+            $newest = is_array($rows) && isset($rows[0]['m_gts']) ? $rows[0]['m_gts'] : null;
+            return is_numeric($newest) ? max(0.0, floatval($newest)) : 0.0;
         }
         return 0.0;
     }
