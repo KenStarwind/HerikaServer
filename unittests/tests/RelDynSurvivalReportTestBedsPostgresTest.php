@@ -172,7 +172,12 @@ final class RelDynSurvivalReportTestBedsPostgresTest extends TestCase
         pg_query($admin, "CREATE TABLE conf_opts (id text NOT NULL, value text, CONSTRAINT pid PRIMARY KEY (id))");
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,
-            utterance_id text, delivery_state text)");
+            utterance_id text, delivery_state text, private_thought jsonb)");
+        // lib/core/database_schema/core_profiles.sql: core 3.4.2 reads each NPC's private-thought policy from its profile
+        pg_query($admin, "CREATE TABLE core_profiles (id integer PRIMARY KEY, label text, default_npc text, default_narrator text,
+            tts_connector_id integer, itt_connector_id integer, llm_primary_id integer, llm_secondary_id integer,
+            llm_tertiary_id integer, llm_quaternary_id integer, llm_formatter_id integer, llm_fallback_id integer,
+            metadata jsonb, diary_connector_id integer, slot integer, prompt text)");
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
         pg_query($admin, "CREATE TABLE locations (name text, formid bigint, region text, hold text, tags text,
             factions text, is_interior integer, vanilla_location boolean, coords point, refs text, cleared boolean,

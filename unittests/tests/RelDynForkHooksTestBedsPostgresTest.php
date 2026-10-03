@@ -177,7 +177,7 @@ final class RelDynForkHooksTestBedsPostgresTest extends TestCase
         // data/database_default.sql eventlog and diarylog
         pg_query($admin, "CREATE TABLE eventlog (type varchar(128), data text, sess text, gamets bigint NOT NULL,
             localts bigint NOT NULL, ts bigint, rowid bigserial PRIMARY KEY, people text, location text, party text,
-            utterance_id text, delivery_state text)");
+            utterance_id text, delivery_state text, private_thought jsonb)");
         pg_query($admin, "CREATE TABLE diarylog (ts text NOT NULL, sess character varying(1024), topic text, content text,
             tags text, people text, localts bigint NOT NULL, location text, gamets bigint NOT NULL, rowid bigserial NOT NULL)");
         pg_query($admin, "CREATE TABLE responselog (localts bigint, sent int, actor text, text text, action text, tag text)");
