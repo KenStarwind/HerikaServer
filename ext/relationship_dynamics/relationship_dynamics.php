@@ -2650,12 +2650,8 @@ class RelationshipDynamics
             // loads that helper in every bootstrapped page (lib/settings.php requires
             // utils_game_timestamp.php), standalone pages never load Logger, and an empty
             // eventlog (a fresh install) is a normal state here, not a warning.
-            try {
-                $rows = $GLOBALS['db']->fetchAll("SELECT MAX(gamets) AS m_gts FROM eventlog WHERE (gamets > 0) LIMIT 1");
-            } catch (\Throwable $e) {
-                self::logError('currentGamets', $e);
-                return 0.0;
-            }
+            // a database failure propagates, as it did through the core helper
+            $rows = $GLOBALS['db']->fetchAll("SELECT MAX(gamets) AS m_gts FROM eventlog WHERE (gamets > 0) LIMIT 1");
             $newest = is_array($rows) && isset($rows[0]['m_gts']) ? $rows[0]['m_gts'] : null;
             return is_numeric($newest) ? max(0.0, floatval($newest)) : 0.0;
         }
