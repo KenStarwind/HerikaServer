@@ -8,8 +8,10 @@ Immaturity now has a shape. A mature NPC whose trust has fallen far enough decid
 immature one who trusts too much turns codependent and lets bad treatment land softer; one with neither has no floor
 at all and can be used. All of it moves with who they are and how they're treated, never a switch.
 Relationships can be committed, or sworn under an oath that strains and can break. When a romance ends, it ends by
-character: as an ex, as something unresolved, or as friends, and some of those roads lead back. Neglect can tempt an
-NPC to stray, and what happens next is who they are: some confess, some leave, some hide it.
+character: as an ex, as something unresolved, or as friends, and some of those roads lead back. A walkaway on standards,
+or because the feeling has gone, ends the romance as it starts, when the NPC leaves (core records the ending), and a
+boundary test that ends with the NPC back does not bring the romance back, while a follow during it keeps the ending.
+Neglect can tempt an NPC to stray, and what happens next is who they are: some confess, some leave, some hide it.
 Warmth travels through friends, and so do rivalries between rivals. Housecarls and sworn protectors build a duty bond
 of their own that never turns into romance. A fight's thrill scales with the enemy, a near miss binds people together,
 and a wide range of named moods colours how feelings are put into words.
