@@ -3,6 +3,12 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.26 — on CHIM 3.4.2
+RelDyn now sits on CHIM's current unstable line (3.4.2) instead of the 3.4.1 base it was ported to. Nothing about how
+characters feel changed: the pages and the game clock were adjusted to the newer core, which loads more of itself on
+every page and records a private-thought column in its event log. It pairs with a matching local build of the game
+plugin, AIAgent 3.4.2, that carries the survival reporter and the blush bridge.
+
 ## reldyn-v0.25 — the dark path, how relationships end and begin again, duty, and a face that shows it
 Immaturity now has a shape. A mature NPC whose trust has fallen far enough decides they deserve better and leaves; an
 immature one who trusts too much turns codependent and lets bad treatment land softer; one with neither has no floor
