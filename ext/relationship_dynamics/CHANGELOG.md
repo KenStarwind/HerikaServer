@@ -3,6 +3,15 @@
 Conceptual notes per version. Tags live on Ken's fork (KenStarwind/HerikaServer) as `reldyn-vX.Y`.
 Design authority: D:\docs\relationship-dynamics-mdd.md + D:\docs\reldyn-design-decisions-2026-09-23.md.
 
+## reldyn-v0.27 — scripted scenes feed the evaluator
+Voiced follower banter and quest scenes that the game overhears (CHIM stores them as background dialogue) now reach
+RelDyn's evaluation as context. They show up marked as scene lines: a few of the latest from the last couple of game
+hours, only what the character said or what was said to or about them or the player while they were there, each repeated
+line once, never as the exchange being scored, so they colour how someone is acting without crowding out the
+conversation with the player. Ambient chatter between others is left out.
+Time-loop quests replay the same lines every loop, so scene lines heard in The Forgotten City are ignored, and a small,
+marked hook in CHIM's event logging keeps core from storing them at all. The list of places is a setting, and the hook can be switched off.
+
 ## reldyn-v0.26 — on CHIM 3.4.2
 RelDyn now sits on CHIM's current unstable line (3.4.2) instead of the 3.4.1 base it was ported to. Nothing about how
 characters feel changed: the pages and the game clock were adjusted to the newer core, which loads more of itself on

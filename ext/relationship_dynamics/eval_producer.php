@@ -245,6 +245,29 @@ final class RelDynEval
             'autostart_worker' => true,  // start the worker process after queueing
             'apply_in_worker'  => true,  // the worker applies the NPC's eval inbox right after filling it; false = the NPC's next postrequest does
             'goal_max_chars'   => 240,   // characters of the NPC's director goal shown to the eval (goal_addressed)
+            // Scripted scene dialogue (CHIM type 'chat_background': voiced follower banter, quest and mod scenes the
+            // game plugin overheard) rides along in the eval window as context, marked "(scene)", never as the scored
+            // exchange. Bounded: at most scene_max_lines of them, from the last scene_window_game_hours, each
+            // clipped; the same line by the same speaker counts once.
+            'scene_lines'              => true,
+            'scene_max_lines'          => 4,     // scene lines per window; 0 = none
+            'scene_window_game_hours'  => 2,     // how far back from the exchange a scene line still counts
+            'scene_scan_rows'          => 80,    // chat_background rows read back to find them
+            'scene_line_max_chars'     => 240,   // one scene line is clipped to this
+            // A scene line reaches the eval only when the NPC said it, or the NPC was present and it names the NPC or
+            // the player (scene_player_terms are how scripted lines address the player without a name).
+            'scene_player_terms'       => ['Dragonborn', 'Dovahkiin'],
+            // Time-loop quests repeat the same lines every loop. Scene lines heard where the location text contains
+            // one of these (case-insensitive) are ignored by the eval and, with scene_skip_write, not stored by core
+            // at all. These are the cell names of The Forgotten City (read from the mod's patch plugin). The mod's
+            // generic cell names (Cave, Citadel, Chambers, Underground tunnels, Lakehouse) are left out on purpose:
+            // they would match other places. Add more here; an empty list switches the filter off.
+            'scene_excluded_locations' => [
+                'Forgotten City', 'Forgotten Ruins', 'Golden Sentinel', 'Firefly Finery', 'The Honest Trader',
+                "Vernon's Fresh Produce", "Brandas' house", "Ulrin's house", 'Brol the Scholar', "Luki's chambers",
+                'Dwarven Dome', 'Abandoned Palace',
+            ],
+            'scene_skip_write'         => true,  // CHIM fork hook: core does not store scene lines heard in those locations
         ];
     }
 
@@ -820,7 +843,7 @@ final class RelDynEval
         }
 
         $scoredThrough = isset($job['scored_through_rowid']) && is_numeric($job['scored_through_rowid']) ? intval($job['scored_through_rowid']) : null;
-        $window = self::conversationWindow($npc, $player, $anchor, intval($cfg['window_lines']), intval($cfg['scan_rows']), $scoredThrough);
+        $window = self::conversationWindow($npc, $player, $anchor, intval($cfg['window_lines']), intval($cfg['scan_rows']), $scoredThrough, $cfg);
         if (empty($window['current'])) {
             error_log("[RelDyn-EVAL] job for {$npc} dropped: no reply from {$npc} in the conversation window");
             return ['drop' => 'no_reply'];
@@ -963,9 +986,27 @@ final class RelDynEval
      * before $scoredThroughRowid (the previous job's anchor) were scored already and are
      * never 'current': an NPC follow-up without a new player line is scored on its own.
      *
+     * With $sceneCfg (the producer config) the scripted scene lines the NPC took part in or overheard
+     * (sceneLines) are merged into 'earlier' by rowid, flagged 'scene' => true; never into 'current'.
+     *
      * @return array{earlier: list<array>, current: list<array>} lines carry their eventlog rowid
      */
-    public static function conversationWindow(string $npcName, string $playerName, int $anchorRowid, int $windowLines, int $scanRows, ?int $scoredThroughRowid = null): array
+    public static function conversationWindow(string $npcName, string $playerName, int $anchorRowid, int $windowLines, int $scanRows, ?int $scoredThroughRowid = null, ?array $sceneCfg = null): array
+    {
+        $window = self::chatWindow($npcName, $playerName, $anchorRowid, $windowLines, $scanRows, $scoredThroughRowid);
+        if ($sceneCfg !== null) {
+            $scene = self::sceneLines($npcName, $playerName, $anchorRowid, $sceneCfg);
+            if ($scene !== []) {
+                $earlier = array_merge($window['earlier'], $scene);
+                usort($earlier, static fn(array $a, array $b): int => $a['rowid'] <=> $b['rowid']);
+                $window['earlier'] = $earlier;   // context only: a scene line is never part of the scored exchange
+            }
+        }
+        return $window;
+    }
+
+    /** conversationWindow() without scene lines: the chat + player input rows only. */
+    private static function chatWindow(string $npcName, string $playerName, int $anchorRowid, int $windowLines, int $scanRows, ?int $scoredThroughRowid): array
     {
         $types = '{' . implode(',', self::WINDOW_ROW_TYPES) . '}';
         $states = '{' . implode(',', self::VISIBLE_CHAT_STATES) . '}';
@@ -1014,6 +1055,205 @@ final class RelDynEval
             }
         }
         return ['earlier' => array_slice($lines, 0, $start), 'current' => array_slice($lines, $start)];
+    }
+
+    // =========================================================================
+    // EVAL INPUT: scripted scene lines (CHIM type 'chat_background')
+    // =========================================================================
+
+    /** eventlog type of scripted / overheard scene dialogue (the game plugin's ProcedureListenToScene). */
+    const SCENE_TYPE = 'chat_background';
+
+    /** Lower-cased, apostrophes and spaces normalised: how location text is compared. */
+    private static function normLocation(string $s): string
+    {
+        $s = str_replace(["\u{2019}", "\u{2018}", '`'], "'", $s);
+        return mb_strtolower(trim(preg_replace('/\s+/u', ' ', $s) ?? $s));
+    }
+
+    /** "Name [Race]" -> "Name": the game plugin tags creatures and some NPCs with a bracketed race. */
+    private static function baseName(string $name): string
+    {
+        return trim(preg_replace('/\s*\[[^\]]*\]\s*$/u', '', $name) ?? $name);
+    }
+
+    /**
+     * The location the game plugin stamped on a scene line: "(Context location: Whiterun, Hold: X
+     * background chat) Name: text" -> "Whiterun, Hold: X". Null when the row has no such prefix.
+     */
+    public static function sceneLocation(string $data): ?string
+    {
+        if (preg_match('/^\s*\(\s*Context\s+(?:new\s+)?location:\s*(.*?)\s*background\s+chat\s*\)/isu', $data, $m)) {
+            return trim($m[1]);
+        }
+        return null;
+    }
+
+    /** Does the location text contain one of the excluded names (case-insensitive substring)? */
+    public static function locationExcluded(?string $location, array $excluded): bool
+    {
+        $text = self::normLocation((string) $location);
+        if ($text === '') {
+            return false;
+        }
+        foreach ($excluded as $name) {
+            $n = self::normLocation((string) $name);
+            if ($n !== '' && str_contains($text, $n)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * CHIM fork hook body (ext/relationship_dynamics/background_chat_gate.php, asked by core's logEvent
+     * for every scene line it is about to store): true = do not store it, the player is somewhere whose
+     * scene lines repeat (scene_excluded_locations; the Forgotten City's time loop). The location is the
+     * line's own stamp, else core's cached one. Off with RelDyn, or scene_skip_write false.
+     */
+    public static function backgroundChatSkipped(string $data, ?string $cachedLocation = null): bool
+    {
+        $all = RelationshipDynamics::getConfig();   // one config read per scene line core stores
+        if (empty($all['enabled'])) {
+            return false;
+        }
+        $cfg = array_merge(self::defaultConfig(), is_array($all['eval_producer'] ?? null) ? $all['eval_producer'] : []);
+        if (empty($cfg['scene_skip_write']) || !is_array($cfg['scene_excluded_locations'] ?? null)) {
+            return false;
+        }
+        return self::locationExcluded(self::sceneLocation($data) ?? $cachedLocation, $cfg['scene_excluded_locations']);
+    }
+
+    /** Does $text name $who (whole word, case-insensitive)? A multi-word name also counts by its first word. */
+    private static function mentions(string $text, string $who): bool
+    {
+        $who = self::baseName($who);
+        if ($who === '') {
+            return false;
+        }
+        $tokens = [$who];
+        $first = preg_split('/\s+/u', $who)[0] ?? '';
+        if ($first !== $who && mb_strlen($first) >= 3) {
+            $tokens[] = $first;
+        }
+        foreach ($tokens as $t) {
+            if (preg_match('/(?<![\p{L}\p{N}])' . preg_quote($t, '/') . '(?![\p{L}\p{N}])/iu', $text) === 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * One chat_background row as a scene line for this NPC, or null when it does not belong in this NPC's
+     * eval: not parseable, heard in an excluded location, or neither said by the NPC nor (with the NPC
+     * present) addressed to or about the NPC or the player. Dedupe and the cap are sceneLines()'s.
+     *
+     * @param array $row eventlog row: rowid, data, people, location
+     * @return array{role:string,speaker:string,text:string,listener:?string,scene:bool,rowid:int,people:string}|null
+     */
+    public static function sceneLineFromRow(array $row, string $npcName, string $playerName, array $cfg): ?array
+    {
+        $data = (string) ($row['data'] ?? '');
+        $excluded = is_array($cfg['scene_excluded_locations'] ?? null) ? $cfg['scene_excluded_locations'] : [];
+        if (self::locationExcluded(self::sceneLocation($data) ?? (string) ($row['location'] ?? ''), $excluded)) {
+            return null;
+        }
+        $line = self::parseDialogueRow(self::SCENE_TYPE, $data, $npcName, $playerName);
+        if ($line === null || $line['role'] === 'player') {
+            return null;
+        }
+        $speaker = self::baseName($line['speaker']);
+        $isNpc = $line['role'] === 'npc' || self::sameName($speaker, self::baseName($npcName));
+        if (!$isNpc) {
+            $present = false;
+            foreach (self::peopleNames((string) ($row['people'] ?? '')) as $p) {
+                if (self::sameName(self::baseName($p), self::baseName($npcName))) {
+                    $present = true;
+                    break;
+                }
+            }
+            $about = $line['listener'] !== null
+                && (self::mentions($line['listener'], $npcName) || self::mentions($line['listener'], $playerName));
+            if (!$about) {
+                foreach (array_merge([$npcName, $playerName], (array) ($cfg['scene_player_terms'] ?? [])) as $who) {
+                    if (self::mentions($line['text'], (string) $who)) {
+                        $about = true;
+                        break;
+                    }
+                }
+            }
+            if (!$present || !$about) {
+                return null;   // ambient chatter between others, or the NPC was not there
+            }
+        }
+        $max = max(4, intval($cfg['scene_line_max_chars'] ?? 240));
+        $text = $line['text'];
+        if (mb_strlen($text) > $max) {
+            $text = rtrim(mb_substr($text, 0, $max - 3)) . '...';
+        }
+        return [
+            'role'     => $isNpc ? 'npc' : 'other',
+            'speaker'  => $isNpc ? $npcName : $speaker,
+            'text'     => $text,
+            'listener' => $line['listener'],
+            'scene'    => true,
+            'rowid'    => intval($row['rowid'] ?? 0),
+            'people'   => (string) ($row['people'] ?? ''),
+        ];
+    }
+
+    /**
+     * The scripted scene lines this NPC's eval may see for the exchange anchored at $anchorRowid: the
+     * chat_background rows of the last scene_window_game_hours (game clock) that sceneLineFromRow keeps,
+     * the same line by the same speaker once (its latest), at most scene_max_lines (the latest ones),
+     * oldest first. Never throws: a failed read is logged and means no scene lines.
+     *
+     * @return list<array>
+     */
+    public static function sceneLines(string $npcName, string $playerName, int $anchorRowid, array $cfg): array
+    {
+        $cap = intval($cfg['scene_max_lines'] ?? 0);
+        if (empty($cfg['scene_lines']) || $cap <= 0) {
+            return [];
+        }
+        $span = (int) round(max(0.0, floatval($cfg['scene_window_game_hours'] ?? 2)) * RelationshipDynamics::GAMETS_PER_DAY / 24.0);
+        try {
+            $res = self::db()->fetchOne(
+                "SELECT coalesce(json_agg(r ORDER BY r.rowid DESC), '[]'::json)::text AS rows FROM (
+                     SELECT rowid, data, people, location FROM eventlog
+                     WHERE rowid <= \$1 AND type = '" . self::SCENE_TYPE . "'
+                       AND gamets >= (SELECT gamets FROM eventlog WHERE rowid = \$1) - \$2
+                     ORDER BY rowid DESC LIMIT \$3
+                 ) r",
+                [$anchorRowid, $span, max(1, intval($cfg['scene_scan_rows'] ?? 80))]
+            );
+            $rows = json_decode((string) ($res['rows'] ?? '[]'), true);
+            if (!is_array($rows)) {
+                throw new RuntimeException('scene window query failed');
+            }
+        } catch (\Throwable $e) {
+            error_log('[RelDyn-EVAL] scene lines not read (' . $e->getMessage() . '), the eval runs without them');
+            return [];
+        }
+        $out = [];
+        $seen = [];
+        foreach ($rows as $row) {   // newest first
+            $line = self::sceneLineFromRow($row, $npcName, $playerName, $cfg);
+            if ($line === null) {
+                continue;
+            }
+            $key = mb_strtolower($line['speaker']) . '|' . self::normText($line['text']);
+            if (isset($seen[$key])) {
+                continue;   // barks and time loops repeat
+            }
+            $seen[$key] = true;
+            $out[] = $line;
+            if (count($out) >= $cap) {
+                break;
+            }
+        }
+        return array_reverse($out);
     }
 
     /**
@@ -1175,6 +1415,9 @@ final class RelDynEval
             $out = [];
             foreach ($lines as $l) {
                 $to = $l['listener'] !== null ? " (to {$l['listener']})" : '';
+                if (!empty($l['scene'])) {
+                    $to = $l['listener'] !== null ? " (scene, to {$l['listener']})" : ' (scene)';
+                }
                 $out[] = "[{$l['speaker']}]{$to}: {$l['text']}";
             }
             return implode("\n", $out);
@@ -1204,6 +1447,10 @@ final class RelDynEval
         $signalGuideText = implode("\n", $signalGuide);
         $earlier = empty($window['earlier']) ? '(none)' : $fmt($window['earlier']);
         $current = $fmt($window['current']);
+        $hasScene = count(array_filter($window['earlier'] ?? [], static fn($l) => !empty($l['scene']))) > 0;
+        $earlierNote = $hasScene
+            ? "; lines marked (scene) are scripted dialogue {$npc} took part in or overheard, context for how {$npc} is acting, not conversation with {$player}"
+            : '';
         $events = empty($eventTags) ? '' : "\nObserved events in this exchange (already certain): " . implode(', ', $eventTags) . "\n";
         $stateText = implode("\n", array_map(static fn($s) => "- {$s}", $state));
         $tagText = implode("\n", $tagDefs);
@@ -1247,7 +1494,7 @@ PLAYER: {$player}
 {$npc}'S CURRENT STATE:
 {$stateText}
 
-EARLIER CONVERSATION (context only, already scored, do not score it again):
+EARLIER CONVERSATION (context only, already scored, do not score it again{$earlierNote}):
 {$earlier}
 
 THIS EXCHANGE (score only this):

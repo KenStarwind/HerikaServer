@@ -5583,6 +5583,13 @@ function logEvent($dataArray,$forcePeople='', $returnEventId = false)
             $dataArray[3] ?? ""
         );
         $eventType = strtolower((string)$dataArray[0]);
+        // CHIM fork hook (RelDyn): an extension may veto storing a scripted scene line (time-loop quests repeat them)
+        if ($eventType === "chat_background") {
+            require_once(__DIR__ . DIRECTORY_SEPARATOR . "relationship_manager.php");
+            if (chimBackgroundChatSkipped($dataArray[3] ?? "", $GLOBALS["CACHE_LOCATION"] ?? null)) {
+                return $returnEventId ? 0 : null;
+            }
+        }
         $defaultPeopleFallback = $GLOBALS["CACHE_PEOPLE_LIMITED"];
         
         if (in_array($eventType, ["infoaction", "funcret"], true)) {

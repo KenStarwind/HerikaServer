@@ -75,6 +75,26 @@ if (!function_exists('chimDiaryContextFor')) {
     }
 }
 
+// CHIM fork hook (RelDyn): may an extension veto storing a scripted scene line ('chat_background' row)? Each
+// ext/*/background_chat_gate.php (loaded here, once) may set $GLOBALS['CHIM_BACKGROUND_CHAT_GATES'][name] =
+// fn(string $data, ?string $location): bool; true = skip the row. Asked by logEvent() in lib/chat_helper_functions.php
+// (RelDyn: time-loop quests such as The Forgotten City replay the same lines). No gate, or none answers true: stored as ever.
+if (!function_exists('chimBackgroundChatSkipped')) {
+    function chimBackgroundChatSkipped($data, $location = null) {
+        static $loaded = false;
+        if (!$loaded) {
+            $loaded = true;
+            foreach (glob(($GLOBALS['ENGINE_PATH'] ?? dirname(__DIR__) . '/') . 'ext/*/background_chat_gate.php') ?: [] as $gateFile) {
+                require_once $gateFile;
+            }
+        }
+        foreach ($GLOBALS['CHIM_BACKGROUND_CHAT_GATES'] ?? [] as $gate) {
+            if ($gate((string)$data, $location === null ? null : (string)$location) === true) return true;
+        }
+        return false;
+    }
+}
+
 class RelationshipManager {
 
     // Valid relationship types (the "flavor" of the relationship)

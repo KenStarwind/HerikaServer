@@ -418,6 +418,27 @@ final class RelDynEvalWorkerPostgresTest extends TestCase
         $this->assertSame($w, RelDynEval::conversationWindow(self::NPC, self::PLAYER, $anchor, 12, 200));
     }
 
+    public function testTheWorkerShowsSceneLinesMarkedAsContextAndLeavesTheForgottenCityOut(): void
+    {
+        $this->seedConversation();
+        $this->event('chat_background', '(Context location: Jorrvaskr, Whiterun background chat) Aela the Huntress: Hold the line, Dragonborn!', self::T0 - 500);
+        $this->event('chat_background', '(Context location: The Forgotten City background chat) Aela the Huntress: Do you hear the bell, Dragonborn?', self::T0 - 450);
+        $this->event('chat_background', '(Context location: Jorrvaskr, Whiterun background chat) Farkas: Nice weather for it.', self::T0 - 400, '|Farkas|Aela the Huntress|');
+        $this->postrequest(self::NPC, ['inputtext', '1727000123', (string) self::T0, 'Kaida: I kept the best pelt for you. (Talking to Aela the Huntress)'], self::PLAYER);
+
+        $calls = [];
+        RelDynEval::runWorker($this->llm(self::GOOD_REPLY, $calls));
+        $this->assertCount(1, $calls, $this->log());
+        $user = $calls[0]['messages'][1]['content'];
+        [$earlier, $current] = explode('THIS EXCHANGE (score only this):', $user, 2);
+        $this->assertStringContainsString('[Aela the Huntress] (scene): Hold the line, Dragonborn!', $earlier, 'her scripted line, marked as a scene line');
+        $this->assertStringContainsString('lines marked (scene) are scripted dialogue', $earlier);
+        $this->assertStringNotContainsString('bell', $user, 'nothing heard in the Forgotten City');
+        $this->assertStringNotContainsString('Nice weather', $user, 'ambient chatter between others');
+        $this->assertStringNotContainsString('(scene)', $current, 'the scored exchange has no scene lines');
+        $this->assertCount(1, $this->inbox(), 'scene lines never queue or score anything of their own');
+    }
+
     /** THIS EXCHANGE block of an eval prompt, one line per entry. */
     private static function scoredLines(array $call): array
     {
